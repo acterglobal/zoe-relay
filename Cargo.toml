@@ -1,0 +1,6 @@
+[workspace]
+
+resolver = "2"
+members = ["crates/*"]
+edition = "2024"
+rust-version = "1.83.0"
