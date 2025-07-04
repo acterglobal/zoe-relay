@@ -13,12 +13,12 @@ pub enum Tag {
     },
     User {
         // Refers to a user in some form
-        id: u64,
+        id: Vec<u8>,
         relays: Vec<String>,
     },
     Channel {
         // Refers to a channel in some form
-        id: u64,
+        id: Vec<u8>,
         relays: Vec<String>,
     },
 }
@@ -289,7 +289,7 @@ mod tests {
             1714857600,
             Kind::Regular,
             vec![Tag::User {
-                id: 1,
+                id: vec![1],    
                 relays: vec!["relay1".to_string()],
             }],
         );
@@ -310,11 +310,11 @@ mod tests {
                 relays: vec!["relay1".to_string()],
             },
             Tag::User {
-                id: 2,
+                id: vec![2],
                 relays: vec!["relay2".to_string()],
             },
             Tag::Channel {
-                id: 3,
+                id: vec![3],
                 relays: vec!["relay3".to_string()],
             },
         ];
@@ -485,7 +485,7 @@ mod tests {
                     relays: vec!["relay1".to_string()],
                 },
                 Tag::User {
-                    id: 2,
+                    id: vec![2],
                     relays: vec!["relay2".to_string()],
                 },
             ],
@@ -508,7 +508,7 @@ mod tests {
             1714857600,
             Kind::Regular,
             vec![Tag::Channel {
-                id: 1,
+                id: vec![1],
                 relays: vec!["relay1".to_string()],
             }],
         );
