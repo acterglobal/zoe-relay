@@ -8,6 +8,6 @@ bincode = { workspace = true, features = ["serde"] }
 ed25519-dalek = { version = "2.0.0", features = ["serde"] }
 postcard = "1.1.2"
 serde = "1.0.219"
-blake3 = "1.5"
+blake3 = { version = "1.5", features = ["serde"] }
 tarpc = { workspace = true}
 rand = "0.8"
