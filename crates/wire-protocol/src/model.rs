@@ -9,16 +9,19 @@ pub enum Tag {
     Event {
         // referes to another event in some form
         id: Hash,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
         relays: Vec<String>,
     },
     User {
         // Refers to a user in some form
         id: Vec<u8>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
         relays: Vec<String>,
     },
     Channel {
         // Refers to a channel in some form
         id: Vec<u8>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
         relays: Vec<String>,
     },
 }
@@ -33,9 +36,16 @@ pub enum StoreKey {
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub enum Kind {
-    Regular,              // shall be stored in order of arrival
-    Emphemeral,           // may only be forwarded but not be stored
-    Store(StoreKey),      // store only the latest messages of StoreKey per User
+    /// This is a regular event, that should be stored and made available to query for afterwards
+    Regular,
+    /// An ephemeral event is not kept permanently but mainly forwarded to who ever is interested
+    /// if a number is provided and larger than 0, this is the maximum seconds the event should be stored for in case
+    /// someone asks. If the timestamp + seconds is smaller than the current server time, the event
+    /// might be discarded without even forwarding it.
+    Emphemeral(Option<u8>),
+    /// This is an event that should be stored in a specific store
+    Store(StoreKey),
+    /// This is an event that should clear a specific store
     ClearStore(StoreKey), // clear the given storekey of the user, if the events timestamp is larger than the stored one
 }
 
@@ -289,7 +299,7 @@ mod tests {
             1714857600,
             Kind::Regular,
             vec![Tag::User {
-                id: vec![1],    
+                id: vec![1],
                 relays: vec!["relay1".to_string()],
             }],
         );
