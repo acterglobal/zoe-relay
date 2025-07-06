@@ -49,6 +49,31 @@ pub enum Kind {
     ClearStore(StoreKey), // clear the given storekey of the user, if the events timestamp is larger than the stored one
 }
 
+
+
+impl StoreKey {
+    /// Deserialize from storage value
+    pub fn from_storage_value(value: &str) -> Result<Self, Box<dyn std::error::Error>> {
+        let bytes = hex::decode(value)?;
+        let store_key: Self = postcard::from_bytes(&bytes)?;
+        Ok(store_key)
+    }
+
+    /// Serialize to storage value
+    pub fn to_storage_value(&self) -> Result<String, Box<dyn std::error::Error>> {
+        let bytes = postcard::to_vec::<_, 4096>(self)?;
+        Ok(hex::encode(bytes))
+    }
+}
+
+impl Kind {
+    /// Serialize to storage value
+    pub fn to_storage_value(&self) -> Result<String, Box<dyn std::error::Error>> {
+        let bytes = postcard::to_vec::<_, 4096>(self)?;
+        Ok(hex::encode(bytes))
+    }
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 #[serde(bound = "T: Serialize + for<'a> Deserialize<'a>")]
 pub enum Message<T>
@@ -94,6 +119,17 @@ where
     }
 }
 
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+#[serde(bound = "T: Serialize + for<'a> Deserialize<'a>")]
+pub struct MessageV0<T> {
+    pub sender: VerifyingKey,
+    pub when: u64, // unix timestamp in seconds
+    pub kind: Kind,
+    pub tags: Vec<Tag>,
+    pub content: T,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(bound = "T: Serialize + for<'a> Deserialize<'a>")]
 pub struct MessageFull<T>
@@ -104,16 +140,6 @@ where
     pub message: Message<T>,
     // TODO: do we need to add a HMAC?
     pub signature: Signature,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
-#[serde(bound = "T: Serialize + for<'a> Deserialize<'a>")]
-pub struct MessageV0<T> {
-    pub sender: VerifyingKey,
-    pub when: u64, // unix timestamp in seconds
-    pub kind: Kind,
-    pub tags: Vec<Tag>,
-    pub content: T,
 }
 
 impl<T> MessageFull<T>
@@ -164,6 +190,69 @@ where
         let signature_valid = self.verify()?;
         let id_valid = self.verify_id()?;
         Ok(signature_valid && id_valid)
+    }
+    
+    /// The key this message is stored under in the storage
+    pub fn storage_key(&self) -> String {
+        format!("message:{}", self.id.to_hex())
+    }
+
+    /// The value this message is stored under in the storage
+    pub fn storage_value(&self) -> Result<String, Box<dyn std::error::Error>> {
+        let bytes = postcard::to_vec::<_, 4096>(&self)?;
+        Ok(hex::encode(bytes))
+    }
+
+    /// The timeout for this message in the storage
+    pub fn storage_timeout(&self) -> Option<u64> {
+        match &self.message {
+            Message::MessageV0(msg) => {
+                if let Kind::Emphemeral(Some(timeout)) = msg.kind {
+                    if timeout > 0 {
+                        return Some(timeout as u64);
+                    }
+                }
+                None
+            }
+        }
+    }
+
+    /// Deserialize a message from its storage value
+    pub fn from_storage_value(value: &str) -> Result<Self, Box<dyn std::error::Error>> {
+        let bytes = hex::decode(value)?;
+        let message: Self = postcard::from_bytes(&bytes)?;
+        Ok(message)
+    }
+
+
+    pub fn author(&self) -> &VerifyingKey {
+        match &self.message {
+            Message::MessageV0(message) => &message.sender,
+        }
+    }
+    
+    pub fn when(&self) -> &u64 {
+        match &self.message {
+            Message::MessageV0(message) => &message.when,
+        }
+    }
+
+    pub fn kind(&self) -> &Kind {
+        match &self.message {
+            Message::MessageV0(message) => &message.kind,
+        }
+    }
+
+    pub fn tags(&self) -> &Vec<Tag> {    
+        match &self.message {
+            Message::MessageV0(message) => &message.tags,
+        }
+    }
+
+    pub fn content(&self) -> &T {
+        match &self.message {
+            Message::MessageV0(message) => &message.content,
+        }
     }
 }
 

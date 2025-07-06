@@ -11,3 +11,4 @@ serde = "1.0.219"
 blake3 = { version = "1.5", features = ["serde"] }
 tarpc = { workspace = true}
 rand = "0.8"
+hex = "0.4"
