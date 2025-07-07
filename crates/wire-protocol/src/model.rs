@@ -9,19 +9,19 @@ pub enum Tag {
     Event {
         // referes to another event in some form
         id: Hash,
-        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        #[serde(default)]
         relays: Vec<String>,
     },
     User {
         // Refers to a user in some form
         id: Vec<u8>,
-        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        #[serde(default)]
         relays: Vec<String>,
     },
     Channel {
         // Refers to a channel in some form
         id: Vec<u8>,
-        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        #[serde(default)]
         relays: Vec<String>,
     },
 }
@@ -49,30 +49,28 @@ pub enum Kind {
     ClearStore(StoreKey), // clear the given storekey of the user, if the events timestamp is larger than the stored one
 }
 
+// impl StoreKey {
+//     /// Deserialize from storage value
+//     pub fn from_storage_value(value: &str) -> Result<Self, Box<dyn std::error::Error>> {
+//         let bytes = hex::decode(value)?;
+//         let store_key: Self = postcard::from_bytes(&bytes)?;
+//         Ok(store_key)
+//     }
 
+//     /// Serialize to storage value
+//     pub fn to_storage_value(&self) -> Result<String, Box<dyn std::error::Error>> {
+//         let bytes = postcard::to_vec::<_, 4096>(self)?;
+//         Ok(hex::encode(bytes))
+//     }
+// }
 
-impl StoreKey {
-    /// Deserialize from storage value
-    pub fn from_storage_value(value: &str) -> Result<Self, Box<dyn std::error::Error>> {
-        let bytes = hex::decode(value)?;
-        let store_key: Self = postcard::from_bytes(&bytes)?;
-        Ok(store_key)
-    }
-
-    /// Serialize to storage value
-    pub fn to_storage_value(&self) -> Result<String, Box<dyn std::error::Error>> {
-        let bytes = postcard::to_vec::<_, 4096>(self)?;
-        Ok(hex::encode(bytes))
-    }
-}
-
-impl Kind {
-    /// Serialize to storage value
-    pub fn to_storage_value(&self) -> Result<String, Box<dyn std::error::Error>> {
-        let bytes = postcard::to_vec::<_, 4096>(self)?;
-        Ok(hex::encode(bytes))
-    }
-}
+// impl Kind {
+//     /// Serialize to storage value
+//     pub fn to_storage_value(&self) -> Result<String, Box<dyn std::error::Error>> {
+//         let bytes = postcard::to_vec::<_, 4096>(self)?;
+//         Ok(hex::encode(bytes))
+//     }
+// }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 #[serde(bound = "T: Serialize + for<'a> Deserialize<'a>")]
@@ -119,13 +117,13 @@ where
     }
 }
 
-
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 #[serde(bound = "T: Serialize + for<'a> Deserialize<'a>")]
 pub struct MessageV0<T> {
     pub sender: VerifyingKey,
     pub when: u64, // unix timestamp in seconds
     pub kind: Kind,
+    #[serde(default)]
     pub tags: Vec<Tag>,
     pub content: T,
 }
@@ -191,16 +189,10 @@ where
         let id_valid = self.verify_id()?;
         Ok(signature_valid && id_valid)
     }
-    
-    /// The key this message is stored under in the storage
-    pub fn storage_key(&self) -> String {
-        format!("message:{}", self.id.to_hex())
-    }
 
     /// The value this message is stored under in the storage
-    pub fn storage_value(&self) -> Result<String, Box<dyn std::error::Error>> {
-        let bytes = postcard::to_vec::<_, 4096>(&self)?;
-        Ok(hex::encode(bytes))
+    pub fn storage_value(&self) -> Result<heapless::Vec<u8, 4096>, Box<dyn std::error::Error>> {
+        Ok(postcard::to_vec(&self)?)
     }
 
     /// The timeout for this message in the storage
@@ -218,19 +210,17 @@ where
     }
 
     /// Deserialize a message from its storage value
-    pub fn from_storage_value(value: &str) -> Result<Self, Box<dyn std::error::Error>> {
-        let bytes = hex::decode(value)?;
-        let message: Self = postcard::from_bytes(&bytes)?;
+    pub fn from_storage_value(value: &[u8]) -> Result<Self, Box<dyn std::error::Error>> {
+        let message: Self = postcard::from_bytes(value)?;
         Ok(message)
     }
-
 
     pub fn author(&self) -> &VerifyingKey {
         match &self.message {
             Message::MessageV0(message) => &message.sender,
         }
     }
-    
+
     pub fn when(&self) -> &u64 {
         match &self.message {
             Message::MessageV0(message) => &message.when,
@@ -243,7 +233,7 @@ where
         }
     }
 
-    pub fn tags(&self) -> &Vec<Tag> {    
+    pub fn tags(&self) -> &Vec<Tag> {
         match &self.message {
             Message::MessageV0(message) => &message.tags,
         }
@@ -395,6 +385,38 @@ mod tests {
 
         let msg_full = MessageFull::new(core, &sk).unwrap();
         assert!(msg_full.verify_all().unwrap());
+        // Serialize and deserialize
+        let serialized = msg_full.storage_value().unwrap();
+        let deserialized = MessageFull::<ComplexContent>::from_storage_value(&serialized).unwrap();
+
+        assert_eq!(msg_full, deserialized);
+        assert!(deserialized.verify_all().unwrap());
+    }
+
+    #[test]
+    fn test_complex_content_no_tags_serialization() {
+        let (sk, pk) = make_keys();
+        let complex_content = ComplexContent {
+            text: "Hello, World!".to_string(),
+            numbers: vec![1, 2, 3, 4, 5],
+            flag: true,
+        };
+        let core = Message::new_v0(
+            complex_content.clone(),
+            pk.clone(),
+            1714857600,
+            Kind::Regular,
+            vec![],
+        );
+
+        let msg_full = MessageFull::new(core, &sk).unwrap();
+        assert!(msg_full.verify_all().unwrap());
+        // Serialize and deserialize
+        let serialized = msg_full.storage_value().unwrap();
+        let deserialized = MessageFull::<ComplexContent>::from_storage_value(&serialized).unwrap();
+
+        assert_eq!(msg_full, deserialized);
+        assert!(deserialized.verify_all().unwrap());
     }
 
     #[test]
@@ -524,7 +546,11 @@ mod tests {
     #[test]
     fn test_serialization_roundtrip() {
         let (sk, pk) = make_keys();
-        let content = DummyContent { value: 42 };
+        let content = ComplexContent {
+            text: "Hello, World!".to_string(),
+            numbers: vec![1, 2, 3, 4, 5],
+            flag: true,
+        };
         let core = Message::new_v0(
             content.clone(),
             pk.clone(),
@@ -542,8 +568,8 @@ mod tests {
         let msg_full = MessageFull::new(core, &sk).unwrap();
 
         // Serialize and deserialize
-        let serialized = postcard::to_vec::<_, 1024>(&msg_full).unwrap();
-        let deserialized: MessageFull<DummyContent> = postcard::from_bytes(&serialized).unwrap();
+        let serialized = msg_full.storage_value().unwrap();
+        let deserialized = MessageFull::<ComplexContent>::from_storage_value(&serialized).unwrap();
 
         assert_eq!(msg_full, deserialized);
         assert!(deserialized.verify_all().unwrap());
