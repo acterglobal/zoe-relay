@@ -19,6 +19,9 @@ pub enum RelayError {
 
     #[error("Internal error: {0}")]
     Internal(String),
+
+    #[error("Empty filters")]
+    EmptyFilters,
 }
 
 impl From<std::io::Error> for RelayError {
@@ -45,4 +48,4 @@ impl From<std::time::SystemTimeError> for RelayError {
     }
 }
 
-pub type Result<T> = std::result::Result<T, RelayError>; 
+pub type Result<T> = std::result::Result<T, RelayError>;

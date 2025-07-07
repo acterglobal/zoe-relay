@@ -1,5 +1,7 @@
 use crate::error::Result;
-use redis::{aio::ConnectionManager, AsyncCommands, RedisResult};
+use async_stream::stream;
+use futures_util::stream::Stream;
+use redis::{AsyncCommands, RedisResult, aio::ConnectionManager, streams::StreamReadReply};
 use serde::{Deserialize, Serialize};
 use zoeyr_wire_protocol::{Kind, MessageFull, StoreKey, Tag};
 
@@ -16,17 +18,17 @@ const PROTECTED_KEY: &str = "protected:";
 /// Message filters for querying
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct MessageFilters {
-    pub authors: Option<Vec<String>>,
-    pub kinds: Option<Vec<Kind>>,
-    pub tags: Option<Vec<Tag>>,
-    pub since: Option<u64>,
-    pub until: Option<u64>,
-    pub limit: Option<usize>,
+    pub authors: Option<Vec<u8>>,
+    pub channels: Option<Vec<u8>>,
+    pub events: Option<Vec<u8>>,
+    pub users: Option<Vec<u8>>,
 }
 
 impl MessageFilters {
     /// Deserialize from storage value
-    pub fn from_storage_value(value: &str) -> std::result::Result<Self, Box<dyn std::error::Error>> {
+    pub fn from_storage_value(
+        value: &str,
+    ) -> std::result::Result<Self, Box<dyn std::error::Error>> {
         let bytes = hex::decode(value)?;
         let filters: Self = postcard::from_bytes(&bytes)?;
         Ok(filters)
@@ -37,6 +39,13 @@ impl MessageFilters {
         let bytes = postcard::to_vec::<_, 4096>(self)?;
         Ok(hex::encode(bytes))
     }
+
+    pub fn is_empty(&self) -> bool {
+        self.authors.is_none()
+            && self.channels.is_none()
+            && self.events.is_none()
+            && self.users.is_none()
+    }
 }
 
 /// Trait for types that can be serialized to/from storage values
@@ -44,7 +53,7 @@ pub trait StorageValue {
     fn from_storage_value(value: &str) -> std::result::Result<Self, Box<dyn std::error::Error>>
     where
         Self: Sized;
-    
+
     fn to_storage_value(&self) -> std::result::Result<String, Box<dyn std::error::Error>>;
 }
 
@@ -84,12 +93,15 @@ impl RedisStorage {
     pub async fn new(config: crate::config::RelayConfig) -> Result<Self> {
         let client = redis::Client::open(config.redis.url.as_str())?;
         let conn = ConnectionManager::new(client).await?;
-        Ok(Self { conn: tokio::sync::Mutex::new(conn), config })
+        Ok(Self {
+            conn: tokio::sync::Mutex::new(conn),
+            config,
+        })
     }
 
     /// Store the given message, use tags and metadata to index and inform
     /// subscribers.
-    /// 
+    ///
     /// Returns true if this message was newly saved, false if it was already found
     /// Note: messages aren't checked for validity in this function. It is expected that
     /// its key uniquely identifies to an immutable message and that it is confirmed before
@@ -116,7 +128,6 @@ impl RedisStorage {
             None
         };
 
-
         // Handle ephemeral messages
         if let Some(timeout) = tm {
             pipe.set_ex::<_, _>(&id, &value, timeout);
@@ -129,10 +140,9 @@ impl RedisStorage {
         xadd = xadd.arg(ID_KEY).arg(&id.as_slice());
         xadd = xadd.arg(AUTHOR_KEY).arg(&author_bytes);
         xadd = xadd.arg(TIMESTAMP_KEY).arg(&timestamp.to_le_bytes());
-        
 
         // Store the indizes
-        
+
         for tag in message.tags() {
             match tag {
                 Tag::Event { id: event_id, .. } => {
@@ -141,7 +151,7 @@ impl RedisStorage {
                 Tag::User { id: user_id, .. } => {
                     xadd = xadd.arg(USER_KEY).arg(&user_id);
                 }
-                Tag::Channel { id: channel_id, .. } => {    
+                Tag::Channel { id: channel_id, .. } => {
                     xadd = xadd.arg(CHANNEL_KEY).arg(&channel_id);
                 }
                 Tag::Protected => {
@@ -156,7 +166,7 @@ impl RedisStorage {
             return Ok(false);
         }
         let _: () = pipe.query_async(&mut *conn).await?;
-        
+
         Ok(true)
     }
 
@@ -166,7 +176,7 @@ impl RedisStorage {
     {
         let mut conn = self.conn.lock().await;
         let result: RedisResult<Option<String>> = conn.get(id).await;
-        
+
         match result? {
             Some(data) => {
                 // Use the model's deserialization method
@@ -177,17 +187,62 @@ impl RedisStorage {
         }
     }
 
-    pub async fn query_messages<T>(
+    pub async fn listen_for_messages<T>(
         &self,
-        _filters: &MessageFilters,
-        _limit: Option<usize>,
-    ) -> Result<Vec<MessageFull<T>>>
+        filters: &MessageFilters,
+        since: Option<String>,
+        limit: Option<usize>,
+    ) -> Result<impl Stream<Item = Result<(Vec<u8>, String)>>>
     where
         T: Serialize + for<'de> Deserialize<'de> + Send + Sync,
     {
-        unimplemented!()
-    }
+        if filters.is_empty() {
+            return Err(crate::error::RelayError::EmptyFilters);
+        }
 
+        Ok(stream! {
+            let mut since = since;
+            let mut conn = self.conn.lock().await;
+
+            loop {
+                let mut read = redis::cmd("XREAD");
+                if let Some(l) = &limit {
+                    if *l > 0 {
+                        read.arg("COUNT").arg(l);
+                    }
+                }
+                read.arg("STREAMS").arg(MESSAGE_STREAM_NAME);
+                if let Some(since) = &since {
+                    read.arg(since);
+                } else {
+                    read.arg("0-0"); // default is to start at 0
+                }
+
+                let stream_result: redis::RedisResult<StreamReadReply> = read.query_async(&mut *conn).await;
+                match stream_result {
+                    Ok(stream) => {
+                        for stream_key in stream.keys {
+                            for entry in stream_key.ids {
+                                let id = entry.id; // the new height
+                                let map = entry.map; // we need to filter by this
+                                if let Some(msg_id) = map.get(ID_KEY) {
+                                    // FIXME: check filters
+                                    if let Ok(bytes) = redis::FromRedisValue::from_redis_value(msg_id) {
+                                        yield Ok((bytes, id.clone()));
+                                        since = Some(id);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        yield Err(crate::error::RelayError::Redis(e));
+                        break;
+                    }
+                }
+            }
+        })
+    }
 
     pub async fn get_user_data(&self, _user_id: &str, _key: &str) -> Result<Option<String>> {
         unimplemented!()
@@ -208,17 +263,15 @@ mod tests {
     #[test]
     fn test_message_filters_serialization() {
         let filters = MessageFilters {
-            authors: Some(vec!["author1".to_string(), "author2".to_string()]),
-            kinds: Some(vec![Kind::Regular, Kind::Emphemeral(Some(60))]),
-            tags: Some(vec![Tag::Protected]),
-            since: Some(1000),
-            until: Some(2000),
-            limit: Some(50),
+            authors: Some(vec![1u8, 2u8, 3u8]),
+            channels: Some(vec![4u8, 5u8, 6u8]),
+            events: Some(vec![7u8, 8u8, 9u8]),
+            users: Some(vec![10u8, 11u8, 12u8]),
         };
 
         let serialized = filters.to_storage_value().unwrap();
         let deserialized = MessageFilters::from_storage_value(&serialized).unwrap();
-        
+
         assert_eq!(filters, deserialized);
     }
 
@@ -227,7 +280,7 @@ mod tests {
         let store_key = StoreKey::PublicUserInfo;
         let serialized = store_key.to_storage_value().unwrap();
         let deserialized = StoreKey::from_storage_value(&serialized).unwrap();
-        
+
         assert_eq!(store_key, deserialized);
     }
 
@@ -236,7 +289,7 @@ mod tests {
         let kind = Kind::Emphemeral(Some(30));
         let serialized = kind.to_storage_value().unwrap();
         let deserialized = Kind::from_storage_value(&serialized).unwrap();
-        
+
         assert_eq!(kind, deserialized);
     }
 
@@ -251,21 +304,21 @@ mod tests {
     #[test]
     fn test_message_key_generation() {
         // Test the key generation logic directly
-        let key = format!("{}{}", MESSAGE_PREFIX, "test_id");
-        assert_eq!(key, "message:test_id");
+        let key = format!("{}{}", MESSAGE_STREAM_NAME, "test_id");
+        assert_eq!(key, "messages:test_id");
     }
 
     #[test]
     fn test_user_data_key_generation() {
         // Test the key generation logic directly
-        let key = format!("{}{}:{}", USER_PREFIX, "user123", "profile");
+        let key = format!("{}{}:{}", USER_KEY, "user123", "profile");
         assert_eq!(key, "user:user123:profile");
     }
 
     #[test]
     fn test_ephemeral_key_generation() {
         // Test the key generation logic directly
-        let key = format!("{}{}", EPHEMERAL_PREFIX, "test_id");
+        let key = format!("{}{}", "ephemeral:", "test_id");
         assert_eq!(key, "ephemeral:test_id");
     }
-} 
+}

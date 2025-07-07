@@ -1,9 +1,9 @@
+pub mod config;
 pub mod error;
 pub mod storage;
-pub mod config;
 
-pub use error::RelayError;
 pub use config::RelayConfig;
+pub use error::RelayError;
 
 /// Re-export common types for convenience
-pub use zoeyr_wire_protocol::{Message, MessageFull, Kind, Tag, StoreKey};
+pub use zoeyr_wire_protocol::{Kind, Message, MessageFull, StoreKey, Tag};
