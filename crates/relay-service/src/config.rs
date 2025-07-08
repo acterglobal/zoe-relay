@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Default)]
 pub struct RelayConfig {
     /// Redis connection configuration
     pub redis: RedisConfig,
@@ -36,14 +37,6 @@ pub struct ServiceConfig {
     pub port: u16,
 }
 
-impl Default for RelayConfig {
-    fn default() -> Self {
-        Self {
-            redis: RedisConfig::default(),
-            service: ServiceConfig::default(),
-        }
-    }
-}
 
 impl Default for RedisConfig {
     fn default() -> Self {

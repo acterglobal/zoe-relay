@@ -142,7 +142,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         .map(|s| hex::decode(s).unwrap_or_default())
                         .collect()
                 }),
-                events: events,
+                events,
                 users: users.map(|u| {
                     u.into_iter()
                         .map(|s| hex::decode(s).unwrap_or_default())
@@ -201,21 +201,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                 if with_user {
                     tags.push(Tag::User {
-                        id: format!("user_{}", i).into_bytes(),
+                        id: format!("user_{i}").into_bytes(),
                         relays: Vec::new(),
                     });
                 }
 
                 if with_channel {
                     tags.push(Tag::Channel {
-                        id: format!("channel_{}", i).into_bytes(),
+                        id: format!("channel_{i}").into_bytes(),
                         relays: Vec::new(),
                     });
                 }
 
                 let message = Message::new_v0(
                     content,
-                    verifying_key.clone(),
+                    verifying_key,
                     std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
                         .unwrap()
@@ -273,10 +273,10 @@ where
                 match storage.get_message::<T>(&msg_id).await {
                     Ok(Some(message)) => {
                         println!("Message content: {:?}", message.content());
-                        println!("Stream position: {}", height);
+                        println!("Stream position: {height}");
                     }
                     Ok(None) => {
-                        println!("404: Message {} not found ", hx_id);
+                        println!("404: Message {hx_id} not found ");
                         continue;
                     }
                     Err(e) => {

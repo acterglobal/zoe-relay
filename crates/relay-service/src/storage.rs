@@ -1,9 +1,9 @@
 use crate::error::Result;
 use async_stream::stream;
 use futures_util::stream::Stream;
-use redis::{AsyncCommands, RedisResult, aio::ConnectionManager};
+use redis::{AsyncCommands, aio::ConnectionManager};
 use serde::{Deserialize, Serialize};
-use zoeyr_wire_protocol::{Kind, MessageFull, StoreKey, Tag};
+use zoeyr_wire_protocol::{MessageFull, Tag};
 
 /// Redis key prefixes for different data types
 const MESSAGE_STREAM_NAME: &str = "messages:";
@@ -73,19 +73,9 @@ impl RedisStorage {
             hex::encode(value.as_slice())
         );
 
-        let tm = if let Some(timeout) = message.storage_timeout() {
-            // timeout of 0 is the same as no timeout.
-            if timeout > 0 {
-                // FIXME: also check against local time ...
-                Some(timeout)
-            } else {
-                None
-            }
-        } else {
-            None
-        };
+        let tm = message.storage_timeout().filter(|&timeout| timeout > 0);
 
-        let set = pipe.cmd("SET").arg(&id).arg(value.as_slice());
+        let set = pipe.cmd("SET").arg(id).arg(value.as_slice());
 
         // Handle ephemeral messages
         if let Some(timeout) = tm {
@@ -93,7 +83,7 @@ impl RedisStorage {
         }
 
         let mut xadd: &mut redis::Pipeline = pipe.cmd("XADD").arg(MESSAGE_STREAM_NAME).arg("*");
-        xadd = xadd.arg(ID_KEY).arg(&id);
+        xadd = xadd.arg(ID_KEY).arg(id);
         xadd = xadd.arg(AUTHOR_KEY).arg(&author_bytes);
         xadd = xadd.arg(TIMESTAMP_KEY).arg(&timestamp.to_le_bytes());
 
@@ -102,13 +92,13 @@ impl RedisStorage {
         for tag in message.tags() {
             match tag {
                 Tag::Event { id: event_id, .. } => {
-                    xadd = xadd.arg(EVENT_KEY).arg(&event_id.as_bytes().to_vec());
+                    xadd = xadd.arg(EVENT_KEY).arg(event_id.as_bytes().to_vec());
                 }
                 Tag::User { id: user_id, .. } => {
-                    xadd = xadd.arg(USER_KEY).arg(&user_id);
+                    xadd = xadd.arg(USER_KEY).arg(user_id);
                 }
                 Tag::Channel { id: channel_id, .. } => {
-                    xadd = xadd.arg(CHANNEL_KEY).arg(&channel_id);
+                    xadd = xadd.arg(CHANNEL_KEY).arg(channel_id);
                 }
                 Tag::Protected => {
                     xadd = xadd.arg(PROTECTED_KEY).arg(true);
@@ -172,11 +162,10 @@ impl RedisStorage {
 
                 if block {
                     read.arg("BLOCK").arg(10000);
-                } else if let Some(l) = &limit {
-                    if *l > 0 {
+                } else if let Some(l) = &limit
+                    && *l > 0 {
                         read.arg("COUNT").arg(l);
                     }
-                }
                 read.arg("STREAMS").arg(MESSAGE_STREAM_NAME);
                 if let Some(since) = &since {
                     read.arg(since);
@@ -307,8 +296,8 @@ impl RedisStorage {
 mod tests {
     use super::*;
     use crate::config::{RedisConfig, RelayConfig, ServiceConfig};
-    use blake3::{Hash, Hasher};
-    use ed25519_dalek::{SecretKey, SigningKey};
+    
+    use ed25519_dalek::SigningKey;
     use rand::RngCore;
     use zoeyr_wire_protocol::{Kind, Message, Tag};
 

@@ -27,7 +27,6 @@ pub enum Tag {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
-#[serde(untagged)]
 pub enum StoreKey {
     PublicUserInfo,
     MlsKeyPackage,
@@ -199,11 +198,10 @@ where
     pub fn storage_timeout(&self) -> Option<u64> {
         match &self.message {
             Message::MessageV0(msg) => {
-                if let Kind::Emphemeral(Some(timeout)) = msg.kind {
-                    if timeout > 0 {
+                if let Kind::Emphemeral(Some(timeout)) = msg.kind
+                    && timeout > 0 {
                         return Some(timeout as u64);
                     }
-                }
                 None
             }
         }
@@ -271,6 +269,13 @@ mod tests {
         flag: bool,
     }
 
+    #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+    struct TestContent {
+        text: String,
+        timestamp: u64,
+        value: u32,
+    }
+
     fn make_keys() -> (SigningKey, VerifyingKey) {
         let mut csprng = OsRng;
         let mut secret_bytes = [0u8; 32];
@@ -286,7 +291,7 @@ mod tests {
         let content = DummyContent { value: 42 };
         let core = Message::new_v0(
             content.clone(),
-            pk.clone(),
+            pk,
             1714857600,
             Kind::Regular,
             vec![Tag::Protected],
@@ -312,7 +317,7 @@ mod tests {
         let content = DummyContent { value: 7 };
         let core = Message::new_v0(
             content.clone(),
-            pk1.clone(),
+            pk1,
             1714857600,
             Kind::Regular,
             vec![Tag::Protected],
@@ -329,7 +334,7 @@ mod tests {
         let (sk, pk) = make_keys();
         let core: Message<DummyContent> = Message::new_v0(
             DummyContent { value: 0 },
-            pk.clone(),
+            pk,
             1714857600,
             Kind::Regular,
             vec![Tag::Protected],
@@ -341,14 +346,12 @@ mod tests {
     #[test]
     fn test_multiple_content_items() {
         let (sk, pk) = make_keys();
-        let contents = vec![
-            DummyContent { value: 1 },
+        let contents = [DummyContent { value: 1 },
             DummyContent { value: 2 },
-            DummyContent { value: 3 },
-        ];
+            DummyContent { value: 3 }];
         let core = Message::new_v0(
             contents[0].clone(),
-            pk.clone(),
+            pk,
             1714857600,
             Kind::Regular,
             vec![
@@ -374,7 +377,7 @@ mod tests {
         };
         let core = Message::new_v0(
             complex_content.clone(),
-            pk.clone(),
+            pk,
             1714857600,
             Kind::Regular,
             vec![Tag::User {
@@ -403,7 +406,7 @@ mod tests {
         };
         let core = Message::new_v0(
             complex_content.clone(),
-            pk.clone(),
+            pk,
             1714857600,
             Kind::Regular,
             vec![],
@@ -420,7 +423,7 @@ mod tests {
     }
 
     #[test]
-    fn test_all_tag_types() {
+    fn test_all_tag_types_serialization() {
         let (sk, pk) = make_keys();
         let content = DummyContent { value: 100 };
 
@@ -443,15 +446,125 @@ mod tests {
         for tag in tags {
             let core = Message::new_v0(
                 content.clone(),
-                pk.clone(),
+                pk,
                 1714857600,
                 Kind::Regular,
                 vec![tag.clone()],
             );
 
             let msg_full = MessageFull::new(core, &sk).unwrap();
-            assert!(msg_full.verify_all().unwrap(), "Failed for tag: {:?}", tag);
+            assert!(msg_full.verify_all().unwrap(), "Failed for tag: {tag:?}");
+            // Serialize and deserialize
+            let serialized = msg_full.storage_value().unwrap();
+            let deserialized =
+                MessageFull::<DummyContent>::from_storage_value(&serialized).unwrap();
+
+            assert_eq!(msg_full, deserialized);
+            assert!(deserialized.verify_all().unwrap());
         }
+    }
+    #[test]
+    fn test_complex_content_empheral_kind_serialization() {
+        let (sk, pk) = make_keys();
+        let complex_content = ComplexContent {
+            text: "Hello, World!".to_string(),
+            numbers: vec![1, 2, 3, 4, 5],
+            flag: true,
+        };
+        let core = Message::new_v0(
+            complex_content.clone(),
+            pk,
+            1714857600,
+            Kind::Emphemeral(Some(10)),
+            vec![],
+        );
+
+        let msg_full = MessageFull::new(core, &sk).unwrap();
+        assert!(msg_full.verify_all().unwrap());
+        // Serialize and deserialize
+        let serialized = msg_full.storage_value().unwrap();
+        let deserialized = MessageFull::<ComplexContent>::from_storage_value(&serialized).unwrap();
+
+        assert_eq!(msg_full, deserialized);
+        assert!(deserialized.verify_all().unwrap());
+    }
+
+    #[test]
+    fn test_complex_content_clear_store_kind_serialization() {
+        // Create a signing key for testing
+        let mut rng = rand::rngs::OsRng;
+        let mut secret_bytes = [0u8; 32];
+        use rand::RngCore;
+        rng.fill_bytes(&mut secret_bytes);
+        let signing_key = SigningKey::from_bytes(&secret_bytes);
+        let verifying_key = signing_key.verifying_key();
+
+        for i in 0..10 {
+            let content = TestContent {
+                text: format!("Test message {}", i + 1),
+                timestamp: std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_secs(),
+                value: i as u32,
+            };
+
+            let mut tags = Vec::new();
+            // Create a fake event ID (32 bytes)
+            let mut event_id_bytes = [0u8; 32];
+            event_id_bytes[0] = i as u8;
+            let event_id = blake3::Hash::from(event_id_bytes);
+            tags.push(Tag::Event {
+                id: event_id,
+                relays: Vec::new(),
+            });
+
+            let message = Message::new_v0(
+                content,
+                verifying_key,
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_secs(),
+                Kind::Regular,
+                tags,
+            );
+
+            let msg_full = MessageFull::new(message, &signing_key).unwrap();
+            assert!(msg_full.verify_all().unwrap());
+            // Serialize and deserialize
+            let serialized = msg_full.storage_value().unwrap();
+            let deserialized = MessageFull::<TestContent>::from_storage_value(&serialized).unwrap();
+
+            assert_eq!(msg_full, deserialized);
+            assert!(deserialized.verify_all().unwrap());
+        }
+    }
+
+    #[test]
+    fn test_complex_content_store_kind_serialization() {
+        let (sk, pk) = make_keys();
+        let complex_content = ComplexContent {
+            text: "Hello, World!".to_string(),
+            numbers: vec![1, 2, 3, 4, 5],
+            flag: true,
+        };
+        let core = Message::new_v0(
+            complex_content.clone(),
+            pk,
+            1714857600,
+            Kind::Store(StoreKey::CustomKey(10)),
+            vec![],
+        );
+
+        let msg_full = MessageFull::new(core, &sk).unwrap();
+        assert!(msg_full.verify_all().unwrap());
+        // Serialize and deserialize
+        let serialized = msg_full.storage_value().unwrap();
+        let deserialized = MessageFull::<ComplexContent>::from_storage_value(&serialized).unwrap();
+
+        assert_eq!(msg_full, deserialized);
+        assert!(deserialized.verify_all().unwrap());
     }
 
     #[test]
@@ -460,7 +573,7 @@ mod tests {
         let content = DummyContent { value: 42 };
         let core = Message::new_v0(
             content.clone(),
-            pk.clone(),
+            pk,
             1714857600,
             Kind::Regular,
             vec![Tag::Protected],
@@ -481,7 +594,7 @@ mod tests {
         let content = DummyContent { value: 42 };
         let core = Message::new_v0(
             content.clone(),
-            pk.clone(),
+            pk,
             1714857600,
             Kind::Regular,
             vec![Tag::Protected],
@@ -500,7 +613,7 @@ mod tests {
         let content = DummyContent { value: 42 };
         let core = Message::new_v0(
             content.clone(),
-            pk.clone(),
+            pk,
             1714857600,
             Kind::Regular,
             vec![Tag::Protected],
@@ -519,7 +632,7 @@ mod tests {
         let content = DummyContent { value: 42 };
         let core = Message::new_v0(
             content.clone(),
-            pk.clone(),
+            pk,
             1714857600,
             Kind::Regular,
             vec![Tag::Protected],
@@ -553,7 +666,7 @@ mod tests {
         };
         let core = Message::new_v0(
             content.clone(),
-            pk.clone(),
+            pk,
             1714857600,
             Kind::Regular,
             vec![
@@ -581,7 +694,7 @@ mod tests {
         let content = DummyContent { value: 42 };
         let core = Message::new_v0(
             content.clone(),
-            pk.clone(),
+            pk,
             1714857600,
             Kind::Regular,
             vec![Tag::Protected],
@@ -600,7 +713,7 @@ mod tests {
         let content = DummyContent { value: 42 };
         let core = Message::new_v0(
             content.clone(),
-            pk.clone(),
+            pk,
             1714857600,
             Kind::Regular,
             vec![
@@ -629,7 +742,7 @@ mod tests {
         };
         let core = Message::new_v0(
             large_content.clone(),
-            pk.clone(),
+            pk,
             1714857600,
             Kind::Regular,
             vec![Tag::Channel {
@@ -649,14 +762,14 @@ mod tests {
 
         let core1 = Message::new_v0(
             content1.clone(),
-            pk.clone(),
+            pk,
             1714857600,
             Kind::Regular,
             vec![Tag::Protected],
         );
         let core2 = Message::new_v0(
             content2.clone(),
-            pk.clone(),
+            pk,
             1714857600,
             Kind::Regular,
             vec![Tag::Protected],
@@ -676,14 +789,14 @@ mod tests {
 
         let core1 = Message::new_v0(
             content.clone(),
-            pk.clone(),
+            pk,
             1714857600,
             Kind::Regular,
             vec![Tag::Protected],
         );
         let core2 = Message::new_v0(
             content.clone(),
-            pk.clone(),
+            pk,
             1714857600,
             Kind::Regular,
             vec![Tag::Protected],
