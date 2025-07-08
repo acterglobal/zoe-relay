@@ -1,0 +1,16 @@
+[package]
+name = "zoey-encrypted-storage"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+# Core encryption dependencies
+aes-gcm = "0.10.3"
+aead = "0.5.2"
+blake3 = { workspace = true }
+
+# Compression
+brotli = { workspace = true }
+
+# Error handling
+thiserror = { workspace = true }
