@@ -986,4 +986,285 @@ mod tests {
             assert_eq!(contacts.unwrap().len(), 2);
         }
     }
+    
+    // =============================================================================
+    // END-TO-END TESTS - Real WhatsApp connections (ignored by default)
+    // =============================================================================
+    mod e2e {
+        use super::*;
+        use std::io::{self, Write};
+        
+        /// Display a QR code in scannable ASCII format
+        fn display_qr_code(qr_data: &str) {
+            println!("\n┌─────────────────────────────────────────────────────────────┐");
+            println!("│                     📱 WHATSAPP QR CODE                      │");
+            println!("├─────────────────────────────────────────────────────────────┤");
+            println!("│                                                             │");
+            println!("│  ⚠️  IMPORTANT: This QR code connects to YOUR WhatsApp!     │");
+            println!("│                                                             │");
+            println!("│  📱 TO SCAN:                                                │");
+            println!("│  1. Open WhatsApp on your phone                            │");
+            println!("│  2. Go to Settings > Linked Devices                        │");
+            println!("│  3. Tap 'Link a Device'                                     │");
+            println!("│  4. Scan this QR code with your phone's camera             │");
+            println!("│                                                             │");
+            println!("├─────────────────────────────────────────────────────────────┤");
+            println!("│                        QR CODE DATA:                       │");
+            println!("├─────────────────────────────────────────────────────────────┤");
+            
+            // Display the QR code in a more readable format
+            if qr_data.len() > 100 {
+                // For long QR codes, display in chunks with line breaks for better readability
+                let chars: Vec<char> = qr_data.chars().collect();
+                let chunk_size = 55; // Fit within the box width
+                
+                for chunk in chars.chunks(chunk_size) {
+                    let line: String = chunk.iter().collect();
+                    println!("│ {:55} │", line);
+                }
+            } else {
+                // For shorter codes, display as-is
+                println!("│ {:55} │", qr_data);
+            }
+            
+            println!("├─────────────────────────────────────────────────────────────┤");
+            println!("│  ⏰ QR CODE EXPIRES: This code expires in 20 seconds        │");
+            println!("│  🔄 REFRESH: Re-run test if code expires                    │");
+            println!("│  ✅ SUCCESS: Your phone will show 'Device linked' message   │");
+            println!("│                                                             │");
+            println!("│  💡 TIP: Make sure you have good lighting for scanning     │");
+            println!("│  📶 NETWORK: Ensure your phone has internet connection     │");
+            println!("└─────────────────────────────────────────────────────────────┘");
+            println!();
+            
+            // Add visual separator and clear call to action
+            println!("🎯 ACTION REQUIRED:");
+            println!("   📱 Scan the QR code above with your WhatsApp mobile app");
+            println!("   ⏳ You have about 20 seconds before the code expires");
+            println!("   🔄 If it expires, just restart this test for a new code");
+            println!();
+        }
+
+        fn wait_for_user_confirmation(message: &str) {
+            println!("📋 {}", message);
+            println!("   ⏸️  Press Enter when ready to continue...");
+            let mut input = String::new();
+            io::stdin().read_line(&mut input).unwrap();
+        }
+
+        #[tokio::test]
+        #[ignore = "requires real WhatsApp connection and user interaction"]
+        async fn full_authentication_flow() {
+            println!("\n🔥 E2E Test: Full Authentication Flow");
+            println!("=====================================");
+            
+            // Check if we're using real FFI or mocks
+            #[cfg(test)]
+            {
+                println!("ℹ️  Running in MOCK MODE (simulated QR codes)");
+                println!("   📝 Note: This will show 'https://wa.me/qr/MOCK_QR_CODE_FOR_TESTING'");
+                println!("   🎯 For real QR codes, build without test mode");
+                println!("");
+            }
+            
+            #[cfg(not(test))]
+            {
+                println!("🚀 Running in REAL MODE (actual WhatsApp servers)");
+                println!("   📱 This will generate a real scannable QR code");
+                println!("   ⚠️  Make sure you have a stable internet connection");
+                println!("");
+            }
+            
+            println!("⚠️  This test requires:");
+            println!("   • Real phone number");
+            println!("   • WhatsApp mobile app");
+            println!("   • User interaction for QR scanning");
+            println!("   • Internet connection");
+            println!("   • Good lighting for QR code scanning");
+            println!("   • Stable network connection");
+            
+            wait_for_user_confirmation("Have your WhatsApp mobile app ready for QR scanning");
+
+            // Step 1: Create bot
+            println!("\n1️⃣ Creating WhatsApp bot...");
+            let bot = WhatsAppBot::new().expect("Failed to create WhatsApp bot");
+            println!("   ✅ Bot created successfully");
+
+            // Step 2: Get QR code for authentication
+            println!("\n2️⃣ Getting QR code for authentication...");
+            println!("   🔄 Requesting QR code from WhatsApp servers...");
+            
+            match bot.get_qr_code().await {
+                Ok(qr_code) => {
+                    if !qr_code.is_empty() {
+                        // Check if this is a mock QR code
+                        if qr_code.contains("MOCK_QR_CODE_FOR_TESTING") {
+                            println!("   ⚠️  MOCK QR Code received (not scannable):");
+                            println!("   📱 This is a simulated QR code for testing purposes");
+                            println!("   🔄 To get real QR codes, run: cargo test --package whatsmeow tests::e2e::full_authentication_flow --release -- --ignored --nocapture");
+                            println!();
+                        } else {
+                            println!("   ✅ Real QR Code received from WhatsApp servers!");
+                        }
+                        
+                        // Display the QR code in a scannable format
+                        display_qr_code(&qr_code);
+                        
+                        if qr_code.contains("MOCK_QR_CODE_FOR_TESTING") {
+                            println!("🚨 MOCK MODE NOTICE:");
+                            println!("   📱 The QR code above is simulated and cannot be scanned");
+                            println!("   🔧 This test demonstrates the E2E flow with mock data");
+                            println!("   ✅ To get real QR codes, run in release mode without test");
+                            println!();
+                        } else {
+                            println!("🚀 NEXT STEPS:");
+                            println!("   1. Use your phone's WhatsApp app to scan the QR code above");
+                            println!("   2. Follow the in-app instructions to link this device");
+                            println!("   3. Wait for 'Device linked' confirmation on your phone");
+                        }
+                        
+                        wait_for_user_confirmation("After scanning the QR code and seeing 'Device linked' on your phone");
+                    } else {
+                        println!("   ℹ️  No QR code needed (already authenticated)");
+                        println!("   📱 Your device is already linked to WhatsApp");
+                    }
+                }
+                Err(e) => {
+                    println!("   ⚠️  QR code generation failed: {}", e);
+                    println!("   💡 This might be normal if already authenticated");
+                    println!("   🔄 Try disconnecting and reconnecting if issues persist");
+                }
+            }
+
+            // Step 3: Wait for connection and check status
+            println!("\n3️⃣ Waiting for WhatsApp connection...");
+            
+            // Try connecting
+            match bot.connect().await {
+                Ok(_) => println!("   ✅ Connection attempt initiated"),
+                Err(e) => println!("   ⚠️  Connection failed: {}", e),
+            }
+
+            // Check connection status multiple times with better feedback
+            println!("   🔄 Verifying connection status...");
+            let mut connected = false;
+            
+            for attempt in 1..=10 {
+                println!("   📡 Connection check {}/10...", attempt);
+                
+                match bot.get_connection_status().await {
+                    Ok(status) => {
+                        match status {
+                            ConnectionStatus::Connected => {
+                                println!("   🎉 SUCCESS: Connected to WhatsApp!");
+                                println!("   📱 Your device is now linked and ready to use");
+                                connected = true;
+                                break;
+                            }
+                            ConnectionStatus::Connecting => {
+                                println!("   🔄 Status: Connecting... (please wait)");
+                            }
+                            ConnectionStatus::Disconnected => {
+                                println!("   📴 Status: Disconnected");
+                                if attempt > 5 {
+                                    println!("   💡 Try scanning the QR code again if connection fails");
+                                }
+                            }
+                            ConnectionStatus::LoggedOut => {
+                                println!("   🚪 Status: Logged out - QR code scan may be required");
+                            }
+                        }
+                    }
+                    Err(e) => println!("   ❌ Status check error: {}", e),
+                }
+                
+                if attempt < 10 {
+                    tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+                }
+            }
+
+            // Final status summary
+            if connected {
+                println!("\n✅ Authentication flow completed successfully!");
+                println!("   🎯 Result: WhatsApp connection established");
+                println!("   📱 Device: Successfully linked to your WhatsApp account");
+                println!("   🔗 Status: Ready for messaging and other operations");
+                println!("   🚀 Next: You can now run other E2E tests");
+            } else {
+                println!("\n⚠️ Authentication flow completed with warnings");
+                println!("   📋 Check the status messages above for details");
+                println!("   🔄 You may need to re-run this test with a fresh QR code");
+                println!("   💡 Ensure your phone has a stable internet connection");
+            }
+        }
+
+        #[tokio::test]
+        #[ignore = "requires real WhatsApp connection and user interaction"]
+        async fn send_real_message() {
+            println!("\n🔧 E2E Test: Send Real Message");
+            println!("==============================");
+            println!("⚠️  This test requires:");
+            println!("   • Authenticated WhatsApp connection");
+            println!("   • Valid WhatsApp contact to message");
+            println!("   • User confirmation for sending");
+
+            let bot = WhatsAppBot::new().expect("Failed to create WhatsApp bot");
+
+            // Check if we're connected
+            println!("\n1️⃣ Checking connection status...");
+            match bot.get_connection_status().await {
+                Ok(ConnectionStatus::Connected) => {
+                    println!("   ✅ Connected to WhatsApp");
+                }
+                Ok(status) => {
+                    println!("   ❌ Not connected. Status: {:?}", status);
+                    println!("   💡 Run the authentication flow test first");
+                    return;
+                }
+                Err(e) => {
+                    println!("   ❌ Failed to check status: {}", e);
+                    return;
+                }
+            }
+
+            // Get recipient from user
+            print!("\n2️⃣ Enter recipient phone number (format: +1234567890@s.whatsapp.net): ");
+            io::stdout().flush().unwrap();
+            let mut recipient = String::new();
+            io::stdin().read_line(&mut recipient).unwrap();
+            let recipient = recipient.trim();
+            
+            if recipient.is_empty() || !recipient.contains("@s.whatsapp.net") {
+                println!("   ❌ Invalid recipient format");
+                return;
+            }
+
+            let test_message = format!("🤖 Test message from Rust WhatsApp bot at {}", chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC"));
+            
+            println!("\n   📝 Message to send: {}", test_message);
+            print!("   ❓ Send this message? (y/N): ");
+            io::stdout().flush().unwrap();
+            let mut confirm = String::new();
+            io::stdin().read_line(&mut confirm).unwrap();
+            
+            if confirm.trim().to_lowercase() != "y" && confirm.trim().to_lowercase() != "yes" {
+                println!("   ❌ Message sending cancelled by user");
+                return;
+            }
+
+            // Send message
+            println!("\n3️⃣ Sending message...");
+            match bot.send_message(recipient, &test_message).await {
+                Ok(message_id) => {
+                    println!("   ✅ Message sent successfully!");
+                    println!("   📧 Message ID: {}", message_id);
+                }
+                Err(e) => {
+                    println!("   ❌ Failed to send message: {}", e);
+                }
+            }
+
+            println!("\n✅ Real message test completed");
+        }
+    }
 }
