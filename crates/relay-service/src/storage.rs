@@ -296,7 +296,7 @@ impl RedisStorage {
 mod tests {
     use super::*;
     use crate::config::{RedisConfig, RelayConfig, ServiceConfig};
-    
+
     use ed25519_dalek::SigningKey;
     use rand::RngCore;
     use zoeyr_wire_protocol::{Kind, Message, Tag};

@@ -199,9 +199,10 @@ where
         match &self.message {
             Message::MessageV0(msg) => {
                 if let Kind::Emphemeral(Some(timeout)) = msg.kind
-                    && timeout > 0 {
-                        return Some(timeout as u64);
-                    }
+                    && timeout > 0
+                {
+                    return Some(timeout as u64);
+                }
                 None
             }
         }
@@ -346,9 +347,11 @@ mod tests {
     #[test]
     fn test_multiple_content_items() {
         let (sk, pk) = make_keys();
-        let contents = [DummyContent { value: 1 },
+        let contents = [
+            DummyContent { value: 1 },
             DummyContent { value: 2 },
-            DummyContent { value: 3 }];
+            DummyContent { value: 3 },
+        ];
         let core = Message::new_v0(
             contents[0].clone(),
             pk,

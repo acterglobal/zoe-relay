@@ -1,1 +1,5 @@
 .vscode
+*.private
+*.public
+blob-store-data/
+target
