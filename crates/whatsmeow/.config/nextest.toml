@@ -1,0 +1,70 @@
+# Nextest configuration for WhatsApp Bot tests
+# This allows clean separation between unit, integration, and end-to-end tests
+
+[profile.default]
+# Default configuration - excludes e2e tests that require real WhatsApp
+retries = 0
+fail-fast = false
+slow-timeout = { period = "30s", terminate-after = 2 }
+filter = "not test(~e2e::)"
+
+[profile.ci]
+# Configuration for CI environments - also excludes e2e tests
+retries = 1
+fail-fast = true
+filter = "not test(~e2e::)"
+
+# Define test groups/filters
+[test-groups]
+
+# Unit tests - fast, no external dependencies
+unit = { filter = "test(~unit::)" }
+
+# Integration tests - async operations with mock FFI
+integration = { filter = "test(~integration::)" }
+
+# End-to-end tests - real WhatsApp connections (ignored by default)
+e2e = { filter = "test(~e2e::)" }
+
+# All tests excluding e2e (default behavior)
+all = { filter = "not test(~e2e::)" }
+
+# All tests including e2e (manual execution only)
+everything = { filter = "all()" }
+
+# Quick smoke tests
+smoke = { filter = "test(unit::bot_creation) or test(integration::connect_operation)" }
+
+# Serialization-specific tests
+serialization = { filter = "test(~serialization)" }
+
+# Async operation tests
+async = { filter = "test(~async) or test(~operation) or test(~concurrent)" }
+
+[profile.unit]
+# Profile optimized for unit tests
+test-groups = ["unit"]
+fail-fast = true
+
+[profile.integration] 
+# Profile optimized for integration tests
+test-groups = ["integration"]
+slow-timeout = { period = "60s", terminate-after = 3 }
+
+[profile.e2e]
+# Profile for end-to-end tests with real WhatsApp
+test-groups = ["e2e"]
+slow-timeout = { period = "300s", terminate-after = 1 }
+fail-fast = false
+retries = 0
+
+[profile.manual]
+# Profile for manual testing including e2e
+test-groups = ["everything"]
+slow-timeout = { period = "300s", terminate-after = 1 }
+fail-fast = false
+
+[profile.quick]
+# Quick smoke test profile
+test-groups = ["smoke"]
+fail-fast = true 
