@@ -1,22 +1,22 @@
-use crate::error::Result;
-use async_stream::stream;
-use futures_util::stream::Stream;
+use futures_util::Stream;
 use redis::{AsyncCommands, aio::ConnectionManager};
 use serde::{Deserialize, Serialize};
 use zoeyr_wire_protocol::{MessageFull, Tag};
 
-/// Redis key prefixes for different data types
-const MESSAGE_STREAM_NAME: &str = "messages:";
+use crate::error::RelayError;
+
+type Result<T> = std::result::Result<T, RelayError>;
+
+// Redis key prefixes for different data types
+const MESSAGE_STREAM_NAME: &str = "message_stream";
 const ID_KEY: &str = "id";
-const AUTHOR_KEY: &str = "author";
-const TIMESTAMP_KEY: &str = "timestamp";
 const EVENT_KEY: &str = "event";
+const AUTHOR_KEY: &str = "author";
 const USER_KEY: &str = "user";
 const CHANNEL_KEY: &str = "channel";
-const PROTECTED_KEY: &str = "protected";
 
-/// Message filters for querying
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+/// Message filtering criteria for querying stored messages
+#[derive(Debug, Clone, Default)]
 pub struct MessageFilters {
     pub authors: Option<Vec<Vec<u8>>>,
     pub channels: Option<Vec<Vec<u8>>>,
@@ -26,146 +26,168 @@ pub struct MessageFilters {
 
 impl MessageFilters {
     pub fn is_empty(&self) -> bool {
-        self.authors.is_none()
-            && self.channels.is_none()
-            && self.events.is_none()
-            && self.users.is_none()
+        self.authors.is_none() && self.channels.is_none() && self.events.is_none() && self.users.is_none()
     }
 }
 
-/// Redis-based storage implementation
+/// Redis-backed storage for the relay service
 pub struct RedisStorage {
     pub conn: tokio::sync::Mutex<ConnectionManager>,
     pub config: crate::config::RelayConfig,
 }
 
 impl RedisStorage {
+    /// Create a new Redis storage instance
     pub async fn new(config: crate::config::RelayConfig) -> Result<Self> {
-        let client = redis::Client::open(config.redis.url.as_str())?;
-        let conn = ConnectionManager::new(client).await?;
+        let client = redis::Client::open(config.redis.url.clone())
+            .map_err(RelayError::Redis)?;
+        
+        let conn_manager = ConnectionManager::new(client).await
+            .map_err(RelayError::Redis)?;
+        
         Ok(Self {
-            conn: tokio::sync::Mutex::new(conn),
+            conn: tokio::sync::Mutex::new(conn_manager),
             config,
         })
     }
 
-    /// Store the given message, use tags and metadata to index and inform
-    /// subscribers.
-    ///
-    /// Returns true if this message was newly saved, false if it was already found
-    /// Note: messages aren't checked for validity in this function. It is expected that
-    /// its key uniquely identifies to an immutable message and that it is confirmed before
-    /// calling this function.
+    /// Store a message in Redis and publish to stream for real-time delivery
     pub async fn store_message<T>(&self, message: &MessageFull<T>) -> Result<bool>
     where
         T: Serialize + for<'de> Deserialize<'de> + Send + Sync,
     {
-        let id = message.id.as_bytes();
-        let value = message.storage_value()?;
-        let timestamp = message.when();
-        let author_bytes = message.author().to_bytes();
-        let mut pipe = redis::pipe();
-
-        println!(
-            "storing id: {:?} with {} bytes: {:?}",
-            hex::encode(id),
-            value.len(),
-            hex::encode(value.as_slice())
-        );
-
-        let tm = message.storage_timeout().filter(|&timeout| timeout > 0);
-
-        let set = pipe.cmd("SET").arg(id).arg(value.as_slice());
-
-        // Handle ephemeral messages
-        if let Some(timeout) = tm {
-            set.arg("EX").arg(timeout);
+        let mut conn = self.conn.lock().await;
+        
+        // Serialize the message
+        let storage_value = message.storage_value()
+            .map_err(|e| RelayError::Serialization(e.to_string()))?;
+        
+        let message_id = hex::encode(message.id.as_bytes());
+        
+        // Check if the message already exists first
+        let exists: bool = conn.exists(&message_id)
+            .await
+            .map_err(RelayError::Redis)?;
+        
+        if exists {
+            // Message already exists, return false
+            return Ok(false);
         }
-
-        let mut xadd: &mut redis::Pipeline = pipe.cmd("XADD").arg(MESSAGE_STREAM_NAME).arg("*");
-        xadd = xadd.arg(ID_KEY).arg(id);
-        xadd = xadd.arg(AUTHOR_KEY).arg(&author_bytes);
-        xadd = xadd.arg(TIMESTAMP_KEY).arg(&timestamp.to_le_bytes());
-
-        // Store the indizes
-
+        
+        // Store the message with expiration based on kind
+        let expire_seconds = match message.storage_timeout() {
+            Some(timeout) => timeout,
+            None => 86400, // 24 hours default
+        };
+        
+        // Use SET NX (set if not exists) to avoid race conditions
+        let was_set: bool = redis::cmd("SET")
+            .arg(&message_id)
+            .arg(&storage_value.to_vec())
+            .arg("EX")
+            .arg(expire_seconds as u64)
+            .arg("NX") // Only set if key doesn't exist
+            .query_async(&mut *conn)
+            .await
+            .map_err(RelayError::Redis)?;
+        
+        if !was_set {
+            // Another thread/process stored the message in the meantime
+            return Ok(false);
+        }
+        
+        // Add to stream for real-time delivery only if we successfully stored it
+        let mut stream_fields: Vec<(&str, Vec<u8>)> = vec![
+            (ID_KEY, storage_value.to_vec()),
+        ];
+        
+        // Extract indexable tags from the message
         for tag in message.tags() {
             match tag {
                 Tag::Event { id: event_id, .. } => {
-                    xadd = xadd.arg(EVENT_KEY).arg(event_id.as_bytes().to_vec());
+                    stream_fields.push((EVENT_KEY, event_id.as_bytes().to_vec()));
                 }
                 Tag::User { id: user_id, .. } => {
-                    xadd = xadd.arg(USER_KEY).arg(user_id);
+                    stream_fields.push((USER_KEY, user_id.clone()));
                 }
                 Tag::Channel { id: channel_id, .. } => {
-                    xadd = xadd.arg(CHANNEL_KEY).arg(channel_id);
+                    stream_fields.push((CHANNEL_KEY, channel_id.clone()));
                 }
                 Tag::Protected => {
-                    xadd = xadd.arg(PROTECTED_KEY).arg(true);
+                    // Protected messages aren't added to public stream
                 }
             }
         }
-
-        let mut conn = self.conn.lock().await;
-        if conn.exists(id).await? {
-            // we have already stored and dealt with this item.
-            return Ok(false);
-        }
-        let _: () = pipe.query_async(&mut *conn).await?;
-
+        
+        // Add author information
+        stream_fields.push((AUTHOR_KEY, message.author().to_bytes().to_vec()));
+        
+        // Add to Redis stream
+        let _: String = redis::cmd("XADD")
+            .arg(MESSAGE_STREAM_NAME)
+            .arg("*") // auto-generate ID
+            .arg(&stream_fields)
+            .query_async(&mut *conn)
+            .await
+            .map_err(RelayError::Redis)?;
+        
         Ok(true)
     }
 
+    /// Retrieve a specific message by ID
     pub async fn get_message<T>(&self, id: &[u8]) -> Result<Option<MessageFull<T>>>
     where
         T: Serialize + for<'de> Deserialize<'de> + Send + Sync,
     {
         let mut conn = self.conn.lock().await;
-
-        // regular GET is misunderstanding our input
-        let data: Vec<u8> = redis::cmd("GET").arg(id).query_async(&mut *conn).await?;
-        println!(
-            "reading id: {:?} with {} bytes: {:?}",
-            hex::encode(id),
-            data.len(),
-            hex::encode(data.as_slice())
-        );
-
-        if data.is_empty() {
-            return Ok(None);
+        let message_id = hex::encode(id);
+        
+        let storage_value: Option<Vec<u8>> = conn.get(&message_id)
+            .await
+            .map_err(RelayError::Redis)?;
+        
+        match storage_value {
+            Some(value) => {
+                let message = MessageFull::from_storage_value(&value)
+                    .map_err(|e| RelayError::Serialization(e.to_string()))?;
+                Ok(Some(message))
+            }
+            None => Ok(None),
         }
-
-        // Use the model's deserialization method
-        Ok(Some(MessageFull::<T>::from_storage_value(data.as_slice())?))
     }
 
-    pub async fn listen_for_messages<T>(
-        &self,
-        filters: &MessageFilters,
+    /// Listen for messages matching filters (streaming)
+    pub async fn listen_for_messages<'a, T>(
+        &'a self,
+        filters: &'a MessageFilters,
         since: Option<String>,
         limit: Option<usize>,
-    ) -> Result<impl Stream<Item = Result<(Option<Vec<u8>>, String)>>>
+    ) -> Result<impl Stream<Item = Result<(Option<Vec<u8>>, String)>> + 'a>
     where
         T: Serialize + for<'de> Deserialize<'de> + Send + Sync,
     {
         if filters.is_empty() {
-            return Err(crate::error::RelayError::EmptyFilters);
+            return Err(RelayError::EmptyFilters);
         }
-        let mut conn = { self.conn.lock().await.clone() };
 
-        Ok(stream! {
-            let mut since = since;
-            let mut block = false;
+        let mut conn = self.conn.lock().await.clone();
+        let mut since = since;
+        let mut block = false;
 
+        Ok(async_stream::stream! {
             loop {
                 let mut read = redis::cmd("XREAD");
 
                 if block {
                     read.arg("BLOCK").arg(10000);
-                } else if let Some(l) = &limit
-                    && *l > 0 {
-                        read.arg("COUNT").arg(l);
+                } else {
+                    match &limit {
+                        Some(l) if *l > 0 => {
+                            read.arg("COUNT").arg(l);
+                        }
+                        _ => {}
                     }
+                }
                 read.arg("STREAMS").arg(MESSAGE_STREAM_NAME);
                 if let Some(since) = &since {
                     read.arg(since);
@@ -176,14 +198,19 @@ impl RedisStorage {
                 let stream_result = match read.query_async(&mut conn).await {
                     Ok(stream_result) => stream_result,
                     Err(e) => {
-                        yield Err(crate::error::RelayError::Redis(e));
+                        yield Err(RelayError::Redis(e));
                         break;
                     }
                 };
 
                 // Parse the XREAD response - it's a Vec of (stream_name, Vec of (id, Vec of (field, value)))
-                let rows: Vec<(String, Vec<(String, Vec<(Vec<u8>, Vec<u8>)>)>)> =
-                    redis::from_redis_value(&stream_result)?;
+                let rows: Vec<(String, Vec<(String, Vec<(Vec<u8>, Vec<u8>)>)>)> = match redis::from_redis_value(&stream_result) {
+                    Ok(rows) => rows,
+                    Err(e) => {
+                        yield Err(RelayError::Redis(e));
+                        break;
+                    }
+                };
 
                 if rows.is_empty() {
                     // nothing found yet, we move to blocking mode
@@ -194,7 +221,6 @@ impl RedisStorage {
                     }
                     continue;
                 }
-
 
                 for (stream_key, entries) in rows {
                     if stream_key != MESSAGE_STREAM_NAME {

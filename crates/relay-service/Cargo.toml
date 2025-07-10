@@ -1,7 +1,9 @@
 [package]
 name = "zoeyr-relay-service"
 version = "0.1.0"
-edition = "2024"
+edition = "2021"
+description = "Zoeyr relay service with dynamic authentication, Redis backend, and QUIC transport"
+license = "MIT OR Apache-2.0"
 
 [[bin]]
 name = "relay-service-test"
@@ -11,21 +13,21 @@ path = "src/main.rs"
 zoeyr-wire-protocol = { path = "../wire-protocol" }
 
 # Async runtime
-tokio = { version = "1.0", features = ["full"] }
+tokio = { workspace = true }
 
 # Redis client
 redis = { version = "0.32", features = ["tokio-comp", "connection-manager"] }
 
 # Serialization
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
 
 # Protocol handling with Tarpc
-tarpc = { version = "0.36", features = ["tokio1", "serde-transport", "tcp"] }
+tarpc = { workspace = true }
 
 # Error handling
-anyhow = "1.0"
-thiserror = "1.0"
+anyhow = { workspace = true }
+thiserror = { workspace = true }
 
 # Logging
 tracing = "0.1"
@@ -40,32 +42,65 @@ uuid = { version = "1.0", features = ["v4"] }
 # Configuration
 config = "0.15"
 
-# Testing
-mockall = "0.13"
+# QUIC and TLS support (from zoeyr)
+quinn = "0.11"
+rustls = { version = "0.23", default-features = false, features = ["ring"] }
+rcgen = "0.12"
+
+# Cryptographic dependencies
+ed25519-dalek = { version = "2.0", features = ["rand_core"] }
+blake3 = { workspace = true }
+rand = "0.8"
+
+# Certificate parsing
+x509-parser = "0.16"
+base64 = "0.22"
 
 # Additional utilities
 hex = "0.4"
 async-trait = "0.1"
-rand = "0.8"
 
 # CLI parsing
 clap = { version = "4.0", features = ["derive"] }
 
-# Tarpc JSON support
+# Serialization support
+postcard = { version = "1.0", features = ["use-std"] }
+async-stream = "0.3"
+futures-util = "0.3"
+
+# Tarpc JSON support  
 tokio-serde = { version = "0.9", features = ["json"] }
 
-postcard = { version = "1.0", features = ["use-std"] }
-async-stream = "0.3.6"
-futures-util = "0.3.31"
-
-# Cryptographic dependencies
-ed25519-dalek = "2.0"
-blake3 = "1.0"
-
 [dev-dependencies]
-# Redis mock for testing
+# Testing framework
+tokio-test = "0.4"
+test-case = "3.0"
+proptest = "1.0"
+mockall = "0.12"
+tempfile = "3.0"
+serial_test = "3.0"
+
+# Assertion utilities
+assert_matches = "1.5"
+pretty_assertions = "1.4"
+wiremock = "0.6"
+
+# Test containers for integration tests
 testcontainers = { version = "0.24", features = ["blocking"] }
 testcontainers-modules = { version = "0.12", features = ["redis"] }
 
 # Additional testing utilities
-tokio-test = "0.4"
+criterion = "0.5"
+hex-literal = "0.4"
+
+[[example]]
+name = "relay_server"
+path = "examples/relay_server.rs"
+
+[[example]]
+name = "relay_send_client"
+path = "examples/relay_send_client.rs"
+
+[[example]]
+name = "relay_listen_client"
+path = "examples/relay_listen_client.rs"

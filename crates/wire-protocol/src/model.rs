@@ -198,12 +198,12 @@ where
     pub fn storage_timeout(&self) -> Option<u64> {
         match &self.message {
             Message::MessageV0(msg) => {
-                if let Kind::Emphemeral(Some(timeout)) = msg.kind
-                    && timeout > 0
-                {
-                    return Some(timeout as u64);
+                match msg.kind {
+                    Kind::Emphemeral(Some(timeout)) if timeout > 0 => {
+                        Some(timeout as u64)
+                    }
+                    _ => None
                 }
-                None
             }
         }
     }

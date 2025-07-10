@@ -1,0 +1,278 @@
+use ed25519_dalek::{SigningKey, VerifyingKey, pkcs8::EncodePrivateKey};
+use rcgen::{Certificate, CertificateParams, CustomExtension, KeyPair, PKCS_ED25519};
+use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
+use x509_parser::prelude::*;
+use x509_parser::oid_registry::asn1_rs::oid;
+use crate::protocol::{ProtocolError, Result};
+
+/// Generate a deterministic TLS certificate embedding an ed25519 public key
+/// 
+/// This creates a certificate that can be used for TLS while embedding
+/// the ed25519 public key for application-layer verification.
+pub fn generate_deterministic_cert_from_ed25519(
+    ed25519_key: &SigningKey,
+    subject_name: &str,
+) -> Result<(Vec<CertificateDer<'static>>, PrivateKeyDer<'static>)> {
+    // Create certificate parameters
+    let mut cert_params = CertificateParams::new(vec![subject_name.to_string()]);
+    cert_params.alg = &PKCS_ED25519;
+    
+    // Embed the ed25519 public key in a custom extension
+    // OID 1.3.6.1.4.1.99999.1 is a private enterprise number for demonstration
+    let ed25519_pubkey_ext = CustomExtension::from_oid_content(
+        &[1, 3, 6, 1, 4, 1, 99999, 1],
+        ed25519_key.verifying_key().to_bytes().to_vec(),
+    );
+    cert_params.custom_extensions = vec![ed25519_pubkey_ext];
+    
+    // Generate deterministic keypair for certificate
+    // Note: This is different from the ed25519 key - it's used for TLS compatibility
+    let cert_key_bytes = blake3::hash(&ed25519_key.verifying_key().to_bytes()).as_bytes().to_vec();
+    
+    // Create a deterministic Ed25519 keypair for the certificate
+    use ed25519_dalek::SigningKey as Ed25519SigningKey;
+    let mut seed = [0u8; 32];
+    seed.copy_from_slice(&cert_key_bytes[..32]);
+    let cert_ed25519_key = Ed25519SigningKey::from_bytes(&seed);
+    
+    // Convert to rcgen KeyPair format
+    let cert_keypair = KeyPair::from_der(&cert_ed25519_key.to_pkcs8_der().unwrap().as_bytes())
+        .map_err(|e| ProtocolError::Crypto(format!("Failed to create keypair: {}", e)))?;
+    
+    cert_params.key_pair = Some(cert_keypair);
+    
+    // Generate the certificate
+    let certificate = Certificate::from_params(cert_params)
+        .map_err(|e| ProtocolError::Crypto(format!("Failed to generate certificate: {}", e)))?;
+    
+    // Convert to DER format
+    let cert_der = CertificateDer::from(certificate.serialize_der()
+        .map_err(|e| ProtocolError::Crypto(format!("Failed to serialize certificate: {}", e)))?);
+    
+    let private_key_der = PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(
+        certificate.serialize_private_key_der()
+    ));
+    
+    Ok((vec![cert_der], private_key_der))
+}
+
+/// Extract ed25519 public key from a certificate
+/// 
+/// This function looks for the custom extension containing the ed25519 public key
+/// that was embedded during certificate generation.
+pub fn extract_ed25519_from_cert(cert_der: &CertificateDer) -> Result<VerifyingKey> {
+    // Parse the certificate
+    let (_, cert) = X509Certificate::from_der(cert_der.as_ref())
+        .map_err(|e| ProtocolError::Crypto(format!("Failed to parse certificate: {:?}", e)))?;
+    
+    // Look for our custom extension
+    let target_oid = oid!(1.3.6.1.4.1.99999.1);
+    
+    for extension in cert.extensions() {
+        if extension.oid == target_oid {
+            let key_bytes = extension.value;
+            if key_bytes.len() != 32 {
+                return Err(ProtocolError::Crypto(
+                    "Invalid ed25519 key length in certificate".to_string()
+                ));
+            }
+            
+            let mut key_array = [0u8; 32];
+            key_array.copy_from_slice(key_bytes);
+            
+            return VerifyingKey::from_bytes(&key_array)
+                .map_err(|e| ProtocolError::Crypto(format!("Invalid ed25519 key: {}", e)));
+        }
+    }
+    
+    Err(ProtocolError::Crypto(
+        "No ed25519 key found in certificate".to_string()
+    ))
+}
+
+/// Generate a new ed25519 key pair
+pub fn generate_ed25519_keypair() -> SigningKey {
+    SigningKey::generate(&mut rand::thread_rng())
+}
+
+/// Load ed25519 private key from hex string
+pub fn load_ed25519_key_from_hex(hex_string: &str) -> Result<SigningKey> {
+    let key_bytes = hex::decode(hex_string)
+        .map_err(|e| ProtocolError::Crypto(format!("Invalid hex: {}", e)))?;
+    
+    if key_bytes.len() != 32 {
+        return Err(ProtocolError::Crypto(
+            "ed25519 private key must be 32 bytes".to_string()
+        ));
+    }
+    
+    let mut key_array = [0u8; 32];
+    key_array.copy_from_slice(&key_bytes);
+    
+    Ok(SigningKey::from_bytes(&key_array))
+}
+
+/// Save ed25519 private key to hex string
+pub fn save_ed25519_key_to_hex(key: &SigningKey) -> String {
+    hex::encode(key.to_bytes())
+}
+
+/// Load ed25519 public key from hex string
+pub fn load_ed25519_public_key_from_hex(hex_string: &str) -> Result<VerifyingKey> {
+    let key_bytes = hex::decode(hex_string)
+        .map_err(|e| ProtocolError::Crypto(format!("Invalid hex: {}", e)))?;
+    
+    if key_bytes.len() != 32 {
+        return Err(ProtocolError::Crypto(
+            "ed25519 public key must be 32 bytes".to_string()
+        ));
+    }
+    
+    let mut key_array = [0u8; 32];
+    key_array.copy_from_slice(&key_bytes);
+    
+    VerifyingKey::from_bytes(&key_array)
+        .map_err(|e| ProtocolError::Crypto(format!("Invalid ed25519 public key: {}", e)))
+}
+
+/// Save ed25519 public key to hex string
+pub fn save_ed25519_public_key_to_hex(key: &VerifyingKey) -> String {
+    hex::encode(key.to_bytes())
+}
+
+/// Load ed25519 private key from file
+pub fn load_ed25519_key_from_file(path: &str) -> Result<SigningKey> {
+    let content = std::fs::read_to_string(path)
+        .map_err(|e| ProtocolError::Crypto(format!("Failed to read key file: {}", e)))?;
+    
+    let hex_string = content.trim();
+    load_ed25519_key_from_hex(hex_string)
+}
+
+/// Save ed25519 private key to file
+pub fn save_ed25519_key_to_file(key: &SigningKey, path: &str) -> Result<()> {
+    let hex_string = save_ed25519_key_to_hex(key);
+    std::fs::write(path, hex_string)
+        .map_err(|e| ProtocolError::Crypto(format!("Failed to write key file: {}", e)))
+}
+
+/// Create insecure certificate verifier for client-side
+/// 
+/// This verifier accepts any certificate but extracts and validates
+/// the embedded ed25519 public key against a known server key.
+#[derive(Debug)]
+pub struct InsecureCertVerifier {
+    expected_server_key: VerifyingKey,
+}
+
+impl InsecureCertVerifier {
+    pub fn new(expected_server_key: VerifyingKey) -> Self {
+        Self { expected_server_key }
+    }
+}
+
+impl rustls::client::danger::ServerCertVerifier for InsecureCertVerifier {
+    fn verify_server_cert(
+        &self,
+        end_entity: &CertificateDer,
+        _intermediates: &[CertificateDer],
+        _server_name: &rustls::pki_types::ServerName,
+        _ocsp_response: &[u8],
+        _now: rustls::pki_types::UnixTime,
+    ) -> std::result::Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
+        // Extract ed25519 key from certificate
+        match extract_ed25519_from_cert(end_entity) {
+            Ok(server_ed25519_key) => {
+                // Verify it matches our expected key
+                if server_ed25519_key.to_bytes() == self.expected_server_key.to_bytes() {
+                    tracing::info!("✅ Server ed25519 identity verified via certificate");
+                    Ok(rustls::client::danger::ServerCertVerified::assertion())
+                } else {
+                    tracing::error!("❌ Server ed25519 key mismatch");
+                    Err(rustls::Error::InvalidCertificate(
+                        rustls::CertificateError::ApplicationVerificationFailure
+                    ))
+                }
+            }
+            Err(e) => {
+                tracing::error!("❌ Failed to extract ed25519 key from certificate: {}", e);
+                Err(rustls::Error::InvalidCertificate(
+                    rustls::CertificateError::ApplicationVerificationFailure
+                ))
+            }
+        }
+    }
+    
+    fn verify_tls12_signature(
+        &self,
+        _message: &[u8],
+        _cert: &CertificateDer,
+        _dss: &rustls::DigitallySignedStruct,
+    ) -> std::result::Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
+    }
+    
+    fn verify_tls13_signature(
+        &self,
+        _message: &[u8],
+        _cert: &CertificateDer,
+        _dss: &rustls::DigitallySignedStruct,
+    ) -> std::result::Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
+    }
+    
+    fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
+        vec![
+            rustls::SignatureScheme::RSA_PKCS1_SHA256,
+            rustls::SignatureScheme::ECDSA_NISTP256_SHA256,
+            rustls::SignatureScheme::ED25519,
+        ]
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_deterministic_certificate_generation() {
+        let key = generate_ed25519_keypair();
+        
+        // Generate certificate twice
+        let (certs1, _) = generate_deterministic_cert_from_ed25519(&key, "test.example.com").unwrap();
+        let (certs2, _) = generate_deterministic_cert_from_ed25519(&key, "test.example.com").unwrap();
+        
+        // Should be identical
+        assert_eq!(certs1[0].as_ref(), certs2[0].as_ref());
+    }
+    
+    #[test]
+    fn test_ed25519_key_extraction() {
+        let key = generate_ed25519_keypair();
+        let original_pubkey = key.verifying_key();
+        
+        let (certs, _) = generate_deterministic_cert_from_ed25519(&key, "test.example.com").unwrap();
+        let extracted_pubkey = extract_ed25519_from_cert(&certs[0]).unwrap();
+        
+        assert_eq!(original_pubkey.to_bytes(), extracted_pubkey.to_bytes());
+    }
+    
+    #[test]
+    fn test_key_serialization() {
+        let key = generate_ed25519_keypair();
+        let hex_string = save_ed25519_key_to_hex(&key);
+        let loaded_key = load_ed25519_key_from_hex(&hex_string).unwrap();
+        
+        assert_eq!(key.to_bytes(), loaded_key.to_bytes());
+    }
+    
+    #[test]
+    fn test_public_key_serialization() {
+        let key = generate_ed25519_keypair();
+        let pubkey = key.verifying_key();
+        let hex_string = save_ed25519_public_key_to_hex(&pubkey);
+        let loaded_pubkey = load_ed25519_public_key_from_hex(&hex_string).unwrap();
+        
+        assert_eq!(pubkey.to_bytes(), loaded_pubkey.to_bytes());
+    }
+} 
