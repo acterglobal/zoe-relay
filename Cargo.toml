@@ -1,10 +1,11 @@
 [workspace]
 resolver = "2"
-members = [
+members = [ "crates/backend-protocol",
     "crates/blob-store",
     "crates/encrypted-storage",
     "crates/message-store",
     "crates/relay",
+    "crates/signal-bot",
     "crates/wa-bot",
     "crates/whatsmeow",
     "crates/wire-protocol",
@@ -18,6 +19,7 @@ tarpc = { version = "0.36", features = ["serde-transport", "tcp", "full"] }
 blake3 = "1.5"
 thiserror = "2"
 brotli = "8"
+postcard = "1.0"
 
 [profile.test]
 # Optimize test compilation without losing debug info

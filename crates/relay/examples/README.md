@@ -6,8 +6,31 @@ This directory contains working examples that demonstrate the complete end-to-en
 
 The examples demonstrate:
 - **Relay Server** - Accepts text messages and stores them in Redis
-- **Send Client** - Sends messages to the relay server
-- **Listen Client** - Listens for messages from Redis storage
+- **Send Client** - Sends messages to the relay server via RPC
+- **Listen Client** - Receives messages via real-time streaming protocol
+
+## Protocol Architecture
+
+The relay system uses a **dual-protocol approach** over QUIC connections:
+
+### 🔄 **RPC Protocol** (tarpc)
+- **Purpose**: Send messages, get stats, control operations
+- **Stream**: Primary bidirectional stream
+- **Format**: tarpc requests/responses with PostCard serialization
+- **Used by**: Send client, server management
+
+### 📡 **Streaming Protocol** (Custom)
+- **Purpose**: Real-time message delivery to listening clients
+- **Stream**: Additional bidirectional streams
+- **Format**: Custom protocol with length-delimited frames
+- **Used by**: Listen client for receiving messages
+
+### **Stream Detection**
+The server automatically detects the protocol type based on the first message:
+- If the first message deserializes as `StreamProtocolMessage`, handle as streaming
+- Otherwise, handle as tarpc RPC
+
+This allows both request/response (sending messages) and streaming (receiving messages) over the same QUIC connection infrastructure with strong ed25519 authentication.
 
 ## Prerequisites
 
@@ -140,61 +163,80 @@ cargo run --example relay_send_client -- \
 
 ### 3. Listen Client (`relay_listen_client.rs`)
 
-A client that listens for messages from Redis storage.
+A client that listens for messages using the QUIC streaming protocol.
 
 **Features:**
-- Connects directly to Redis (no QUIC needed)
+- Connects to relay server via QUIC (like the send client)
+- Uses custom streaming protocol for real-time message delivery
 - Supports message filtering by authors, users, channels
-- Can listen for new messages or retrieve historical ones
-- Displays full message details
+- Receives live message updates directly from the server
+- Displays full message details as they arrive
 
 **Usage:**
 ```bash
-# Listen for messages from specific author (server public key)
+# Listen for messages from specific author (batch mode - stops after initial messages)
 cargo run --example relay_listen_client -- \
+  --server-public-key <SERVER_PUBLIC_KEY> \
   --authors <SERVER_PUBLIC_KEY>
 
-# Listen for messages and follow new ones
+# Listen continuously for new messages (follow mode)
 cargo run --example relay_listen_client -- \
+  --server-public-key <SERVER_PUBLIC_KEY> \
   --authors <SERVER_PUBLIC_KEY> \
   --follow
 
-# Listen with multiple filters
+# Listen with multiple filters in follow mode
 cargo run --example relay_listen_client -- \
+  --server-public-key <SERVER_PUBLIC_KEY> \
   --authors <PUB_KEY1>,<PUB_KEY2> \
   --users <USER_ID1>,<USER_ID2> \
-  --limit 20
+  --limit 20 \
+  --follow
 
 # Listen starting from specific message
 cargo run --example relay_listen_client -- \
-  --authors <SERVER_PUBLIC_KEY> \
-  --since <MESSAGE_ID>
+  --server-public-key <SERVER_PUBLIC_KEY> \
+  --since <MESSAGE_ID> \
+  --follow
 
-# Use custom Redis URL
+# Connect to different server
 cargo run --example relay_listen_client -- \
-  --redis-url redis://localhost:6379 \
-  --authors <SERVER_PUBLIC_KEY>
+  --server 127.0.0.1:8080 \
+  --server-public-key <SERVER_PUBLIC_KEY> \
+  --authors <SERVER_PUBLIC_KEY> \
+  --follow
+
+# Use specific client key
+cargo run --example relay_listen_client -- \
+  --server-public-key <SERVER_PUBLIC_KEY> \
+  --private-key <CLIENT_HEX_KEY> \
+  --authors <SERVER_PUBLIC_KEY> \
+  --follow
 ```
 
 **Example Output:**
 ```
-🎧 Starting to listen for messages...
-📋 Client public key: f1e2d3c4b5a6987012345678901234567890fedcba1234567890fedcba123456
+🚀 Zoeyr QUIC+Tarpc Listen Client
+📋 Server: 127.0.0.1:4433
+🔑 Expected server public key: a1b2c3d4e5f6789012345678901234567890abcdef1234567890abcdef123456
+🔗 Connecting to relay server at 127.0.0.1:4433
+✅ Server TLS certificate contains expected ed25519 key!
+✅ Connected! TLS handshake verified server identity.
+🎧 Starting real-time message streaming via QUIC streaming protocol
+📋 Client public key: f1e2d3c4b5a6987012345678901234567890fedcba1234567890abcdef123456
 🔍 Listening with filters applied:
    👥 Authors: 1 keys
-📨 Received message: 789abc123def456789012345678901234567890abcdef123456789012345678 at height: 1640995200000-0
-
-┌─────────────────────────────────────────────────────
-│ 📨 Message ID: 789abc123def456789012345678901234567890abcdef123456789012345678
-│ 👤 Author: a1b2c3d4e5f6789012345678901234567890abcdef1234567890abcdef123456
-│ ⏰ Timestamp: 1640995200
-│ 📍 Stream Position: 1640995200000-0
-│ 🏷️  Kind: Regular
-│
-│ 💬 Content: Hello, Zoeyr!
-└─────────────────────────────────────────────────────
-
-✅ Finished listening - received 1 messages
+📤 Sent stream request to server
+✅ Stream started successfully, listening for messages...
+💓 Received heartbeat from server
+📨 Received message 1: test_message_123
+   Stream position: 1234567890-0
+   Data size: 32 bytes
+   Content: This is a test streaming message
+📦 Batch end received
+🔚 Stream ended by server
+✅ Streaming completed, received 1 messages
+🎉 Successfully received messages via streaming protocol!
 ```
 
 ## Complete End-to-End Demo
@@ -218,7 +260,9 @@ cargo run --example relay_server
 ### Step 3: Start the Listener Client
 ```bash
 # Terminal 2 - Replace <SERVER_PUBLIC_KEY> with actual key from Step 2
+# Add --follow flag to keep listening continuously
 cargo run --example relay_listen_client -- \
+  --server-public-key <SERVER_PUBLIC_KEY> \
   --authors <SERVER_PUBLIC_KEY> \
   --follow
 ```

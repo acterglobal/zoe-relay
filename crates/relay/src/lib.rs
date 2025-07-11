@@ -1,6 +1,7 @@
 pub mod connection;
 pub mod dynamic_auth_server;
-// pub mod tests; // Disabled due to import conflicts with new architecture
+#[cfg(test)]
+pub mod tests;
 pub mod client;
 pub mod server; // Reusable server utilities // Reusable client utilities
 

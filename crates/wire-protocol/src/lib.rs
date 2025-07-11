@@ -4,6 +4,7 @@ pub mod crypto;
 pub mod model;
 pub mod protocol;
 pub mod relay; // Existing wire protocol models
+pub mod streaming; // Message streaming protocol
 
 pub use auth::*;
 pub use blob::*;
@@ -11,6 +12,7 @@ pub use crypto::*;
 pub use model::*;
 pub use protocol::*;
 pub use relay::*; // Re-export existing wire protocol types
+pub use streaming::*; // Re-export streaming protocol types
 
 // Re-export Blake3 Hash type for use in other crates
 pub use blake3::Hash;
