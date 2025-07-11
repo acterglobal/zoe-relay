@@ -6,7 +6,7 @@ use ed25519_dalek::SigningKey;
 use futures_util::StreamExt;
 use tracing::{error, info, warn};
 use tracing_subscriber::prelude::*;
-use zoeyr_relay_service::storage::{MessageFilters, RedisStorage};
+use zoeyr_message_store::{MessageFilters, RedisStorage};
 use zoeyr_wire_protocol::{Kind, Message, MessageFull, Tag};
 
 #[derive(Parser)]
@@ -101,8 +101,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
 
     // Create Redis storage
-    let config = zoeyr_relay_service::config::RelayConfig {
-        redis: zoeyr_relay_service::config::RedisConfig {
+    let config = zoeyr_message_store::RelayConfig {
+        redis: zoeyr_message_store::RedisConfig {
             url: cli.redis_url,
             pool_size: 10,
         },
@@ -116,7 +116,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Commands::Listen {
             authors,
             channels,
-            events,
+            events: _,
             event_index,
             users,
             since,
@@ -229,10 +229,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let message_full = MessageFull::new(message, &signing_key)?;
 
                 match storage.store_message(&message_full).await {
-                    Ok(true) => {
-                        info!("Stored new message {}: {}", i + 1, message_full.id);
+                    Ok(Some(stream_id)) => {
+                        info!(
+                            "Stored new message {}: {} (stream ID: {})",
+                            i + 1,
+                            message_full.id,
+                            stream_id
+                        );
                     }
-                    Ok(false) => {
+                    Ok(None) => {
                         warn!("Message {} already existed: {}", i + 1, message_full.id);
                     }
                     Err(e) => {
@@ -257,7 +262,9 @@ async fn listen_for_messages<T>(
 where
     T: serde::Serialize + for<'de> serde::Deserialize<'de> + Send + Sync + std::fmt::Debug,
 {
-    let mut stream = Box::pin(
+    let mut stream: std::pin::Pin<
+        Box<dyn futures_util::Stream<Item = Result<(Option<Vec<u8>>, String), _>> + Send>,
+    > = Box::pin(
         storage
             .listen_for_messages::<T>(filters, since, Some(limit))
             .await?,

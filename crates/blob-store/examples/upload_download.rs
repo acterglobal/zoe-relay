@@ -1,8 +1,8 @@
-use std::path::PathBuf;
-use std::time::Duration;
 use anyhow::{Context, Result};
 use reqwest::Client;
 use serde_json::Value;
+use std::path::PathBuf;
+use std::time::Duration;
 use tokio::fs;
 use tracing::{info, warn};
 
@@ -65,9 +65,11 @@ impl ExampleClient {
             .await
             .context("Failed to read test file")?;
 
-        info!("Uploading file: {} ({} bytes)", 
-              self.config.test_file_path.display(), 
-              file_content.len());
+        info!(
+            "Uploading file: {} ({} bytes)",
+            self.config.test_file_path.display(),
+            file_content.len()
+        );
 
         // Upload to blob store
         let response = self
@@ -134,7 +136,10 @@ impl ExampleClient {
             .await
             .context("Failed to write downloaded data")?;
 
-        info!("Saved downloaded data to: {}", self.config.temp_download_path.display());
+        info!(
+            "Saved downloaded data to: {}",
+            self.config.temp_download_path.display()
+        );
         Ok(())
     }
 
@@ -149,7 +154,7 @@ impl ExampleClient {
             .context("Failed to read downloaded file")?;
 
         let matches = original_data == downloaded_data;
-        
+
         if matches {
             info!("✅ Data integrity check passed! Original and downloaded data match.");
         } else {
@@ -167,7 +172,10 @@ impl ExampleClient {
             fs::remove_file(&self.config.temp_download_path)
                 .await
                 .context("Failed to remove temporary file")?;
-            info!("Cleaned up temporary file: {}", self.config.temp_download_path.display());
+            info!(
+                "Cleaned up temporary file: {}",
+                self.config.temp_download_path.display()
+            );
         }
         Ok(())
     }
@@ -189,7 +197,10 @@ impl ExampleClient {
             fs::write(&self.config.test_file_path, test_content)
                 .await
                 .context("Failed to create test file")?;
-            info!("Created test file: {}", self.config.test_file_path.display());
+            info!(
+                "Created test file: {}",
+                self.config.test_file_path.display()
+            );
         }
 
         // Step 3: Upload file
@@ -233,7 +244,7 @@ async fn main() -> Result<()> {
 
     // Create configuration
     let config = ExampleConfig::default();
-    
+
     // Create client
     let client = ExampleClient::new(config);
 
@@ -248,4 +259,4 @@ async fn main() -> Result<()> {
             std::process::exit(1);
         }
     }
-} 
+}

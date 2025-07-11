@@ -2,8 +2,9 @@
 resolver = "2"
 members = [
     "crates/blob-store",
-    "crates/encrypted-storage", 
-    "crates/relay-service",
+    "crates/encrypted-storage",
+    "crates/message-store",
+    "crates/relay",
     "crates/wa-bot",
     "crates/whatsmeow",
     "crates/wire-protocol",
@@ -13,8 +14,7 @@ members = [
 anyhow = "1.0"
 tokio = { version = "1.46", features = ["full"] }
 serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
-tarpc = { version = "0.36", features = ["serde-transport", "tcp", "serde-transport-json"] }
+tarpc = { version = "0.36", features = ["serde-transport", "tcp", "full"] }
 blake3 = "1.5"
 thiserror = "2"
 brotli = "8"

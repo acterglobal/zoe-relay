@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+// Note: MessageFull and ProtocolMessage may be used by generated code
 
 /// Message filters for querying relay storage
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -103,6 +104,7 @@ pub enum RelayError {
     EmptyFilters,
     StorageError(String),
     SerializationError(String),
+    UnauthorizedAccess,
 }
 
 impl std::fmt::Display for RelayError {
@@ -113,6 +115,7 @@ impl std::fmt::Display for RelayError {
             RelayError::EmptyFilters => write!(f, "Message filters cannot be empty"),
             RelayError::StorageError(msg) => write!(f, "Storage error: {}", msg),
             RelayError::SerializationError(msg) => write!(f, "Serialization error: {}", msg),
+            RelayError::UnauthorizedAccess => write!(f, "Unauthorized access"),
         }
     }
 }
@@ -122,14 +125,24 @@ impl std::error::Error for RelayError {}
 /// Result type for relay operations
 pub type RelayResult<T> = Result<T, RelayError>;
 
+/// Statistics about the relay service
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RelayStats {
+    pub total_messages: u64,
+    pub active_streams: u32,
+    pub storage_size_bytes: u64,
+    pub connected_clients: u32,
+}
+
 /// Tarpc service trait for relay message operations
+/// Authentication is handled by QUIC ed25519 mutual TLS - no additional auth needed
 #[tarpc::service]
 pub trait RelayService {
     /// Retrieve a specific message by its ID
     async fn get_message(message_id: Vec<u8>) -> RelayResult<Option<Vec<u8>>>;
 
     /// Store a message in the relay
-    async fn store_message(message_data: Vec<u8>) -> RelayResult<bool>;
+    async fn store_message(message_data: Vec<u8>) -> RelayResult<String>;
 
     /// Start listening for messages and return a stream session ID
     async fn start_message_stream(config: StreamConfig) -> RelayResult<String>;
@@ -146,47 +159,3 @@ pub trait RelayService {
     /// Get statistics about stored messages
     async fn get_stats() -> RelayResult<RelayStats>;
 }
-
-/// Statistics about the relay service
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RelayStats {
-    pub total_messages: u64,
-    pub active_streams: u32,
-    pub storage_size_bytes: u64,
-}
-
-/// Combined service trait that provides both authentication and relay services
-#[tarpc::service]
-pub trait ZoeyrService {
-    /// Authentication challenge request
-    async fn request_challenge() -> crate::auth::AuthChallenge;
-
-    /// Submit challenge response for authentication
-    async fn submit_challenge_response(
-        response: Vec<u8>,
-        public_key: Vec<u8>,
-    ) -> Result<String, String>;
-
-    /// Relay: Retrieve a specific message by its ID
-    async fn get_message(message_id: Vec<u8>) -> RelayResult<Option<Vec<u8>>>;
-
-    /// Relay: Store a message in the relay
-    async fn store_message(message_data: Vec<u8>) -> RelayResult<bool>;
-
-    /// Relay: Start listening for messages and return a stream session ID
-    async fn start_message_stream(config: StreamConfig) -> RelayResult<String>;
-
-    /// Relay: Get the next batch of messages from an active stream
-    async fn get_stream_batch(
-        session_id: String,
-        max_messages: Option<usize>,
-    ) -> RelayResult<Vec<StreamMessage>>;
-
-    /// Relay: Stop a message stream
-    async fn stop_message_stream(session_id: String) -> RelayResult<bool>;
-
-    /// Relay: Get statistics about stored messages
-    async fn get_stats() -> RelayResult<RelayStats>;
-}
-
- 

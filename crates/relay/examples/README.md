@@ -1,4 +1,4 @@
-# Zoeyr Relay Service Examples
+# Zoeyr Relay Examples
 
 This directory contains working examples that demonstrate the complete end-to-end message relay functionality of the Zoeyr system.
 
@@ -63,16 +63,24 @@ cargo run --example relay_server -- --redis-url redis://localhost:6379
 📋 Server Address: 127.0.0.1:4433
 🔑 Server Public Key: a1b2c3d4e5f6789012345678901234567890abcdef1234567890abcdef123456
 💾 Redis storage initialized
-🚀 Creating relay server endpoint
-📋 Server Address: 127.0.0.1:4433
-🔑 Server Public Key: a1b2c3d4e5f6789012345678901234567890abcdef1234567890abcdef123456
-✅ Server endpoint ready on 127.0.0.1:4433
-💡 Clients can connect with server public key: a1b2c3d4e5f6789012345678901234567890abcdef1234567890abcdef123456
-✅ Server listening on 127.0.0.1:4433
+
+🚀 Zoeyr Relay Server is now running!
+   📡 Server will show detailed logs when messages are stored
+   💾 Redis storage backend connected
+   🔄 Ready to process client connections
 
 🔑 IMPORTANT: Server Public Key for clients:
    a1b2c3d4e5f6789012345678901234567890abcdef1234567890abcdef123456
    Copy this key to connect clients!
+
+# When a message is received and stored:
+📥 Received message for storage (156 bytes)
+📝 Storing message with ID: 789abc123def456789012345678901234567890abcdef123456789012345678
+✅ Message stored successfully!
+   Message ID: 789abc123def456789012345678901234567890abcdef123456789012345678
+   Stream ID: 1640995200000-0
+   Author: f1e2d3c4b5a6987012345678901234567890fedcba1234567890fedcba123456
+   Content preview: "Hello, Zoeyr!"
 ```
 
 ### 2. Send Client (`relay_send_client.rs`)
@@ -111,14 +119,23 @@ cargo run --example relay_send_client -- \
 
 **Example Output:**
 ```
+🚀 Zoeyr QUIC+Tarpc Send Client
+📋 Server: 127.0.0.1:4433
+🔑 Expected server public key: a1b2c3d4e5f6789012345678901234567890abcdef1234567890abcdef123456
 🔗 Connecting to relay server at 127.0.0.1:4433
-🔑 Expected server ed25519 key: a1b2c3d4e5f6789012345678901234567890abcdef1234567890abcdef123456
-🔑 Client ed25519 key: f1e2d3c4b5a6987012345678901234567890fedcba1234567890fedcba123456
 ✅ Server TLS certificate contains expected ed25519 key!
 ✅ Connected! TLS handshake verified server identity.
-📤 Sending message: Hello, Zoeyr!
-✅ Message sent successfully!
-📋 Message ID: 789abc123def456789012345678901234567890abcdef123456789012345678
+📤 Sending message via QUIC+tarpc: Hello, Zoeyr!
+📤 Sending store_message request via tarpc
+
+🎉 SUCCESS: Message stored on relay server!
+   📦 Storage ID: 1640995200000-0
+   🆔 Message ID: 789abc123def456789012345678901234567890abcdef123456789012345678
+   📝 Content: "Hello, Zoeyr!"
+   👤 Author: f1e2d3c4b5a6987012345678901234567890fedcba1234567890fedcba123456
+
+✨ Message relay operation completed!
+   Check the server logs to see storage confirmation.
 ```
 
 ### 3. Listen Client (`relay_listen_client.rs`)
@@ -224,9 +241,41 @@ cargo run --example relay_send_client -- \
 ```
 
 You should see:
-- **Terminal 1** (Server): Connection logs and message storage confirmations
+- **Terminal 1** (Server): Connection logs and detailed message storage confirmations with storage IDs
 - **Terminal 2** (Listener): Real-time message display as they arrive
-- **Terminal 3** (Sender): Success confirmations for sent messages
+- **Terminal 3** (Sender): Success confirmations with message IDs and storage confirmation
+
+### Message Storage Confirmation
+
+When a message is successfully sent and stored, you'll see detailed logs on both client and server:
+
+**Client Output:**
+```
+🎉 SUCCESS: Message stored on relay server!
+   📦 Storage ID: 1640995200000-0
+   🆔 Message ID: 789abc123def456789012345678901234567890abcdef123456789012345678
+   📝 Content: "Hello, world!"
+   👤 Author: f1e2d3c4b5a6987012345678901234567890fedcba1234567890fedcba123456
+```
+
+**Server Output:**
+```
+2024-01-12T10:30:45.123456Z  INFO relay_server: 🔗 New QUIC connection from 127.0.0.1:54321
+2024-01-12T10:30:45.123789Z  INFO relay_server: 🎯 Handling QUIC connection, waiting for streams...
+2024-01-12T10:30:45.124012Z  INFO relay_server: 📡 New bidirectional stream accepted
+2024-01-12T10:30:45.124234Z  INFO relay_server: 🔧 Setting up tarpc transport over QUIC stream
+2024-01-12T10:30:45.124456Z  INFO zoeyr_message_store::service: 📥 Received message for storage (156 bytes)
+2024-01-12T10:30:45.124678Z  INFO zoeyr_message_store::service: 📝 Storing message with ID: 789abc123def456789012345678901234567890abcdef123456789012345678
+2024-01-12T10:30:45.124890Z  INFO zoeyr_message_store::service: ✅ Message stored successfully!
+2024-01-12T10:30:45.124912Z  INFO zoeyr_message_store::service:    Message ID: 789abc123def456789012345678901234567890abcdef123456789012345678
+2024-01-12T10:30:45.124934Z  INFO zoeyr_message_store::service:    Stream ID: 1640995200000-0
+2024-01-12T10:30:45.124956Z  INFO zoeyr_message_store::service:    Author: f1e2d3c4b5a6987012345678901234567890fedcba1234567890fedcba123456
+2024-01-12T10:30:45.124978Z  INFO zoeyr_message_store::service:    Content preview: "Hello, world!"
+```
+
+This makes it easy to confirm that messages are properly stored and to correlate client requests with server-side storage operations.
+
+**Note:** The examples are configured to show INFO level logs, which include detailed connection handling and message processing information. The timestamps and module names help trace the complete flow from QUIC connection establishment through message storage.
 
 ## Key Features Demonstrated
 
@@ -263,7 +312,7 @@ You should see:
 ### Key Architectural Changes
 - **Client-Side Message Creation**: Send clients now create proper `MessageFull<String>` wire protocol messages with signing and timestamps
 - **Server as Pure Relay**: The server receives `MessageFull` messages and forwards them to Redis storage without modification
-- **Shared Connection Utilities**: QUIC connection and TLS verification logic is shared via the relay-service library
+- **Shared Connection Utilities**: QUIC connection and TLS verification logic is shared via the relay library
 - **JSON Network Protocol**: All QUIC communication uses JSON serialization for compatibility with serde's external tagging
 
 ### Security Model

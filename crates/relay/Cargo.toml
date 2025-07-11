@@ -1,16 +1,18 @@
 [package]
-name = "zoeyr-relay-service"
+name = "zoeyr-relay"
 version = "0.1.0"
 edition = "2021"
-description = "Zoeyr relay service with dynamic authentication, Redis backend, and QUIC transport"
+description = "Zoeyr relay connector providing QUIC transport and RPC service routing"
 license = "MIT OR Apache-2.0"
 
 [[bin]]
-name = "relay-service-test"
+name = "relay-test"
 path = "src/main.rs"
 
 [dependencies]
 zoeyr-wire-protocol = { path = "../wire-protocol" }
+zoeyr-message-store = { path = "../message-store" }
+zoeyr-blob-store = { path = "../blob-store" }
 
 # Async runtime
 tokio = { workspace = true }
@@ -20,7 +22,7 @@ redis = { version = "0.32", features = ["tokio-comp", "connection-manager"] }
 
 # Serialization
 serde = { workspace = true, features = ["derive"] }
-serde_json = { workspace = true }
+bytes = "1.0"
 
 # Protocol handling with Tarpc
 tarpc = { workspace = true }
@@ -68,8 +70,11 @@ postcard = { version = "1.0", features = ["use-std"] }
 async-stream = "0.3"
 futures-util = "0.3"
 
-# Tarpc JSON support  
-tokio-serde = { version = "0.9", features = ["json"] }
+# Tarpc serde support  
+tokio-serde = { version = "0.9" }
+
+# Tokio utilities for async stream compatibility
+tokio-util = { version = "0.7", features = ["compat"] }
 
 [dev-dependencies]
 # Testing framework

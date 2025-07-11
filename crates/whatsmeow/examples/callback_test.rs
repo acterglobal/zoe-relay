@@ -4,7 +4,7 @@ use whatsmeow::WhatsAppBot;
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("🧪 WhatsApp Bot - Callback Test");
     println!("===============================");
-    
+
     // Step 1: Create bot
     println!("\n1️⃣ Creating WhatsApp bot...");
     let bot = WhatsAppBot::new()?;
@@ -29,8 +29,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             if qr_code.is_empty() {
                 println!("   ✅ QR code callback worked (no code needed)");
             } else {
-                println!("   ✅ QR code callback worked! Got code: {}", 
-                    if qr_code.len() > 50 { format!("{}...", &qr_code[..50]) } else { qr_code });
+                println!(
+                    "   ✅ QR code callback worked! Got code: {}",
+                    if qr_code.len() > 50 {
+                        format!("{}...", &qr_code[..50])
+                    } else {
+                        qr_code
+                    }
+                );
             }
         }
         Err(e) => {
@@ -43,7 +49,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("\n4️⃣ Testing contacts callback...");
     match bot.get_contacts().await {
         Ok(contacts) => {
-            println!("   ✅ Contacts callback worked! Got {} contacts", contacts.len());
+            println!(
+                "   ✅ Contacts callback worked! Got {} contacts",
+                contacts.len()
+            );
         }
         Err(e) => {
             println!("   ⚠️  Contacts callback failed: {}", e);
@@ -52,6 +61,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("\n✅ Callback test completed!");
     println!("   🎯 All async callbacks are working properly");
-    
+
     Ok(())
-} 
+}

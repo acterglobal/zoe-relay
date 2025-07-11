@@ -1,10 +1,11 @@
 # Zoeyr Wire Protocol
 
-The wire protocol crate provides core message definitions, cryptographic utilities, and authentication types for the Zoeyr messaging system.
+The wire protocol crate provides core message definitions, cryptographic utilities, tarpc service interfaces, and authentication types for the Zoeyr messaging system.
 
 ## Features
 
 - **Message Protocol**: Serializable message types with support for generic content
+- **tarpc Service Interfaces**: RelayService and BlobService definitions for RPC communication
 - **Cryptographic Utilities**: Ed25519 key management and deterministic TLS certificate generation
 - **Authentication System**: Dynamic challenge-response authentication with session management
 - **Protocol Types**: Core protocol definitions for relay communication
@@ -42,6 +43,57 @@ let message_full = MessageFull::new(message, &signing_key)?;
 
 // Verify the message
 assert!(message_full.verify_all()?);
+```
+
+## tarpc Service Interfaces
+
+### RelayService
+
+Provides messaging operations over RPC:
+
+```rust
+use zoeyr_wire_protocol::{RelayService, RelayServiceClient};
+
+// Service methods available:
+// - get_message(id: Vec<u8>) -> RelayResult<Option<Vec<u8>>>
+// - store_message(data: Vec<u8>) -> RelayResult<String>
+// - start_message_stream(filters: MessageFilters) -> RelayResult<String>
+// - get_stream_batch(stream_id: String) -> RelayResult<Vec<Vec<u8>>>
+// - stop_message_stream(stream_id: String) -> RelayResult<()>
+// - get_stats() -> RelayResult<RelayStats>
+```
+
+### BlobService
+
+Provides blob storage operations over RPC:
+
+```rust
+use zoeyr_wire_protocol::{BlobService, BlobServiceClient};
+
+// Service methods available:
+// - health_check() -> BlobResult<BlobHealth>
+// - upload_blob(data: Vec<u8>) -> BlobResult<String>
+// - download_blob(hash: String) -> BlobResult<Vec<u8>>
+// - get_blob_info(hash: String) -> BlobResult<BlobInfo>
+// - list_blobs() -> BlobResult<Vec<BlobInfo>>
+```
+
+### Service Client Usage
+
+```rust
+// RelayService client (connected via QUIC+tarpc)
+let relay_client: RelayServiceClient = /* connected via relay crate */;
+
+// Store a message
+let message_data = postcard::to_allocvec(&message_full)?;
+let message_id = relay_client.store_message(message_data).await??;
+
+// BlobService client
+let blob_client: BlobServiceClient = /* connected via relay crate */;
+
+// Upload a blob
+let blob_data = b"Hello, blob world!".to_vec();
+let blob_hash = blob_client.upload_blob(blob_data).await??;
 ```
 
 ## Message Types
@@ -91,16 +143,21 @@ use zoeyr_wire_protocol::{
     generate_ed25519_keypair,
     load_ed25519_key_from_hex,
     save_ed25519_key_to_hex,
+    load_ed25519_public_key_from_hex,
+    save_ed25519_public_key_to_hex,
 };
 
 // Generate new keypair
 let key = generate_ed25519_keypair();
+let public_key = key.verifying_key();
 
-// Serialize to hex
-let hex_key = save_ed25519_key_to_hex(&key);
+// Serialize keys to hex
+let hex_private_key = save_ed25519_key_to_hex(&key);
+let hex_public_key = save_ed25519_public_key_to_hex(&public_key);
 
-// Load from hex
-let loaded_key = load_ed25519_key_from_hex(&hex_key)?;
+// Load keys from hex
+let loaded_private_key = load_ed25519_key_from_hex(&hex_private_key)?;
+let loaded_public_key = load_ed25519_public_key_from_hex(&hex_public_key)?;
 ```
 
 ### Deterministic TLS Certificates

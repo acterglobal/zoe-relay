@@ -1,5 +1,5 @@
 use futures_util::Stream;
-use redis::{AsyncCommands, aio::ConnectionManager};
+use redis::{aio::ConnectionManager, AsyncCommands};
 use serde::{Deserialize, Serialize};
 use zoeyr_wire_protocol::{MessageFull, Tag};
 
@@ -26,7 +26,10 @@ pub struct MessageFilters {
 
 impl MessageFilters {
     pub fn is_empty(&self) -> bool {
-        self.authors.is_none() && self.channels.is_none() && self.events.is_none() && self.users.is_none()
+        self.authors.is_none()
+            && self.channels.is_none()
+            && self.events.is_none()
+            && self.users.is_none()
     }
 }
 
@@ -39,12 +42,12 @@ pub struct RedisStorage {
 impl RedisStorage {
     /// Create a new Redis storage instance
     pub async fn new(config: crate::config::RelayConfig) -> Result<Self> {
-        let client = redis::Client::open(config.redis.url.clone())
+        let client = redis::Client::open(config.redis.url.clone()).map_err(RelayError::Redis)?;
+
+        let conn_manager = ConnectionManager::new(client)
+            .await
             .map_err(RelayError::Redis)?;
-        
-        let conn_manager = ConnectionManager::new(client).await
-            .map_err(RelayError::Redis)?;
-        
+
         Ok(Self {
             conn: tokio::sync::Mutex::new(conn_manager),
             config,
@@ -52,86 +55,87 @@ impl RedisStorage {
     }
 
     /// Store a message in Redis and publish to stream for real-time delivery
-    pub async fn store_message<T>(&self, message: &MessageFull<T>) -> Result<bool>
+    /// Returns the stream ID if the message was newly stored, None if it already existed
+    pub async fn store_message<T>(&self, message: &MessageFull<T>) -> Result<Option<String>>
     where
         T: Serialize + for<'de> Deserialize<'de> + Send + Sync,
     {
         let mut conn = self.conn.lock().await;
-        
+
         // Serialize the message
-        let storage_value = message.storage_value()
+        let storage_value = message
+            .storage_value()
             .map_err(|e| RelayError::Serialization(e.to_string()))?;
-        
+
         let message_id = hex::encode(message.id.as_bytes());
-        
+
         // Check if the message already exists first
-        let exists: bool = conn.exists(&message_id)
-            .await
-            .map_err(RelayError::Redis)?;
-        
+        let exists: bool = conn.exists(&message_id).await.map_err(RelayError::Redis)?;
+
         if exists {
-            // Message already exists, return false
-            return Ok(false);
+            // Message already exists, return None
+            return Ok(None);
         }
-        
-        // Store the message with expiration based on kind
-        let expire_seconds = match message.storage_timeout() {
-            Some(timeout) => timeout,
-            None => 86400, // 24 hours default
-        };
-        
-        // Use SET NX (set if not exists) to avoid race conditions
-        let was_set: bool = redis::cmd("SET")
-            .arg(&message_id)
-            .arg(&storage_value.to_vec())
-            .arg("EX")
-            .arg(expire_seconds as u64)
-            .arg("NX") // Only set if key doesn't exist
+
+        // Build SET command - only add expiration if timeout is set and > 0
+        let mut set_cmd = redis::cmd("SET");
+        set_cmd.arg(&message_id).arg(&storage_value.to_vec());
+
+        if let Some(timeout) = message.storage_timeout() {
+            if timeout > 0 {
+                set_cmd.arg("EX").arg(timeout as u64);
+            }
+        }
+
+        set_cmd.arg("NX"); // Only set if key doesn't exist
+
+        let was_set: bool = set_cmd
             .query_async(&mut *conn)
             .await
             .map_err(RelayError::Redis)?;
-        
+
         if !was_set {
             // Another thread/process stored the message in the meantime
-            return Ok(false);
+            return Ok(None);
         }
-        
+
         // Add to stream for real-time delivery only if we successfully stored it
-        let mut stream_fields: Vec<(&str, Vec<u8>)> = vec![
-            (ID_KEY, storage_value.to_vec()),
-        ];
-        
-        // Extract indexable tags from the message
+        let mut xadd_cmd = redis::cmd("XADD");
+        xadd_cmd.arg(MESSAGE_STREAM_NAME).arg("*"); // auto-generate ID
+
+        // Add the message data
+        xadd_cmd.arg(ID_KEY).arg(&storage_value.to_vec());
+
+        // Extract indexable tags from the message and add directly to command
         for tag in message.tags() {
             match tag {
                 Tag::Event { id: event_id, .. } => {
-                    stream_fields.push((EVENT_KEY, event_id.as_bytes().to_vec()));
+                    xadd_cmd.arg(EVENT_KEY).arg(event_id.as_bytes().to_vec());
                 }
                 Tag::User { id: user_id, .. } => {
-                    stream_fields.push((USER_KEY, user_id.clone()));
+                    xadd_cmd.arg(USER_KEY).arg(user_id.clone());
                 }
                 Tag::Channel { id: channel_id, .. } => {
-                    stream_fields.push((CHANNEL_KEY, channel_id.clone()));
+                    xadd_cmd.arg(CHANNEL_KEY).arg(channel_id.clone());
                 }
                 Tag::Protected => {
                     // Protected messages aren't added to public stream
                 }
             }
         }
-        
+
         // Add author information
-        stream_fields.push((AUTHOR_KEY, message.author().to_bytes().to_vec()));
-        
-        // Add to Redis stream
-        let _: String = redis::cmd("XADD")
-            .arg(MESSAGE_STREAM_NAME)
-            .arg("*") // auto-generate ID
-            .arg(&stream_fields)
+        xadd_cmd
+            .arg(AUTHOR_KEY)
+            .arg(message.author().to_bytes().to_vec());
+
+        // Execute XADD and get the stream entry ID
+        let stream_id: String = xadd_cmd
             .query_async(&mut *conn)
             .await
             .map_err(RelayError::Redis)?;
-        
-        Ok(true)
+
+        Ok(Some(stream_id))
     }
 
     /// Retrieve a specific message by ID
@@ -141,11 +145,10 @@ impl RedisStorage {
     {
         let mut conn = self.conn.lock().await;
         let message_id = hex::encode(id);
-        
-        let storage_value: Option<Vec<u8>> = conn.get(&message_id)
-            .await
-            .map_err(RelayError::Redis)?;
-        
+
+        let storage_value: Option<Vec<u8>> =
+            conn.get(&message_id).await.map_err(RelayError::Redis)?;
+
         match storage_value {
             Some(value) => {
                 let message = MessageFull::from_storage_value(&value)
@@ -421,7 +424,7 @@ mod tests {
             .store_message(&message)
             .await
             .expect("Failed to store message");
-        assert!(stored, "Message should be newly stored");
+        assert!(stored.is_some(), "Message should be newly stored");
 
         // Retrieve the message
         let retrieved = storage
@@ -494,7 +497,7 @@ mod tests {
             .store_message(&message)
             .await
             .expect("Failed to store message");
-        assert!(stored_first, "First storage should succeed");
+        assert!(stored_first.is_some(), "First storage should succeed");
 
         // Try to store the same message again
         let stored_second = storage
@@ -502,8 +505,8 @@ mod tests {
             .await
             .expect("Failed to store message");
         assert!(
-            !stored_second,
-            "Second storage should return false (already exists)"
+            stored_second.is_none(),
+            "Second storage should return None (already exists)"
         );
 
         // Verify the message can still be retrieved
@@ -568,7 +571,7 @@ mod tests {
             .store_message(&message)
             .await
             .expect("Failed to store message");
-        assert!(stored, "Message should be newly stored");
+        assert!(stored.is_some(), "Message should be newly stored");
 
         // Retrieve the message
         let retrieved = storage
@@ -666,7 +669,7 @@ mod tests {
             .store_message(&message_full)
             .await
             .expect("Failed to store ephemeral message");
-        assert!(stored, "Ephemeral message should be newly stored");
+        assert!(stored.is_some(), "Ephemeral message should be newly stored");
 
         // Verify it can be retrieved immediately
         let retrieved = storage

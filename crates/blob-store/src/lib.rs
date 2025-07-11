@@ -16,8 +16,11 @@ use tracing::{info, warn};
 
 pub mod error;
 pub mod server;
+pub mod service;
 
-use error::BlobStoreError;
+pub use error::*;
+pub use server::*;
+pub use service::*;
 
 /// Configuration for the blob store
 #[derive(Debug, Clone)]
@@ -242,5 +245,12 @@ mod tests {
         let service = BlobStoreService::new(config).await.unwrap();
         // The store should be created successfully
         assert!(service.config().data_dir.exists());
+    }
+
+    #[tokio::test]
+    async fn test_blob_store_config_default() {
+        let config = BlobStoreConfig::default();
+        assert_eq!(config.host, "127.0.0.1");
+        assert_eq!(config.port, 8080);
     }
 }

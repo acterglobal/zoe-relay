@@ -1,6 +1,6 @@
 # Zoeyr - Secure Messaging Relay System
 
-A secure, modular messaging relay system built with QUIC transport and ed25519 cryptography.
+A secure, modular messaging relay system built with QUIC transport, tarpc RPC services, and ed25519 cryptography.
 
 ## 🚀 Quick Start
 
@@ -33,35 +33,40 @@ cargo run --example relay_listen_client -- \
 ## 📦 What's Included
 
 ### Core Components
-- **`zoeyr-wire-protocol`** - Protocol definitions and cryptographic utilities
-- **`zoeyr-relay-service`** - Redis-backed message relay with working examples
+- **`zoeyr-wire-protocol`** - Protocol definitions, cryptographic utilities, and tarpc service interfaces
+- **`zoeyr-message-store`** - Message storage, handling, streaming, and RelayService tarpc implementation
+- **`zoeyr-relay`** - QUIC connector providing unified transport for multiple tarpc services
+- **`zoeyr-blob-store`** - Binary data storage with both HTTP and tarpc interfaces
 - **`zoeyr-whatsmeow`** - WhatsApp bridge integration
-- **`zoeyr-blob-store`** - Binary data storage service
 
 ### Security Features
-- **Dual-layer security**: TLS transport + message signing
-- **Ed25519 cryptography** for identity verification
-- **QUIC transport** with connection migration
-- **Server identity verification** via TLS certificates
+- **QUIC+tarpc architecture**: Unified RPC services over QUIC transport
+- **Ed25519 cryptography** for identity verification via QUIC mutual TLS
+- **Server identity verification** via ed25519-embedded TLS certificates
+- **No session management** - QUIC certificates provide all authentication
 
 ### Working Examples
-- **Relay Server** - Message relay with Redis backend
-- **Send Client** - Create and send signed messages
+- **Relay Server** - Message relay with Redis backend over QUIC+tarpc
+- **Send Client** - Create and send signed messages via tarpc
 - **Listen Client** - Real-time message streaming with filtering
 
 ## 🔗 Architecture
 
 ```
-Client Apps → QUIC/TLS Transport → Relay Service → Redis Storage
-     ↓              ↓                    ↓            ↓
-Message Creation  Identity Verify   Message Routing  Streaming
+Client Apps → QUIC Transport → Relay Connector → Multiple Services
+     ↓              ↓               ↓              ↓
+   tarpc          ed25519        Service         Message Store
+  Clients        Mutual TLS      Routing        (Redis Backend)
+                                    ↓
+                                Blob Store
+                               (Iroh Backend)
 ```
 
 **Key Features:**
-- Messages are created and signed by clients
-- Server acts as a relay, forwarding messages to Redis
-- Real-time message distribution via Redis Streams
-- Comprehensive filtering by author, user, channel
+- **Unified QUIC stack**: Both message and blob services over same authenticated connection
+- **tarpc RPC services**: Clean service interfaces with automatic serialization
+- **Service routing**: Relay crate routes different services over QUIC streams
+- **Clean separation**: Business logic isolated from transport concerns
 
 ## 🛠️ Development
 
@@ -74,7 +79,7 @@ cargo build --workspace
 cargo test --workspace
 
 # Run specific examples
-cargo run --example relay_server --package zoeyr-relay-service
+cargo run --example relay_server --package zoeyr-relay
 cargo run --example upload_download --package zoeyr-blob-store
 ```
 
@@ -93,26 +98,29 @@ open http://localhost:8081
 ## 📋 Project Status
 
 ### ✅ Working
-- **Relay Service** - Complete with examples
-- **Wire Protocol** - Message format and cryptography
+- **Message Store** - Complete message storage with Redis backend and tarpc service
+- **Relay Connector** - QUIC+tarpc routing for multiple services
+- **Wire Protocol** - Service definitions and cryptography
+- **Blob Storage** - Binary data handling with HTTP and tarpc interfaces
 - **WhatsApp Bridge** - Integration with WhatsApp
-- **Blob Storage** - Binary data handling
 
 ### 🚧 In Progress
+- Integration of blob service through relay QUIC stack
 - Comprehensive integration testing
 - Production deployment configurations
-- Performance optimization
 
 ## 📚 Documentation
 
 - **[Development Guide](docs/development.md)** - Setup, workflow, troubleshooting
 - **[Architecture Overview](docs/architecture.md)** - Technical deep dive
-- **[Relay Service Examples](crates/relay-service/examples/README.md)** - Complete usage guide
+- **[Relay Examples](crates/relay/examples/README.md)** - Complete usage guide
+- **[Message Store](crates/message-store/)** - Storage and streaming documentation
 
 ## 🔐 Security Model
 
 ### Transport Security
 - **QUIC/TLS 1.3** with ed25519-derived certificates
+- **Mutual TLS authentication** via ed25519 public keys embedded in certificates
 - **Server identity verification** via certificate inspection
 - **Connection migration** for mobile networks
 
@@ -123,16 +131,17 @@ open http://localhost:8081
 
 ## 📈 Performance
 
-- **QUIC multiplexing** for concurrent operations
+- **QUIC multiplexing** for concurrent RPC operations
+- **tarpc RPC efficiency** with postcard serialization
 - **Redis Streams** for real-time distribution
-- **Efficient serialization** (JSON + PostCard)
 - **Connection pooling** and reuse
+- **Service routing** over single QUIC connection
 
 ## 🎯 Use Cases
 
 ### Messaging Applications
-- Secure chat applications
-- Real-time notifications
+- Secure chat applications with tarpc RPC interface
+- Real-time notifications over QUIC
 - Multi-device synchronization
 
 ### Integration Hub
@@ -141,9 +150,16 @@ open http://localhost:8081
 - Protocol translation
 
 ### Development Platform
-- Cryptographic messaging foundation
-- QUIC transport examples
-- Redis integration patterns
+- QUIC+tarpc service foundation
+- Cryptographic messaging examples
+- Multi-service integration patterns
+
+## 🏗️ Crate Structure
+
+- **`message-store`**: Pure message logic (storage, tarpc service, Redis backend)
+- **`relay`**: QUIC connector with reusable server/client utilities
+- **`blob-store`**: Blob storage with both HTTP and tarpc interfaces
+- **`wire-protocol`**: Service definitions for RelayService and BlobService
 
 ## 🤝 Contributing
 
@@ -171,6 +187,6 @@ This project is licensed under MIT OR Apache-2.0.
 
 ---
 
-**Getting Started**: Follow the [Quick Start](#-quick-start) guide above, then explore the [examples](crates/relay-service/examples/) and [documentation](docs/).
+**Getting Started**: Follow the [Quick Start](#-quick-start) guide above, then explore the [examples](crates/relay/examples/) and [documentation](docs/).
 
 **Questions?** Check the [development guide](docs/development.md) or review the [architecture overview](docs/architecture.md).

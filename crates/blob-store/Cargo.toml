@@ -8,6 +8,8 @@ name = "zoeyr-blob-store"
 path = "src/main.rs"
 
 [dependencies]
+zoeyr-wire-protocol = { path = "../wire-protocol" }
+
 # Iroh blob store dependencies
 iroh-blobs = "0.90.0"
 
@@ -22,9 +24,13 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 anyhow = "1.0"
 thiserror = "1.0"
+
+# Protocol handling with Tarpc
+tarpc = { version = "0.36", features = ["serde-transport", "tcp", "serde-transport-json"] }
 tracing = "0.1"
 tracing-subscriber = "0.3"
 clap = { version = "4.0", features = ["derive"] }
+chrono = { version = "0.4", features = ["serde"] }
 
 # HTTP client for examples
 reqwest = { version = "0.11", features = ["json"] }

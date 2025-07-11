@@ -197,14 +197,10 @@ where
     /// The timeout for this message in the storage
     pub fn storage_timeout(&self) -> Option<u64> {
         match &self.message {
-            Message::MessageV0(msg) => {
-                match msg.kind {
-                    Kind::Emphemeral(Some(timeout)) if timeout > 0 => {
-                        Some(timeout as u64)
-                    }
-                    _ => None
-                }
-            }
+            Message::MessageV0(msg) => match msg.kind {
+                Kind::Emphemeral(Some(timeout)) if timeout > 0 => Some(timeout as u64),
+                _ => None,
+            },
         }
     }
 
@@ -249,8 +245,8 @@ where
 mod tests {
     use super::*;
     use ed25519_dalek::{Signer, SigningKey, VerifyingKey};
-    use rand::RngCore;
     use rand::rngs::OsRng;
+    use rand::RngCore;
 
     fn make_hash() -> Hash {
         let mut hasher = Hasher::new();
