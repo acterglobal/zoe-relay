@@ -8,5 +8,5 @@ pub enum GenericError<T: Serialize + Deserialize> {
     NotFound(String),
     Conflict(String),
     TooManyRequests(String),
-    Custom(T)
+    Custom(T),
 }

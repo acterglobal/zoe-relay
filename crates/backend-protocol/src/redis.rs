@@ -1,4 +1,3 @@
-
 use apalis_redis::{Config, ConnectionManager, RedisStorage};
 
 pub struct CommandQueuer {
@@ -16,7 +15,11 @@ impl CommandQueuer {
         RedisStorage::new(self.storage.clone())
     }
 
-    pub fn respond<T: Serialize + Deserialize, E: Serialize + Deserialize>(&self, id: string, response: Response<T, E>) -> Result<(), Error>>{
+    pub fn respond<T: Serialize + Deserialize, E: Serialize + Deserialize>(
+        &self,
+        id: string,
+        response: Response<T, E>,
+    ) -> Result<(), Error> {
         let rsp = postcard::to_vec(&response)?;
         let command = Cmd::new("LPUSH");
         command.arg(format!("zoeyr-backoffice-response:{id}"));

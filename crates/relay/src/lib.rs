@@ -1,9 +1,9 @@
+pub mod client;
 pub mod connection;
 pub mod dynamic_auth_server;
+pub mod server;
 #[cfg(test)]
-pub mod tests;
-pub mod client;
-pub mod server; // Reusable server utilities // Reusable client utilities
+pub mod tests; // Reusable server utilities // Reusable client utilities
 
 pub use client::{QuicTarpcClient, RelayClientBuilder};
 pub use connection::*;

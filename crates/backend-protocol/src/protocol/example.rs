@@ -1,4 +1,3 @@
-
 use apalis::prelude::*;
 use serde::{Deserialize, Serialize};
 

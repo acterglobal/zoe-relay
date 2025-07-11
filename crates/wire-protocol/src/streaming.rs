@@ -17,7 +17,7 @@ pub struct StreamRequest {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum StreamingMessage {
     /// A new message received from the storage
-    MessageReceived { 
+    MessageReceived {
         /// Blake3 hash of the message
         message_id: String,
         /// Redis stream position
@@ -64,17 +64,17 @@ impl StreamRequest {
             follow: false,
         }
     }
-    
+
     pub fn with_since(mut self, since: String) -> Self {
         self.since = Some(since);
         self
     }
-    
+
     pub fn with_limit(mut self, limit: usize) -> Self {
         self.limit = Some(limit);
         self
     }
-    
+
     pub fn with_follow(mut self, follow: bool) -> Self {
         self.follow = follow;
         self
@@ -89,20 +89,20 @@ impl StreamingMessage {
             message_data,
         }
     }
-    
+
     pub fn error(message: String) -> Self {
         Self::StreamError(message)
     }
-    
+
     pub fn end() -> Self {
         Self::StreamEnd
     }
-    
+
     pub fn heartbeat() -> Self {
         Self::Heartbeat
     }
-    
+
     pub fn batch_end() -> Self {
         Self::BatchEnd
     }
-} 
+}

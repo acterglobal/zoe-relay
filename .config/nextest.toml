@@ -1,88 +1,12 @@
-# Nextest configuration following whatsmeow patterns
-# Based on industry best practices for Rust testing
-
-# =====================================
-# PROFILE DEFINITIONS
-# =====================================
+# Nextest configuration for the Zoeyr workspace
 
 [profile.default]
 test-threads = 4
-timeout = { period = "60s" }
-
-[profile.unit]
-# Fast unit tests - no external dependencies
-test-threads = 8
-timeout = { period = "30s" }
-filter = 'test(~unit::)'
-
-[profile.integration]
-# Integration tests with mocked dependencies
-test-threads = 4
-timeout = { period = "120s" }
-filter = 'test(~integration::)'
-
-[profile.redis]
-# Tests requiring Redis container
-test-threads = 2
-timeout = { period = "180s" }
-filter = 'test(~redis_integration::)'
-
-[profile.e2e]
-# End-to-end tests (run manually)
-test-threads = 1
-timeout = { period = "300s" }
-filter = 'test(~e2e::)'
 
 [profile.ci]
-# Optimized for CI - excludes manual tests
+# Optimized for CI
 test-threads = 4
-timeout = { period = "180s" }
-filter = 'not test(~e2e::)'
 
-[profile.manual]
-# Manual tests that require human interaction
-test-threads = 1
-timeout = { period = "600s" }
-filter = 'test(~manual::)'
-
-[profile.quick]
-# Quick smoke tests
-test-threads = 8
-timeout = { period = "15s" }
-filter = 'test(~unit::) and not test(~crypto::)'
-
-[profile.crypto]
-# Cryptographic tests
-test-threads = 2
-timeout = { period = "90s" }
-filter = 'test(~crypto::)'
-
-[profile.protocol]
-# Protocol-specific tests
-test-threads = 4
-timeout = { period = "60s" }
-filter = 'test(~protocol::)'
-
-[profile.network]
-# Network-related tests
-test-threads = 2
-timeout = { period = "120s" }
-filter = 'test(~network::)'
-
-[profile.auth]
-# Authentication tests
-test-threads = 2
-timeout = { period = "90s" }
-filter = 'test(~auth::)'
-
-[profile.async]
-# Async/concurrency tests
-test-threads = 4
-timeout = { period = "120s" }
-filter = 'test(~async::)'
-
-[profile.bench]
-# Benchmark-style tests
-test-threads = 1
-timeout = { period = "300s" }
-filter = 'test(~bench::)' 
+[profile.fast]
+# Fast tests with more parallelism
+test-threads = 8 
