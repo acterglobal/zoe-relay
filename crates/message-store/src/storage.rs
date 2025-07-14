@@ -1,12 +1,12 @@
 use std::marker::PhantomData;
 
 use futures_util::Stream;
-use redis::{aio::ConnectionManager, AsyncCommands};
-use serde::{de::value, Deserialize, Serialize};
-use tracing::info;
-use zoeyr_wire_protocol::{Kind, MessageFull, StoreKey, Tag};
+use redis::{aio::ConnectionManager, AsyncCommands, SetOptions};
+use serde::{Deserialize, Serialize};
+use tracing::{info, warn};
+use zoeyr_wire_protocol::{MessageFull, StoreKey, Tag};
 
-use crate::{error::RelayError, storage};
+use crate::error::RelayError;
 
 type Result<T> = std::result::Result<T, RelayError>;
 
@@ -60,10 +60,14 @@ where
     }
     /// Retrieve a specific string
     async fn get_inner_full(&self, id: &str) -> Result<Option<MessageFull<T>>> {
-        let Some(value) = self.get_inner_raw(id).await? else {
+        let mut conn = self.conn.lock().await.clone();
+        Self::get_full(&mut conn, id).await
+    }
+
+    async fn get_full(conn: &mut ConnectionManager, id: &str) -> Result<Option<MessageFull<T>>> {
+        let Some(value): Option<Vec<u8>> = conn.get(id).await? else {
             return Ok(None);
         };
-
         let message = MessageFull::from_storage_value(&value)
             .map_err(|e| RelayError::Serialization(e.to_string()))?;
         Ok(Some(message))
@@ -111,6 +115,7 @@ where
 
         if exists {
             // Message already exists, return None
+            info!("Message already exists, ignoring to store");
             return Ok(None);
         }
 
@@ -172,14 +177,74 @@ where
             .await
             .map_err(RelayError::Redis)?;
 
-        // post processing the message: we are meant to store this.
+        // post processing the message: if we are meant to store this.
         if let Some(storage_key) = message.store_key() {
             let author_id = hex::encode(message.author().as_bytes());
             let storage_key_enc: u32 = storage_key.into();
             let storage_id = format!("{author_id}:{storage_key_enc}");
-            let _ = conn
-                .set::<String, String, String>(storage_id, message_id)
-                .await;
+
+            info!(
+                redis_key = storage_id,
+                message_id = message_id,
+                "storing for key"
+            );
+
+            if let Some(previous_id) = conn
+                .set_options(&storage_id, &message_id, SetOptions::default().get(true))
+                .await?
+            {
+                // there was something set, we need to make sure this isn't a problem
+                let mut previous_id: String = previous_id;
+                'retry: loop {
+                    info!(redis_key = previous_id, "checking previous message");
+                    let Some(previous_message) = Self::get_full(&mut *conn, &previous_id).await?
+                    else {
+                        // we are good, nothing was here
+                        info!(
+                            redis_key = storage_id,
+                            "No previous message found, all good"
+                        );
+                        break 'retry;
+                    };
+                    info!("previous message found. comparing timestamps");
+                    let prev_when = previous_message.when();
+                    let msg_when = message.when();
+                    if msg_when > prev_when {
+                        // new message is newer, we are good, continue
+                        info!(redis_key = previous_id, "We are newer, ignore");
+                        break 'retry;
+                    } else if prev_when == msg_when {
+                        // timestamp was the same, we need to check the id
+                        if previous_message.id.as_bytes() < message.id.as_bytes() {
+                            // our ID is greater, we won,
+                            info!(redis_key = previous_id, "We are older, ignore");
+                            break 'retry;
+                        }
+                    }
+
+                    info!(
+                        redis_key = previous_id,
+                        "The previous message needs to be restored"
+                    );
+
+                    // we need to revert back.
+                    let Some(new_previous_id): Option<String> = conn
+                        .set_options(&storage_id, &previous_id, SetOptions::default().get(true))
+                        .await?
+                    else {
+                        // FIXME: potential clearing bug?
+                        warn!("Restored without it being set. curious...");
+                        break 'retry;
+                    };
+
+                    if new_previous_id == previous_id || new_previous_id == message_id {
+                        // we are all good
+                        break 'retry;
+                    } else {
+                        previous_id = new_previous_id;
+                    }
+                }
+            }
         }
 
         Ok(Some(stream_id))
@@ -398,30 +463,32 @@ mod tests {
 
     /// Helper function to create a test message with given content
     fn create_test_message(content: TestContent) -> Result<MessageFull<TestContent>> {
-        create_test_message_with_kind(content, Kind::Regular)
+        let mut secret_bytes = [0u8; 32];
+        rand::thread_rng().fill_bytes(&mut secret_bytes);
+        let signing_key = SigningKey::from_bytes(&secret_bytes);
+        create_test_message_with_kind(content, Kind::Regular, &signing_key, 0)
     }
 
     fn create_test_message_with_kind(
         content: TestContent,
         kind: Kind,
+        signing_key: &SigningKey,
+        time_shift: u64,
     ) -> Result<MessageFull<TestContent>> {
-        let mut secret_bytes = [0u8; 32];
-        rand::thread_rng().fill_bytes(&mut secret_bytes);
-        let signing_key = SigningKey::from_bytes(&secret_bytes);
         let verifying_key = signing_key.verifying_key();
-
         let message = Message::new_v0(
             content,
             verifying_key,
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
-                .as_secs(),
+                .as_secs()
+                .saturating_sub(time_shift),
             kind,
             vec![],
         );
 
-        Ok(MessageFull::new(message, &signing_key)?)
+        Ok(MessageFull::new(message, signing_key)?)
     }
 
     /// Helper function to create a test message with tags
@@ -523,7 +590,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_store_and_retrieve_user_data_message_with_override() {
+    async fn test_store_and_retrieve_user_data_message_with_overwrite() {
+        let _ = env_logger::try_init();
         // Skip test if Redis is not available
         let config = create_test_config();
         let storage = match RedisStorage::<TestContent>::new(config.clone()).await {
@@ -534,6 +602,10 @@ mod tests {
             }
         };
 
+        let mut secret_bytes = [0u8; 32];
+        rand::thread_rng().fill_bytes(&mut secret_bytes);
+        let signing_key = SigningKey::from_bytes(&secret_bytes);
+
         // Create a test message
         let test_content = TestContent {
             text: "Updated Display Name".to_string(),
@@ -543,6 +615,26 @@ mod tests {
         let message = create_test_message_with_kind(
             test_content.clone(),
             Kind::Store(StoreKey::PublicUserInfo),
+            &signing_key,
+            20, // oldest
+        )
+        .expect("Failed to create test message");
+
+        // a second message, a bit younger but soon too old if synced late
+        let too_old_message = create_test_message_with_kind(
+            test_content.clone(),
+            Kind::Store(StoreKey::PublicUserInfo),
+            &signing_key,
+            10, // second oldest
+        )
+        .expect("Failed to create test message");
+
+        // building a new message with a higher timestamp
+        let message2 = create_test_message_with_kind(
+            test_content.clone(),
+            Kind::Store(StoreKey::PublicUserInfo),
+            &signing_key,
+            5, // middle old
         )
         .expect("Failed to create test message");
 
@@ -600,16 +692,9 @@ mod tests {
             "Retrieved message should be valid"
         );
 
-        // building a new message with a higher timestamp
-        let message = create_test_message_with_kind(
-            test_content.clone(),
-            Kind::Store(StoreKey::PublicUserInfo),
-        )
-        .expect("Failed to create test message");
-
         // Store the message
         let stored = storage
-            .store_message(&message)
+            .store_message(&message2)
             .await
             .expect("Failed to store message");
         assert!(stored.is_some(), "Message should be newly stored");
@@ -620,6 +705,36 @@ mod tests {
             .await
             .expect("Failed to retrieve message")
             .expect("Message should be found");
+
+        assert_eq!(retrieved.id, message2.id, "Message IDs should match");
+        assert_eq!(
+            retrieved.content(),
+            message2.content(),
+            "Message content should match"
+        );
+
+        // now we try to old one
+
+        // Store the message
+        let stored = storage
+            .store_message(&too_old_message)
+            .await
+            .expect("Failed to store message");
+        assert!(stored.is_some(), "Message should be newly stored");
+
+        // Retrieve the message again.
+        let retrieved = storage
+            .get_user_data(user_id, StoreKey::PublicUserInfo)
+            .await
+            .expect("Failed to retrieve message")
+            .expect("Message should be found");
+
+        assert_eq!(retrieved.id, message2.id, "Message IDs should match");
+        assert_eq!(
+            retrieved.content(),
+            message2.content(),
+            "Message content should match previouusly stored"
+        );
     }
 
     #[tokio::test]
