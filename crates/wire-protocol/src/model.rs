@@ -3,6 +3,9 @@ use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
 use postcard::to_vec;
 use serde::{Deserialize, Serialize};
 
+mod store_key;
+pub use store_key::StoreKey;
+
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub enum Tag {
     Protected, // may not be forwarded, unless the other end is authenticated as the author, may it be accepted
@@ -24,13 +27,6 @@ pub enum Tag {
         #[serde(default)]
         relays: Vec<String>,
     },
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
-pub enum StoreKey {
-    PublicUserInfo,
-    MlsKeyPackage,
-    CustomKey(u32), // yet to be known variant
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
@@ -204,6 +200,20 @@ where
         }
     }
 
+    pub fn store_key(&self) -> Option<StoreKey> {
+        match &self.message {
+            Message::MessageV0(msg) => match &msg.kind {
+                Kind::Store(key) => Some(key.clone()),
+                _ => None,
+            },
+        }
+    }
+
+    /// this is meant to clear a storage key
+    pub fn clear_key(&self) -> Option<StoreKey> {
+        None
+    }
+
     /// Deserialize a message from its storage value
     pub fn from_storage_value(value: &[u8]) -> Result<Self, Box<dyn std::error::Error>> {
         let message: Self = postcard::from_bytes(value)?;
@@ -237,6 +247,17 @@ where
     pub fn content(&self) -> &T {
         match &self.message {
             Message::MessageV0(message) => &message.content,
+        }
+    }
+}
+
+impl MessageFull<Vec<u8>> {
+    pub fn try_deserialize_content<C>(&self) -> Result<C, postcard::Error>
+    where
+        C: for<'a> Deserialize<'a>,
+    {
+        match &self.message {
+            Message::MessageV0(message) => postcard::from_bytes(&message.content),
         }
     }
 }
@@ -393,6 +414,39 @@ mod tests {
 
         assert_eq!(msg_full, deserialized);
         assert!(deserialized.verify_all().unwrap());
+    }
+
+    #[test]
+    #[ignore = "this won't work, and that's the proof"]
+    fn test_complex_content_serialization_is_not_vec_u8() {
+        let (sk, pk) = make_keys();
+        let complex_content = ComplexContent {
+            text: "Hello, World!".to_string(),
+            numbers: vec![1, 2, 3, 4, 5],
+            flag: true,
+        };
+        let core = Message::new_v0(
+            complex_content.clone(),
+            pk,
+            1714857600,
+            Kind::Regular,
+            vec![Tag::User {
+                id: vec![1],
+                relays: vec!["relay1".to_string()],
+            }],
+        );
+
+        let msg_full = MessageFull::new(core, &sk).unwrap();
+        // Serialize and deserialize
+        let serialized = msg_full.storage_value().unwrap();
+        let deserialized = MessageFull::<ComplexContent>::from_storage_value(&serialized).unwrap();
+        assert!(deserialized.verify_all().unwrap());
+
+        let deserialize_u8 = MessageFull::<Vec<u8>>::from_storage_value(&serialized).unwrap();
+        let vecu8_content: ComplexContent = deserialize_u8.try_deserialize_content().unwrap();
+
+        assert_eq!(msg_full, deserialized);
+        assert_eq!(&vecu8_content, deserialized.content());
     }
 
     #[test]

@@ -125,15 +125,6 @@ impl std::error::Error for RelayError {}
 /// Result type for relay operations
 pub type RelayResult<T> = Result<T, RelayError>;
 
-/// Statistics about the relay service
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RelayStats {
-    pub total_messages: u64,
-    pub active_streams: u32,
-    pub storage_size_bytes: u64,
-    pub connected_clients: u32,
-}
-
 /// Tarpc service trait for relay message operations
 /// Authentication is handled by QUIC ed25519 mutual TLS - no additional auth needed
 #[tarpc::service]
@@ -155,7 +146,4 @@ pub trait RelayService {
 
     /// Stop a message stream
     async fn stop_message_stream(session_id: String) -> RelayResult<bool>;
-
-    /// Get statistics about stored messages
-    async fn get_stats() -> RelayResult<RelayStats>;
 }

@@ -1,9 +1,12 @@
+use std::marker::PhantomData;
+
 use futures_util::Stream;
 use redis::{aio::ConnectionManager, AsyncCommands};
-use serde::{Deserialize, Serialize};
-use zoeyr_wire_protocol::{MessageFull, Tag};
+use serde::{de::value, Deserialize, Serialize};
+use tracing::info;
+use zoeyr_wire_protocol::{Kind, MessageFull, StoreKey, Tag};
 
-use crate::error::RelayError;
+use crate::{error::RelayError, storage};
 
 type Result<T> = std::result::Result<T, RelayError>;
 
@@ -34,12 +37,43 @@ impl MessageFilters {
 }
 
 /// Redis-backed storage for the relay service
-pub struct RedisStorage {
+pub struct RedisStorage<T> {
     pub conn: tokio::sync::Mutex<ConnectionManager>,
     pub config: crate::config::RelayConfig,
+    _type: PhantomData<T>,
 }
 
-impl RedisStorage {
+// internal API
+impl<T> RedisStorage<T>
+where
+    T: Serialize + for<'de> Deserialize<'de> + Send + Sync + Sized,
+{
+    async fn get_inner<R: redis::FromRedisValue>(&self, id: &str) -> Result<Option<R>> {
+        info!("Reading: {id}");
+        let mut conn = self.conn.lock().await;
+
+        return Ok(conn.get(&id).await.map_err(RelayError::Redis)?);
+    }
+    /// Retrieve a specific message by ID as its raw data
+    async fn get_inner_raw(&self, id: &str) -> Result<Option<Vec<u8>>> {
+        self.get_inner::<Vec<u8>>(id).await
+    }
+    /// Retrieve a specific string
+    async fn get_inner_full(&self, id: &str) -> Result<Option<MessageFull<T>>> {
+        let Some(value) = self.get_inner_raw(id).await? else {
+            return Ok(None);
+        };
+
+        let message = MessageFull::from_storage_value(&value)
+            .map_err(|e| RelayError::Serialization(e.to_string()))?;
+        Ok(Some(message))
+    }
+}
+
+impl<T> RedisStorage<T>
+where
+    T: Serialize + for<'de> Deserialize<'de> + Send + Sync + Sized,
+{
     /// Create a new Redis storage instance
     pub async fn new(config: crate::config::RelayConfig) -> Result<Self> {
         let client = redis::Client::open(config.redis.url.clone()).map_err(RelayError::Redis)?;
@@ -51,15 +85,18 @@ impl RedisStorage {
         Ok(Self {
             conn: tokio::sync::Mutex::new(conn_manager),
             config,
+            _type: Default::default(),
         })
     }
 
+    /// Retrieve a specific message by ID as its raw data
+    pub async fn get_message_raw(&self, id: &[u8]) -> Result<Option<Vec<u8>>> {
+        let message_id = hex::encode(id);
+        self.get_inner_raw(&message_id).await
+    }
     /// Store a message in Redis and publish to stream for real-time delivery
     /// Returns the stream ID if the message was newly stored, None if it already existed
-    pub async fn store_message<T>(&self, message: &MessageFull<T>) -> Result<Option<String>>
-    where
-        T: Serialize + for<'de> Deserialize<'de> + Send + Sync,
-    {
+    pub async fn store_message(&self, message: &MessageFull<T>) -> Result<Option<String>> {
         let mut conn = self.conn.lock().await;
 
         // Serialize the message
@@ -135,40 +172,32 @@ impl RedisStorage {
             .await
             .map_err(RelayError::Redis)?;
 
+        // post processing the message: we are meant to store this.
+        if let Some(storage_key) = message.store_key() {
+            let author_id = hex::encode(message.author().as_bytes());
+            let storage_key_enc: u32 = storage_key.into();
+            let storage_id = format!("{author_id}:{storage_key_enc}");
+            let _ = conn
+                .set::<String, String, String>(storage_id, message_id)
+                .await;
+        }
+
         Ok(Some(stream_id))
     }
 
     /// Retrieve a specific message by ID
-    pub async fn get_message<T>(&self, id: &[u8]) -> Result<Option<MessageFull<T>>>
-    where
-        T: Serialize + for<'de> Deserialize<'de> + Send + Sync,
-    {
-        let mut conn = self.conn.lock().await;
+    pub async fn get_message(&self, id: &[u8]) -> Result<Option<MessageFull<T>>> {
         let message_id = hex::encode(id);
-
-        let storage_value: Option<Vec<u8>> =
-            conn.get(&message_id).await.map_err(RelayError::Redis)?;
-
-        match storage_value {
-            Some(value) => {
-                let message = MessageFull::from_storage_value(&value)
-                    .map_err(|e| RelayError::Serialization(e.to_string()))?;
-                Ok(Some(message))
-            }
-            None => Ok(None),
-        }
+        self.get_inner_full(&message_id).await
     }
 
     /// Listen for messages matching filters (streaming)
-    pub async fn listen_for_messages<'a, T>(
+    pub async fn listen_for_messages<'a>(
         &'a self,
         filters: &'a MessageFilters,
         since: Option<String>,
         limit: Option<usize>,
-    ) -> Result<impl Stream<Item = Result<(Option<Vec<u8>>, String)>> + 'a>
-    where
-        T: Serialize + for<'de> Deserialize<'de> + Send + Sync,
-    {
+    ) -> Result<impl Stream<Item = Result<(Option<Vec<u8>>, String)>> + 'a> {
         if filters.is_empty() {
             return Err(RelayError::EmptyFilters);
         }
@@ -224,6 +253,9 @@ impl RedisStorage {
                     }
                     continue;
                 }
+
+                // TODO: would be nice to collapse this a bit
+                // and maybe have this tested separately as well
 
                 for (stream_key, entries) in rows {
                     if stream_key != MESSAGE_STREAM_NAME {
@@ -316,8 +348,19 @@ impl RedisStorage {
         })
     }
 
-    pub async fn get_user_data(&self, _user_id: &str, _key: &str) -> Result<Option<String>> {
-        unimplemented!()
+    pub async fn get_user_data(
+        &self,
+        user_id: &[u8],
+        key: StoreKey,
+    ) -> Result<Option<MessageFull<T>>> {
+        let message_id = hex::encode(user_id);
+        let storage_key: u32 = key.into();
+        let target_key = format!("{message_id}:{storage_key}");
+        let Some(message_id) = self.get_inner::<String>(&target_key).await? else {
+            return Ok(None);
+        };
+
+        self.get_inner_full(&message_id).await
     }
 }
 
@@ -328,7 +371,7 @@ mod tests {
 
     use ed25519_dalek::SigningKey;
     use rand::RngCore;
-    use zoeyr_wire_protocol::{Kind, Message, Tag};
+    use zoeyr_wire_protocol::{Kind, Message, StoreKey, Tag};
 
     #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
     struct TestContent {
@@ -355,6 +398,13 @@ mod tests {
 
     /// Helper function to create a test message with given content
     fn create_test_message(content: TestContent) -> Result<MessageFull<TestContent>> {
+        create_test_message_with_kind(content, Kind::Regular)
+    }
+
+    fn create_test_message_with_kind(
+        content: TestContent,
+        kind: Kind,
+    ) -> Result<MessageFull<TestContent>> {
         let mut secret_bytes = [0u8; 32];
         rand::thread_rng().fill_bytes(&mut secret_bytes);
         let signing_key = SigningKey::from_bytes(&secret_bytes);
@@ -367,7 +417,7 @@ mod tests {
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
                 .as_secs(),
-            Kind::Regular,
+            kind,
             vec![],
         );
 
@@ -402,7 +452,7 @@ mod tests {
     async fn test_store_and_retrieve_message() {
         // Skip test if Redis is not available
         let config = create_test_config();
-        let storage = match RedisStorage::new(config.clone()).await {
+        let storage = match RedisStorage::<TestContent>::new(config.clone()).await {
             Ok(storage) => storage,
             Err(_) => {
                 eprintln!("Skipping test: Redis not available at {}", config.redis.url);
@@ -428,7 +478,7 @@ mod tests {
 
         // Retrieve the message
         let retrieved = storage
-            .get_message::<TestContent>(message.id.as_bytes())
+            .get_message(message.id.as_bytes())
             .await
             .expect("Failed to retrieve message")
             .expect("Message should be found");
@@ -473,10 +523,110 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_store_and_retrieve_user_data_message_with_override() {
+        // Skip test if Redis is not available
+        let config = create_test_config();
+        let storage = match RedisStorage::<TestContent>::new(config.clone()).await {
+            Ok(storage) => storage,
+            Err(_) => {
+                eprintln!("Skipping test: Redis not available at {}", config.redis.url);
+                return;
+            }
+        };
+
+        // Create a test message
+        let test_content = TestContent {
+            text: "Updated Display Name".to_string(),
+            value: 42,
+        };
+
+        let message = create_test_message_with_kind(
+            test_content.clone(),
+            Kind::Store(StoreKey::PublicUserInfo),
+        )
+        .expect("Failed to create test message");
+
+        let user_id = message.author().as_bytes();
+
+        // Store the message
+        let stored = storage
+            .store_message(&message)
+            .await
+            .expect("Failed to store message");
+        assert!(stored.is_some(), "Message should be newly stored");
+
+        // Retrieve the message, which is never and thus should have overwritten.
+        let retrieved = storage
+            .get_user_data(user_id, StoreKey::PublicUserInfo)
+            .await
+            .expect("Failed to retrieve message")
+            .expect("Message should be found");
+
+        // Verify the retrieved message matches the original
+        assert_eq!(retrieved.id, message.id, "Message IDs should match");
+        assert_eq!(
+            retrieved.content(),
+            message.content(),
+            "Message content should match"
+        );
+        assert_eq!(
+            retrieved.author(),
+            message.author(),
+            "Message sender should match"
+        );
+        assert_eq!(
+            retrieved.when(),
+            message.when(),
+            "Message timestamp should match"
+        );
+        assert_eq!(
+            retrieved.kind(),
+            message.kind(),
+            "Message kind should match"
+        );
+        assert_eq!(
+            retrieved.tags(),
+            message.tags(),
+            "Message tags should match"
+        );
+        assert_eq!(
+            retrieved.signature, message.signature,
+            "Message signature should match"
+        );
+
+        // Verify the message is valid
+        assert!(
+            retrieved.verify_all().expect("Failed to verify message"),
+            "Retrieved message should be valid"
+        );
+
+        // building a new message with a higher timestamp
+        let message = create_test_message_with_kind(
+            test_content.clone(),
+            Kind::Store(StoreKey::PublicUserInfo),
+        )
+        .expect("Failed to create test message");
+
+        // Store the message
+        let stored = storage
+            .store_message(&message)
+            .await
+            .expect("Failed to store message");
+        assert!(stored.is_some(), "Message should be newly stored");
+
+        // Retrieve the message
+        let retrieved = storage
+            .get_user_data(user_id, StoreKey::PublicUserInfo)
+            .await
+            .expect("Failed to retrieve message")
+            .expect("Message should be found");
+    }
+
+    #[tokio::test]
     async fn test_store_duplicate_message() {
         // Skip test if Redis is not available
         let config = create_test_config();
-        let storage = match RedisStorage::new(config.clone()).await {
+        let storage = match RedisStorage::<TestContent>::new(config.clone()).await {
             Ok(storage) => storage,
             Err(_) => {
                 eprintln!("Skipping test: Redis not available at {}", config.redis.url);
@@ -511,7 +661,7 @@ mod tests {
 
         // Verify the message can still be retrieved
         let retrieved = storage
-            .get_message::<TestContent>(message.id.as_bytes())
+            .get_message(message.id.as_bytes())
             .await
             .expect("Failed to retrieve message")
             .expect("Message should be found");
@@ -526,7 +676,7 @@ mod tests {
     async fn test_store_message_with_tags() {
         // Skip test if Redis is not available
         let config = create_test_config();
-        let storage = match RedisStorage::new(config.clone()).await {
+        let storage = match RedisStorage::<TestContent>::new(config.clone()).await {
             Ok(storage) => storage,
             Err(_) => {
                 eprintln!("Skipping test: Redis not available at {}", config.redis.url);
@@ -575,7 +725,7 @@ mod tests {
 
         // Retrieve the message
         let retrieved = storage
-            .get_message::<TestContent>(message.id.as_bytes())
+            .get_message(message.id.as_bytes())
             .await
             .expect("Failed to retrieve message")
             .expect("Message should be found");
@@ -604,7 +754,7 @@ mod tests {
     async fn test_retrieve_nonexistent_message() {
         // Skip test if Redis is not available
         let config = create_test_config();
-        let storage = match RedisStorage::new(config.clone()).await {
+        let storage = match RedisStorage::<TestContent>::new(config.clone()).await {
             Ok(storage) => storage,
             Err(_) => {
                 eprintln!("Skipping test: Redis not available at {}", config.redis.url);
@@ -617,7 +767,7 @@ mod tests {
 
         // Try to retrieve a message that doesn't exist
         let retrieved = storage
-            .get_message::<TestContent>(fake_id)
+            .get_message(fake_id)
             .await
             .expect("Should not error when retrieving nonexistent message");
 
@@ -631,7 +781,7 @@ mod tests {
     async fn test_ephemeral_message() {
         // Skip test if Redis is not available
         let config = create_test_config();
-        let storage = match RedisStorage::new(config.clone()).await {
+        let storage = match RedisStorage::<TestContent>::new(config.clone()).await {
             Ok(storage) => storage,
             Err(_) => {
                 eprintln!("Skipping test: Redis not available at {}", config.redis.url);
@@ -673,7 +823,7 @@ mod tests {
 
         // Verify it can be retrieved immediately
         let retrieved = storage
-            .get_message::<TestContent>(message_full.id.as_bytes())
+            .get_message(message_full.id.as_bytes())
             .await
             .expect("Failed to retrieve ephemeral message")
             .expect("Ephemeral message should be found immediately");

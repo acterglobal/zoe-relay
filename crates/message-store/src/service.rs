@@ -1,4 +1,5 @@
 use super::storage::RedisStorage;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -6,18 +7,24 @@ use tokio::sync::RwLock;
 use tracing::{error, info, warn};
 
 use zoeyr_wire_protocol::{
-    MessageFull, RelayError, RelayResult, RelayService, RelayStats, StreamConfig, StreamMessage,
+    MessageFull, RelayError, RelayResult, RelayService, StreamConfig, StreamMessage,
 };
 
 /// tarpc implementation of RelayService using Redis storage
 #[derive(Clone)]
-pub struct RelayServiceImpl {
-    storage: Arc<RedisStorage>,
+pub struct RelayServiceImpl<T>
+where
+    T: Serialize + for<'de> Deserialize<'de> + Send + Sync + Sized,
+{
+    storage: Arc<RedisStorage<T>>,
     active_streams: Arc<RwLock<HashMap<String, StreamConfig>>>,
 }
 
-impl RelayServiceImpl {
-    pub fn new(storage: Arc<RedisStorage>) -> Self {
+impl<T> RelayServiceImpl<T>
+where
+    T: Serialize + for<'de> Deserialize<'de> + Send + Sync + Sized,
+{
+    pub fn new(storage: Arc<RedisStorage<T>>) -> Self {
         Self {
             storage,
             active_streams: Arc::new(RwLock::new(HashMap::new())),
@@ -32,30 +39,19 @@ impl RelayServiceImpl {
     }
 }
 
-impl RelayService for RelayServiceImpl {
+impl<T> RelayService for RelayServiceImpl<T>
+where
+    T: Serialize + for<'de> Deserialize<'de> + Send + Sync + Sized,
+{
     async fn get_message(
         self,
         _ctx: tarpc::context::Context,
         message_id: Vec<u8>,
     ) -> RelayResult<Option<Vec<u8>>> {
-        info!("Getting message: {}", hex::encode(&message_id));
-
-        // Convert to the storage API - this is a simplified implementation
-        // In a full implementation, you'd convert the message_id appropriately
-        // and call storage.get_message() with proper type handling
-        match self.storage.get_message::<String>(&message_id).await {
-            Ok(Some(message_full)) => {
-                let serialized = postcard::to_allocvec(&message_full).map_err(|e| {
-                    RelayError::SerializationError(format!("Serialization error: {}", e))
-                })?;
-                Ok(Some(serialized))
-            }
-            Ok(None) => Ok(None),
-            Err(e) => {
-                error!("Failed to get message: {}", e);
-                Err(RelayError::StorageError(format!("Storage error: {}", e)))
-            }
-        }
+        self.storage
+            .get_message_raw(&message_id)
+            .await
+            .map_err(|e| RelayError::StorageError(format!("Storage error: {e}")))
     }
 
     async fn store_message(
@@ -69,9 +65,9 @@ impl RelayService for RelayServiceImpl {
         );
 
         // Deserialize the MessageFull from the message_data
-        let message_full: MessageFull<String> = MessageFull::from_storage_value(&message_data)
-            .map_err(|e| {
-                RelayError::SerializationError(format!("Failed to deserialize message: {}", e))
+        let message_full: MessageFull<T> =
+            MessageFull::from_storage_value(&message_data).map_err(|e| {
+                RelayError::SerializationError(format!("Failed to deserialize message: {e}"))
             })?;
 
         let message_id = hex::encode(message_full.id.as_bytes());
@@ -87,10 +83,6 @@ impl RelayService for RelayServiceImpl {
                     "   Author: {}",
                     hex::encode(message_full.author().to_bytes())
                 );
-                info!(
-                    "   Content preview: {:?}",
-                    message_full.content().chars().take(50).collect::<String>()
-                );
                 Ok(stream_id)
             }
             Ok(None) => {
@@ -102,7 +94,7 @@ impl RelayService for RelayServiceImpl {
             Err(e) => {
                 error!("❌ Failed to store message: {}", e);
                 error!("   Message ID: {}", message_id);
-                Err(RelayError::StorageError(format!("Storage error: {}", e)))
+                Err(RelayError::StorageError(format!("Storage error: {e}")))
             }
         }
     }
@@ -178,20 +170,6 @@ impl RelayService for RelayServiceImpl {
         info!("Stream session stopped: {}", session_id);
         Ok(true)
     }
-
-    async fn get_stats(self, _ctx: tarpc::context::Context) -> RelayResult<RelayStats> {
-        info!("Getting relay stats");
-
-        // In a full implementation, you'd query actual metrics from storage
-        let stats = RelayStats {
-            total_messages: 0,
-            active_streams: 0,
-            storage_size_bytes: 0,
-            connected_clients: 1,
-        };
-
-        Ok(stats)
-    }
 }
 
 #[cfg(test)]
@@ -215,7 +193,7 @@ mod tests {
         // For this test, we just verify the structure compiles
         // Real Redis testing would require a test container
         let storage = Arc::new(
-            RedisStorage::new(config)
+            RedisStorage::<String>::new(config)
                 .await
                 .expect("Failed to create storage"),
         );
