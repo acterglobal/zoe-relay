@@ -149,7 +149,6 @@ The BlobService provides the following RPC methods:
 - **`upload_blob(data: Vec<u8>)`** → `BlobResult<String>`: Upload and get hash
 - **`download_blob(hash: String)`** → `BlobResult<Vec<u8>>`: Download by hash
 - **`get_blob_info(hash: String)`** → `BlobResult<BlobInfo>`: Get metadata
-- **`list_blobs()`** → `BlobResult<Vec<BlobInfo>>`: List all blobs
 
 #### Using the RPC Interface
 

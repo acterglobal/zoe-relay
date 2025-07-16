@@ -172,15 +172,6 @@ async fn download_blob(
         .into_response())
 }
 
-/// List all blobs (basic implementation)
-async fn list_blobs(_state: State<AppState>) -> Result<Json<Vec<BlobInfo>>, BlobStoreError> {
-    // Note: This is a simplified implementation
-    // In a real implementation, you'd want to iterate through the store
-    // For now, we'll return an empty list as iroh-blobs doesn't expose a simple list method
-    warn!("List blobs endpoint not fully implemented");
-    Ok(Json(Vec::new()))
-}
-
 /// Health check endpoint
 async fn health_check() -> Json<serde_json::Value> {
     Json(serde_json::json!({
@@ -196,7 +187,6 @@ pub fn create_router(state: AppState) -> Router {
         .route("/upload", post(upload_blob))
         .route("/blob/:hash", get(download_blob))
         .route("/blob/:hash/info", get(get_blob_info))
-        .route("/blobs", get(list_blobs))
         .layer(CorsLayer::permissive())
         .with_state(state)
 }

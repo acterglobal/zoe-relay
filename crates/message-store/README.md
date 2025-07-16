@@ -58,7 +58,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ```rust
 use zoeyr_message_store::{RedisStorage, MessageFilters};
-use zoeyr_wire_protocol::{MessageFull, Message, MessageContent, Kind};
+use zoeyr_wire_protocol::{MessageFull, Message, Kind};
+use serde::{Serialize, Deserialize};
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub enum MessageContent {
+    Text { text: String }
+    File { file: Vec<u8>}
+}
 
 // Store a message
 let content = MessageContent::Text { text: "Hello, World!".to_string() };
@@ -78,7 +85,7 @@ match stream_id {
 }
 
 // Retrieve the message
-let retrieved = storage.get_message::<String>(message_full.id.as_bytes()).await?;
+let retrieved = storage.get_message(message_full.id.as_bytes()).await?;
 if let Some(msg) = retrieved {
     println!("Retrieved message: {:?}", msg.content());
 }

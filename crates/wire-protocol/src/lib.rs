@@ -50,11 +50,7 @@ where
 
     // Message operations
     Message {
-        content: T,
-        session_token: Option<String>,
-    },
-    MessageFull {
-        message: MessageFull<T>,
+        content: Box<MessageFull<T>>,
     },
     MessageResponse {
         message_id: String,

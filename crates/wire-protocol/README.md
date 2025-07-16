@@ -75,7 +75,6 @@ use zoeyr_wire_protocol::{BlobService, BlobServiceClient};
 // - upload_blob(data: Vec<u8>) -> BlobResult<String>
 // - download_blob(hash: String) -> BlobResult<Vec<u8>>
 // - get_blob_info(hash: String) -> BlobResult<BlobInfo>
-// - list_blobs() -> BlobResult<Vec<BlobInfo>>
 ```
 
 ### Service Client Usage
@@ -110,13 +109,9 @@ pub struct MessageFull<T> {
 }
 ```
 
-### Content Types
+### Content Types for T
 
-The protocol supports multiple content types:
-
-- `MessageContent::Text { text: String }` - Text messages
-- `MessageContent::Binary { data: Vec<u8> }` - Binary data
-- `MessageContent::File { filename: String, data: Vec<u8> }` - File attachments
+The protocol supports custom content types, as long as they are serializable and deserializable with postcard encoding.
 
 ### Message Kinds
 
@@ -132,7 +127,8 @@ Messages can be tagged for organization and filtering:
 - `Tag::Event { id: Hash, relays: Vec<String> }` - Event references
 - `Tag::User { id: Vec<u8>, relays: Vec<String> }` - User references  
 - `Tag::Channel { id: Vec<u8>, relays: Vec<String> }` - Channel references
-- `Tag::Protected` - Messages requiring authentication to forward
+- `Tag::Protected` - Messages that are only accepted if the author is the same as the connection holder. Relays must reject the message if that is not the case and will not
+store it
 
 ## Cryptographic Features
 

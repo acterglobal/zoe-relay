@@ -54,7 +54,7 @@ Zoeyr is a secure messaging relay system built with a modular, multi-crate archi
 **Key Types**:
 ```rust
 pub enum ProtocolMessage<T> {
-    MessageFull { message: MessageFull<T> },
+    Message { message: MessageFull<T> },
     HealthCheck,
     HealthResponse { status: String, timestamp: u64 },
     Error { message: String },

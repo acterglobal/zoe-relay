@@ -138,15 +138,4 @@ impl BlobService for BlobServiceImpl {
 
         Ok(Some(info))
     }
-
-    async fn list_blobs(self, _context: tarpc::context::Context) -> BlobResult<Vec<BlobInfo>> {
-        info!("Listing all blobs");
-
-        // Note: Iroh's FsStore doesn't provide a direct way to list all blobs
-        // In a real implementation, you might want to maintain an index
-        // For now, return an empty list as this would require filesystem iteration
-
-        warn!("list_blobs not fully implemented - Iroh FsStore doesn't support listing");
-        Ok(vec![])
-    }
 }

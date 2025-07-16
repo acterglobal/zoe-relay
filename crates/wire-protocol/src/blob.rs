@@ -14,9 +14,6 @@ pub trait BlobService {
 
     /// Get information about a blob
     async fn get_blob_info(hash: String) -> BlobResult<Option<BlobInfo>>;
-
-    /// List all stored blobs
-    async fn list_blobs() -> BlobResult<Vec<BlobInfo>>;
 }
 
 /// Result type for blob operations
