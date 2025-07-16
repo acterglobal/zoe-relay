@@ -5,7 +5,7 @@ use pretty_assertions::assert_eq;
 use std::time::Duration;
 
 // Update imports to use new crate structure
-use zoeyr_relay::*; // Use relay crate
+// Use relay crate
 use zoeyr_wire_protocol::*; // Use wire-protocol crate
 
 // ========================================
@@ -40,7 +40,7 @@ async fn integration_auth_challenge_flow() {
     // Test that we can sign and verify a challenge-response style message
     let nonce = "test-challenge-nonce";
     let timestamp = 1234567890u64;
-    let message_to_sign = format!("auth:{}:{}", nonce, timestamp);
+    let message_to_sign = format!("auth:{nonce}:{timestamp}");
 
     // Client creates signature
     let signature = client_key.sign(message_to_sign.as_bytes());

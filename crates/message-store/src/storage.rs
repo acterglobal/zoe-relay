@@ -1,4 +1,4 @@
-use std::marker::PhantomData;
+use std::{marker::PhantomData, sync::Arc};
 
 use futures_util::Stream;
 use redis::{aio::ConnectionManager, AsyncCommands, SetOptions};
@@ -37,8 +37,9 @@ impl MessageFilters {
 }
 
 /// Redis-backed storage for the relay service
+#[derive(Clone)]
 pub struct RedisStorage<T> {
-    pub conn: tokio::sync::Mutex<ConnectionManager>,
+    pub conn: Arc<tokio::sync::Mutex<ConnectionManager>>,
     pub config: crate::config::RelayConfig,
     _type: PhantomData<T>,
 }
@@ -46,13 +47,13 @@ pub struct RedisStorage<T> {
 // internal API
 impl<T> RedisStorage<T>
 where
-    T: Serialize + for<'de> Deserialize<'de> + Send + Sync + Sized,
+    T: Serialize + for<'de> Deserialize<'de> + Send + Sync + Sized + Clone,
 {
     async fn get_inner<R: redis::FromRedisValue>(&self, id: &str) -> Result<Option<R>> {
         info!("Reading: {id}");
         let mut conn = self.conn.lock().await;
 
-        return Ok(conn.get(&id).await.map_err(RelayError::Redis)?);
+        return conn.get(id).await.map_err(RelayError::Redis);
     }
     /// Retrieve a specific message by ID as its raw data
     async fn get_inner_raw(&self, id: &str) -> Result<Option<Vec<u8>>> {
@@ -76,7 +77,7 @@ where
 
 impl<T> RedisStorage<T>
 where
-    T: Serialize + for<'de> Deserialize<'de> + Send + Sync + Sized,
+    T: Serialize + for<'de> Deserialize<'de> + Send + Sync + Sized + Clone,
 {
     /// Create a new Redis storage instance
     pub async fn new(config: crate::config::RelayConfig) -> Result<Self> {
@@ -87,7 +88,7 @@ where
             .map_err(RelayError::Redis)?;
 
         Ok(Self {
-            conn: tokio::sync::Mutex::new(conn_manager),
+            conn: Arc::new(tokio::sync::Mutex::new(conn_manager)),
             config,
             _type: Default::default(),
         })
@@ -121,11 +122,11 @@ where
 
         // Build SET command - only add expiration if timeout is set and > 0
         let mut set_cmd = redis::cmd("SET");
-        set_cmd.arg(&message_id).arg(&storage_value.to_vec());
+        set_cmd.arg(&message_id).arg(storage_value.to_vec());
 
         if let Some(timeout) = message.storage_timeout() {
             if timeout > 0 {
-                set_cmd.arg("EX").arg(timeout as u64);
+                set_cmd.arg("EX").arg(timeout);
             }
         }
 
@@ -146,7 +147,7 @@ where
         xadd_cmd.arg(MESSAGE_STREAM_NAME).arg("*"); // auto-generate ID
 
         // Add the message data
-        xadd_cmd.arg(ID_KEY).arg(&storage_value.to_vec());
+        xadd_cmd.arg(ID_KEY).arg(storage_value.to_vec());
 
         // Extract indexable tags from the message and add directly to command
         for tag in message.tags() {
@@ -197,7 +198,7 @@ where
                 let mut previous_id: String = previous_id;
                 'retry: loop {
                     info!(redis_key = previous_id, "checking previous message");
-                    let Some(previous_message) = Self::get_full(&mut *conn, &previous_id).await?
+                    let Some(previous_message) = Self::get_full(&mut conn, &previous_id).await?
                     else {
                         // we are good, nothing was here
                         info!(

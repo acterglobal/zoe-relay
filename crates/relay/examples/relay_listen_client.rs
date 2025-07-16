@@ -44,32 +44,6 @@ struct Cli {
     /// Keep listening for new messages (don't stop after initial batch)
     #[arg(short, long)]
     follow: bool,
-
-    /// Test server statistics instead of listening
-    #[arg(long)]
-    stats: bool,
-}
-
-async fn get_stats(client: &zoeyr_relay::QuicTarpcClient) -> Result<()> {
-    info!("📊 Requesting server statistics via QUIC+tarpc");
-
-    // Create tarpc client and send request
-    let relay_service = client.relay_service().await?;
-
-    match relay_service.get_stats(tarpc::context::current()).await? {
-        Ok(stats) => {
-            println!("📊 Server Statistics:");
-            println!("   Total Messages: {}", stats.total_messages);
-            println!("   Active Streams: {}", stats.active_streams);
-            println!("   Storage Size: {} bytes", stats.storage_size_bytes);
-            println!("   Connected Clients: {}", stats.connected_clients);
-            Ok(())
-        }
-        Err(error) => {
-            error!("❌ Server error: {:?}", error);
-            Err(anyhow::anyhow!("Server error: {:?}", error))
-        }
-    }
 }
 
 async fn test_stream_messages(
@@ -171,44 +145,32 @@ async fn main() -> Result<()> {
 
     let client = builder.build().await?;
 
-    if cli.stats {
-        match get_stats(&client).await {
-            Ok(_) => {
-                info!("✅ Stats request completed successfully!");
-            }
-            Err(e) => {
-                error!("❌ Stats request failed: {}", e);
-                return Err(e);
-            }
-        }
-    } else {
-        // Parse filters
-        let mut filters = MessageFilters::new();
+    // Parse filters
+    let mut filters = MessageFilters::new();
 
-        if let Some(authors_str) = cli.authors {
-            let authors = parse_hex_list(&authors_str)?;
-            filters = filters.with_authors(authors);
-        }
+    if let Some(authors_str) = cli.authors {
+        let authors = parse_hex_list(&authors_str)?;
+        filters = filters.with_authors(authors);
+    }
 
-        if let Some(users_str) = cli.users {
-            let users = parse_hex_list(&users_str)?;
-            filters = filters.with_users(users);
-        }
+    if let Some(users_str) = cli.users {
+        let users = parse_hex_list(&users_str)?;
+        filters = filters.with_users(users);
+    }
 
-        if let Some(channels_str) = cli.channels {
-            let channels = parse_hex_list(&channels_str)?;
-            filters = filters.with_channels(channels);
-        }
+    if let Some(channels_str) = cli.channels {
+        let channels = parse_hex_list(&channels_str)?;
+        filters = filters.with_channels(channels);
+    }
 
-        match test_stream_messages(&client, filters, cli.since, cli.limit, cli.follow).await {
-            Ok(_) => {
-                info!("✅ Message streaming completed successfully!");
-                println!("🎉 Successfully received messages via streaming protocol!");
-            }
-            Err(e) => {
-                error!("❌ Message streaming failed: {}", e);
-                return Err(e);
-            }
+    match test_stream_messages(&client, filters, cli.since, cli.limit, cli.follow).await {
+        Ok(_) => {
+            info!("✅ Message streaming completed successfully!");
+            println!("🎉 Successfully received messages via streaming protocol!");
+        }
+        Err(e) => {
+            error!("❌ Message streaming failed: {}", e);
+            return Err(e);
         }
     }
 

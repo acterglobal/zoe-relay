@@ -114,9 +114,9 @@ impl DynamicSession {
         }
 
         // Verify signature
-        let message_to_verify = format!("auth:{}:{}", nonce, timestamp);
+        let message_to_verify = format!("auth:{nonce}:{timestamp}");
         let signature = Signature::from_slice(signature)
-            .map_err(|e| ProtocolError::Crypto(format!("Invalid signature: {}", e)))?;
+            .map_err(|e| ProtocolError::Crypto(format!("Invalid signature: {e}")))?;
 
         match self
             .client_ed25519_key
@@ -260,7 +260,7 @@ impl SessionManager {
 
         let session = sessions
             .get_mut(session_id)
-            .ok_or_else(|| ProtocolError::SessionExpired)?;
+            .ok_or(ProtocolError::SessionExpired)?;
 
         f(session)
     }
@@ -274,7 +274,7 @@ impl SessionManager {
 
         let session = sessions
             .get(session_id)
-            .ok_or_else(|| ProtocolError::SessionExpired)?;
+            .ok_or(ProtocolError::SessionExpired)?;
 
         Ok(session.get_stats())
     }
@@ -335,7 +335,7 @@ impl AuthChallengeManager {
         challenge_nonce: &str,
         challenge_timestamp: u64,
     ) -> Result<Vec<u8>> {
-        let message_to_sign = format!("auth:{}:{}", challenge_nonce, challenge_timestamp);
+        let message_to_sign = format!("auth:{challenge_nonce}:{challenge_timestamp}");
         let signature = self.server_key.sign(message_to_sign.as_bytes());
         Ok(signature.to_bytes().to_vec())
     }
@@ -347,9 +347,9 @@ impl AuthChallengeManager {
         challenge_timestamp: u64,
         signature: &[u8],
     ) -> Result<bool> {
-        let message_to_verify = format!("auth:{}:{}", challenge_nonce, challenge_timestamp);
+        let message_to_verify = format!("auth:{challenge_nonce}:{challenge_timestamp}");
         let signature = Signature::from_slice(signature)
-            .map_err(|e| ProtocolError::Crypto(format!("Invalid signature: {}", e)))?;
+            .map_err(|e| ProtocolError::Crypto(format!("Invalid signature: {e}")))?;
 
         match client_key.verify(message_to_verify.as_bytes(), &signature) {
             Ok(_) => Ok(true),

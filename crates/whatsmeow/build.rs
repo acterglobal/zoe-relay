@@ -24,7 +24,7 @@ fn setup_ffi() {
     }
 
     // Tell Cargo to link the library
-    println!("cargo:rustc-link-search=native={}", manifest_dir);
+    println!("cargo:rustc-link-search=native={manifest_dir}");
     println!("cargo:rustc-link-lib=dylib=whatsmeow");
 
     // Link system libraries

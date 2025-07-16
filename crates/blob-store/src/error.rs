@@ -56,34 +56,34 @@ impl IntoResponse for BlobStoreError {
     fn into_response(self) -> Response {
         let (status, error_message) = match self {
             BlobStoreError::NotFound(hash) => {
-                (StatusCode::NOT_FOUND, format!("Blob not found: {}", hash))
+                (StatusCode::NOT_FOUND, format!("Blob not found: {hash}"))
             }
             BlobStoreError::InvalidInput(msg) => {
-                (StatusCode::BAD_REQUEST, format!("Invalid input: {}", msg))
+                (StatusCode::BAD_REQUEST, format!("Invalid input: {msg}"))
             }
             BlobStoreError::Storage(err) => (
                 StatusCode::INTERNAL_SERVER_ERROR,
-                format!("Storage error: {}", err),
+                format!("Storage error: {err}"),
             ),
             BlobStoreError::Io(err) => (
                 StatusCode::INTERNAL_SERVER_ERROR,
-                format!("IO error: {}", err),
+                format!("IO error: {err}"),
             ),
             BlobStoreError::Serialization(err) => (
                 StatusCode::BAD_REQUEST,
-                format!("Serialization error: {}", err),
+                format!("Serialization error: {err}"),
             ),
             BlobStoreError::HashParse(err) => (
                 StatusCode::BAD_REQUEST,
-                format!("Hash parsing error: {}", err),
+                format!("Hash parsing error: {err}"),
             ),
             BlobStoreError::Internal(msg) => (
                 StatusCode::INTERNAL_SERVER_ERROR,
-                format!("Internal error: {}", msg),
+                format!("Internal error: {msg}"),
             ),
             BlobStoreError::Request(msg) => (
                 StatusCode::INTERNAL_SERVER_ERROR,
-                format!("Request error: {}", msg),
+                format!("Request error: {msg}"),
             ),
         };
 

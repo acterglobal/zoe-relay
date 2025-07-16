@@ -96,29 +96,6 @@ async fn send_message(client: &zoeyr_relay::QuicTarpcClient, message: String) ->
     }
 }
 
-async fn get_stats(client: &zoeyr_relay::QuicTarpcClient) -> Result<()> {
-    info!("📊 Requesting server statistics via tarpc");
-
-    // Create tarpc client and send request
-    let relay_service = client.relay_service().await?;
-
-    match relay_service.get_stats(tarpc::context::current()).await? {
-        Ok(stats) => {
-            info!("✅ Server statistics retrieved");
-            println!("📊 Server Statistics:");
-            println!("   Total Messages: {}", stats.total_messages);
-            println!("   Active Streams: {}", stats.active_streams);
-            println!("   Storage Size: {} bytes", stats.storage_size_bytes);
-            println!("   Connected Clients: {}", stats.connected_clients);
-            Ok(())
-        }
-        Err(error) => {
-            error!("❌ Failed to get stats: {:?}", error);
-            Err(anyhow::anyhow!("Failed to get stats: {:?}", error))
-        }
-    }
-}
-
 #[tokio::main]
 async fn main() -> Result<()> {
     // Initialize logging with INFO level
@@ -143,21 +120,16 @@ async fn main() -> Result<()> {
 
     let client = builder.build().await?;
 
-    if cli.stats {
-        get_stats(&client).await?;
-    } else {
-        match send_message(&client, cli.message).await {
-            Ok(_storage_id) => {
-                info!("🚀 Client completed successfully!");
-                println!("\n✨ Message relay operation completed!");
-                println!("   Check the server logs to see storage confirmation.");
-            }
-            Err(e) => {
-                error!("❌ Failed to send message: {}", e);
-                return Err(e);
-            }
+    match send_message(&client, cli.message).await {
+        Ok(_storage_id) => {
+            info!("🚀 Client completed successfully!");
+            println!("\n✨ Message relay operation completed!");
+            println!("   Check the server logs to see storage confirmation.");
+        }
+        Err(e) => {
+            error!("❌ Failed to send message: {}", e);
+            return Err(e);
         }
     }
-
     Ok(())
 }

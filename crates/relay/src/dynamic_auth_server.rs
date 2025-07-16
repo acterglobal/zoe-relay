@@ -110,7 +110,7 @@ impl DynamicSession {
         }
 
         // Verify signature
-        let expected_message = format!("auth:{}:{}", nonce, timestamp);
+        let expected_message = format!("auth:{nonce}:{timestamp}");
         let signature_bytes: [u8; 64] = signature
             .try_into()
             .map_err(|_| anyhow::anyhow!("Invalid signature length"))?;
@@ -179,7 +179,7 @@ impl MessageHandler for ZoeyrApplicationHandler {
         match message {
             ProtocolMessage::Message { content, .. } => {
                 // Use debug format to analyze content for sensitivity
-                let content_str = format!("{:?}", content);
+                let content_str = format!("{content:?}");
 
                 // YOUR business logic here!
                 if content_str.contains("admin")
@@ -208,7 +208,7 @@ impl MessageHandler for ZoeyrApplicationHandler {
     fn authorization_freshness_window(&self, message: &ProtocolMessage<String>) -> u64 {
         match message {
             ProtocolMessage::Message { content, .. } => {
-                let content_str = format!("{:?}", content);
+                let content_str = format!("{content:?}");
                 if content_str.contains("admin")
                     || content_str.contains("delete")
                     || content_str.contains("payment")
@@ -237,7 +237,7 @@ impl MessageHandler for ZoeyrApplicationHandler {
                 );
 
                 // YOUR application logic here!
-                let content_str = format!("{:?}", content);
+                let content_str = format!("{content:?}");
                 let _response_text = if content_str.contains("admin") {
                     "Admin operation completed successfully".to_string()
                 } else if content_str.contains("upload") || content_str.contains("File") {
@@ -254,7 +254,7 @@ impl MessageHandler for ZoeyrApplicationHandler {
             ProtocolMessage::HealthCheck => Ok(ProtocolMessage::HealthResponse {
                 status: format!(
                     "OK - Identity: {} - Challenges: {}/{}",
-                    hex::encode(session.client_ed25519_key.to_bytes())[..8].to_string(),
+                    &hex::encode(session.client_ed25519_key.to_bytes())[..8],
                     session.successful_challenges,
                     session.successful_challenges + session.failed_challenges
                 ),
@@ -281,7 +281,7 @@ impl rustls::server::danger::ClientCertVerifier for DynamicClientCertVerifier {
         _now: rustls::pki_types::UnixTime,
     ) -> Result<rustls::server::danger::ClientCertVerified, rustls::Error> {
         match extract_ed25519_from_cert(end_entity)
-            .map_err(|e| format!("Certificate verification failed: {}", e))
+            .map_err(|e| format!("Certificate verification failed: {e}"))
         {
             Ok(client_ed25519_key) => {
                 info!("✅ Client identity verified via mutual TLS");

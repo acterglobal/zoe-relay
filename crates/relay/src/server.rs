@@ -2,6 +2,7 @@ use anyhow::{Context, Result};
 use ed25519_dalek::SigningKey;
 use futures_util::{Sink, SinkExt, Stream, StreamExt};
 use quinn::{Connection, RecvStream, SendStream};
+use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -77,7 +78,7 @@ impl AsyncWrite for QuicDuplexStream {
     ) -> Poll<Result<usize, std::io::Error>> {
         Pin::new(&mut self.send)
             .poll_write(cx, buf)
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))
+            .map_err(std::io::Error::other)
     }
 
     fn poll_flush(
@@ -86,7 +87,7 @@ impl AsyncWrite for QuicDuplexStream {
     ) -> Poll<Result<(), std::io::Error>> {
         Pin::new(&mut self.send)
             .poll_flush(cx)
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))
+            .map_err(std::io::Error::other)
     }
 
     fn poll_shutdown(
@@ -95,7 +96,7 @@ impl AsyncWrite for QuicDuplexStream {
     ) -> Poll<Result<(), std::io::Error>> {
         Pin::new(&mut self.send)
             .poll_shutdown(cx)
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))
+            .map_err(std::io::Error::other)
     }
 }
 
@@ -253,7 +254,7 @@ async fn handle_tarpc_protocol<S: AsyncRead + AsyncWrite + Unpin + Send + 'stati
     // Now create the framed transport - this will work with tarpc because it sees a normal stream
     let codec = LengthDelimitedCodec::new();
     let framed = Framed::new(stream_with_buffered_data, codec);
-    let transport = serde_transport::new(framed, PostcardSerializer::default());
+    let transport = serde_transport::new(framed, PostcardSerializer);
 
     info!("✅ Created tarpc transport with buffered first frame");
 
@@ -262,8 +263,8 @@ async fn handle_tarpc_protocol<S: AsyncRead + AsyncWrite + Unpin + Send + 'stati
     info!("📡 Tarpc server ready to handle requests");
 
     // Handle incoming requests
-    use futures_util::StreamExt;
-    let mut requests = server.execute(service.serve());
+
+    let requests = server.execute(service.serve());
 
     // TODO: Fix Send/Unpin trait issues with tarpc
     // while let Some(request_handler) = requests.next().await {
@@ -323,9 +324,9 @@ where
 
                 // Create test message
                 let test_message = StreamingMessage::MessageReceived {
-                    message_id: format!("test_msg_{}", message_count),
+                    message_id: format!("test_msg_{message_count}"),
                     stream_position: message_count.to_string(),
-                    message_data: format!("Test message {} content", message_count).into_bytes(),
+                    message_data: format!("Test message {message_count} content").into_bytes(),
                 };
 
                 let msg_frame = StreamProtocolMessage::Message(test_message);
@@ -486,7 +487,7 @@ where
     }
 
     async fn handle_tarpc_over_quic_stream_v2(
-        mut recv: RecvStream,
+        recv: RecvStream,
         send: SendStream,
         service: impl RelayService + Clone + Send + 'static,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
@@ -576,7 +577,7 @@ where
 
                         // Send a test message
                         let test_message = StreamingMessage::MessageReceived {
-                            message_id: format!("follow_msg_{}", message_count),
+                            message_id: format!("follow_msg_{message_count}"),
                             stream_position: message_count.to_string(),
                             message_data: format!(
                                 "Follow mode message #{} - timestamp: {}",
@@ -732,11 +733,13 @@ impl RelayServerBuilder {
         self
     }
 
-    pub async fn build(
+    pub async fn build<
+        T: Serialize + for<'de> Deserialize<'de> + Send + Sync + Sized + Clone + 'static,
+    >(
         self,
     ) -> Result<(
-        QuicTarpcServer<zoeyr_wire_protocol::ServeRelayService<crate::RelayServiceImpl>>,
-        Arc<RedisStorage>,
+        QuicTarpcServer<zoeyr_wire_protocol::ServeRelayService<crate::RelayServiceImpl<T>>>,
+        Arc<RedisStorage<T>>,
     )> {
         // Load or generate server key
         let server_key = match self.private_key {
@@ -933,18 +936,6 @@ mod tests {
         ) -> RelayResult<bool> {
             Ok(true)
         }
-
-        async fn get_stats(
-            self,
-            _ctx: tarpc::context::Context,
-        ) -> RelayResult<zoeyr_wire_protocol::RelayStats> {
-            Ok(zoeyr_wire_protocol::RelayStats {
-                total_messages: 0,
-                active_streams: 0,
-                storage_size_bytes: 0,
-                connected_clients: 1,
-            })
-        }
     }
 
     #[test]
@@ -1119,7 +1110,7 @@ mod tests {
         let stream_msg = StreamProtocolMessage::Request(stream_request);
         let stream_bytes = postcard::to_allocvec(&stream_msg).unwrap();
 
-        println!("Stream bytes: {:?}", stream_bytes);
+        println!("Stream bytes: {stream_bytes:?}");
         println!("Stream bytes hex: {}", hex::encode(&stream_bytes));
 
         // Test that streaming bytes cannot be deserialized as tarpc
@@ -1131,10 +1122,7 @@ mod tests {
         }
 
         let tarpc_from_stream: Result<MockTarpcRequest, _> = postcard::from_bytes(&stream_bytes);
-        println!(
-            "Trying to deserialize stream as tarpc: {:?}",
-            tarpc_from_stream
-        );
+        println!("Trying to deserialize stream as tarpc: {tarpc_from_stream:?}");
 
         // The key insight: postcard is very permissive, so we need a different approach
         // Instead of relying on deserialization failure, we rely on successful deserialization
@@ -1154,16 +1142,13 @@ mod tests {
         };
         let tarpc_bytes = postcard::to_allocvec(&tarpc_msg).unwrap();
 
-        println!("Tarpc bytes: {:?}", tarpc_bytes);
+        println!("Tarpc bytes: {tarpc_bytes:?}");
         println!("Tarpc bytes hex: {}", hex::encode(&tarpc_bytes));
 
         // Test that tarpc bytes cannot be deserialized as our streaming protocol
         let stream_from_tarpc: Result<StreamProtocolMessage, _> =
             postcard::from_bytes(&tarpc_bytes);
-        println!(
-            "Trying to deserialize tarpc as stream: {:?}",
-            stream_from_tarpc
-        );
+        println!("Trying to deserialize tarpc as stream: {stream_from_tarpc:?}");
         assert!(
             stream_from_tarpc.is_err(),
             "Should not be able to deserialize tarpc as StreamProtocolMessage"

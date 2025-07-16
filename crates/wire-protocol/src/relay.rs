@@ -113,8 +113,8 @@ impl std::fmt::Display for RelayError {
             RelayError::MessageNotFound => write!(f, "Message not found"),
             RelayError::InvalidMessageId => write!(f, "Invalid message ID"),
             RelayError::EmptyFilters => write!(f, "Message filters cannot be empty"),
-            RelayError::StorageError(msg) => write!(f, "Storage error: {}", msg),
-            RelayError::SerializationError(msg) => write!(f, "Serialization error: {}", msg),
+            RelayError::StorageError(msg) => write!(f, "Storage error: {msg}"),
+            RelayError::SerializationError(msg) => write!(f, "Serialization error: {msg}"),
             RelayError::UnauthorizedAccess => write!(f, "Unauthorized access"),
         }
     }

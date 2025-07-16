@@ -719,7 +719,6 @@ unsafe impl Sync for WhatsAppBot {}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json;
 
     // =============================================================================
     // UNIT TESTS - Testing data models, serialization, and Rust-side logic
@@ -910,7 +909,7 @@ mod tests {
         #[test]
         fn default_implementation() {
             // With mocks enabled, this should succeed
-            let result = std::panic::catch_unwind(|| WhatsAppBot::default());
+            let result = std::panic::catch_unwind(WhatsAppBot::default);
             // In test environment with mocks, this should succeed
             assert!(result.is_ok());
         }
@@ -948,13 +947,12 @@ mod tests {
 
                 let json_result = serde_json::to_string(&contact);
                 if should_be_valid {
-                    assert!(json_result.is_ok(), "JID '{}' should be valid", jid);
+                    assert!(json_result.is_ok(), "JID '{jid}' should be valid");
                     if let Ok(json) = json_result {
                         let deserialize_result: Result<Contact, _> = serde_json::from_str(&json);
                         assert!(
                             deserialize_result.is_ok(),
-                            "JID '{}' should deserialize correctly",
-                            jid
+                            "JID '{jid}' should deserialize correctly"
                         );
                     }
                 }
@@ -1177,11 +1175,11 @@ mod tests {
 
                 for chunk in chars.chunks(chunk_size) {
                     let line: String = chunk.iter().collect();
-                    println!("│ {:55} │", line);
+                    println!("│ {line:55} │");
                 }
             } else {
                 // For shorter codes, display as-is
-                println!("│ {:55} │", qr_data);
+                println!("│ {qr_data:55} │");
             }
 
             println!("├─────────────────────────────────────────────────────────────┤");
@@ -1203,7 +1201,7 @@ mod tests {
         }
 
         fn wait_for_user_confirmation(message: &str) {
-            println!("📋 {}", message);
+            println!("📋 {message}");
             println!("   ⏸️  Press Enter when ready to continue...");
             let mut input = String::new();
             io::stdin().read_line(&mut input).unwrap();
@@ -1221,7 +1219,7 @@ mod tests {
                 println!("ℹ️  Running in MOCK MODE (simulated QR codes)");
                 println!("   📝 Note: This will show 'https://wa.me/qr/MOCK_QR_CODE_FOR_TESTING'");
                 println!("   🎯 For real QR codes, build without test mode");
-                println!("");
+                println!();
             }
 
             #[cfg(not(test))]
@@ -1293,7 +1291,7 @@ mod tests {
                     }
                 }
                 Err(e) => {
-                    println!("   ⚠️  QR code generation failed: {}", e);
+                    println!("   ⚠️  QR code generation failed: {e}");
                     println!("   💡 This might be normal if already authenticated");
                     println!("   🔄 Try disconnecting and reconnecting if issues persist");
                 }
@@ -1305,7 +1303,7 @@ mod tests {
             // Try connecting
             match bot.connect().await {
                 Ok(_) => println!("   ✅ Connection attempt initiated"),
-                Err(e) => println!("   ⚠️  Connection failed: {}", e),
+                Err(e) => println!("   ⚠️  Connection failed: {e}"),
             }
 
             // Check connection status multiple times with better feedback
@@ -1313,7 +1311,7 @@ mod tests {
             let mut connected = false;
 
             for attempt in 1..=10 {
-                println!("   📡 Connection check {}/10...", attempt);
+                println!("   📡 Connection check {attempt}/10...");
 
                 match bot.get_connection_status().await {
                     Ok(status) => match status {
@@ -1338,7 +1336,7 @@ mod tests {
                             println!("   🚪 Status: Logged out - QR code scan may be required");
                         }
                     },
-                    Err(e) => println!("   ❌ Status check error: {}", e),
+                    Err(e) => println!("   ❌ Status check error: {e}"),
                 }
 
                 if attempt < 10 {
@@ -1380,12 +1378,12 @@ mod tests {
                     println!("   ✅ Connected to WhatsApp");
                 }
                 Ok(status) => {
-                    println!("   ❌ Not connected. Status: {:?}", status);
+                    println!("   ❌ Not connected. Status: {status:?}");
                     println!("   💡 Run the authentication flow test first");
                     return;
                 }
                 Err(e) => {
-                    println!("   ❌ Failed to check status: {}", e);
+                    println!("   ❌ Failed to check status: {e}");
                     return;
                 }
             }
@@ -1407,7 +1405,7 @@ mod tests {
                 chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC")
             );
 
-            println!("\n   📝 Message to send: {}", test_message);
+            println!("\n   📝 Message to send: {test_message}");
             print!("   ❓ Send this message? (y/N): ");
             io::stdout().flush().unwrap();
             let mut confirm = String::new();
@@ -1423,10 +1421,10 @@ mod tests {
             match bot.send_message(recipient, &test_message).await {
                 Ok(message_id) => {
                     println!("   ✅ Message sent successfully!");
-                    println!("   📧 Message ID: {}", message_id);
+                    println!("   📧 Message ID: {message_id}");
                 }
                 Err(e) => {
-                    println!("   ❌ Failed to send message: {}", e);
+                    println!("   ❌ Failed to send message: {e}");
                 }
             }
 

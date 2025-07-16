@@ -46,7 +46,7 @@ async fn e2e_message_storage_and_retrieval() {
 
     // Test message retrieval
     let retrieved = storage
-        .get_message::<String>(signed_message.id.as_bytes())
+        .get_message(signed_message.id.as_bytes())
         .await
         .expect("Failed to retrieve message")
         .expect("Message not found");
@@ -96,7 +96,7 @@ async fn e2e_duplicate_message_prevention() {
     // This should either succeed silently (idempotent) or return a specific duplicate error
     // The behavior depends on the storage implementation
     let retrieved = storage
-        .get_message::<String>(signed_message.id.as_bytes())
+        .get_message(signed_message.id.as_bytes())
         .await
         .expect("Failed to retrieve message")
         .expect("Message not found");

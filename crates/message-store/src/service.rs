@@ -14,7 +14,7 @@ use zoeyr_wire_protocol::{
 #[derive(Clone)]
 pub struct RelayServiceImpl<T>
 where
-    T: Serialize + for<'de> Deserialize<'de> + Send + Sync + Sized,
+    T: Serialize + for<'de> Deserialize<'de> + Send + Sync + Sized + Clone,
 {
     storage: Arc<RedisStorage<T>>,
     active_streams: Arc<RwLock<HashMap<String, StreamConfig>>>,
@@ -22,7 +22,7 @@ where
 
 impl<T> RelayServiceImpl<T>
 where
-    T: Serialize + for<'de> Deserialize<'de> + Send + Sync + Sized,
+    T: Serialize + for<'de> Deserialize<'de> + Send + Sync + Sized + Clone,
 {
     pub fn new(storage: Arc<RedisStorage<T>>) -> Self {
         Self {
@@ -41,7 +41,7 @@ where
 
 impl<T> RelayService for RelayServiceImpl<T>
 where
-    T: Serialize + for<'de> Deserialize<'de> + Send + Sync + Sized,
+    T: Serialize + for<'de> Deserialize<'de> + Send + Sync + Sized + Clone,
 {
     async fn get_message(
         self,

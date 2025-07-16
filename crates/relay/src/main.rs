@@ -254,19 +254,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 async fn listen_for_messages<T>(
-    storage: &RedisStorage,
+    storage: &RedisStorage<T>,
     filters: &MessageFilters,
     since: Option<String>,
     limit: usize,
 ) -> Result<(), Box<dyn std::error::Error>>
 where
-    T: serde::Serialize + for<'de> serde::Deserialize<'de> + Send + Sync + std::fmt::Debug,
+    T: serde::Serialize + for<'de> serde::Deserialize<'de> + Send + Sync + std::fmt::Debug + Clone,
 {
     let mut stream: std::pin::Pin<
         Box<dyn futures_util::Stream<Item = Result<(Option<Vec<u8>>, String), _>> + Send>,
     > = Box::pin(
         storage
-            .listen_for_messages::<T>(filters, since, Some(limit))
+            .listen_for_messages(filters, since, Some(limit))
             .await?,
     );
 
@@ -277,7 +277,7 @@ where
                 info!("Received message: {} at height: {}", hx_id, height);
 
                 // Try to fetch the full message
-                match storage.get_message::<T>(&msg_id).await {
+                match storage.get_message(&msg_id).await {
                     Ok(Some(message)) => {
                         println!("Message content: {:?}", message.content());
                         println!("Stream position: {height}");

@@ -1,6 +1,5 @@
 use anyhow::{Context, Result};
 use ed25519_dalek::SigningKey;
-use futures_util::{SinkExt, StreamExt};
 use std::net::SocketAddr;
 use tarpc::{client, serde_transport};
 use tracing::{error, info};
@@ -52,7 +51,7 @@ impl QuicTarpcClient {
         let codec = LengthDelimitedCodec::new();
         let combined = QuicDuplexStream::new(recv, send);
         let framed = Framed::new(combined, codec);
-        let transport = serde_transport::new(framed, PostcardSerializer::default());
+        let transport = serde_transport::new(framed, PostcardSerializer);
 
         // Create tarpc client
         let client = RelayServiceClient::new(client::Config::default(), transport).spawn();
@@ -101,7 +100,7 @@ impl QuicTarpcClient {
             let response_msg: StreamProtocolMessage = postcard::from_bytes(&response_frame)
                 .map_err(|e| anyhow::anyhow!("Failed to deserialize response: {}", e))?;
 
-            use zoeyr_wire_protocol::{StreamResponse, StreamingMessage};
+            use zoeyr_wire_protocol::StreamResponse;
             match response_msg {
                 StreamProtocolMessage::Response(StreamResponse::StreamStarted) => {
                     info!("✅ Stream started successfully, listening for messages...");
@@ -141,7 +140,7 @@ impl QuicTarpcClient {
                     // Try to decode the message data as a string for display
                     if let Ok(content) = String::from_utf8(message_data) {
                         info!("   Content: {}", content);
-                        println!("📨 Message {}: {}", message_count, content);
+                        println!("📨 Message {message_count}: {content}");
                     }
                 }
                 StreamProtocolMessage::Message(StreamingMessage::Heartbeat) => {

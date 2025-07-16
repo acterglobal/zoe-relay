@@ -113,7 +113,7 @@ impl RelayClient {
         let crypto = rustls::ClientConfig::builder()
             .dangerous()
             .with_custom_certificate_verifier(Arc::new(ServerEd25519TlsVerifier::new(
-                expected_server_ed25519_key.clone(),
+                expected_server_ed25519_key,
             )))
             .with_no_client_auth();
 

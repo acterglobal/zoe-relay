@@ -49,7 +49,7 @@ async fn main() -> Result<()> {
         builder = builder.with_private_key(private_key);
     }
 
-    let (server, _storage) = builder.build().await?;
+    let (server, _storage) = builder.build::<String>().await?;
 
     info!("🎯 Relay server ready to accept messages!");
     println!("\n🚀 Zoeyr Relay Server is now running!");

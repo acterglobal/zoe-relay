@@ -129,10 +129,10 @@ async fn get_blob_info(
 ) -> Result<Json<BlobInfo>, BlobStoreError> {
     let hash = hash_str.parse::<Hash>().context("Invalid hash format")?;
 
-    let exists = state.service.store().has(hash.clone()).await?;
+    let exists = state.service.store().has(hash).await?;
     let size = if exists {
         // Get the blob size by trying to get the bytes
-        match state.service.store().get_bytes(hash.clone()).await {
+        match state.service.store().get_bytes(hash).await {
             Ok(bytes) => bytes.len() as u64,
             Err(_) => 0,
         }
@@ -157,7 +157,7 @@ async fn download_blob(
     let data = state
         .service
         .store()
-        .get_bytes(hash.clone())
+        .get_bytes(hash)
         .await
         .map_err(|_| BlobStoreError::NotFound(hash.to_string()))?;
 

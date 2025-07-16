@@ -18,9 +18,9 @@ impl From<u32> for StoreKey {
     }
 }
 
-impl Into<u32> for StoreKey {
-    fn into(self) -> u32 {
-        match self {
+impl From<StoreKey> for u32 {
+    fn from(val: StoreKey) -> Self {
+        match val {
             StoreKey::PublicUserInfo => 0,
             StoreKey::MlsKeyPackage => 100,
             StoreKey::CustomKey(a) => a,
@@ -28,12 +28,12 @@ impl Into<u32> for StoreKey {
     }
 }
 
-impl Into<u32> for &StoreKey {
-    fn into(self) -> u32 {
-        match self {
+impl From<&StoreKey> for u32 {
+    fn from(val: &StoreKey) -> Self {
+        match val {
             StoreKey::PublicUserInfo => 0,
             StoreKey::MlsKeyPackage => 100,
-            StoreKey::CustomKey(a) => a.clone(),
+            StoreKey::CustomKey(a) => *a,
         }
     }
 }

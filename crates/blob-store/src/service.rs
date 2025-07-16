@@ -82,7 +82,7 @@ impl BlobService for BlobServiceImpl {
             .map_err(|_| BlobError::InvalidHash { hash: hash.clone() })?;
 
         // Try to get the blob data
-        let data = match self.store.get_bytes(hash.clone()).await {
+        let data = match self.store.get_bytes(hash).await {
             Ok(bytes) => bytes,
             Err(_) => return Ok(None), // Blob not found
         };
@@ -107,20 +107,20 @@ impl BlobService for BlobServiceImpl {
             .map_err(|_| BlobError::InvalidHash { hash: hash.clone() })?;
 
         // Check if blob exists and get its size
-        let exists =
-            self.store
-                .has(hash_obj.clone())
-                .await
-                .map_err(|e| BlobError::StorageError {
-                    message: e.to_string(),
-                })?;
+        let exists = self
+            .store
+            .has(hash_obj)
+            .await
+            .map_err(|e| BlobError::StorageError {
+                message: e.to_string(),
+            })?;
 
         if !exists {
             return Ok(None);
         }
 
         // Get the blob size by retrieving the bytes
-        let size_bytes = match self.store.get_bytes(hash_obj.clone()).await {
+        let size_bytes = match self.store.get_bytes(hash_obj).await {
             Ok(bytes) => bytes.len() as u64,
             Err(e) => {
                 error!("Failed to retrieve blob {} for size info: {}", hash, e);

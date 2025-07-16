@@ -9,7 +9,6 @@
 use anyhow::Result;
 use bytes::BytesMut;
 use futures_util::{SinkExt, StreamExt};
-use std::sync::Arc;
 use tokio::io::duplex;
 use tokio_util::codec::{Framed, LengthDelimitedCodec};
 
@@ -161,7 +160,7 @@ async fn test_tarpc_framing_debug() -> Result<()> {
         args: b"Hello tarpc!".to_vec(),
     };
 
-    println!("🔍 Original request: {:?}", test_request);
+    println!("🔍 Original request: {test_request:?}");
 
     // Serialize with postcard
     let serialized = postcard::to_allocvec(&test_request)?;
@@ -191,7 +190,7 @@ async fn test_tarpc_framing_debug() -> Result<()> {
 
     // Test deserialization
     let deserialized: TarpcRequest = postcard::from_bytes(&received_frame)?;
-    println!("🔍 Deserialized: {:?}", deserialized);
+    println!("🔍 Deserialized: {deserialized:?}");
 
     assert_eq!(deserialized.id, test_request.id);
     assert_eq!(deserialized.method, test_request.method);
@@ -328,7 +327,7 @@ async fn test_tarpc_transport_compatibility() -> Result<()> {
     // This works fine:
     use tarpc::serde_transport;
     let _transport: serde_transport::Transport<_, Vec<u8>, String, _> =
-        serde_transport::new(client_framed, PostcardSerializer::default());
+        serde_transport::new(client_framed, PostcardSerializer);
     println!("✅ tarpc transport works fine with direct Framed stream");
 
     println!("🎯 SOLUTION NEEDED: Find a way to inject the first frame into tarpc transport");
@@ -364,7 +363,7 @@ async fn test_tarpc_solution_with_buffered_stream() -> Result<()> {
     // This should work because tarpc sees a normal Framed<StreamWithBufferedData, _>
     use tarpc::serde_transport;
     let _transport: serde_transport::Transport<_, Vec<u8>, String, _> =
-        serde_transport::new(framed, PostcardSerializer::default());
+        serde_transport::new(framed, PostcardSerializer);
 
     println!("✅ SUCCESS: tarpc transport accepts StreamWithBufferedData!");
     println!("🎯 This approach buffers the first frame at the raw stream level");
