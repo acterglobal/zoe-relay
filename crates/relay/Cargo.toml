@@ -31,6 +31,9 @@ tarpc = { workspace = true }
 anyhow = { workspace = true }
 thiserror = { workspace = true }
 
+# Pin projection
+pin-project = "1.0"
+
 # Logging
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
@@ -97,15 +100,3 @@ testcontainers-modules = { version = "0.12", features = ["redis"] }
 # Additional testing utilities
 criterion = "0.5"
 hex-literal = "0.4"
-
-[[example]]
-name = "relay_server"
-path = "examples/relay_server.rs"
-
-[[example]]
-name = "relay_send_client"
-path = "examples/relay_send_client.rs"
-
-[[example]]
-name = "relay_listen_client"
-path = "examples/relay_listen_client.rs"

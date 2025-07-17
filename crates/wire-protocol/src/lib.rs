@@ -4,7 +4,8 @@ pub mod crypto;
 pub mod model;
 pub mod protocol;
 pub mod relay; // Existing wire protocol models
-pub mod streaming; // Message streaming protocol
+pub mod streaming;
+pub mod wire; // Message streaming protocol
 
 pub use auth::*;
 pub use blob::*;
@@ -13,6 +14,7 @@ pub use model::*;
 pub use protocol::*;
 pub use relay::*; // Re-export existing wire protocol types
 pub use streaming::*; // Re-export streaming protocol types
+pub use wire::*;
 
 // Re-export Blake3 Hash type for use in other crates
 pub use blake3::Hash;
@@ -50,7 +52,7 @@ where
 
     // Message operations
     Message {
-        content: Box<MessageFull<T>>,
+        content: Box<T>,
     },
     MessageResponse {
         message_id: String,
@@ -68,6 +70,24 @@ where
     Error {
         message: String,
     },
+}
+
+impl<T> From<T> for ProtocolMessage<T>
+where
+    T: Serialize + for<'a> Deserialize<'a> + Clone + PartialEq + Send + Sync,
+{
+    fn from(value: T) -> Self {
+        Box::new(value).into()
+    }
+}
+
+impl<T> From<Box<T>> for ProtocolMessage<T>
+where
+    T: Serialize + for<'a> Deserialize<'a> + Clone + PartialEq + Send + Sync,
+{
+    fn from(value: Box<T>) -> Self {
+        ProtocolMessage::Message { content: value }
+    }
 }
 
 /// Common content types for convenience
@@ -90,18 +110,11 @@ mod tests {
     #[test]
     fn unit_protocol_creation() {
         let content = "Hello World".to_string();
-        let message = ProtocolMessage::Message {
-            content,
-            session_token: Some("test-token".to_string()),
-        };
+        let message: ProtocolMessage<String> = content.into();
 
         match message {
-            ProtocolMessage::Message {
-                content,
-                session_token,
-            } => {
-                assert_eq!(session_token, Some("test-token".to_string()));
-                assert_eq!(content, "Hello World");
+            ProtocolMessage::Message { content } => {
+                assert_eq!(content.as_str(), "Hello World");
             }
             _ => panic!("Wrong message type"),
         }
@@ -110,10 +123,7 @@ mod tests {
     #[test]
     fn unit_protocol_serialization() {
         let content = vec![1u8, 2, 3, 4];
-        let message = ProtocolMessage::Message {
-            content,
-            session_token: Some("binary-session".to_string()),
-        };
+        let message: ProtocolMessage<Vec<u8>> = content.into();
 
         // Test postcard serialization
         let serialized_bytes =
@@ -127,10 +137,7 @@ mod tests {
     #[test_case("test".to_string(); "text_content")]
     #[test_case("another message".to_string(); "another_text_content")]
     fn unit_protocol_text_content_types(content: String) {
-        let message = ProtocolMessage::Message {
-            content,
-            session_token: None,
-        };
+        let message: ProtocolMessage<String> = content.into();
 
         // Ensure it serializes and deserializes correctly
         let serialized_bytes = postcard::to_allocvec(&message).unwrap();
@@ -142,10 +149,7 @@ mod tests {
     #[test]
     fn unit_protocol_binary_content() {
         let content = vec![1u8, 2, 3];
-        let message = ProtocolMessage::Message {
-            content,
-            session_token: None,
-        };
+        let message: ProtocolMessage<Vec<u8>> = content.into();
 
         let serialized_bytes = postcard::to_allocvec(&message).unwrap();
         let deserialized: ProtocolMessage<Vec<u8>> =
@@ -159,10 +163,7 @@ mod tests {
             filename: "test.txt".to_string(),
             data: vec![4, 5, 6],
         };
-        let message = ProtocolMessage::Message {
-            content,
-            session_token: None,
-        };
+        let message: ProtocolMessage<FileContent> = content.into();
 
         let serialized_bytes = postcard::to_allocvec(&message).unwrap();
         let deserialized: ProtocolMessage<FileContent> =
@@ -205,10 +206,7 @@ mod tests {
 
     #[test]
     fn protocol_message_postcard_serialization_works() {
-        let message = ProtocolMessage::Message {
-            content: "test message".to_string(),
-            session_token: Some("token123".to_string()),
-        };
+        let message: ProtocolMessage<String> = "test message".to_string().into();
 
         // Postcard serialization should work with our current approach
         let serialized_bytes = postcard::to_allocvec(&message).unwrap();
@@ -223,10 +221,7 @@ mod tests {
     #[test]
     fn protocol_message_postcard_works_now() {
         // Test the actual message type that was previously causing issues
-        let message = ProtocolMessage::Message {
-            content: "hello by ben".to_string(),
-            session_token: None,
-        };
+        let message: ProtocolMessage<String> = "hello by ben".to_string().into();
 
         // PostCard serialization now works with our implementation approach
         let serialized =
@@ -315,10 +310,7 @@ mod tests {
             metadata,
         };
 
-        let protocol_message = ProtocolMessage::Message {
-            content: custom_content.clone(),
-            session_token: Some("custom-session-token".to_string()),
-        };
+        let protocol_message: ProtocolMessage<CustomContent> = custom_content.clone().into();
 
         // Test serialization
         let serialized_bytes = postcard::to_allocvec(&protocol_message).unwrap();
@@ -329,17 +321,13 @@ mod tests {
 
         // Verify content
         match deserialized {
-            ProtocolMessage::Message {
-                content,
-                session_token,
-            } => {
+            ProtocolMessage::Message { content } => {
                 assert_eq!(content.message, "Custom protocol message");
                 assert_eq!(content.priority, 5);
                 assert_eq!(
                     content.metadata.get("author"),
                     Some(&"test-user".to_string())
                 );
-                assert_eq!(session_token, Some("custom-session-token".to_string()));
             }
             _ => panic!("Wrong message type"),
         }

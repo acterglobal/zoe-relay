@@ -169,9 +169,6 @@ The RelayService provides the following RPC methods:
 - **`get_message`**: Retrieve a message by ID
 - **`store_message`**: Store a new message (returns stream ID if newly stored, None if already exists)
 - **`start_message_stream`**: Begin streaming messages with filters
-- **`get_stream_batch`**: Get next batch of messages from active stream
-- **`stop_message_stream`**: Stop an active message stream
-- **`get_stats`**: Get service statistics
 
 ### Authentication
 

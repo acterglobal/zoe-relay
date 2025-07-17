@@ -7423,6 +7423,7 @@ dependencies = [
  "hex",
  "hex-literal",
  "mockall",
+ "pin-project",
  "postcard",
  "pretty_assertions",
  "proptest",

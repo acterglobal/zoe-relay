@@ -1,13 +1,244 @@
 use anyhow::{Context, Result};
 use ed25519_dalek::{SigningKey, VerifyingKey};
-use std::net::SocketAddr;
+use futures_util::{Sink, Stream};
+use pin_project::pin_project;
+use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+use std::task::{Context as TaskContext, Poll};
+use std::{net::SocketAddr, pin::Pin};
+use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
+use tokio::sync::mpsc;
 use tracing::{error, info};
 
-use quinn::{ClientConfig, Connection, Endpoint, ServerConfig};
+use quinn::{ClientConfig, Connection, Endpoint, RecvStream, SendStream, ServerConfig};
 use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
 
-use zoeyr_wire_protocol::{extract_ed25519_from_cert, generate_deterministic_cert_from_ed25519};
+use zoeyr_wire_protocol::{
+    extract_ed25519_from_cert, generate_deterministic_cert_from_ed25519, ServerWireMessage,
+    StreamMessage,
+};
+
+/// Transport that routes ServerWireMessage<R, T> - RPC to RPC handling, Stream to channels
+#[pin_project]
+pub struct RoutingTransport<R, T, Transport>
+where
+    R: Serialize + for<'a> Deserialize<'a> + Clone + PartialEq + Send + Sync + Unpin,
+    T: Serialize + for<'a> Deserialize<'a> + Clone + PartialEq + Send + Sync + Unpin,
+    Transport: Stream + Sink<ServerWireMessage<R, T>> + Unpin,
+{
+    #[pin]
+    inner: Transport,
+    stream_tx: mpsc::UnboundedSender<StreamMessage<T>>,
+    _phantom: std::marker::PhantomData<(R, T)>,
+}
+
+impl<R, T, Transport> RoutingTransport<R, T, Transport>
+where
+    R: Serialize + for<'a> Deserialize<'a> + Clone + PartialEq + Send + Sync + Unpin,
+    T: Serialize + for<'a> Deserialize<'a> + Clone + PartialEq + Send + Sync + Unpin,
+    Transport: Stream + Sink<ServerWireMessage<R, T>> + Unpin,
+{
+    pub fn new(inner: Transport, stream_tx: mpsc::UnboundedSender<StreamMessage<T>>) -> Self {
+        Self {
+            inner,
+            stream_tx,
+            _phantom: std::marker::PhantomData,
+        }
+    }
+
+    pub fn with_channels(inner: Transport) -> (Self, mpsc::UnboundedReceiver<StreamMessage<T>>) {
+        let (stream_tx, stream_rx) = mpsc::unbounded_channel();
+        (
+            Self {
+                inner,
+                stream_tx,
+                _phantom: std::marker::PhantomData,
+            },
+            stream_rx,
+        )
+    }
+}
+
+impl<R, T, Transport, E> Stream for RoutingTransport<R, T, Transport>
+where
+    R: Serialize + for<'a> Deserialize<'a> + Clone + PartialEq + Send + Sync + Unpin,
+    T: Serialize + for<'a> Deserialize<'a> + Clone + PartialEq + Send + Sync + Unpin,
+    Transport:
+        Stream<Item = Result<ServerWireMessage<R, T>, E>> + Sink<ServerWireMessage<R, T>> + Unpin,
+    E: std::error::Error + Send + Sync + 'static,
+{
+    type Item = Result<R, E>;
+
+    fn poll_next(self: Pin<&mut Self>, cx: &mut TaskContext<'_>) -> Poll<Option<Self::Item>> {
+        let this = self.project();
+        match this.inner.poll_next(cx) {
+            Poll::Ready(Some(Ok(ServerWireMessage::Rpc(rpc_item)))) => {
+                Poll::Ready(Some(Ok(rpc_item)))
+            }
+            Poll::Ready(Some(Ok(ServerWireMessage::Stream(stream_msg)))) => {
+                // Route stream message to channel
+                if let Err(e) = this.stream_tx.send(stream_msg) {
+                    error!("Failed to send stream message to channel: {}", e);
+                }
+                // Continue polling for next message (stream messages don't go to RPC)
+                cx.waker().wake_by_ref();
+                Poll::Pending
+            }
+            Poll::Ready(Some(Err(e))) => Poll::Ready(Some(Err(e))),
+            Poll::Ready(None) => Poll::Ready(None),
+            Poll::Pending => Poll::Pending,
+        }
+    }
+}
+
+impl<R, T, Transport> Sink<R> for RoutingTransport<R, T, Transport>
+where
+    R: Serialize + for<'a> Deserialize<'a> + Clone + PartialEq + Send + Sync + Unpin,
+    T: Serialize + for<'a> Deserialize<'a> + Clone + PartialEq + Send + Sync + Unpin,
+    Transport: Stream + Sink<ServerWireMessage<R, T>> + Unpin,
+    <Transport as Sink<ServerWireMessage<R, T>>>::Error: std::error::Error + Send + Sync + 'static,
+{
+    type Error = <Transport as Sink<ServerWireMessage<R, T>>>::Error;
+
+    fn poll_ready(self: Pin<&mut Self>, cx: &mut TaskContext<'_>) -> Poll<Result<(), Self::Error>> {
+        let this = self.project();
+        this.inner.poll_ready(cx)
+    }
+
+    fn start_send(self: Pin<&mut Self>, item: R) -> Result<(), Self::Error> {
+        let this = self.project();
+        let wrapped = ServerWireMessage::Rpc(item);
+        this.inner.start_send(wrapped)
+    }
+
+    fn poll_flush(self: Pin<&mut Self>, cx: &mut TaskContext<'_>) -> Poll<Result<(), Self::Error>> {
+        let this = self.project();
+        this.inner.poll_flush(cx)
+    }
+
+    fn poll_close(self: Pin<&mut Self>, cx: &mut TaskContext<'_>) -> Poll<Result<(), Self::Error>> {
+        let this = self.project();
+        this.inner.poll_close(cx)
+    }
+}
+
+/// Simple postcard codec for ServerWireMessage
+#[derive(Clone, Debug, Default)]
+pub struct PostcardCodec;
+
+impl<R, T> tokio_serde::Serializer<ServerWireMessage<R, T>> for PostcardCodec
+where
+    R: Serialize + for<'a> Deserialize<'a> + Clone + PartialEq + Send + Sync,
+    T: Serialize + for<'a> Deserialize<'a> + Clone + PartialEq + Send + Sync,
+{
+    type Error = std::io::Error;
+
+    fn serialize(
+        self: Pin<&mut Self>,
+        item: &ServerWireMessage<R, T>,
+    ) -> Result<bytes::Bytes, Self::Error> {
+        let bytes = postcard::to_allocvec(item)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+        Ok(bytes::Bytes::from(bytes))
+    }
+}
+
+impl<R, T> tokio_serde::Deserializer<ServerWireMessage<R, T>> for PostcardCodec
+where
+    R: Serialize + for<'a> Deserialize<'a> + Clone + PartialEq + Send + Sync,
+    T: Serialize + for<'a> Deserialize<'a> + Clone + PartialEq + Send + Sync,
+{
+    type Error = std::io::Error;
+
+    fn deserialize(
+        self: Pin<&mut Self>,
+        src: &bytes::BytesMut,
+    ) -> Result<ServerWireMessage<R, T>, Self::Error> {
+        postcard::from_bytes(src)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))
+    }
+}
+
+/// Generic postcard codec for any serializable type
+#[derive(Clone, Debug, Default)]
+pub struct GenericPostcardCodec;
+
+impl<Item> tokio_serde::Serializer<Item> for GenericPostcardCodec
+where
+    Item: Serialize + for<'a> Deserialize<'a> + Clone + PartialEq + Send + Sync,
+{
+    type Error = std::io::Error;
+
+    fn serialize(self: Pin<&mut Self>, item: &Item) -> Result<bytes::Bytes, Self::Error> {
+        let bytes = postcard::to_allocvec(item)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+        Ok(bytes::Bytes::from(bytes))
+    }
+}
+
+impl<Item> tokio_serde::Deserializer<Item> for GenericPostcardCodec
+where
+    Item: Serialize + for<'a> Deserialize<'a> + Clone + PartialEq + Send + Sync,
+{
+    type Error = std::io::Error;
+
+    fn deserialize(self: Pin<&mut Self>, src: &bytes::BytesMut) -> Result<Item, Self::Error> {
+        postcard::from_bytes(src)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))
+    }
+}
+
+/// A duplex stream that combines QUIC RecvStream and SendStream
+pub struct QuicDuplexStream {
+    recv: RecvStream,
+    send: SendStream,
+}
+
+impl QuicDuplexStream {
+    pub fn new(recv: RecvStream, send: SendStream) -> Self {
+        Self { recv, send }
+    }
+}
+
+impl AsyncRead for QuicDuplexStream {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        cx: &mut TaskContext<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        Pin::new(&mut self.recv).poll_read(cx, buf)
+    }
+}
+
+impl AsyncWrite for QuicDuplexStream {
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        cx: &mut TaskContext<'_>,
+        buf: &[u8],
+    ) -> Poll<Result<usize, std::io::Error>> {
+        Pin::new(&mut self.send)
+            .poll_write(cx, buf)
+            .map_err(std::io::Error::other)
+    }
+
+    fn poll_flush(
+        mut self: Pin<&mut Self>,
+        cx: &mut TaskContext<'_>,
+    ) -> Poll<Result<(), std::io::Error>> {
+        Pin::new(&mut self.send)
+            .poll_flush(cx)
+            .map_err(std::io::Error::other)
+    }
+
+    fn poll_shutdown(
+        mut self: Pin<&mut Self>,
+        cx: &mut TaskContext<'_>,
+    ) -> Poll<Result<(), std::io::Error>> {
+        Pin::new(&mut self.send)
+            .poll_shutdown(cx)
+            .map_err(std::io::Error::other)
+    }
+}
 
 /// Custom TLS verifier that checks the server's embedded ed25519 key
 #[derive(Debug)]
@@ -138,28 +369,34 @@ impl RelayClient {
             server_key: expected_server_ed25519_key,
         })
     }
-
-    /// Send postcard-serialized data and receive response
-    pub async fn send_postcard<T, R>(&self, request: &T) -> Result<R>
-    where
-        T: serde::Serialize,
-        R: for<'a> serde::Deserialize<'a>,
-    {
-        let (mut send, mut recv) = self.connection.open_bi().await?;
-
-        // Send request using postcard
-        let request_bytes = postcard::to_allocvec(request)?;
-
-        send.write_all(&request_bytes).await?;
-        send.finish()?;
-
-        // Receive response
-        let response_bytes = recv.read_to_end(1024 * 1024).await?; // 1MB limit
-        let response: R = postcard::from_bytes(&response_bytes)?;
-
-        Ok(response)
-    }
 }
+
+// info!("🎯 Handling QUIC connection, waiting for streams...");
+// let (send, recv) = connection.accept_bi().await?;
+
+// // Now create the framed transport - this will work with tarpc because it sees a normal stream
+// let codec = LengthDelimitedCodec::new();
+// let combined = QuicDuplexStream::new(recv, send);
+// let framed = Framed::new(combined, codec);
+// let transport = serde_transport::new(stream, PostcardSerializer);
+
+// info!("✅ Created tarpc transport with buffered first frame");
+
+// // Create tarpc server
+// let server = server::BaseChannel::with_defaults(transport);
+// info!("📡 Tarpc server ready to handle requests");
+
+// // Handle incoming requests
+
+// tokio::spawn(
+//     server.execute(service.serve())
+//         // Handle all requests concurrently.
+//         .for_each(|response| async move {
+//             tokio::spawn(response);
+//         }));
+
+// info!("🔚 QUIC connection ended");
+// Ok(())
 
 /// Create a QUIC server endpoint with ed25519-derived TLS certificate
 pub fn create_relay_server_endpoint(addr: SocketAddr, server_key: &SigningKey) -> Result<Endpoint> {

@@ -58,9 +58,6 @@ use zoeyr_wire_protocol::{RelayService, RelayServiceClient};
 // - get_message(id: Vec<u8>) -> RelayResult<Option<Vec<u8>>>
 // - store_message(data: Vec<u8>) -> RelayResult<String>
 // - start_message_stream(filters: MessageFilters) -> RelayResult<String>
-// - get_stream_batch(stream_id: String) -> RelayResult<Vec<Vec<u8>>>
-// - stop_message_stream(stream_id: String) -> RelayResult<()>
-// - get_stats() -> RelayResult<RelayStats>
 ```
 
 ### BlobService

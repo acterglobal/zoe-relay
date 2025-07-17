@@ -87,11 +87,12 @@ async fn e2e_duplicate_message_prevention() {
     let signed_message = MessageFull::new(message, &signing_key).expect("Failed to sign message");
 
     // Store message first time - should succeed
-    let result1 = storage.store_message(&signed_message).await;
-    assert!(result1.is_ok());
+    let result1 = storage.store_message(&signed_message).await.unwrap();
+    assert!(result1.is_some());
 
     // Try to store the same message again - should be detected as duplicate
-    let result2 = storage.store_message(&signed_message).await;
+    let result2 = storage.store_message(&signed_message).await.unwrap();
+    assert!(result2.is_none());
 
     // This should either succeed silently (idempotent) or return a specific duplicate error
     // The behavior depends on the storage implementation
@@ -107,10 +108,7 @@ async fn e2e_duplicate_message_prevention() {
 #[tokio::test]
 async fn e2e_protocol_message_round_trip() {
     // Test protocol message creation and parsing without storage
-    let text_message = ProtocolMessage::Message {
-        content: "E2E protocol test".to_string(),
-        session_token: Some("test-session".to_string()),
-    };
+    let text_message: ProtocolMessage<String> = "E2E protocol test".to_string().into();
 
     // Test postcard serialization round trip
     let serialized_data = postcard::to_allocvec(&text_message).unwrap();

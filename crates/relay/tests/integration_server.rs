@@ -86,10 +86,7 @@ async fn integration_protocol_message_handling() {
     // Test protocol message creation and serialization
     let text_content = "Integration test message".to_string();
 
-    let message = ProtocolMessage::Message {
-        content: text_content,
-        session_token: Some("integration-token".to_string()),
-    };
+    let message: ProtocolMessage<String> = text_content.into();
 
     // Test postcard serialization
     let serialized_bytes = postcard::to_allocvec(&message).expect("Serialization failed");
@@ -222,10 +219,7 @@ async fn integration_file_content_handling() {
         data: vec![1, 2, 3, 4, 5],
     };
 
-    let message = ProtocolMessage::Message {
-        content: file_content.clone(),
-        session_token: None,
-    };
+    let message: ProtocolMessage<FileContent> = file_content.clone().into();
 
     // Test serialization
     let serialized_bytes = postcard::to_allocvec(&message).unwrap();

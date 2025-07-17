@@ -1,17 +1,15 @@
 use anyhow::{Context, Result};
 use ed25519_dalek::SigningKey;
 use std::net::SocketAddr;
-use tarpc::{client, serde_transport};
-use tracing::{error, info};
-// Removed unused compat imports
+use tracing::info;
 
 use crate::RelayClient;
 use zoeyr_wire_protocol::{
     generate_ed25519_keypair, load_ed25519_key_from_hex, load_ed25519_public_key_from_hex,
-    RelayServiceClient, StreamRequest,
+    ServerWireMessage, StreamMessage,
 };
 
-/// Generic QUIC + tarpc client that can connect to any tarpc service
+/// Generic QUIC client with persistent bi-directional connection
 pub struct QuicTarpcClient {
     relay_client: RelayClient,
 }
@@ -36,138 +34,137 @@ impl QuicTarpcClient {
         &self.relay_client.client_key
     }
 
-    /// Create a tarpc client for the RelayService
-    pub async fn relay_service(&self) -> Result<RelayServiceClient> {
+    /// Create a persistent bi-directional connection with RPC client and stream message receiver
+    /// Note: Temporarily disabled due to tarpc integration complexity
+    /*
+    pub async fn create_persistent_connection<R, T>(&self) -> Result<(
+        client::NewClient<R, RoutingTransport<R, T, tarpc::serde_transport::Transport<tokio_util::codec::Framed<crate::QuicDuplexStream, tokio_util::codec::LengthDelimitedCodec>, ServerWireMessage<R, T>, ServerWireMessage<R, T>, PostcardCodec>>>,
+        mpsc::UnboundedReceiver<StreamMessage<T>>,
+    )>
+    where
+        R: serde::Serialize + for<'a> serde::Deserialize<'a> + Clone + PartialEq + Send + Sync + Unpin + std::fmt::Debug + 'static,
+        T: serde::Serialize + for<'a> serde::Deserialize<'a> + Clone + PartialEq + Send + Sync + Unpin + std::fmt::Debug + 'static,
+    {
+        info!("🔗 Creating persistent bi-directional connection");
+
+        // Get QUIC connection
+        let connection = &self.relay_client.connection;
+
+        // Open persistent bidirectional stream
+        let (send, recv) = connection.open_bi().await?;
+
+        // Create layered transport: QUIC -> framed -> postcard -> routing
+        use tokio_util::codec::{Framed, LengthDelimitedCodec};
+
+        let codec = LengthDelimitedCodec::new();
+        let combined = crate::QuicDuplexStream::new(recv, send);
+        let framed = Framed::new(combined, codec);
+        let postcard_transport = tarpc::serde_transport::new(framed, PostcardCodec);
+
+        // Create routing transport with channels
+        let (routing_transport, stream_rx) = RoutingTransport::with_channels(postcard_transport);
+
+        // Create tarpc client that works with the RPC type R
+        let rpc_client = client::new(client::Config::default(), routing_transport);
+
+        info!("✅ Persistent connection established");
+        Ok((rpc_client, stream_rx))
+    }
+
+    /// Convenience method to create a connection and spawn a stream message handler
+    pub async fn create_connection_with_stream_handler<R, T, F>(&self, mut stream_handler: F) -> Result<client::NewClient<R, RoutingTransport<R, T, tarpc::serde_transport::Transport<tokio_util::codec::Framed<crate::QuicDuplexStream, tokio_util::codec::LengthDelimitedCodec>, ServerWireMessage<R, T>, ServerWireMessage<R, T>, PostcardCodec>>>>
+    where
+        R: serde::Serialize + for<'a> serde::Deserialize<'a> + Clone + PartialEq + Send + Sync + Unpin + std::fmt::Debug + 'static,
+        T: serde::Serialize + for<'a> serde::Deserialize<'a> + Clone + PartialEq + Send + Sync + Unpin + std::fmt::Debug + 'static,
+        F: FnMut(StreamMessage<T>) -> Result<()> + Send + 'static,
+    {
+        let (rpc_client, mut stream_rx) = self.create_persistent_connection().await?;
+
+        // Spawn task to handle incoming stream messages
+        tokio::spawn(async move {
+            info!("📨 Stream message handler started");
+            while let Some(stream_msg) = stream_rx.recv().await {
+                info!("📨 Received stream message: {:?}", stream_msg);
+                if let Err(e) = stream_handler(stream_msg) {
+                    error!("❌ Stream handler error: {}", e);
+                }
+            }
+            info!("📨 Stream message handler ended");
+        });
+
+        Ok(rpc_client)
+    }
+    */
+
+    /// Send a raw ServerWireMessage directly (for lower-level usage)
+    pub async fn send_wire_message<R, T>(&self, message: ServerWireMessage<R, T>) -> Result<()>
+    where
+        R: serde::Serialize
+            + for<'a> serde::Deserialize<'a>
+            + Clone
+            + PartialEq
+            + Send
+            + Sync
+            + Unpin
+            + std::fmt::Debug,
+        T: serde::Serialize
+            + for<'a> serde::Deserialize<'a>
+            + Clone
+            + PartialEq
+            + Send
+            + Sync
+            + Unpin
+            + std::fmt::Debug,
+    {
+        info!("📤 Sending wire message directly");
+
         // Get QUIC connection
         let connection = &self.relay_client.connection;
 
         // Open bidirectional stream
-        let (send, recv) = connection.open_bi().await?;
+        let (mut send, _recv) = connection.open_bi().await?;
 
-        // Create tarpc transport from QUIC streams
-        use crate::server::{PostcardSerializer, QuicDuplexStream};
-        use tokio_util::codec::{Framed, LengthDelimitedCodec};
+        // Serialize and send the message
+        let bytes = postcard::to_allocvec(&message)
+            .map_err(|e| anyhow::anyhow!("Failed to serialize wire message: {}", e))?;
 
-        let codec = LengthDelimitedCodec::new();
-        let combined = QuicDuplexStream::new(recv, send);
-        let framed = Framed::new(combined, codec);
-        let transport = serde_transport::new(framed, PostcardSerializer);
+        send.write_all(&bytes).await?;
+        send.finish()?;
 
-        // Create tarpc client
-        let client = RelayServiceClient::new(client::Config::default(), transport).spawn();
-
-        Ok(client)
+        info!("✅ Wire message sent successfully");
+        Ok(())
     }
 
-    /// Start a message stream using the streaming protocol over QUIC
-    pub async fn start_message_stream(&self, stream_request: StreamRequest) -> Result<()> {
-        info!("🎧 Starting message stream with streaming protocol");
+    /// Send a stream message directly (wraps in ServerWireMessage::Stream)
+    pub async fn send_stream_message<T>(&self, message: StreamMessage<T>) -> Result<()>
+    where
+        T: serde::Serialize
+            + for<'a> serde::Deserialize<'a>
+            + Clone
+            + PartialEq
+            + Send
+            + Sync
+            + Unpin
+            + std::fmt::Debug,
+    {
+        let wire_message: ServerWireMessage<(), T> = ServerWireMessage::Stream(message);
+        self.send_wire_message(wire_message).await
+    }
 
-        // Get QUIC connection
-        let connection = &self.relay_client.connection;
-
-        // Open a bidirectional stream for streaming
-        let (send, recv) = connection.open_bi().await?;
-
-        // Create framed stream for the streaming protocol
-        use crate::server::QuicDuplexStream;
-        use tokio_util::codec::{Framed, LengthDelimitedCodec};
-
-        let codec = LengthDelimitedCodec::new();
-        let combined = QuicDuplexStream::new(recv, send);
-        let mut framed = Framed::new(combined, codec);
-
-        // Send the initial stream request
-        use zoeyr_wire_protocol::StreamProtocolMessage;
-        let request_msg = StreamProtocolMessage::Request(stream_request);
-        let request_bytes = postcard::to_allocvec(&request_msg)
-            .map_err(|e| anyhow::anyhow!("Failed to serialize stream request: {}", e))?;
-
-        use futures_util::SinkExt;
-        framed
-            .send(request_bytes.into())
-            .await
-            .map_err(|e| anyhow::anyhow!("Failed to send stream request: {}", e))?;
-
-        info!("📤 Sent stream request to server");
-
-        // Wait for response
-        use futures_util::StreamExt;
-        if let Some(response_frame) = framed.next().await {
-            let response_frame = response_frame
-                .map_err(|e| anyhow::anyhow!("Failed to receive response frame: {}", e))?;
-
-            let response_msg: StreamProtocolMessage = postcard::from_bytes(&response_frame)
-                .map_err(|e| anyhow::anyhow!("Failed to deserialize response: {}", e))?;
-
-            use zoeyr_wire_protocol::StreamResponse;
-            match response_msg {
-                StreamProtocolMessage::Response(StreamResponse::StreamStarted) => {
-                    info!("✅ Stream started successfully, listening for messages...");
-                }
-                StreamProtocolMessage::Response(StreamResponse::StreamRejected(reason)) => {
-                    return Err(anyhow::anyhow!("Stream rejected: {}", reason));
-                }
-                _ => {
-                    return Err(anyhow::anyhow!("Unexpected response to stream request"));
-                }
-            }
-        } else {
-            return Err(anyhow::anyhow!("No response to stream request"));
-        }
-
-        // Now listen for streaming messages
-        let mut message_count = 0;
-        while let Some(message_frame) = framed.next().await {
-            let message_frame = message_frame
-                .map_err(|e| anyhow::anyhow!("Failed to receive message frame: {}", e))?;
-
-            let message: StreamProtocolMessage = postcard::from_bytes(&message_frame)
-                .map_err(|e| anyhow::anyhow!("Failed to deserialize message: {}", e))?;
-
-            use zoeyr_wire_protocol::StreamingMessage;
-            match message {
-                StreamProtocolMessage::Message(StreamingMessage::MessageReceived {
-                    message_id,
-                    stream_position,
-                    message_data,
-                }) => {
-                    message_count += 1;
-                    info!("📨 Received message {}: {}", message_count, message_id);
-                    info!("   Stream position: {}", stream_position);
-                    info!("   Data size: {} bytes", message_data.len());
-
-                    // Try to decode the message data as a string for display
-                    if let Ok(content) = String::from_utf8(message_data) {
-                        info!("   Content: {}", content);
-                        println!("📨 Message {message_count}: {content}");
-                    }
-                }
-                StreamProtocolMessage::Message(StreamingMessage::Heartbeat) => {
-                    info!("💓 Received heartbeat from server");
-                }
-                StreamProtocolMessage::Message(StreamingMessage::BatchEnd) => {
-                    info!("📦 Batch end received");
-                }
-                StreamProtocolMessage::Message(StreamingMessage::StreamEnd) => {
-                    info!("🔚 Stream ended by server");
-                    break;
-                }
-                StreamProtocolMessage::Message(StreamingMessage::StreamError(error)) => {
-                    error!("❌ Stream error: {}", error);
-                    return Err(anyhow::anyhow!("Stream error: {}", error));
-                }
-                _ => {
-                    error!("❌ Unexpected message type in stream");
-                }
-            }
-        }
-
-        info!(
-            "✅ Streaming completed, received {} messages",
-            message_count
-        );
-        Ok(())
+    /// Send an RPC message directly (wraps in ServerWireMessage::Rpc)
+    pub async fn send_rpc_message<R>(&self, message: R) -> Result<()>
+    where
+        R: serde::Serialize
+            + for<'a> serde::Deserialize<'a>
+            + Clone
+            + PartialEq
+            + Send
+            + Sync
+            + Unpin
+            + std::fmt::Debug,
+    {
+        let wire_message: ServerWireMessage<R, ()> = ServerWireMessage::Rpc(message);
+        self.send_wire_message(wire_message).await
     }
 }
 

@@ -4,11 +4,9 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-use tracing::{error, info, warn};
+use tracing::{error, info};
 
-use zoeyr_wire_protocol::{
-    MessageFull, RelayError, RelayResult, RelayService, StreamConfig, StreamMessage,
-};
+use zoeyr_wire_protocol::{MessageFull, RelayError, RelayResult, RelayService, StreamConfig};
 
 /// tarpc implementation of RelayService using Redis storage
 #[derive(Clone)]
@@ -103,72 +101,12 @@ where
         self,
         _ctx: tarpc::context::Context,
         config: StreamConfig,
-    ) -> RelayResult<String> {
+    ) -> RelayResult<bool> {
         info!(
             "Starting message stream with filters: {:?}",
             config.filters.is_empty()
         );
-
-        // Generate a session ID for this stream
-        let session_id = format!("session_{}", uuid::Uuid::new_v4());
-
-        // In a full implementation, you'd:
-        // 1. Store the StreamConfig associated with this session_id
-        // 2. Set up Redis streams listening with the provided filters
-        // 3. Manage active streams in a session registry
-
-        info!("Created stream session: {}", session_id);
-        Ok(session_id)
-    }
-
-    async fn get_stream_batch(
-        self,
-        _ctx: tarpc::context::Context,
-        session_id: String,
-        max_messages: Option<usize>,
-    ) -> RelayResult<Vec<StreamMessage>> {
-        let stream_config = {
-            let streams = self.active_streams.read().await;
-            streams.get(&session_id).cloned()
-        };
-
-        let stream_config = match stream_config {
-            Some(stream_config) => stream_config,
-            None => {
-                warn!("No stream config found for session: {}", session_id);
-                return Ok(vec![]);
-            }
-        };
-
-        // In a full implementation, we would:
-        // 1. Use the stored StreamConfig to query the storage
-        // 2. Convert storage results to StreamMessage format
-        // 3. Handle pagination and "since" logic
-
-        // For now, return empty batch
-        info!(
-            "Stream batch for session {} - limit: {:?} filters: {:?}",
-            session_id,
-            max_messages,
-            stream_config.filters.is_empty()
-        );
-        Ok(vec![])
-    }
-
-    async fn stop_message_stream(
-        self,
-        _ctx: tarpc::context::Context,
-        session_id: String,
-    ) -> RelayResult<bool> {
-        info!("Stopping message stream: {}", session_id);
-
-        // In a full implementation, you'd:
-        // 1. Look up the session in the registry
-        // 2. Cancel any ongoing Redis stream operations
-        // 3. Clean up session state
-
-        info!("Stream session stopped: {}", session_id);
-        Ok(true)
+        Ok(false)
     }
 }
 
@@ -198,9 +136,6 @@ mod tests {
                 .expect("Failed to create storage"),
         );
         let _service = RelayServiceImpl::new(storage);
-
-        // Test passes if no panics occur
-        assert!(true);
     }
 
     #[tokio::test]

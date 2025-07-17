@@ -75,6 +75,8 @@ where
     }
 }
 
+type RedisStreamResult = Vec<(String, Vec<(String, Vec<(Vec<u8>, Vec<u8>)>)>)>;
+
 impl<T> RedisStorage<T>
 where
     T: Serialize + for<'de> Deserialize<'de> + Send + Sync + Sized + Clone,
@@ -302,7 +304,7 @@ where
                 };
 
                 // Parse the XREAD response - it's a Vec of (stream_name, Vec of (id, Vec of (field, value)))
-                let rows: Vec<(String, Vec<(String, Vec<(Vec<u8>, Vec<u8>)>)>)> = match redis::from_redis_value(&stream_result) {
+                let rows: RedisStreamResult = match redis::from_redis_value(&stream_result) {
                     Ok(rows) => rows,
                     Err(e) => {
                         yield Err(RelayError::Redis(e));

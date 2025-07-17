@@ -54,17 +54,6 @@ impl Default for MessageFilters {
     }
 }
 
-/// Streaming message response containing both message data and stream metadata
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct StreamMessage {
-    /// The actual message data (serialized MessageFull)
-    pub message_data: Option<Vec<u8>>,
-    /// Redis stream ID for this message
-    pub stream_id: String,
-    /// Whether this is the end of initial batch (switching to live mode)
-    pub end_of_batch: bool,
-}
-
 /// Configuration for message streaming
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StreamConfig {
@@ -136,14 +125,5 @@ pub trait RelayService {
     async fn store_message(message_data: Vec<u8>) -> RelayResult<String>;
 
     /// Start listening for messages and return a stream session ID
-    async fn start_message_stream(config: StreamConfig) -> RelayResult<String>;
-
-    /// Get the next batch of messages from an active stream
-    async fn get_stream_batch(
-        session_id: String,
-        max_messages: Option<usize>,
-    ) -> RelayResult<Vec<StreamMessage>>;
-
-    /// Stop a message stream
-    async fn stop_message_stream(session_id: String) -> RelayResult<bool>;
+    async fn start_message_stream(config: StreamConfig) -> RelayResult<bool>;
 }

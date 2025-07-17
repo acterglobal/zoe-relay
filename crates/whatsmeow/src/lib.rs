@@ -116,10 +116,12 @@ mod mock_ffi {
     static MOCK_INIT_SUCCESS: AtomicBool = AtomicBool::new(true);
     static MOCK_CONNECTION_STATUS: AtomicBool = AtomicBool::new(false);
 
+    #[allow(unused)]
     pub fn set_mock_init_success(success: bool) {
         MOCK_INIT_SUCCESS.store(success, Ordering::SeqCst);
     }
 
+    #[allow(unused)]
     pub fn set_mock_connection_status(connected: bool) {
         MOCK_CONNECTION_STATUS.store(connected, Ordering::SeqCst);
     }

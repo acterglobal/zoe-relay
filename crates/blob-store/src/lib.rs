@@ -12,7 +12,7 @@ use axum::{
 use iroh_blobs::{Hash, store::fs::FsStore};
 use serde::Serialize;
 use tower_http::cors::CorsLayer;
-use tracing::{info, warn};
+use tracing::info;
 
 pub mod error;
 pub mod server;
