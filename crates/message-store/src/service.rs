@@ -1,5 +1,4 @@
 use super::storage::RedisStorage;
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -10,19 +9,13 @@ use zoeyr_wire_protocol::{MessageFull, RelayError, RelayResult, RelayService, St
 
 /// tarpc implementation of RelayService using Redis storage
 #[derive(Clone)]
-pub struct RelayServiceImpl<T>
-where
-    T: Serialize + for<'de> Deserialize<'de> + Send + Sync + Sized + Clone,
-{
-    storage: Arc<RedisStorage<T>>,
+pub struct RelayServiceImpl {
+    storage: Arc<RedisStorage>,
     active_streams: Arc<RwLock<HashMap<String, StreamConfig>>>,
 }
 
-impl<T> RelayServiceImpl<T>
-where
-    T: Serialize + for<'de> Deserialize<'de> + Send + Sync + Sized + Clone,
-{
-    pub fn new(storage: Arc<RedisStorage<T>>) -> Self {
+impl RelayServiceImpl {
+    pub fn new(storage: Arc<RedisStorage>) -> Self {
         Self {
             storage,
             active_streams: Arc::new(RwLock::new(HashMap::new())),
@@ -37,10 +30,7 @@ where
     }
 }
 
-impl<T> RelayService for RelayServiceImpl<T>
-where
-    T: Serialize + for<'de> Deserialize<'de> + Send + Sync + Sized + Clone,
-{
+impl RelayService for RelayServiceImpl {
     async fn get_message(
         self,
         _ctx: tarpc::context::Context,
@@ -63,7 +53,7 @@ where
         );
 
         // Deserialize the MessageFull from the message_data
-        let message_full: MessageFull<T> =
+        let message_full: MessageFull =
             MessageFull::from_storage_value(&message_data).map_err(|e| {
                 RelayError::SerializationError(format!("Failed to deserialize message: {e}"))
             })?;
@@ -131,7 +121,7 @@ mod tests {
         // For this test, we just verify the structure compiles
         // Real Redis testing would require a test container
         let storage = Arc::new(
-            RedisStorage::<String>::new(config)
+            RedisStorage::new(config)
                 .await
                 .expect("Failed to create storage"),
         );

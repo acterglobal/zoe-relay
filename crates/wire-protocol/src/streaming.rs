@@ -4,15 +4,11 @@ use crate::MessageFull;
 
 /// Messages sent over the streaming protocol
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(bound = "T: Serialize + for<'a> Deserialize<'a>")]
-pub enum StreamMessage<T>
-where
-    T: Serialize + for<'a> Deserialize<'a> + Clone + PartialEq + Send + Sync,
-{
+pub enum StreamMessage {
     /// A new message received that matches our filter
     MessageReceived {
         /// Blake3 hash of the message
-        message: MessageFull<T>,
+        message: MessageFull,
         /// Redis stream position
         stream_height: String,
     },

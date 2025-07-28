@@ -34,9 +34,9 @@ pub enum Kind {
     /// This is a regular event, that should be stored and made available to query for afterwards
     Regular,
     /// An ephemeral event is not kept permanently but mainly forwarded to who ever is interested
-    /// if a number is provided and larger than 0, this is the maximum seconds the event should be stored for in case
-    /// someone asks. If the timestamp + seconds is smaller than the current server time, the event
-    /// might be discarded without even forwarding it.
+    /// if a number is provided and larger than 0, this is the maximum seconds the event should be
+    /// stored for in case someone asks. If the timestamp + seconds is smaller than the current
+    /// server time, the event might be discarded without even forwarding it.
     Emphemeral(Option<u8>),
     /// This is an event that should be stored in a specific store
     Store(StoreKey),
@@ -68,23 +68,16 @@ pub enum Kind {
 // }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
-#[serde(bound = "T: Serialize + for<'a> Deserialize<'a>")]
-pub enum Message<T>
-where
-    T: Serialize + for<'a> Deserialize<'a>,
-{
-    MessageV0(MessageV0<T>),
+pub enum Message {
+    MessageV0(MessageV0),
 }
 
-impl<T> Message<T>
-where
-    T: Serialize + for<'a> Deserialize<'a>,
-{
+impl Message {
     pub fn to_bytes(&self) -> Result<Vec<u8>, postcard::Error> {
         match self {
             Message::MessageV0(message) => {
-                let heapless_vec = to_vec::<_, 4096>(message)?;
-                Ok(heapless_vec.to_vec())
+                let v = to_vec::<_, 4096>(message)?;
+                Ok(v.to_vec())
             }
         }
     }
@@ -101,7 +94,13 @@ where
         }
     }
 
-    pub fn new_v0(content: T, sender: VerifyingKey, when: u64, kind: Kind, tags: Vec<Tag>) -> Self {
+    pub fn new_v0(
+        content: Vec<u8>,
+        sender: VerifyingKey,
+        when: u64,
+        kind: Kind,
+        tags: Vec<Tag>,
+    ) -> Self {
         Message::MessageV0(MessageV0 {
             sender,
             when,
@@ -110,40 +109,48 @@ where
             content,
         })
     }
+
+    pub fn new_typed<T>(
+        content: T,
+        sender: VerifyingKey,
+        when: u64,
+        kind: Kind,
+        tags: Vec<Tag>,
+    ) -> Result<Self, postcard::Error>
+    where
+        T: Serialize,
+    {
+        Ok(Message::MessageV0(MessageV0 {
+            sender,
+            when,
+            kind,
+            tags,
+            content: postcard::to_stdvec(&content)?,
+        }))
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
-#[serde(bound = "T: Serialize + for<'a> Deserialize<'a>")]
-pub struct MessageV0<T> {
+pub struct MessageV0 {
     pub sender: VerifyingKey,
     pub when: u64, // unix timestamp in seconds
     pub kind: Kind,
     #[serde(default)]
     pub tags: Vec<Tag>,
-    pub content: T,
+    pub content: Vec<u8>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(bound = "T: Serialize + for<'a> Deserialize<'a>")]
-pub struct MessageFull<T>
-where
-    T: Serialize + for<'a> Deserialize<'a>,
-{
+pub struct MessageFull {
     pub id: Hash,
-    pub message: Message<T>,
+    pub message: Message,
     // TODO: do we need to add a HMAC?
     pub signature: Signature,
 }
 
-impl<T> MessageFull<T>
-where
-    T: Serialize + for<'a> Deserialize<'a>,
-{
+impl MessageFull {
     /// Create a new MessageFull with proper signature and ID
-    pub fn new(
-        message: Message<T>,
-        signer: &SigningKey,
-    ) -> Result<Self, Box<dyn std::error::Error>> {
+    pub fn new(message: Message, signer: &SigningKey) -> Result<Self, Box<dyn std::error::Error>> {
         let message_bytes = message.to_bytes()?;
         let signature = signer.sign(&message_bytes);
 
@@ -244,14 +251,14 @@ where
         }
     }
 
-    pub fn content(&self) -> &T {
+    pub fn content(&self) -> &Vec<u8> {
         match &self.message {
             Message::MessageV0(message) => &message.content,
         }
     }
 }
 
-impl MessageFull<Vec<u8>> {
+impl MessageFull {
     pub fn try_deserialize_content<C>(&self) -> Result<C, postcard::Error>
     where
         C: for<'a> Deserialize<'a>,
@@ -307,13 +314,14 @@ mod tests {
     fn test_message_sign_and_verify() {
         let (sk, pk) = make_keys();
         let content = DummyContent { value: 42 };
-        let core = Message::new_v0(
+        let core = Message::new_typed(
             content.clone(),
             pk,
             1714857600,
             Kind::Regular,
             vec![Tag::Protected],
-        );
+        )
+        .unwrap();
         let msg_full = MessageFull::new(core.clone(), &sk).unwrap();
         // Signature should verify
         assert!(msg_full.verify().unwrap());
@@ -324,7 +332,7 @@ mod tests {
         // Tampering with content should fail
         let mut tampered = msg_full.clone();
         let Message::MessageV0(ref mut msg) = tampered.message;
-        msg.content.value = 99;
+        msg.content[10] = 99;
         assert!(!tampered.verify_all().unwrap());
     }
 
@@ -333,13 +341,14 @@ mod tests {
         let (sk1, pk1) = make_keys();
         let (sk2, _pk2) = make_keys();
         let content = DummyContent { value: 7 };
-        let core = Message::new_v0(
+        let core = Message::new_typed(
             content.clone(),
             pk1,
             1714857600,
             Kind::Regular,
             vec![Tag::Protected],
-        );
+        )
+        .unwrap();
         let mut msg_full = MessageFull::new(core, &sk1).unwrap();
         // Replace signature with one from a different key
         let fake_sig = sk2.sign(&msg_full.message.to_bytes().unwrap());
@@ -350,13 +359,14 @@ mod tests {
     #[test]
     fn test_empty_content() {
         let (sk, pk) = make_keys();
-        let core: Message<DummyContent> = Message::new_v0(
+        let core = Message::new_typed(
             DummyContent { value: 0 },
             pk,
             1714857600,
             Kind::Regular,
             vec![Tag::Protected],
-        );
+        )
+        .unwrap();
         let msg_full = MessageFull::new(core, &sk).unwrap();
         assert!(msg_full.verify_all().unwrap());
     }
@@ -369,7 +379,7 @@ mod tests {
             DummyContent { value: 2 },
             DummyContent { value: 3 },
         ];
-        let core = Message::new_v0(
+        let core = Message::new_typed(
             contents[0].clone(),
             pk,
             1714857600,
@@ -381,7 +391,8 @@ mod tests {
                     relays: vec!["relay1".to_string()],
                 },
             ],
-        );
+        )
+        .unwrap();
 
         let msg_full = MessageFull::new(core, &sk).unwrap();
         assert!(msg_full.verify_all().unwrap());
@@ -395,7 +406,7 @@ mod tests {
             numbers: vec![1, 2, 3, 4, 5],
             flag: true,
         };
-        let core = Message::new_v0(
+        let core = Message::new_typed(
             complex_content.clone(),
             pk,
             1714857600,
@@ -404,15 +415,19 @@ mod tests {
                 id: vec![1],
                 relays: vec!["relay1".to_string()],
             }],
-        );
+        )
+        .unwrap();
 
         let msg_full = MessageFull::new(core, &sk).unwrap();
         assert!(msg_full.verify_all().unwrap());
         // Serialize and deserialize
         let serialized = msg_full.storage_value().unwrap();
-        let deserialized = MessageFull::<ComplexContent>::from_storage_value(&serialized).unwrap();
+        let deserialized = MessageFull::from_storage_value(&serialized).unwrap();
+
+        let de_content: ComplexContent = deserialized.try_deserialize_content().unwrap();
 
         assert_eq!(msg_full, deserialized);
+        assert_eq!(complex_content, de_content);
         assert!(deserialized.verify_all().unwrap());
     }
 
@@ -425,7 +440,7 @@ mod tests {
             numbers: vec![1, 2, 3, 4, 5],
             flag: true,
         };
-        let core = Message::new_v0(
+        let core = Message::new_typed(
             complex_content.clone(),
             pk,
             1714857600,
@@ -434,19 +449,20 @@ mod tests {
                 id: vec![1],
                 relays: vec!["relay1".to_string()],
             }],
-        );
+        )
+        .unwrap();
 
         let msg_full = MessageFull::new(core, &sk).unwrap();
         // Serialize and deserialize
         let serialized = msg_full.storage_value().unwrap();
-        let deserialized = MessageFull::<ComplexContent>::from_storage_value(&serialized).unwrap();
+        let deserialized = MessageFull::from_storage_value(&serialized).unwrap();
         assert!(deserialized.verify_all().unwrap());
 
-        let deserialize_u8 = MessageFull::<Vec<u8>>::from_storage_value(&serialized).unwrap();
-        let vecu8_content: ComplexContent = deserialize_u8.try_deserialize_content().unwrap();
+        let deserialize_u8 = MessageFull::from_storage_value(&serialized).unwrap();
+        let de_content: ComplexContent = deserialize_u8.try_deserialize_content().unwrap();
 
         assert_eq!(msg_full, deserialized);
-        assert_eq!(&vecu8_content, deserialized.content());
+        assert_eq!(complex_content, de_content);
     }
 
     #[test]
@@ -457,21 +473,25 @@ mod tests {
             numbers: vec![1, 2, 3, 4, 5],
             flag: true,
         };
-        let core = Message::new_v0(
+        let core = Message::new_typed(
             complex_content.clone(),
             pk,
             1714857600,
             Kind::Regular,
             vec![],
-        );
+        )
+        .unwrap();
 
         let msg_full = MessageFull::new(core, &sk).unwrap();
         assert!(msg_full.verify_all().unwrap());
         // Serialize and deserialize
         let serialized = msg_full.storage_value().unwrap();
-        let deserialized = MessageFull::<ComplexContent>::from_storage_value(&serialized).unwrap();
+        let deserialized = MessageFull::from_storage_value(&serialized).unwrap();
+
+        let de_content: ComplexContent = deserialized.try_deserialize_content().unwrap();
 
         assert_eq!(msg_full, deserialized);
+        assert_eq!(complex_content, de_content);
         assert!(deserialized.verify_all().unwrap());
     }
 
@@ -497,22 +517,24 @@ mod tests {
         ];
 
         for tag in tags {
-            let core = Message::new_v0(
+            let core = Message::new_typed(
                 content.clone(),
                 pk,
                 1714857600,
                 Kind::Regular,
                 vec![tag.clone()],
-            );
+            )
+            .unwrap();
 
             let msg_full = MessageFull::new(core, &sk).unwrap();
             assert!(msg_full.verify_all().unwrap(), "Failed for tag: {tag:?}");
             // Serialize and deserialize
             let serialized = msg_full.storage_value().unwrap();
-            let deserialized =
-                MessageFull::<DummyContent>::from_storage_value(&serialized).unwrap();
+            let deserialized = MessageFull::from_storage_value(&serialized).unwrap();
+            let de_content: DummyContent = deserialized.try_deserialize_content().unwrap();
 
             assert_eq!(msg_full, deserialized);
+            assert_eq!(content, de_content);
             assert!(deserialized.verify_all().unwrap());
         }
     }
@@ -524,19 +546,24 @@ mod tests {
             numbers: vec![1, 2, 3, 4, 5],
             flag: true,
         };
-        let core = Message::new_v0(
+        let core = Message::new_typed(
             complex_content.clone(),
             pk,
             1714857600,
             Kind::Emphemeral(Some(10)),
             vec![],
-        );
+        )
+        .unwrap();
 
         let msg_full = MessageFull::new(core, &sk).unwrap();
         assert!(msg_full.verify_all().unwrap());
         // Serialize and deserialize
         let serialized = msg_full.storage_value().unwrap();
-        let deserialized = MessageFull::<ComplexContent>::from_storage_value(&serialized).unwrap();
+        let deserialized = MessageFull::from_storage_value(&serialized).unwrap();
+        let de_content: ComplexContent = deserialized.try_deserialize_content().unwrap();
+
+        assert_eq!(msg_full, deserialized);
+        assert_eq!(complex_content, de_content);
 
         assert_eq!(msg_full, deserialized);
         assert!(deserialized.verify_all().unwrap());
@@ -572,8 +599,8 @@ mod tests {
                 relays: Vec::new(),
             });
 
-            let message = Message::new_v0(
-                content,
+            let message = Message::new_typed(
+                content.clone(),
                 verifying_key,
                 std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
@@ -581,15 +608,18 @@ mod tests {
                     .as_secs(),
                 Kind::Regular,
                 tags,
-            );
+            )
+            .unwrap();
 
             let msg_full = MessageFull::new(message, &signing_key).unwrap();
             assert!(msg_full.verify_all().unwrap());
             // Serialize and deserialize
             let serialized = msg_full.storage_value().unwrap();
-            let deserialized = MessageFull::<TestContent>::from_storage_value(&serialized).unwrap();
+            let deserialized = MessageFull::from_storage_value(&serialized).unwrap();
+            let de_content: TestContent = deserialized.try_deserialize_content().unwrap();
 
             assert_eq!(msg_full, deserialized);
+            assert_eq!(content, de_content);
             assert!(deserialized.verify_all().unwrap());
         }
     }
@@ -602,21 +632,24 @@ mod tests {
             numbers: vec![1, 2, 3, 4, 5],
             flag: true,
         };
-        let core = Message::new_v0(
+        let core = Message::new_typed(
             complex_content.clone(),
             pk,
             1714857600,
             Kind::Store(StoreKey::CustomKey(10)),
             vec![],
-        );
+        )
+        .unwrap();
 
         let msg_full = MessageFull::new(core, &sk).unwrap();
         assert!(msg_full.verify_all().unwrap());
         // Serialize and deserialize
         let serialized = msg_full.storage_value().unwrap();
-        let deserialized = MessageFull::<ComplexContent>::from_storage_value(&serialized).unwrap();
+        let deserialized = MessageFull::from_storage_value(&serialized).unwrap();
+        let de_content: ComplexContent = deserialized.try_deserialize_content().unwrap();
 
         assert_eq!(msg_full, deserialized);
+        assert_eq!(complex_content, de_content);
         assert!(deserialized.verify_all().unwrap());
     }
 
@@ -624,13 +657,14 @@ mod tests {
     fn test_id_tampering() {
         let (sk, pk) = make_keys();
         let content = DummyContent { value: 42 };
-        let core = Message::new_v0(
+        let core = Message::new_typed(
             content.clone(),
             pk,
             1714857600,
             Kind::Regular,
             vec![Tag::Protected],
-        );
+        )
+        .unwrap();
         let mut msg_full = MessageFull::new(core, &sk).unwrap();
 
         // Tamper with ID
@@ -645,13 +679,14 @@ mod tests {
     fn test_empty_signature() {
         let (sk, pk) = make_keys();
         let content = DummyContent { value: 42 };
-        let core = Message::new_v0(
+        let core = Message::new_typed(
             content.clone(),
             pk,
             1714857600,
             Kind::Regular,
             vec![Tag::Protected],
-        );
+        )
+        .unwrap();
         let mut msg_full = MessageFull::new(core, &sk).unwrap();
         // Create an invalid signature by using wrong key
         let (wrong_sk, _) = make_keys();
@@ -664,13 +699,14 @@ mod tests {
     fn test_invalid_signature_length() {
         let (sk, pk) = make_keys();
         let content = DummyContent { value: 42 };
-        let core = Message::new_v0(
+        let core = Message::new_typed(
             content.clone(),
             pk,
             1714857600,
             Kind::Regular,
             vec![Tag::Protected],
-        );
+        )
+        .unwrap();
         let mut msg_full = MessageFull::new(core, &sk).unwrap();
         // Create an invalid signature by using wrong key
         let (wrong_sk, _) = make_keys();
@@ -683,13 +719,14 @@ mod tests {
     fn test_signature_tampering() {
         let (sk, pk) = make_keys();
         let content = DummyContent { value: 42 };
-        let core = Message::new_v0(
+        let core = Message::new_typed(
             content.clone(),
             pk,
             1714857600,
             Kind::Regular,
             vec![Tag::Protected],
-        );
+        )
+        .unwrap();
         let mut msg_full = MessageFull::new(core, &sk).unwrap();
         // Create an invalid signature by using wrong key
         let (wrong_sk, _) = make_keys();
@@ -717,7 +754,7 @@ mod tests {
             numbers: vec![1, 2, 3, 4, 5],
             flag: true,
         };
-        let core = Message::new_v0(
+        let core = Message::new_typed(
             content.clone(),
             pk,
             1714857600,
@@ -729,15 +766,18 @@ mod tests {
                     relays: vec!["relay1".to_string()],
                 },
             ],
-        );
+        )
+        .unwrap();
 
         let msg_full = MessageFull::new(core, &sk).unwrap();
 
         // Serialize and deserialize
         let serialized = msg_full.storage_value().unwrap();
-        let deserialized = MessageFull::<ComplexContent>::from_storage_value(&serialized).unwrap();
+        let deserialized = MessageFull::from_storage_value(&serialized).unwrap();
+        let de_content: ComplexContent = deserialized.try_deserialize_content().unwrap();
 
         assert_eq!(msg_full, deserialized);
+        assert_eq!(content, de_content);
         assert!(deserialized.verify_all().unwrap());
     }
 
@@ -745,13 +785,14 @@ mod tests {
     fn test_core_message_serialization() {
         let (sk, pk) = make_keys();
         let content = DummyContent { value: 42 };
-        let core = Message::new_v0(
+        let core = Message::new_typed(
             content.clone(),
             pk,
             1714857600,
             Kind::Regular,
             vec![Tag::Protected],
-        );
+        )
+        .unwrap();
         let serialized = core.to_bytes().unwrap();
         assert!(!serialized.is_empty());
 
@@ -764,7 +805,7 @@ mod tests {
     fn test_multiple_tags() {
         let (sk, pk) = make_keys();
         let content = DummyContent { value: 42 };
-        let core = Message::new_v0(
+        let core = Message::new_typed(
             content.clone(),
             pk,
             1714857600,
@@ -780,7 +821,8 @@ mod tests {
                     relays: vec!["relay2".to_string()],
                 },
             ],
-        );
+        )
+        .unwrap();
         let msg_full = MessageFull::new(core, &sk).unwrap();
         assert!(msg_full.verify_all().unwrap());
     }
@@ -793,7 +835,7 @@ mod tests {
             numbers: (0..1000).collect(), // Large vector
             flag: false,
         };
-        let core = Message::new_v0(
+        let core = Message::new_typed(
             large_content.clone(),
             pk,
             1714857600,
@@ -802,7 +844,8 @@ mod tests {
                 id: vec![1],
                 relays: vec!["relay1".to_string()],
             }],
-        );
+        )
+        .unwrap();
         let msg_full = MessageFull::new(core, &sk).unwrap();
         assert!(msg_full.verify_all().unwrap());
     }
@@ -813,20 +856,22 @@ mod tests {
         let content1 = DummyContent { value: 1 };
         let content2 = DummyContent { value: 2 };
 
-        let core1 = Message::new_v0(
+        let core1 = Message::new_typed(
             content1.clone(),
             pk,
             1714857600,
             Kind::Regular,
             vec![Tag::Protected],
-        );
-        let core2 = Message::new_v0(
+        )
+        .unwrap();
+        let core2 = Message::new_typed(
             content2.clone(),
             pk,
             1714857600,
             Kind::Regular,
             vec![Tag::Protected],
-        );
+        )
+        .unwrap();
 
         let msg_full1 = MessageFull::new(core1, &sk).unwrap();
         let msg_full2 = MessageFull::new(core2, &sk).unwrap();
@@ -840,20 +885,22 @@ mod tests {
         let (sk, pk) = make_keys();
         let content = DummyContent { value: 42 };
 
-        let core1 = Message::new_v0(
+        let core1 = Message::new_typed(
             content.clone(),
             pk,
             1714857600,
             Kind::Regular,
             vec![Tag::Protected],
-        );
-        let core2 = Message::new_v0(
+        )
+        .unwrap();
+        let core2 = Message::new_typed(
             content.clone(),
             pk,
             1714857600,
             Kind::Regular,
             vec![Tag::Protected],
-        );
+        )
+        .unwrap();
 
         let msg_full1 = MessageFull::new(core1, &sk).unwrap();
         let msg_full2 = MessageFull::new(core2, &sk).unwrap();

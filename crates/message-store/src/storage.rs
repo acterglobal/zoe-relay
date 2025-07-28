@@ -1,8 +1,7 @@
-use std::{marker::PhantomData, sync::Arc};
+use std::sync::Arc;
 
 use futures_util::Stream;
 use redis::{aio::ConnectionManager, AsyncCommands, SetOptions};
-use serde::{Deserialize, Serialize};
 use tracing::{info, warn};
 use zoeyr_wire_protocol::{MessageFull, StoreKey, Tag};
 
@@ -38,17 +37,13 @@ impl MessageFilters {
 
 /// Redis-backed storage for the relay service
 #[derive(Clone)]
-pub struct RedisStorage<T> {
+pub struct RedisStorage {
     pub conn: Arc<tokio::sync::Mutex<ConnectionManager>>,
     pub config: crate::config::RelayConfig,
-    _type: PhantomData<T>,
 }
 
 // internal API
-impl<T> RedisStorage<T>
-where
-    T: Serialize + for<'de> Deserialize<'de> + Send + Sync + Sized + Clone,
-{
+impl RedisStorage {
     async fn get_inner<R: redis::FromRedisValue>(&self, id: &str) -> Result<Option<R>> {
         info!("Reading: {id}");
         let mut conn = self.conn.lock().await;
@@ -60,12 +55,12 @@ where
         self.get_inner::<Vec<u8>>(id).await
     }
     /// Retrieve a specific string
-    async fn get_inner_full(&self, id: &str) -> Result<Option<MessageFull<T>>> {
+    async fn get_inner_full(&self, id: &str) -> Result<Option<MessageFull>> {
         let mut conn = self.conn.lock().await.clone();
         Self::get_full(&mut conn, id).await
     }
 
-    async fn get_full(conn: &mut ConnectionManager, id: &str) -> Result<Option<MessageFull<T>>> {
+    async fn get_full(conn: &mut ConnectionManager, id: &str) -> Result<Option<MessageFull>> {
         let Some(value): Option<Vec<u8>> = conn.get(id).await? else {
             return Ok(None);
         };
@@ -77,10 +72,7 @@ where
 
 type RedisStreamResult = Vec<(String, Vec<(String, Vec<(Vec<u8>, Vec<u8>)>)>)>;
 
-impl<T> RedisStorage<T>
-where
-    T: Serialize + for<'de> Deserialize<'de> + Send + Sync + Sized + Clone,
-{
+impl RedisStorage {
     /// Create a new Redis storage instance
     pub async fn new(config: crate::config::RelayConfig) -> Result<Self> {
         let client = redis::Client::open(config.redis.url.clone()).map_err(RelayError::Redis)?;
@@ -92,7 +84,6 @@ where
         Ok(Self {
             conn: Arc::new(tokio::sync::Mutex::new(conn_manager)),
             config,
-            _type: Default::default(),
         })
     }
 
@@ -103,7 +94,7 @@ where
     }
     /// Store a message in Redis and publish to stream for real-time delivery
     /// Returns the stream ID if the message was newly stored, None if it already existed
-    pub async fn store_message(&self, message: &MessageFull<T>) -> Result<Option<String>> {
+    pub async fn store_message(&self, message: &MessageFull) -> Result<Option<String>> {
         let mut conn = self.conn.lock().await;
 
         // Serialize the message
@@ -254,7 +245,7 @@ where
     }
 
     /// Retrieve a specific message by ID
-    pub async fn get_message(&self, id: &[u8]) -> Result<Option<MessageFull<T>>> {
+    pub async fn get_message(&self, id: &[u8]) -> Result<Option<MessageFull>> {
         let message_id = hex::encode(id);
         self.get_inner_full(&message_id).await
     }
@@ -420,7 +411,7 @@ where
         &self,
         user_id: &[u8],
         key: StoreKey,
-    ) -> Result<Option<MessageFull<T>>> {
+    ) -> Result<Option<MessageFull>> {
         let message_id = hex::encode(user_id);
         let storage_key: u32 = key.into();
         let target_key = format!("{message_id}:{storage_key}");
@@ -439,6 +430,7 @@ mod tests {
 
     use ed25519_dalek::SigningKey;
     use rand::RngCore;
+    use serde::{Deserialize, Serialize};
     use zoeyr_wire_protocol::{Kind, Message, StoreKey, Tag};
 
     #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -465,7 +457,7 @@ mod tests {
     }
 
     /// Helper function to create a test message with given content
-    fn create_test_message(content: TestContent) -> Result<MessageFull<TestContent>> {
+    fn create_test_message(content: TestContent) -> Result<MessageFull> {
         let mut secret_bytes = [0u8; 32];
         rand::thread_rng().fill_bytes(&mut secret_bytes);
         let signing_key = SigningKey::from_bytes(&secret_bytes);
@@ -477,9 +469,9 @@ mod tests {
         kind: Kind,
         signing_key: &SigningKey,
         time_shift: u64,
-    ) -> Result<MessageFull<TestContent>> {
+    ) -> Result<MessageFull> {
         let verifying_key = signing_key.verifying_key();
-        let message = Message::new_v0(
+        let message = Message::new_typed(
             content,
             verifying_key,
             std::time::SystemTime::now()
@@ -489,22 +481,20 @@ mod tests {
                 .saturating_sub(time_shift),
             kind,
             vec![],
-        );
+        )
+        .unwrap();
 
         Ok(MessageFull::new(message, signing_key)?)
     }
 
     /// Helper function to create a test message with tags
-    fn create_test_message_with_tags(
-        content: TestContent,
-        tags: Vec<Tag>,
-    ) -> Result<MessageFull<TestContent>> {
+    fn create_test_message_with_tags(content: TestContent, tags: Vec<Tag>) -> Result<MessageFull> {
         let mut secret_bytes = [0u8; 32];
         rand::thread_rng().fill_bytes(&mut secret_bytes);
         let signing_key = SigningKey::from_bytes(&secret_bytes);
         let verifying_key = signing_key.verifying_key();
 
-        let message = Message::new_v0(
+        let message = Message::new_typed(
             content,
             verifying_key,
             std::time::SystemTime::now()
@@ -513,7 +503,8 @@ mod tests {
                 .as_secs(),
             Kind::Regular,
             tags,
-        );
+        )
+        .unwrap();
 
         Ok(MessageFull::new(message, &signing_key)?)
     }
@@ -522,7 +513,7 @@ mod tests {
     async fn test_store_and_retrieve_message() {
         // Skip test if Redis is not available
         let config = create_test_config();
-        let storage = match RedisStorage::<TestContent>::new(config.clone()).await {
+        let storage = match RedisStorage::new(config.clone()).await {
             Ok(storage) => storage,
             Err(_) => {
                 eprintln!("Skipping test: Redis not available at {}", config.redis.url);
@@ -597,7 +588,7 @@ mod tests {
         let _ = env_logger::try_init();
         // Skip test if Redis is not available
         let config = create_test_config();
-        let storage = match RedisStorage::<TestContent>::new(config.clone()).await {
+        let storage = match RedisStorage::new(config.clone()).await {
             Ok(storage) => storage,
             Err(_) => {
                 eprintln!("Skipping test: Redis not available at {}", config.redis.url);
@@ -744,7 +735,7 @@ mod tests {
     async fn test_store_duplicate_message() {
         // Skip test if Redis is not available
         let config = create_test_config();
-        let storage = match RedisStorage::<TestContent>::new(config.clone()).await {
+        let storage = match RedisStorage::new(config.clone()).await {
             Ok(storage) => storage,
             Err(_) => {
                 eprintln!("Skipping test: Redis not available at {}", config.redis.url);
@@ -794,7 +785,7 @@ mod tests {
     async fn test_store_message_with_tags() {
         // Skip test if Redis is not available
         let config = create_test_config();
-        let storage = match RedisStorage::<TestContent>::new(config.clone()).await {
+        let storage = match RedisStorage::new(config.clone()).await {
             Ok(storage) => storage,
             Err(_) => {
                 eprintln!("Skipping test: Redis not available at {}", config.redis.url);
@@ -872,7 +863,7 @@ mod tests {
     async fn test_retrieve_nonexistent_message() {
         // Skip test if Redis is not available
         let config = create_test_config();
-        let storage = match RedisStorage::<TestContent>::new(config.clone()).await {
+        let storage = match RedisStorage::new(config.clone()).await {
             Ok(storage) => storage,
             Err(_) => {
                 eprintln!("Skipping test: Redis not available at {}", config.redis.url);
@@ -899,7 +890,7 @@ mod tests {
     async fn test_ephemeral_message() {
         // Skip test if Redis is not available
         let config = create_test_config();
-        let storage = match RedisStorage::<TestContent>::new(config.clone()).await {
+        let storage = match RedisStorage::new(config.clone()).await {
             Ok(storage) => storage,
             Err(_) => {
                 eprintln!("Skipping test: Redis not available at {}", config.redis.url);
@@ -918,7 +909,7 @@ mod tests {
         let signing_key = SigningKey::from_bytes(&secret_bytes);
         let verifying_key = signing_key.verifying_key();
 
-        let message = Message::new_v0(
+        let message = Message::new_typed(
             test_content,
             verifying_key,
             std::time::SystemTime::now()
@@ -927,7 +918,8 @@ mod tests {
                 .as_secs(),
             Kind::Emphemeral(Some(5)), // 5 second timeout
             vec![],
-        );
+        )
+        .unwrap();
 
         let message_full =
             MessageFull::new(message, &signing_key).expect("Failed to create ephemeral message");

@@ -18,27 +18,25 @@ use zoeyr_wire_protocol::{
     StreamMessage,
 };
 
-/// Transport that routes ServerWireMessage<R, T> - RPC to RPC handling, Stream to channels
+/// Transport that routes ServerWireMessage<R> - RPC to RPC handling, Stream to channels
 #[pin_project]
-pub struct RoutingTransport<R, T, Transport>
+pub struct RoutingTransport<R, Transport>
 where
     R: Serialize + for<'a> Deserialize<'a> + Clone + PartialEq + Send + Sync + Unpin,
-    T: Serialize + for<'a> Deserialize<'a> + Clone + PartialEq + Send + Sync + Unpin,
-    Transport: Stream + Sink<ServerWireMessage<R, T>> + Unpin,
+    Transport: Stream + Sink<ServerWireMessage<R>> + Unpin,
 {
     #[pin]
     inner: Transport,
-    stream_tx: mpsc::UnboundedSender<StreamMessage<T>>,
-    _phantom: std::marker::PhantomData<(R, T)>,
+    stream_tx: mpsc::UnboundedSender<StreamMessage>,
+    _phantom: std::marker::PhantomData<R>,
 }
 
-impl<R, T, Transport> RoutingTransport<R, T, Transport>
+impl<R, Transport> RoutingTransport<R, Transport>
 where
     R: Serialize + for<'a> Deserialize<'a> + Clone + PartialEq + Send + Sync + Unpin,
-    T: Serialize + for<'a> Deserialize<'a> + Clone + PartialEq + Send + Sync + Unpin,
-    Transport: Stream + Sink<ServerWireMessage<R, T>> + Unpin,
+    Transport: Stream + Sink<ServerWireMessage<R>> + Unpin,
 {
-    pub fn new(inner: Transport, stream_tx: mpsc::UnboundedSender<StreamMessage<T>>) -> Self {
+    pub fn new(inner: Transport, stream_tx: mpsc::UnboundedSender<StreamMessage>) -> Self {
         Self {
             inner,
             stream_tx,
@@ -46,7 +44,7 @@ where
         }
     }
 
-    pub fn with_channels(inner: Transport) -> (Self, mpsc::UnboundedReceiver<StreamMessage<T>>) {
+    pub fn with_channels(inner: Transport) -> (Self, mpsc::UnboundedReceiver<StreamMessage>) {
         let (stream_tx, stream_rx) = mpsc::unbounded_channel();
         (
             Self {
@@ -59,12 +57,10 @@ where
     }
 }
 
-impl<R, T, Transport, E> Stream for RoutingTransport<R, T, Transport>
+impl<R, Transport, E> Stream for RoutingTransport<R, Transport>
 where
     R: Serialize + for<'a> Deserialize<'a> + Clone + PartialEq + Send + Sync + Unpin,
-    T: Serialize + for<'a> Deserialize<'a> + Clone + PartialEq + Send + Sync + Unpin,
-    Transport:
-        Stream<Item = Result<ServerWireMessage<R, T>, E>> + Sink<ServerWireMessage<R, T>> + Unpin,
+    Transport: Stream<Item = Result<ServerWireMessage<R>, E>> + Sink<ServerWireMessage<R>> + Unpin,
     E: std::error::Error + Send + Sync + 'static,
 {
     type Item = Result<R, E>;
@@ -91,14 +87,13 @@ where
     }
 }
 
-impl<R, T, Transport> Sink<R> for RoutingTransport<R, T, Transport>
+impl<R, Transport> Sink<R> for RoutingTransport<R, Transport>
 where
     R: Serialize + for<'a> Deserialize<'a> + Clone + PartialEq + Send + Sync + Unpin,
-    T: Serialize + for<'a> Deserialize<'a> + Clone + PartialEq + Send + Sync + Unpin,
-    Transport: Stream + Sink<ServerWireMessage<R, T>> + Unpin,
-    <Transport as Sink<ServerWireMessage<R, T>>>::Error: std::error::Error + Send + Sync + 'static,
+    Transport: Stream + Sink<ServerWireMessage<R>> + Unpin,
+    <Transport as Sink<ServerWireMessage<R>>>::Error: std::error::Error + Send + Sync + 'static,
 {
-    type Error = <Transport as Sink<ServerWireMessage<R, T>>>::Error;
+    type Error = <Transport as Sink<ServerWireMessage<R>>>::Error;
 
     fn poll_ready(self: Pin<&mut Self>, cx: &mut TaskContext<'_>) -> Poll<Result<(), Self::Error>> {
         let this = self.project();
@@ -126,16 +121,15 @@ where
 #[derive(Clone, Debug, Default)]
 pub struct PostcardCodec;
 
-impl<R, T> tokio_serde::Serializer<ServerWireMessage<R, T>> for PostcardCodec
+impl<R> tokio_serde::Serializer<ServerWireMessage<R>> for PostcardCodec
 where
     R: Serialize + for<'a> Deserialize<'a> + Clone + PartialEq + Send + Sync,
-    T: Serialize + for<'a> Deserialize<'a> + Clone + PartialEq + Send + Sync,
 {
     type Error = std::io::Error;
 
     fn serialize(
         self: Pin<&mut Self>,
-        item: &ServerWireMessage<R, T>,
+        item: &ServerWireMessage<R>,
     ) -> Result<bytes::Bytes, Self::Error> {
         let bytes = postcard::to_allocvec(item)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
@@ -143,17 +137,16 @@ where
     }
 }
 
-impl<R, T> tokio_serde::Deserializer<ServerWireMessage<R, T>> for PostcardCodec
+impl<R> tokio_serde::Deserializer<ServerWireMessage<R>> for PostcardCodec
 where
     R: Serialize + for<'a> Deserialize<'a> + Clone + PartialEq + Send + Sync,
-    T: Serialize + for<'a> Deserialize<'a> + Clone + PartialEq + Send + Sync,
 {
     type Error = std::io::Error;
 
     fn deserialize(
         self: Pin<&mut Self>,
         src: &bytes::BytesMut,
-    ) -> Result<ServerWireMessage<R, T>, Self::Error> {
+    ) -> Result<ServerWireMessage<R>, Self::Error> {
         postcard::from_bytes(src)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))
     }

@@ -25,7 +25,7 @@ async fn e2e_message_storage_and_retrieval() {
 
     let content = "E2E test message".to_string();
 
-    let message = Message::new_v0(
+    let message = Message::new_typed(
         content,
         verifying_key,
         std::time::SystemTime::now()
@@ -34,7 +34,8 @@ async fn e2e_message_storage_and_retrieval() {
             .as_secs(),
         Kind::Regular,
         vec![],
-    );
+    )
+    .expect("New message creation failed");
 
     let signed_message = MessageFull::new(message, &signing_key).expect("Failed to sign message");
 
@@ -73,7 +74,7 @@ async fn e2e_duplicate_message_prevention() {
 
     let content = "Duplicate test message".to_string();
 
-    let message = Message::new_v0(
+    let message = Message::new_typed(
         content,
         verifying_key,
         std::time::SystemTime::now()
@@ -82,7 +83,8 @@ async fn e2e_duplicate_message_prevention() {
             .as_secs(),
         Kind::Regular,
         vec![],
-    );
+    )
+    .unwrap();
 
     let signed_message = MessageFull::new(message, &signing_key).expect("Failed to sign message");
 

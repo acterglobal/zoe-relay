@@ -155,7 +155,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 filters
             );
 
-            listen_for_messages::<TestContent>(&storage, &filters, since, limit).await?;
+            listen_for_messages(&storage, &filters, since, limit).await?;
         }
 
         Commands::Send {
@@ -214,7 +214,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
 
                 let message = Message::new_v0(
-                    content,
+                    postcard::to_stdvec(&content)?,
                     verifying_key,
                     std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
@@ -253,15 +253,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-async fn listen_for_messages<T>(
-    storage: &RedisStorage<T>,
+async fn listen_for_messages(
+    storage: &RedisStorage,
     filters: &MessageFilters,
     since: Option<String>,
     limit: usize,
-) -> Result<(), Box<dyn std::error::Error>>
-where
-    T: serde::Serialize + for<'de> serde::Deserialize<'de> + Send + Sync + std::fmt::Debug + Clone,
-{
+) -> Result<(), Box<dyn std::error::Error>> {
     let mut stream: std::pin::Pin<
         Box<dyn futures_util::Stream<Item = Result<(Option<Vec<u8>>, String), _>> + Send>,
     > = Box::pin(

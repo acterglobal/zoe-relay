@@ -189,7 +189,7 @@ async fn integration_message_full_creation() {
     let verifying_key = signing_key.verifying_key();
 
     let content = "Test message content".to_string();
-    let message = Message::new_v0(
+    let message = Message::new_typed(
         content,
         verifying_key,
         std::time::SystemTime::now()
@@ -198,7 +198,8 @@ async fn integration_message_full_creation() {
             .as_secs(),
         Kind::Regular,
         vec![],
-    );
+    )
+    .expect("Creating new message failed");
 
     let message_full =
         MessageFull::new(message, &signing_key).expect("Failed to create MessageFull");

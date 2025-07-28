@@ -1,15 +1,18 @@
 use anyhow::{Context, Result};
 use ed25519_dalek::SigningKey;
+use futures_util::StreamExt;
 use std::net::SocketAddr;
-use tracing::info;
+use tokio::sync::mpsc;
+use tokio_util::codec::{Framed, LengthDelimitedCodec};
+use tracing::{error, info};
 
-use crate::RelayClient;
+use crate::{QuicDuplexStream, RelayClient};
 use zoeyr_wire_protocol::{
     generate_ed25519_keypair, load_ed25519_key_from_hex, load_ed25519_public_key_from_hex,
     ServerWireMessage, StreamMessage,
 };
 
-/// Generic QUIC client with persistent bi-directional connection
+/// Generic QUIC client with separated RPC and streaming capabilities
 pub struct QuicTarpcClient {
     relay_client: RelayClient,
 }
@@ -34,80 +37,80 @@ impl QuicTarpcClient {
         &self.relay_client.client_key
     }
 
-    /// Create a persistent bi-directional connection with RPC client and stream message receiver
-    /// Note: Temporarily disabled due to tarpc integration complexity
-    /*
-    pub async fn create_persistent_connection<R, T>(&self) -> Result<(
-        client::NewClient<R, RoutingTransport<R, T, tarpc::serde_transport::Transport<tokio_util::codec::Framed<crate::QuicDuplexStream, tokio_util::codec::LengthDelimitedCodec>, ServerWireMessage<R, T>, ServerWireMessage<R, T>, PostcardCodec>>>,
-        mpsc::UnboundedReceiver<StreamMessage<T>>,
-    )>
-    where
-        R: serde::Serialize + for<'a> serde::Deserialize<'a> + Clone + PartialEq + Send + Sync + Unpin + std::fmt::Debug + 'static,
-        T: serde::Serialize + for<'a> serde::Deserialize<'a> + Clone + PartialEq + Send + Sync + Unpin + std::fmt::Debug + 'static,
-    {
-        info!("🔗 Creating persistent bi-directional connection");
+    /// Create a QUIC stream that can be used for tarpc RPC
+    pub async fn create_rpc_stream(&self) -> Result<QuicDuplexStream> {
+        info!("🔗 Creating RPC stream");
 
         // Get QUIC connection
         let connection = &self.relay_client.connection;
 
-        // Open persistent bidirectional stream
+        // Open bidirectional stream for RPC
         let (send, recv) = connection.open_bi().await?;
 
-        // Create layered transport: QUIC -> framed -> postcard -> routing
-        use tokio_util::codec::{Framed, LengthDelimitedCodec};
+        // Create duplex stream
+        let stream = QuicDuplexStream::new(recv, send);
 
-        let codec = LengthDelimitedCodec::new();
-        let combined = crate::QuicDuplexStream::new(recv, send);
-        let framed = Framed::new(combined, codec);
-        let postcard_transport = tarpc::serde_transport::new(framed, PostcardCodec);
-
-        // Create routing transport with channels
-        let (routing_transport, stream_rx) = RoutingTransport::with_channels(postcard_transport);
-
-        // Create tarpc client that works with the RPC type R
-        let rpc_client = client::new(client::Config::default(), routing_transport);
-
-        info!("✅ Persistent connection established");
-        Ok((rpc_client, stream_rx))
+        info!("✅ RPC stream established");
+        Ok(stream)
     }
 
-    /// Convenience method to create a connection and spawn a stream message handler
-    pub async fn create_connection_with_stream_handler<R, T, F>(&self, mut stream_handler: F) -> Result<client::NewClient<R, RoutingTransport<R, T, tarpc::serde_transport::Transport<tokio_util::codec::Framed<crate::QuicDuplexStream, tokio_util::codec::LengthDelimitedCodec>, ServerWireMessage<R, T>, ServerWireMessage<R, T>, PostcardCodec>>>>
-    where
-        R: serde::Serialize + for<'a> serde::Deserialize<'a> + Clone + PartialEq + Send + Sync + Unpin + std::fmt::Debug + 'static,
-        T: serde::Serialize + for<'a> serde::Deserialize<'a> + Clone + PartialEq + Send + Sync + Unpin + std::fmt::Debug + 'static,
-        F: FnMut(StreamMessage<T>) -> Result<()> + Send + 'static,
-    {
-        let (rpc_client, mut stream_rx) = self.create_persistent_connection().await?;
+    /// Create a streaming receiver for server messages
+    pub async fn create_stream_receiver<T>(
+        &self,
+    ) -> Result<mpsc::UnboundedReceiver<StreamMessage>> {
+        info!("🔗 Creating stream receiver connection");
+
+        // Get QUIC connection
+        let connection = &self.relay_client.connection;
+
+        // Open bidirectional stream for streaming
+        let (send, recv) = connection.open_bi().await?;
+
+        // Create transport stack for streaming
+        let codec = LengthDelimitedCodec::new();
+        let combined = QuicDuplexStream::new(recv, send);
+        let mut framed = Framed::new(combined, codec);
+
+        // Create channel for stream messages
+        let (tx, rx) = mpsc::unbounded_channel();
 
         // Spawn task to handle incoming stream messages
         tokio::spawn(async move {
-            info!("📨 Stream message handler started");
-            while let Some(stream_msg) = stream_rx.recv().await {
-                info!("📨 Received stream message: {:?}", stream_msg);
-                if let Err(e) = stream_handler(stream_msg) {
-                    error!("❌ Stream handler error: {}", e);
+            while let Some(item) = framed.next().await {
+                match item {
+                    Ok(bytes) => {
+                        // Deserialize the message
+                        match postcard::from_bytes::<ServerWireMessage<()>>(&bytes) {
+                            Ok(ServerWireMessage::Stream(stream_msg)) => {
+                                if let Err(e) = tx.send(stream_msg) {
+                                    error!("Failed to send stream message: {}", e);
+                                    break;
+                                }
+                            }
+                            Ok(ServerWireMessage::Rpc(_)) => {
+                                // Ignore RPC messages on stream channel
+                            }
+                            Err(e) => {
+                                error!("Failed to deserialize message: {}", e);
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        error!("Stream error: {}", e);
+                        break;
+                    }
                 }
             }
-            info!("📨 Stream message handler ended");
         });
 
-        Ok(rpc_client)
+        info!("✅ Stream receiver connection established");
+        Ok(rx)
     }
-    */
 
     /// Send a raw ServerWireMessage directly (for lower-level usage)
-    pub async fn send_wire_message<R, T>(&self, message: ServerWireMessage<R, T>) -> Result<()>
+    pub async fn send_wire_message<R>(&self, message: ServerWireMessage<R>) -> Result<()>
     where
         R: serde::Serialize
-            + for<'a> serde::Deserialize<'a>
-            + Clone
-            + PartialEq
-            + Send
-            + Sync
-            + Unpin
-            + std::fmt::Debug,
-        T: serde::Serialize
             + for<'a> serde::Deserialize<'a>
             + Clone
             + PartialEq
@@ -136,18 +139,8 @@ impl QuicTarpcClient {
     }
 
     /// Send a stream message directly (wraps in ServerWireMessage::Stream)
-    pub async fn send_stream_message<T>(&self, message: StreamMessage<T>) -> Result<()>
-    where
-        T: serde::Serialize
-            + for<'a> serde::Deserialize<'a>
-            + Clone
-            + PartialEq
-            + Send
-            + Sync
-            + Unpin
-            + std::fmt::Debug,
-    {
-        let wire_message: ServerWireMessage<(), T> = ServerWireMessage::Stream(message);
+    pub async fn send_stream_message(&self, message: StreamMessage) -> Result<()> {
+        let wire_message: ServerWireMessage<()> = ServerWireMessage::Stream(message);
         self.send_wire_message(wire_message).await
     }
 
@@ -163,7 +156,7 @@ impl QuicTarpcClient {
             + Unpin
             + std::fmt::Debug,
     {
-        let wire_message: ServerWireMessage<R, ()> = ServerWireMessage::Rpc(message);
+        let wire_message: ServerWireMessage<R> = ServerWireMessage::Rpc(message);
         self.send_wire_message(wire_message).await
     }
 }

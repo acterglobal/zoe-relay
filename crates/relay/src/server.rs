@@ -26,37 +26,21 @@ pub trait ConnectionHandler: Clone + Send + Sync + 'static {
 }
 
 /// Handler for persistent bi-directional connections
-pub struct PersistentConnectionHandler<T, Service>
+pub struct PersistentConnectionHandler<Service>
 where
-    T: serde::Serialize
-        + for<'a> serde::Deserialize<'a>
-        + Clone
-        + PartialEq
-        + Send
-        + Sync
-        + Unpin
-        + std::fmt::Debug
-        + 'static,
     Service: tarpc::server::Serve + Clone + Send + Sync + 'static,
 {
     service_factory: Arc<dyn Fn() -> Service + Send + Sync>,
-    stream_message_tx: mpsc::UnboundedSender<StreamMessage<T>>,
+    stream_message_tx: mpsc::UnboundedSender<StreamMessage>,
 }
 
-impl<T, Service> PersistentConnectionHandler<T, Service>
+impl<Service> PersistentConnectionHandler<Service>
 where
-    T: serde::Serialize
-        + for<'a> serde::Deserialize<'a>
-        + Clone
-        + PartialEq
-        + Send
-        + Sync
-        + Unpin
-        + std::fmt::Debug
-        + 'static,
     Service: tarpc::server::Serve + Clone + Send + Sync + 'static,
+    <Service as tarpc::server::Serve>::Req:
+        Serialize + for<'a> Deserialize<'a> + Clone + PartialEq + Send + Sync + Unpin,
 {
-    pub fn new<F>(service_factory: F) -> (Self, mpsc::UnboundedReceiver<StreamMessage<T>>)
+    pub fn new<F>(service_factory: F) -> (Self, mpsc::UnboundedReceiver<StreamMessage>)
     where
         F: Fn() -> Service + Send + Sync + 'static,
     {
@@ -82,14 +66,14 @@ where
         let framed = Framed::new(combined, codec);
         let postcard_transport: tarpc::serde_transport::Transport<
             _,
-            ServerWireMessage<T, T>,
-            ServerWireMessage<T, T>,
+            ServerWireMessage<<Service as tarpc::server::Serve>::Req>,
+            ServerWireMessage<<Service as tarpc::server::Serve>::Req>,
             PostcardCodec,
         > = tarpc::serde_transport::new(framed, PostcardCodec);
 
         // Create routing transport with channels
         let (_routing_transport, mut stream_rx) =
-            RoutingTransport::<T, T, _>::with_channels(postcard_transport);
+            RoutingTransport::<_, _>::with_channels(postcard_transport);
 
         // Note: tarpc server integration temporarily disabled due to compatibility issues
         // let server_channel = server::BaseChannel::with_defaults(routing_transport);
@@ -119,17 +103,8 @@ where
     }
 }
 
-impl<T, Service> Clone for PersistentConnectionHandler<T, Service>
+impl<Service> Clone for PersistentConnectionHandler<Service>
 where
-    T: serde::Serialize
-        + for<'a> serde::Deserialize<'a>
-        + Clone
-        + PartialEq
-        + Send
-        + Sync
-        + Unpin
-        + std::fmt::Debug
-        + 'static,
     Service: tarpc::server::Serve + Clone + Send + Sync + 'static,
 {
     fn clone(&self) -> Self {
@@ -140,18 +115,11 @@ where
     }
 }
 
-impl<T, Service> ConnectionHandler for PersistentConnectionHandler<T, Service>
+impl<Service> ConnectionHandler for PersistentConnectionHandler<Service>
 where
-    T: serde::Serialize
-        + for<'a> serde::Deserialize<'a>
-        + Clone
-        + PartialEq
-        + Send
-        + Sync
-        + Unpin
-        + std::fmt::Debug
-        + 'static,
     Service: tarpc::server::Serve + Clone + Send + Sync + 'static,
+    <Service as tarpc::server::Serve>::Req:
+        Serialize + for<'a> Deserialize<'a> + Clone + PartialEq + Send + Sync + Unpin,
 {
     type Error = String;
 
@@ -163,62 +131,29 @@ where
 }
 
 /// Stream message broadcaster for sending messages to clients
-pub struct StreamMessageBroadcaster<T>
-where
-    T: serde::Serialize
-        + for<'a> serde::Deserialize<'a>
-        + Clone
-        + PartialEq
-        + Send
-        + Sync
-        + Unpin
-        + std::fmt::Debug
-        + 'static,
-{
-    clients: Arc<tokio::sync::RwLock<Vec<mpsc::UnboundedSender<StreamMessage<T>>>>>,
+pub struct StreamMessageBroadcaster {
+    clients: Arc<tokio::sync::RwLock<Vec<mpsc::UnboundedSender<StreamMessage>>>>,
 }
 
-impl<T> Default for StreamMessageBroadcaster<T>
-where
-    T: serde::Serialize
-        + for<'a> serde::Deserialize<'a>
-        + Clone
-        + PartialEq
-        + Send
-        + Sync
-        + Unpin
-        + std::fmt::Debug
-        + 'static,
-{
+impl Default for StreamMessageBroadcaster {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<T> StreamMessageBroadcaster<T>
-where
-    T: serde::Serialize
-        + for<'a> serde::Deserialize<'a>
-        + Clone
-        + PartialEq
-        + Send
-        + Sync
-        + Unpin
-        + std::fmt::Debug
-        + 'static,
-{
+impl StreamMessageBroadcaster {
     pub fn new() -> Self {
         Self {
             clients: Arc::new(tokio::sync::RwLock::new(Vec::new())),
         }
     }
 
-    pub async fn add_client(&self, tx: mpsc::UnboundedSender<StreamMessage<T>>) {
+    pub async fn add_client(&self, tx: mpsc::UnboundedSender<StreamMessage>) {
         let mut clients = self.clients.write().await;
         clients.push(tx);
     }
 
-    pub async fn broadcast(&self, message: StreamMessage<T>) {
+    pub async fn broadcast(&self, message: StreamMessage) {
         let mut clients = self.clients.write().await;
         clients.retain(|tx| tx.send(message.clone()).is_ok());
     }
@@ -229,18 +164,7 @@ where
     }
 }
 
-impl<T> Clone for StreamMessageBroadcaster<T>
-where
-    T: serde::Serialize
-        + for<'a> serde::Deserialize<'a>
-        + Clone
-        + PartialEq
-        + Send
-        + Sync
-        + Unpin
-        + std::fmt::Debug
-        + 'static,
-{
+impl Clone for StreamMessageBroadcaster {
     fn clone(&self) -> Self {
         Self {
             clients: Arc::clone(&self.clients),
@@ -349,14 +273,7 @@ impl RelayServerBuilder {
         self
     }
 
-    pub async fn build<
-        T: Serialize + for<'de> Deserialize<'de> + Send + Sync + Sized + Clone + 'static,
-    >(
-        self,
-    ) -> Result<(
-        QuicTarpcServer<RelayServiceFactory<T>>,
-        Arc<RedisStorage<T>>,
-    )> {
+    pub async fn build(self) -> Result<(QuicTarpcServer<RelayServiceFactory>, Arc<RedisStorage>)> {
         // Load or generate server key
         let _server_key = match self.private_key {
             Some(key_hex) => {
@@ -413,17 +330,17 @@ impl RelayServerBuilder {
 
 /// Factory for creating RelayService instances
 #[derive(Clone)]
-pub struct RelayServiceFactory<T> {
-    storage: Arc<RedisStorage<T>>,
+pub struct RelayServiceFactory {
+    storage: Arc<RedisStorage>,
 }
 
-impl<T> RelayServiceFactory<T> {
-    pub fn new(storage: Arc<RedisStorage<T>>) -> Self {
+impl RelayServiceFactory {
+    pub fn new(storage: Arc<RedisStorage>) -> Self {
         Self { storage }
     }
 }
 
-// impl<T> ServeFactory for RelayServiceFactory<T>
+// impl<T> ServeFactory for RelayServiceFactory
 // where
 //     T: Serialize + for<'de> Deserialize<'de> + Send + Sync + Clone + 'static,
 // {
@@ -534,7 +451,7 @@ mod tests {
         // Test that RPC messages are routed to the Stream
         let (mock_transport, input_tx, _sink_rx) = MockTransport::new();
         let (mut routing_transport, mut stream_rx) =
-            RoutingTransport::<TestEchoRequest, String, _>::with_channels(mock_transport);
+            RoutingTransport::<TestEchoRequest, _>::with_channels(mock_transport);
 
         // Send RPC message through the mock transport
         let rpc_msg = ServerWireMessage::Rpc(TestEchoRequest {
@@ -566,7 +483,7 @@ mod tests {
         // Test that Stream messages are routed to the channel
         let (mock_transport, input_tx, _sink_rx) = MockTransport::new();
         let (mut routing_transport, mut stream_rx) =
-            RoutingTransport::<TestEchoRequest, String, _>::with_channels(mock_transport);
+            RoutingTransport::<TestEchoRequest, _>::with_channels(mock_transport);
 
         // Send stream message through the mock transport
         let stream_msg =
@@ -602,7 +519,7 @@ mod tests {
         // Test that the Sink wraps items in ServerWireMessage::Rpc
         let (mock_transport, _input_tx, mut sink_rx) = MockTransport::new();
         let (mut routing_transport, _stream_rx) =
-            RoutingTransport::<TestEchoRequest, String, _>::with_channels(mock_transport);
+            RoutingTransport::<TestEchoRequest, _>::with_channels(mock_transport);
 
         // Send RPC message through the Sink
         let rpc_req = TestEchoRequest {
@@ -630,7 +547,7 @@ mod tests {
         // Test concurrent RPC and stream message handling
         let (mock_transport, input_tx, _sink_rx) = MockTransport::new();
         let (mut routing_transport, mut stream_rx) =
-            RoutingTransport::<TestEchoRequest, String, _>::with_channels(mock_transport);
+            RoutingTransport::<TestEchoRequest, _>::with_channels(mock_transport);
 
         // Send mixed messages
         let rpc_msg1 = ServerWireMessage::Rpc(TestEchoRequest {
@@ -683,7 +600,7 @@ mod tests {
         // Test error handling when stream channel is closed
         let (mock_transport, input_tx, _sink_rx) = MockTransport::new();
         let (mut routing_transport, stream_rx) =
-            RoutingTransport::<TestEchoRequest, String, _>::with_channels(mock_transport);
+            RoutingTransport::<TestEchoRequest, _>::with_channels(mock_transport);
 
         // Drop the stream receiver to close the channel
         drop(stream_rx);
@@ -716,7 +633,7 @@ mod tests {
         // Test a complete end-to-end scenario
         let (mock_transport, input_tx, mut sink_rx) = MockTransport::new();
         let (mut routing_transport, mut stream_rx) =
-            RoutingTransport::<TestEchoRequest, String, _>::with_channels(mock_transport);
+            RoutingTransport::<TestEchoRequest, _>::with_channels(mock_transport);
 
         // Spawn a task to poll the routing transport continuously
         let routing_task = {
