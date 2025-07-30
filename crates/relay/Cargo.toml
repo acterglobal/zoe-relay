@@ -58,6 +58,10 @@ rand = "0.8"
 name = "zoe-relay"
 path = "src/main.rs"
 
+[[example]]
+name = "message_client"
+path = "examples/message_client.rs"
+
 
 [dev-dependencies]
 # Testing framework

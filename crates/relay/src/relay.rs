@@ -132,9 +132,8 @@ pub struct StreamPair {
 }
 
 impl StreamPair {
-    pub async fn send_ack(&mut self) -> Result<()> {
-        self.send.write_u8(1).await?;
-        Ok(())
+    pub async fn send_ack(&mut self) -> std::io::Result<()> {
+        self.send.write_u8(1).await
     }
 }
 

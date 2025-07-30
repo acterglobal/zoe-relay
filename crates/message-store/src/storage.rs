@@ -10,6 +10,7 @@ use crate::error::{MessageStoreError, Result};
 // Redis key prefixes for different data types
 const MESSAGE_STREAM_NAME: &str = "message_stream";
 const ID_KEY: &str = "id";
+const MESSAGE_FULL_KEY: &str = "m_full";
 const EVENT_KEY: &str = "event";
 const AUTHOR_KEY: &str = "author";
 const USER_KEY: &str = "user";
@@ -83,10 +84,7 @@ impl RedisMessageStorage {
         let message_id = hex::encode(message.id.as_bytes());
 
         // Check if the message already exists first
-        let exists: bool = conn
-            .exists(&message_id)
-            .await
-            .map_err(MessageStoreError::Redis)?;
+        let exists: bool = conn.exists(&message_id).await.map_err(MessageStoreError::Redis)?;
 
         if exists {
             // Message already exists, return None
@@ -121,7 +119,8 @@ impl RedisMessageStorage {
         xadd_cmd.arg(MESSAGE_STREAM_NAME).arg("*"); // auto-generate ID
 
         // Add the message data
-        xadd_cmd.arg(ID_KEY).arg(storage_value.to_vec());
+        xadd_cmd.arg(ID_KEY).arg(message_id.clone());
+        xadd_cmd.arg(MESSAGE_FULL_KEY).arg(storage_value.to_vec());
 
         // Extract indexable tags from the message and add directly to command
         for tag in message.tags() {
@@ -237,7 +236,7 @@ impl RedisMessageStorage {
         filters: &'a MessageFilters,
         since: Option<String>,
         limit: Option<usize>,
-    ) -> Result<impl Stream<Item = Result<(Option<Vec<u8>>, String)>> + 'a> {
+    ) -> Result<impl Stream<Item = Result<(Option<MessageFull>, String)>> + 'a> {
         if filters.is_empty() {
             return Err(MessageStoreError::EmptyFilters);
         }
@@ -314,12 +313,16 @@ impl RedisMessageStorage {
                             // yielding if our filters match
                             match key_str.as_ref() {
                                 ID_KEY => {
-                                    id = Some(value);
+                                    // ignored
+                                }
+                                MESSAGE_FULL_KEY => {
+                                    let message_full = MessageFull::from_storage_value(&value)
+                                        .map_err(|e| MessageStoreError::Serialization(e.to_string()))?;
                                     if should_yield {
-                                        // already matched, so we yield and continue
-                                        yield Ok((id.clone(), height.clone()));
+                                        yield Ok((Some(message_full), height.clone()));
                                         continue 'messages;
                                     }
+                                    id = Some(message_full);
                                 }
                                 EVENT_KEY => {
                                     let event_id = value;

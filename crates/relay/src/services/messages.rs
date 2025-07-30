@@ -49,16 +49,10 @@ async fn subscription_task(
 
     while let Some(result) = stream.next().await {
         let to_client = match result {
-            Ok((Some(message_id), height)) => {
-                let Ok(Some(message)) = service.get_message(&message_id).await else {
-                    info!("Message not found. skipping");
-                    continue;
-                };
-                StreamMessage::MessageReceived {
-                    message,
-                    stream_height: height,
-                }
-            }
+            Ok((Some(message_full), height)) =>  StreamMessage::MessageReceived {
+                message: message_full,
+                stream_height: height,
+            },
             Ok((None, height)) => {
                 // Empty batch - just a stream height update
                 StreamMessage::StreamHeightUpdate(height)
@@ -86,7 +80,8 @@ impl Service for MessagesService {
 
     async fn run(self) -> Result<(), Self::Error> {
         info!("Starting MessagesService");
-        let Self { streams, service } = self;
+        let Self {mut  streams, service } = self;
+        streams.send_ack().await?;
 
         // Create the transport
         let framed = tokio_util::codec::Framed::new(streams, LengthDelimitedCodec::new());

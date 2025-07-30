@@ -32,9 +32,13 @@ pub fn generate_deterministic_cert_from_ed25519(
 
     // Embed the ed25519 public key in a custom extension
     // OID 1.3.6.1.4.1.99999.1 is a private enterprise number for demonstration
+    let ed25519_pubkey_bytes = ed25519_key.verifying_key().to_bytes().to_vec();
+    tracing::debug!("🔧 Embedding ed25519 public key in certificate: {} (length: {})", 
+                   hex::encode(&ed25519_pubkey_bytes), ed25519_pubkey_bytes.len());
+    
     let ed25519_pubkey_ext = CustomExtension::from_oid_content(
         &[1, 3, 6, 1, 4, 1, 99999, 1],
-        ed25519_key.verifying_key().to_bytes().to_vec(),
+        ed25519_pubkey_bytes,
     );
     cert_params.custom_extensions = vec![ed25519_pubkey_ext];
 
@@ -84,21 +88,32 @@ pub fn extract_ed25519_from_cert(cert_der: &CertificateDer) -> Result<VerifyingK
 
     // Look for our custom extension
     let target_oid = oid!(1.3.6 .1 .4 .1 .99999 .1);
+    tracing::debug!("🔍 Looking for ed25519 extension with OID: {}", target_oid);
+    tracing::debug!("Certificate has {} extensions", cert.extensions().len());
 
-    for extension in cert.extensions() {
+    for (i, extension) in cert.extensions().iter().enumerate() {
+        tracing::debug!("  Extension {}: OID {} (value length: {})", i, extension.oid, extension.value.len());
         if extension.oid == target_oid {
             let key_bytes = extension.value;
+            tracing::debug!("🔍 Found ed25519 extension with {} bytes: {}", key_bytes.len(), hex::encode(key_bytes));
+            
             if key_bytes.len() != 32 {
                 return Err(CryptoError::ParseError(
-                    "Invalid ed25519 key length in certificate".to_string(),
+                    format!("Invalid ed25519 key length in certificate: {} bytes", key_bytes.len()),
                 ));
             }
 
             let mut key_array = [0u8; 32];
             key_array.copy_from_slice(key_bytes);
 
-            return VerifyingKey::from_bytes(&key_array)
+            let result = VerifyingKey::from_bytes(&key_array)
                 .map_err(|e| CryptoError::ParseError(format!("Invalid ed25519 key: {e}")));
+            
+            if let Ok(ref key) = result {
+                tracing::debug!("✅ Successfully extracted ed25519 key: {}", hex::encode(key.to_bytes()));
+            }
+            
+            return result;
         }
     }
 
@@ -200,12 +215,20 @@ impl rustls::client::danger::ServerCertVerifier for AcceptSpecificServerCertVeri
         // Extract ed25519 key from certificate
         match extract_ed25519_from_cert(end_entity) {
             Ok(server_ed25519_key) => {
+                let extracted_key_hex = hex::encode(server_ed25519_key.to_bytes());
+                let expected_key_hex = hex::encode(self.expected_server_key.to_bytes());
+                
+                tracing::debug!("🔍 Extracted server key: {}", extracted_key_hex);
+                tracing::debug!("🔍 Expected server key:  {}", expected_key_hex);
+                
                 // Verify it matches our expected key
                 if server_ed25519_key.to_bytes() == self.expected_server_key.to_bytes() {
                     tracing::info!("✅ Server ed25519 identity verified via certificate");
                     Ok(rustls::client::danger::ServerCertVerified::assertion())
                 } else {
                     tracing::error!("❌ Server ed25519 key mismatch");
+                    tracing::error!("   Extracted: {}", extracted_key_hex);
+                    tracing::error!("   Expected:  {}", expected_key_hex);
                     Err(rustls::Error::InvalidCertificate(
                         rustls::CertificateError::ApplicationVerificationFailure,
                     ))
@@ -263,11 +286,28 @@ impl rustls::server::danger::ClientCertVerifier for ZoeClientCertVerifier {
         _intermediates: &[rustls::pki_types::CertificateDer<'_>],
         _now: rustls::pki_types::UnixTime,
     ) -> std::result::Result<rustls::server::danger::ClientCertVerified, rustls::Error> {
+        tracing::debug!("🔍 Verifying client certificate ({} bytes)", end_entity.as_ref().len());
+        
         // Extract ed25519 key from certificate
         match extract_ed25519_from_cert(end_entity) {
-            Ok(_) => Ok(rustls::server::danger::ClientCertVerified::assertion()),
+            Ok(public_key) => {
+                tracing::info!("✅ Client ed25519 identity verified: {}", hex::encode(public_key.to_bytes()));
+                Ok(rustls::server::danger::ClientCertVerified::assertion())
+            },
             Err(e) => {
-                tracing::error!("❌ Failed to extract ed25519 key from certificate: {}", e);
+                tracing::error!("❌ Failed to extract ed25519 key from client certificate: {}", e);
+                tracing::debug!("Certificate DER length: {} bytes", end_entity.as_ref().len());
+                
+                // Try to parse the certificate to see what extensions it has
+                if let Ok((_, cert)) = x509_parser::certificate::X509Certificate::from_der(end_entity.as_ref()) {
+                    tracing::debug!("Certificate parsed successfully, extensions: {}", cert.extensions().len());
+                    for (i, ext) in cert.extensions().iter().enumerate() {
+                        tracing::debug!("  Extension {}: OID {} (critical: {})", i, ext.oid, ext.critical);
+                    }
+                } else {
+                    tracing::error!("Failed to parse certificate DER");
+                }
+                
                 Err(rustls::Error::InvalidCertificate(
                     rustls::CertificateError::ApplicationVerificationFailure,
                 ))
