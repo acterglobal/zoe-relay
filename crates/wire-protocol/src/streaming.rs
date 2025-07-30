@@ -2,7 +2,6 @@ use serde::{Deserialize, Serialize};
 
 use crate::MessageFull;
 
-
 /// Message filtering criteria for querying stored messages
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct MessageFilters {
@@ -39,7 +38,6 @@ pub enum StreamMessage {
     StreamHeightUpdate(String),
 }
 
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SubscriptionConfig {
     filters: MessageFilters,
@@ -50,5 +48,5 @@ pub struct SubscriptionConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum MessagesServiceRequest {
     Subscribe(SubscriptionConfig),
-    Publish(MessageFull)
+    Publish(MessageFull),
 }

@@ -105,7 +105,8 @@ use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tracing::{error, info};
 use zoeyr_wire_protocol::{
-    extract_ed25519_from_cert, generate_deterministic_cert_from_ed25519, CryptoError, ZoeClientCertVerifier
+    extract_ed25519_from_cert, generate_deterministic_cert_from_ed25519, CryptoError,
+    ZoeClientCertVerifier,
 };
 
 use crate::{Service, ServiceError, ServiceRouter};

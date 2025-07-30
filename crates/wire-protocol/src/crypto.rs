@@ -61,11 +61,10 @@ pub fn generate_deterministic_cert_from_ed25519(
         .map_err(|e| CryptoError::ParseError(format!("Failed to generate certificate: {e}")))?;
 
     // Convert to DER format
-    let cert_der = CertificateDer::from(
-        certificate
-            .serialize_der()
-            .map_err(|e| CryptoError::ParseError(format!("Failed to serialize certificate: {e}")))?,
-    );
+    let cert_der =
+        CertificateDer::from(certificate.serialize_der().map_err(|e| {
+            CryptoError::ParseError(format!("Failed to serialize certificate: {e}"))
+        })?);
 
     let private_key_der = PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(
         certificate.serialize_private_key_der(),
@@ -113,8 +112,8 @@ pub fn generate_ed25519_keypair() -> SigningKey {
 
 /// Load ed25519 private key from hex string
 pub fn load_ed25519_key_from_hex(hex_string: &str) -> Result<SigningKey> {
-    let key_bytes =
-        hex::decode(hex_string).map_err(|e| CryptoError::ParseError(format!("Invalid hex: {e}")))?;
+    let key_bytes = hex::decode(hex_string)
+        .map_err(|e| CryptoError::ParseError(format!("Invalid hex: {e}")))?;
 
     if key_bytes.len() != 32 {
         return Err(CryptoError::ParseError(
@@ -135,8 +134,8 @@ pub fn save_ed25519_key_to_hex(key: &SigningKey) -> String {
 
 /// Load ed25519 public key from hex string
 pub fn load_ed25519_public_key_from_hex(hex_string: &str) -> Result<VerifyingKey> {
-    let key_bytes =
-        hex::decode(hex_string).map_err(|e| CryptoError::ParseError(format!("Invalid hex: {e}")))?;
+    let key_bytes = hex::decode(hex_string)
+        .map_err(|e| CryptoError::ParseError(format!("Invalid hex: {e}")))?;
 
     if key_bytes.len() != 32 {
         return Err(CryptoError::ParseError(
@@ -245,7 +244,6 @@ impl rustls::client::danger::ServerCertVerifier for AcceptSpecificServerCertVeri
     }
 }
 
-
 /// Custom client certificate verifier that accepts any valid certificate
 /// as long as it contains a correct ed25519 public key as per our protoco,
 /// extensions
@@ -265,7 +263,6 @@ impl rustls::server::danger::ClientCertVerifier for ZoeClientCertVerifier {
         _intermediates: &[rustls::pki_types::CertificateDer<'_>],
         _now: rustls::pki_types::UnixTime,
     ) -> std::result::Result<rustls::server::danger::ClientCertVerified, rustls::Error> {
-        
         // Extract ed25519 key from certificate
         match extract_ed25519_from_cert(end_entity) {
             Ok(_) => Ok(rustls::server::danger::ClientCertVerified::assertion()),

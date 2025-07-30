@@ -32,6 +32,19 @@ async-trait = "0.1"
 # Error types for documentation examples
 thiserror = { workspace = true }
 
+# RPC and futures for relay service traits
+tarpc = { workspace = true }
+futures-util = "0.3"
+futures = "0.3"
+postcard = { workspace = true }
+serde = { workspace = true }
+tokio-util = { version = "0.7", features = ["codec"] }
+bytes = "1.0"
+
+# specific impls
+zoeyr-blob-store = { path = "../blob-store" }
+
+
 [dev-dependencies]
 # Testing framework
 tokio-test = "0.4"

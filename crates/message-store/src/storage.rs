@@ -17,7 +17,6 @@ const AUTHOR_KEY: &str = "author";
 const USER_KEY: &str = "user";
 const CHANNEL_KEY: &str = "channel";
 
-
 /// Redis-backed storage for the relay service
 #[derive(Clone)]
 pub struct RedisStorage {

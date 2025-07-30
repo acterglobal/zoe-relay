@@ -117,7 +117,7 @@ pub trait ServiceRouter: Send + Sync {
     type Error: std::error::Error + Send + Sync + 'static;
 
     /// The typed service identifier (e.g., an enum)
-    type ServiceId: std::fmt::Display + std::fmt::Debug + Send + Sync;
+    type ServiceId: std::fmt::Debug + Send + Sync;
 
     /// The service type that handles connections
     type Service: Service;

@@ -9,7 +9,9 @@ use tokio::sync::Notify;
 use tokio::time::{timeout, Duration};
 use zoeyr_relay::Service;
 use zoeyr_relay::{ConnectionInfo, RelayServer, ServiceRouter, StreamPair};
-use zoeyr_wire_protocol::{generate_deterministic_cert_from_ed25519, AcceptSpecificServerCertVerifier};
+use zoeyr_wire_protocol::{
+    generate_deterministic_cert_from_ed25519, AcceptSpecificServerCertVerifier,
+};
 
 #[derive(Debug, thiserror::Error)]
 enum TestError {

@@ -47,10 +47,6 @@ tracing = "0.1"
 # Async utilities  
 async-trait = "0.1"
 
-# RPC and futures for relay service traits
-tarpc = { workspace = true }
-futures-util = "0.3"
-
 [dev-dependencies]
 # Testing framework
 tokio-test = "0.4"
