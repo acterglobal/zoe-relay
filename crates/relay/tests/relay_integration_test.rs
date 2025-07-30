@@ -1,7 +1,7 @@
 use anyhow::Result;
 use ed25519_dalek::SigningKey;
 use futures::future::join;
-use rustls::pki_types::CertificateDer;
+
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};

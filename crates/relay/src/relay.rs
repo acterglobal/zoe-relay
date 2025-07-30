@@ -329,6 +329,7 @@ mod tests {
             }
         }
 
+        #[allow(dead_code)]
         fn was_called(&self) -> bool {
             self.handle_called.load(Ordering::SeqCst)
         }
@@ -337,6 +338,7 @@ mod tests {
     #[derive(Debug, thiserror::Error)]
     enum TestError {
         #[error("Test error: {0}")]
+        #[allow(dead_code)]
         Generic(String),
     }
 

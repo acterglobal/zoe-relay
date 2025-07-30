@@ -332,7 +332,10 @@ mod tests {
         // Tampering with content should fail
         let mut tampered = msg_full.clone();
         let Message::MessageV0(ref mut msg) = tampered.message;
-        msg.content[10] = 99;
+        // Safely tamper with the first byte (index 0) which should always exist
+        if !msg.content.is_empty() {
+            msg.content[0] = msg.content[0].wrapping_add(1);
+        }
         assert!(!tampered.verify_all().unwrap());
     }
 
