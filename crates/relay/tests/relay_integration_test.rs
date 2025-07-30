@@ -9,7 +9,7 @@ use tokio::sync::Notify;
 use tokio::time::{timeout, Duration};
 use zoeyr_relay::Service;
 use zoeyr_relay::{ConnectionInfo, RelayServer, ServiceRouter, StreamPair};
-use zoeyr_wire_protocol::generate_deterministic_cert_from_ed25519;
+use zoeyr_wire_protocol::{generate_deterministic_cert_from_ed25519, AcceptSpecificServerCertVerifier};
 
 #[derive(Debug, thiserror::Error)]
 enum TestError {
@@ -202,7 +202,7 @@ impl TestClient {
             generate_deterministic_cert_from_ed25519(&self.client_key, "client")?;
 
         // Create custom certificate verifier that accepts our server
-        let verifier = ServerCertVerifier::new(server_public_key.verifying_key());
+        let verifier = AcceptSpecificServerCertVerifier::new(server_public_key.verifying_key());
 
         // Create client config with client certificate for mutual TLS
         let crypto = RustlsClientConfig::builder()
@@ -216,75 +216,6 @@ impl TestClient {
         endpoint.set_default_client_config(client_config);
 
         Ok(endpoint)
-    }
-}
-
-/// Custom certificate verifier for client that verifies the server's ed25519 key
-#[derive(Debug)]
-struct ServerCertVerifier {
-    expected_server_key: ed25519_dalek::VerifyingKey,
-}
-
-impl ServerCertVerifier {
-    fn new(expected_key: ed25519_dalek::VerifyingKey) -> Self {
-        Self {
-            expected_server_key: expected_key,
-        }
-    }
-}
-
-impl rustls::client::danger::ServerCertVerifier for ServerCertVerifier {
-    fn verify_server_cert(
-        &self,
-        end_entity: &CertificateDer,
-        _intermediates: &[CertificateDer],
-        _server_name: &rustls::pki_types::ServerName,
-        _ocsp_response: &[u8],
-        _now: rustls::pki_types::UnixTime,
-    ) -> Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
-        use zoeyr_wire_protocol::extract_ed25519_from_cert;
-
-        match extract_ed25519_from_cert(end_entity) {
-            Ok(cert_key) => {
-                if cert_key.to_bytes() == self.expected_server_key.to_bytes() {
-                    println!("✅ Server certificate verified!");
-                    Ok(rustls::client::danger::ServerCertVerified::assertion())
-                } else {
-                    println!("❌ Server certificate key mismatch");
-                    Err(rustls::Error::InvalidCertificate(
-                        rustls::CertificateError::ApplicationVerificationFailure,
-                    ))
-                }
-            }
-            Err(e) => {
-                println!("❌ Failed to extract ed25519 key: {}", e);
-                Err(rustls::Error::InvalidCertificate(
-                    rustls::CertificateError::ApplicationVerificationFailure,
-                ))
-            }
-        }
-    }
-
-    fn verify_tls12_signature(
-        &self,
-        _message: &[u8],
-        _cert: &CertificateDer,
-        _dss: &rustls::DigitallySignedStruct,
-    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
-        Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
-    }
-
-    fn verify_tls13_signature(
-        &self,
-        _message: &[u8],
-        _cert: &CertificateDer,
-        _dss: &rustls::DigitallySignedStruct,
-    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
-        Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
-    }
-
-    fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
-        vec![rustls::SignatureScheme::ED25519]
     }
 }
 

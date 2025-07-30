@@ -105,7 +105,7 @@ use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tracing::{error, info};
 use zoeyr_wire_protocol::{
-    extract_ed25519_from_cert, generate_deterministic_cert_from_ed25519, ProtocolError,
+    extract_ed25519_from_cert, generate_deterministic_cert_from_ed25519, CryptoError, ZoeClientCertVerifier
 };
 
 use crate::{Service, ServiceError, ServiceRouter};
@@ -128,6 +128,13 @@ pub struct StreamPair {
     pub recv: RecvStream,
     /// Stream for sending data to the client
     pub send: SendStream,
+}
+
+impl StreamPair {
+    pub async fn send_ack(&mut self) -> Result<()> {
+        self.send.write_u8(1).await?;
+        Ok(())
+    }
 }
 
 /// Main relay server that accepts QUIC connections with ed25519 authentication
@@ -257,7 +264,7 @@ impl<R: ServiceRouter + 'static> RelayServer<R> {
 }
 
 /// Extract the client's ed25519 public key from the QUIC connection
-fn extract_client_ed25519_key(connection: &Connection) -> Result<VerifyingKey, ProtocolError> {
+fn extract_client_ed25519_key(connection: &Connection) -> Result<VerifyingKey, CryptoError> {
     // Try to get peer certificate from the connection
     if let Some(identity) = connection.peer_identity() {
         if let Ok(cert_chain) = identity.downcast::<Vec<rustls::pki_types::CertificateDer>>() {
@@ -268,9 +275,7 @@ fn extract_client_ed25519_key(connection: &Connection) -> Result<VerifyingKey, P
         }
     }
 
-    Err(ProtocolError::Crypto(
-        "No ed25519 key found in certificate".to_string(),
-    ))
+    Err(CryptoError::Ed25519KeyNotFound)
 }
 
 /// Create a QUIC server endpoint with ed25519-derived TLS certificate
@@ -290,7 +295,7 @@ fn create_server_endpoint(addr: SocketAddr, server_key: &SigningKey) -> Result<E
 
     // Create QUIC server config with client certificate verification required
     let rustls_config = rustls::ServerConfig::builder()
-        .with_client_cert_verifier(Arc::new(ClientCertVerifier::new()))
+        .with_client_cert_verifier(Arc::new(ZoeClientCertVerifier::new()))
         .with_single_cert(certs, private_key)?;
 
     let server_config = ServerConfig::with_crypto(Arc::new(
@@ -301,64 +306,6 @@ fn create_server_endpoint(addr: SocketAddr, server_key: &SigningKey) -> Result<E
     info!("✅ Server endpoint ready on {}", addr);
 
     Ok(endpoint)
-}
-
-/// Custom client certificate verifier that accepts any valid certificate
-/// In a production environment, you would implement proper certificate validation here
-#[derive(Debug)]
-struct ClientCertVerifier;
-
-impl ClientCertVerifier {
-    fn new() -> Self {
-        Self
-    }
-}
-
-impl rustls::server::danger::ClientCertVerifier for ClientCertVerifier {
-    fn verify_client_cert(
-        &self,
-        _end_entity: &rustls::pki_types::CertificateDer<'_>,
-        _intermediates: &[rustls::pki_types::CertificateDer<'_>],
-        _now: rustls::pki_types::UnixTime,
-    ) -> Result<rustls::server::danger::ClientCertVerified, rustls::Error> {
-        // For now, we accept any client certificate
-        // The actual ed25519 key validation happens at the application layer
-        Ok(rustls::server::danger::ClientCertVerified::assertion())
-    }
-
-    fn verify_tls12_signature(
-        &self,
-        _message: &[u8],
-        _cert: &rustls::pki_types::CertificateDer<'_>,
-        _dss: &rustls::DigitallySignedStruct,
-    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
-        Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
-    }
-
-    fn verify_tls13_signature(
-        &self,
-        _message: &[u8],
-        _cert: &rustls::pki_types::CertificateDer<'_>,
-        _dss: &rustls::DigitallySignedStruct,
-    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
-        Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
-    }
-
-    fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
-        vec![
-            rustls::SignatureScheme::ED25519,
-            // rustls::SignatureScheme::ECDSA_NISTP256_SHA256,
-            // rustls::SignatureScheme::RSA_PSS_SHA256,
-        ]
-    }
-
-    fn client_auth_mandatory(&self) -> bool {
-        true
-    }
-
-    fn root_hint_subjects(&self) -> &[rustls::DistinguishedName] {
-        &[]
-    }
 }
 
 #[cfg(test)]

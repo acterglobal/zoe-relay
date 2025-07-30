@@ -2,6 +2,25 @@ use serde::{Deserialize, Serialize};
 
 use crate::MessageFull;
 
+
+/// Message filtering criteria for querying stored messages
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct MessageFilters {
+    pub authors: Option<Vec<Vec<u8>>>,
+    pub channels: Option<Vec<Vec<u8>>>,
+    pub events: Option<Vec<Vec<u8>>>,
+    pub users: Option<Vec<Vec<u8>>>,
+}
+
+impl MessageFilters {
+    pub fn is_empty(&self) -> bool {
+        self.authors.is_none()
+            && self.channels.is_none()
+            && self.events.is_none()
+            && self.users.is_none()
+    }
+}
+
 /// Messages sent over the streaming protocol
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum StreamMessage {
@@ -14,28 +33,22 @@ pub enum StreamMessage {
     },
     /// We have just received a stream height update
     /// but our filter didn't apply here
+    /// Indicator that we are live now and we have
+    /// received all messages up to this point this
+    /// server knows about
     StreamHeightUpdate(String),
 }
 
-/// Request to start a message stream over a dedicated QUIC stream
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct StreamRequest {
-    /// Message filtering criteria
-    pub filters: crate::MessageFilters,
-    /// Start streaming from this message ID (optional but recommended)
-    pub since: Option<String>,
+pub struct SubscriptionConfig {
+    filters: MessageFilters,
+    since: Option<String>,
+    limit: Option<usize>,
 }
 
-impl StreamRequest {
-    pub fn new(filters: crate::MessageFilters) -> Self {
-        Self {
-            filters,
-            since: None,
-        }
-    }
-
-    pub fn with_since(mut self, since: String) -> Self {
-        self.since = Some(since);
-        self
-    }
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum MessagesServiceRequest {
+    Subscribe(SubscriptionConfig),
+    Publish(MessageFull)
 }

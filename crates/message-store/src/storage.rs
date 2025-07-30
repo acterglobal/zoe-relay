@@ -3,7 +3,7 @@ use std::sync::Arc;
 use futures_util::Stream;
 use redis::{aio::ConnectionManager, AsyncCommands, SetOptions};
 use tracing::{info, warn};
-use zoeyr_wire_protocol::{MessageFull, StoreKey, Tag};
+use zoeyr_wire_protocol::{MessageFilters, MessageFull, StoreKey, Tag};
 
 use crate::error::RelayError;
 
@@ -17,23 +17,6 @@ const AUTHOR_KEY: &str = "author";
 const USER_KEY: &str = "user";
 const CHANNEL_KEY: &str = "channel";
 
-/// Message filtering criteria for querying stored messages
-#[derive(Debug, Clone, Default)]
-pub struct MessageFilters {
-    pub authors: Option<Vec<Vec<u8>>>,
-    pub channels: Option<Vec<Vec<u8>>>,
-    pub events: Option<Vec<Vec<u8>>>,
-    pub users: Option<Vec<Vec<u8>>>,
-}
-
-impl MessageFilters {
-    pub fn is_empty(&self) -> bool {
-        self.authors.is_none()
-            && self.channels.is_none()
-            && self.events.is_none()
-            && self.users.is_none()
-    }
-}
 
 /// Redis-backed storage for the relay service
 #[derive(Clone)]
