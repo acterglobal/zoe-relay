@@ -1,4 +1,4 @@
-# Nextest configuration for the Zoeyr workspace
+# Nextest configuration for the Zoe workspace
 
 [profile.default]
 test-threads = 4

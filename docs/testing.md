@@ -9,11 +9,11 @@
 - **Failed**: 0 tests
 
 ### 📦 Crate-by-Crate Results
-- **zoeyr-wire-protocol**: 39/39 tests passing ✅
-- **zoeyr-relay-service**: 5/5 tests passing ✅
-- **zoeyr-whatsmeow**: 29/31 tests passing (2 ignored) ✅
-- **zoeyr-blob-store**: 2/2 tests passing ✅
-- **zoeyr-encrypted-storage**: 12/12 tests passing ✅
+- **zoe-wire-protocol**: 39/39 tests passing ✅
+- **zoe-relay-service**: 5/5 tests passing ✅
+- **zoe-whatsmeow**: 29/31 tests passing (2 ignored) ✅
+- **zoe-blob-store**: 2/2 tests passing ✅
+- **zoe-encrypted-storage**: 12/12 tests passing ✅
 - **Other components**: 9/9 and various smaller test suites ✅
 
 ## 🚀 Running Tests
@@ -25,9 +25,9 @@
 cargo test --workspace
 
 # Run tests for specific crate
-cargo test --package zoeyr-relay-service
-cargo test --package zoeyr-wire-protocol
-cargo test --package zoeyr-whatsmeow
+cargo test --package zoe-relay-service
+cargo test --package zoe-wire-protocol
+cargo test --package zoe-whatsmeow
 
 # Run with verbose output
 cargo test --workspace --verbose
@@ -108,10 +108,10 @@ Some tests require Redis to be running:
 docker-compose up -d redis
 
 # Run Redis-dependent tests
-cargo test --package zoeyr-relay-service storage
+cargo test --package zoe-relay-service storage
 
 # Verify Redis is working
-docker exec zoeyr-redis redis-cli ping
+docker exec zoe-redis redis-cli ping
 ```
 
 ## 🎯 Test Writing Guidelines
@@ -196,7 +196,7 @@ cargo clean
 cargo update
 
 # Check specific crate
-cargo check --package zoeyr-wire-protocol
+cargo check --package zoe-wire-protocol
 ```
 
 #### Test Environment
@@ -221,7 +221,7 @@ cargo test --release
 cargo test -- --test-threads=1
 
 # Run specific slow tests
-cargo test --package zoeyr-relay-service integration
+cargo test --package zoe-relay-service integration
 ```
 
 ## 📈 Test Coverage

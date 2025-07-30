@@ -7,9 +7,9 @@ use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::Notify;
 use tokio::time::{timeout, Duration};
-use zoeyr_relay::Service;
-use zoeyr_relay::{ConnectionInfo, RelayServer, ServiceRouter, StreamPair};
-use zoeyr_wire_protocol::{
+use zoe_relay::Service;
+use zoe_relay::{ConnectionInfo, RelayServer, ServiceRouter, StreamPair};
+use zoe_wire_protocol::{
     generate_deterministic_cert_from_ed25519, AcceptSpecificServerCertVerifier,
 };
 

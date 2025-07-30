@@ -3,7 +3,7 @@ use std::sync::Arc;
 use futures_util::Stream;
 use redis::{aio::ConnectionManager, AsyncCommands, SetOptions};
 use tracing::{info, warn};
-use zoeyr_wire_protocol::{MessageFilters, MessageFull, StoreKey, Tag};
+use zoe_wire_protocol::{MessageFilters, MessageFull, StoreKey, Tag};
 
 use crate::error::RelayError;
 
@@ -413,7 +413,7 @@ mod tests {
     use ed25519_dalek::SigningKey;
     use rand::RngCore;
     use serde::{Deserialize, Serialize};
-    use zoeyr_wire_protocol::{Kind, Message, StoreKey, Tag};
+    use zoe_wire_protocol::{Kind, Message, StoreKey, Tag};
 
     #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
     struct TestContent {

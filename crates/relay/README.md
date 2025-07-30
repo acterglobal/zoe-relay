@@ -1,4 +1,4 @@
-# Zoeyr Relay
+# Zoe Relay
 
 A clean, minimal QUIC relay server with ed25519 bi-directional authentication for service routing.
 
@@ -25,7 +25,7 @@ Certificate  TLS 1.3        Extract Key    First Byte        ServiceRouter::rout
 ### Implementing a Service Router
 
 ```rust
-use zoeyr_relay::{ServiceRouter, ConnectionInfo, StreamPair};
+use zoe_relay::{ServiceRouter, ConnectionInfo, StreamPair};
 use async_trait::async_trait;
 
 struct MyServiceRouter;
@@ -64,7 +64,7 @@ impl ServiceRouter for MyServiceRouter {
 ### Running the Relay Server
 
 ```rust
-use zoeyr_relay::RelayServer;
+use zoe_relay::RelayServer;
 use ed25519_dalek::SigningKey;
 use std::net::SocketAddr;
 
@@ -194,7 +194,7 @@ impl ServiceRouter for ZoeyrServiceRouter {
 Basic server implementation:
 
 ```rust
-use zoeyr_relay::{RelayServer, ServiceRouter, ConnectionInfo, StreamPair};
+use zoe_relay::{RelayServer, ServiceRouter, ConnectionInfo, StreamPair};
 use ed25519_dalek::SigningKey;
 
 struct EchoService;

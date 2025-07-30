@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tracing::{error, info};
 
-use zoeyr_wire_protocol::{BlobError, BlobHealth, BlobInfo, BlobResult, BlobService};
+use zoe_wire_protocol::{BlobError, BlobHealth, BlobInfo, BlobResult, BlobService};
 
 use crate::BlobStoreError;
 

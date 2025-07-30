@@ -4994,6 +4994,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "serde_spanned"
+version = "0.6.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bf41e0cfaf7226dca15e8197172c295a782857fcb97fad1808a166870dee75a3"
+dependencies = [
+ "serde",
+]
+
+[[package]]
 name = "serde_urlencoded"
 version = "0.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5834,10 +5843,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "toml"
+version = "0.8.23"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dc1beb996b9d83529a9e75c17a1686767d148d70663143c7854d8b4a09ced362"
+dependencies = [
+ "serde",
+ "serde_spanned",
+ "toml_datetime",
+ "toml_edit",
+]
+
+[[package]]
 name = "toml_datetime"
 version = "0.6.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "22cddaf88f4fbc13c51aebbf5f8eceb5c7c5a9da2ac40a13519eb5b0a0e8f11c"
+dependencies = [
+ "serde",
+]
 
 [[package]]
 name = "toml_edit"
@@ -5846,9 +5870,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "41fe8c660ae4257887cf66394862d21dbca4a6ddd26f04a3560410406a2f819a"
 dependencies = [
  "indexmap 2.10.0",
+ "serde",
+ "serde_spanned",
  "toml_datetime",
+ "toml_write",
  "winnow",
 ]
+
+[[package]]
+name = "toml_write"
+version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5d99f8c9a7727884afe522e9bd5edbfc91a3312b36a77b5fb8926e4c31a41801"
 
 [[package]]
 name = "tower"
@@ -7092,18 +7125,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "zoey-encrypted-storage"
-version = "0.1.0"
-dependencies = [
- "aead",
- "aes-gcm",
- "blake3",
- "brotli",
- "thiserror 2.0.12",
-]
-
-[[package]]
-name = "zoeyr-backend-protocol"
+name = "zoe-backend-protocol"
 version = "0.1.0"
 dependencies = [
  "apalis",
@@ -7112,7 +7134,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "zoeyr-blob-store"
+name = "zoe-blob-store"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -7134,11 +7156,11 @@ dependencies = [
  "tower-http 0.5.2",
  "tracing",
  "tracing-subscriber",
- "zoeyr-wire-protocol",
+ "zoe-wire-protocol",
 ]
 
 [[package]]
-name = "zoeyr-message-store"
+name = "zoe-message-store"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -7165,16 +7187,17 @@ dependencies = [
  "tokio-test",
  "tracing",
  "uuid",
- "zoeyr-wire-protocol",
+ "zoe-wire-protocol",
 ]
 
 [[package]]
-name = "zoeyr-relay"
+name = "zoe-relay"
 version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
  "bytes",
+ "clap",
  "ed25519-dalek",
  "futures",
  "futures-util",
@@ -7185,26 +7208,28 @@ dependencies = [
  "rustls",
  "serde",
  "tarpc",
+ "tempfile",
  "thiserror 2.0.12",
  "tokio",
  "tokio-test",
  "tokio-util",
+ "toml",
  "tracing",
  "tracing-subscriber",
- "zoeyr-blob-store",
- "zoeyr-wire-protocol",
+ "zoe-blob-store",
+ "zoe-wire-protocol",
 ]
 
 [[package]]
-name = "zoeyr-signal-bot"
+name = "zoe-signal-bot"
 version = "0.1.0"
 
 [[package]]
-name = "zoeyr-wa-bot"
+name = "zoe-wa-bot"
 version = "0.1.0"
 
 [[package]]
-name = "zoeyr-wire-protocol"
+name = "zoe-wire-protocol"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -7230,6 +7255,7 @@ dependencies = [
  "serde",
  "serial_test",
  "socket2",
+ "tarpc",
  "tempfile",
  "test-case",
  "thiserror 2.0.12",
@@ -7238,4 +7264,15 @@ dependencies = [
  "tracing",
  "uuid",
  "x509-parser",
+]
+
+[[package]]
+name = "zoey-encrypted-storage"
+version = "0.1.0"
+dependencies = [
+ "aead",
+ "aes-gcm",
+ "blake3",
+ "brotli",
+ "thiserror 2.0.12",
 ]

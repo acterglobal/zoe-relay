@@ -176,7 +176,7 @@ async fn download_blob(
 async fn health_check() -> Json<serde_json::Value> {
     Json(serde_json::json!({
         "status": "healthy",
-        "service": "zoeyr-blob-store"
+        "service": "zoe-blob-store"
     }))
 }
 

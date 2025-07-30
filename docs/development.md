@@ -23,7 +23,7 @@
    docker-compose up -d redis
    
    # Verify Redis is running
-   docker exec zoeyr-redis redis-cli ping  # Should return PONG
+   docker exec zoe-redis redis-cli ping  # Should return PONG
    
    # Optional: Start Redis Commander (Web UI on http://localhost:8081)
    docker-compose up -d redis-commander
@@ -42,10 +42,10 @@
 
 ### ✅ Working Components
 
-- **`zoeyr-wire-protocol`** - Protocol definitions and cryptography
-- **`zoeyr-relay-service`** - Redis-backed message relay with working examples
-- **`zoeyr-whatsmeow`** - WhatsApp bridge integration
-- **`zoeyr-blob-store`** - Binary data storage service
+- **`zoe-wire-protocol`** - Protocol definitions and cryptography
+- **`zoe-relay-service`** - Redis-backed message relay with working examples
+- **`zoe-whatsmeow`** - WhatsApp bridge integration
+- **`zoe-blob-store`** - Binary data storage service
 
 ### 🚧 In Development
 
@@ -86,7 +86,7 @@ cargo nextest run --profile ci          # CI-optimized tests
 cargo build --workspace
 
 # Build specific crate
-cargo build --package zoeyr-relay-service
+cargo build --package zoe-relay-service
 
 # Build with optimizations
 cargo build --workspace --release
@@ -99,10 +99,10 @@ cargo build --workspace --release
 cargo test --workspace
 
 # Test specific component
-cargo test --package zoeyr-wire-protocol
+cargo test --package zoe-wire-protocol
 
 # Run integration tests
-cargo test --package zoeyr-relay-service --test integration
+cargo test --package zoe-relay-service --test integration
 
 # Check compilation without tests
 cargo check --workspace
@@ -117,7 +117,7 @@ cargo run --example relay_send_client --help
 cargo run --example relay_listen_client --help
 
 # Run blob store examples
-cargo run --example upload_download --package zoeyr-blob-store
+cargo run --example upload_download --package zoe-blob-store
 ```
 
 ## 🐛 Troubleshooting
@@ -147,7 +147,7 @@ Enable debug logging for development:
 export RUST_LOG=debug
 
 # Enable trace logging for specific crate
-export RUST_LOG=zoeyr_relay_service=trace
+export RUST_LOG=zoe_relay_service=trace
 
 # Run with logging
 cargo run --example relay_server
@@ -162,7 +162,7 @@ cargo run --example relay_server
 cargo bench --workspace
 
 # Run specific benchmark
-cargo bench --package zoeyr-wire-protocol
+cargo bench --package zoe-wire-protocol
 ```
 
 ### Profiling
@@ -201,7 +201,7 @@ valgrind --tool=massif cargo run --example relay_server --release
 cargo build --workspace --release
 
 # Create deployment artifacts
-cargo build --release --package zoeyr-relay-service
+cargo build --release --package zoe-relay-service
 ```
 
 ### Docker Integration

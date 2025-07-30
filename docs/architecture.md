@@ -2,13 +2,13 @@
 
 ## 🏗️ System Architecture
 
-Zoeyr is a secure messaging relay system built with a modular, multi-crate architecture. The system provides dual-layer security with QUIC transport and ed25519 cryptography.
+Zoe is a secure messaging relay system built with a modular, multi-crate architecture. The system provides dual-layer security with QUIC transport and ed25519 cryptography.
 
 ### Core Components
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                        Zoeyr Architecture                       │
+│                        Zoe Architecture                       │
 ├─────────────────────────────────────────────────────────────────┤
 │  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐  │
 │  │   Client Apps   │  │   Client Apps   │  │   Client Apps   │  │
@@ -42,7 +42,7 @@ Zoeyr is a secure messaging relay system built with a modular, multi-crate archi
 
 ### Core Protocol Crates
 
-#### `zoeyr-wire-protocol`
+#### `zoe-wire-protocol`
 **Purpose**: Protocol definitions and cryptographic utilities
 
 **Key Components**:
@@ -68,7 +68,7 @@ pub struct MessageFull<T> {
 }
 ```
 
-#### `zoeyr-relay-service`
+#### `zoe-relay-service`
 **Purpose**: Redis-backed message relay service
 
 **Key Components**:
@@ -85,16 +85,16 @@ pub struct MessageFull<T> {
 
 ### Integration Crates
 
-#### `zoeyr-whatsmeow`
+#### `zoe-whatsmeow`
 **Purpose**: WhatsApp bridge integration
 
 **Key Components**:
 - Go-based WhatsApp client integration
 - Multi-device WhatsApp protocol support
 - QR code authentication
-- Message bridging to Zoeyr protocol
+- Message bridging to Zoe protocol
 
-#### `zoeyr-blob-store`
+#### `zoe-blob-store`
 **Purpose**: Binary data storage service
 
 **Key Components**:

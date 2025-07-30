@@ -3,7 +3,7 @@ version: '3.8'
 services:
   redis:
     image: redis:7-alpine
-    container_name: zoeyr-redis
+    container_name: zoe-redis
     ports:
       - "6379:6379"
     volumes:
@@ -20,7 +20,7 @@ services:
 
   redis-commander:
     image: rediscommander/redis-commander:latest
-    container_name: zoeyr-redis-commander
+    container_name: zoe-redis-commander
     ports:
       - "8081:8081"
     environment:

@@ -1,6 +1,6 @@
 # Blob Store Examples
 
-This directory contains example applications that demonstrate how to use the Zoeyr blob store.
+This directory contains example applications that demonstrate how to use the Zoe blob store.
 
 ## Upload/Download Example
 
@@ -37,7 +37,7 @@ The example will output detailed logs showing each step of the process:
 ```
 🚀 Starting blob store upload/download example
 Step 1: Checking server health...
-Server health: {"service":"zoeyr-blob-store","status":"healthy"}
+Server health: {"service":"zoe-blob-store","status":"healthy"}
 Step 2: Creating test data file...
 Created test file: test_data.txt
 Step 3: Uploading file to blob store...

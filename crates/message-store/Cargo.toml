@@ -1,12 +1,12 @@
 [package]
-name = "zoeyr-message-store"
+name = "zoe-message-store"
 version = "0.1.0"
 edition = "2021"
-description = "Zoeyr message storage and handling with Redis backend and tarpc service interface"
+description = "Zoe message storage and handling with Redis backend and tarpc service interface"
 license = "MIT OR Apache-2.0"
 
 [dependencies]
-zoeyr-wire-protocol = { path = "../wire-protocol" }
+zoe-wire-protocol = { path = "../wire-protocol" }
 
 # Async runtime
 tokio = { workspace = true }

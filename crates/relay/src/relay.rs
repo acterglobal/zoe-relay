@@ -1,4 +1,4 @@
-//! # Zoeyr Relay
+//! # Zoe Relay
 //!
 //! A clean, minimal QUIC relay server with ed25519 bi-directional authentication for service routing.
 //!
@@ -26,7 +26,7 @@
 //! ### Implementing a Service Router
 //!
 //! ```rust
-//! use zoeyr_relay::{RelayServer, ServiceRouter};
+//! use zoe_relay::{RelayServer, ServiceRouter};
 //! use ed25519_dalek::SigningKey;
 //! use std::net::SocketAddr;
 //!
@@ -54,10 +54,10 @@
 //! #     type ServiceId = u8;
 //! #     type Service = MyService;
 //! #     async fn parse_service_id(&self, service_id: u8) -> Result<Self::ServiceId, Self::Error> { Ok(service_id) }
-//! #     async fn create_service(&self, _: &Self::ServiceId, _: &zoeyr_relay::ConnectionInfo, _: zoeyr_relay::StreamPair) -> Result<Self::Service, Self::Error> { Ok(MyService) }
+//! #     async fn create_service(&self, _: &Self::ServiceId, _: &zoe_relay::ConnectionInfo, _: zoe_relay::StreamPair) -> Result<Self::Service, Self::Error> { Ok(MyService) }
 //! # }
 //! # #[async_trait]
-//! # impl zoeyr_relay::Service for MyService {
+//! # impl zoe_relay::Service for MyService {
 //! #     type Error = MyError;
 //! #     async fn run(self) -> Result<(), Self::Error> { Ok(()) }
 //! # }
@@ -104,7 +104,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tracing::{error, info};
-use zoeyr_wire_protocol::{
+use zoe_wire_protocol::{
     extract_ed25519_from_cert, generate_deterministic_cert_from_ed25519, CryptoError,
     ZoeClientCertVerifier,
 };
@@ -233,7 +233,7 @@ impl<R: ServiceRouter + 'static> RelayServer<R> {
                 Ok(service_id) => service_id,
                 Err(error) => {
                     error!(?error, "Invalid service ID: {}", service_id);
-                    send.write_u8(ServiceError::UnknownService as u8).await?; // we immediately close this stream with unknown service id
+                    send.write_u8(ServiceError::UnknownService.as_u8()).await?; // we immediately close this stream with unknown service id
                     continue;
                 }
             };
@@ -245,7 +245,7 @@ impl<R: ServiceRouter + 'static> RelayServer<R> {
             {
                 Ok(service) => service,
                 Err(error) => {
-                    error!(?error, "Failed to create service: {}", service_id);
+                    error!(?error, "Failed to create service: {:?}", service_id);
                     // server error
                     // send.write_u8(ServiceError::ServiceCreationError as u8).await?; // we immediately close this stream with unknown service id
                     continue;

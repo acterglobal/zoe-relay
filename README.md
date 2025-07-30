@@ -1,4 +1,4 @@
-# Zoeyr - Secure Messaging Relay System
+# Zoe - Secure Messaging Relay System
 
 A secure, modular messaging relay system built with QUIC transport, tarpc RPC services, and ed25519 cryptography.
 
@@ -33,11 +33,11 @@ cargo run --example relay_listen_client -- \
 ## 📦 What's Included
 
 ### Core Components
-- **`zoeyr-wire-protocol`** - Protocol definitions, cryptographic utilities, and tarpc service interfaces
-- **`zoeyr-message-store`** - Message storage, handling, streaming, and RelayService tarpc implementation
-- **`zoeyr-relay`** - QUIC connector providing unified transport for multiple tarpc services
-- **`zoeyr-blob-store`** - Binary data storage with both HTTP and tarpc interfaces
-- **`zoeyr-whatsmeow`** - WhatsApp bridge integration
+- **`zoe-wire-protocol`** - Protocol definitions, cryptographic utilities, and tarpc service interfaces
+- **`zoe-message-store`** - Message storage, handling, streaming, and RelayService tarpc implementation
+- **`zoe-relay`** - QUIC connector providing unified transport for multiple tarpc services
+- **`zoe-blob-store`** - Binary data storage with both HTTP and tarpc interfaces
+- **`zoe-whatsmeow`** - WhatsApp bridge integration
 
 ### Security Features
 - **QUIC+tarpc architecture**: Unified RPC services over QUIC transport
@@ -79,8 +79,8 @@ cargo build --workspace
 cargo test --workspace
 
 # Run specific examples
-cargo run --example relay_server --package zoeyr-relay
-cargo run --example upload_download --package zoeyr-blob-store
+cargo run --example relay_server --package zoe-relay
+cargo run --example upload_download --package zoe-blob-store
 ```
 
 ### Docker Environment
@@ -89,7 +89,7 @@ cargo run --example upload_download --package zoeyr-blob-store
 docker-compose up -d
 
 # Check Redis
-docker exec zoeyr-redis redis-cli ping
+docker exec zoe-redis redis-cli ping
 
 # Access Redis Commander (web UI)
 open http://localhost:8081

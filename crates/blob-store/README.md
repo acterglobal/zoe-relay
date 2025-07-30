@@ -1,4 +1,4 @@
-# Zoeyr Blob Store
+# Zoe Blob Store
 
 A content-addressable blob store based on iroh-blobs, exposed via both HTTP REST API and tarpc RPC interface for integration with the QUIC transport layer.
 
@@ -33,8 +33,8 @@ curl http://localhost:8080/blob/bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3ocl
 For integration with the QUIC+tarpc ecosystem:
 
 ```rust
-use zoeyr_blob_store::BlobServiceImpl;
-use zoeyr_relay::QuicTarpcServer;
+use zoe_blob_store::BlobServiceImpl;
+use zoe_relay::QuicTarpcServer;
 
 // Host blob service over QUIC
 let blob_service = BlobServiceImpl::new("./blob-data").await?;
@@ -49,7 +49,7 @@ server.run().await?;
 cargo build --release
 
 # Run the HTTP server
-./target/release/zoeyr-blob-store
+./target/release/zoe-blob-store
 
 # Or use with relay system (see relay documentation)
 ```
@@ -59,7 +59,7 @@ cargo build --release
 ### Command Line Options
 
 ```bash
-zoeyr-blob-store [OPTIONS]
+zoe-blob-store [OPTIONS]
 
 Options:
   -d, --data-dir <DATA_DIR>    Data directory for storing blobs [default: ./blob-store-data]
@@ -80,7 +80,7 @@ Response:
 ```json
 {
   "status": "healthy",
-  "service": "zoeyr-blob-store"
+  "service": "zoe-blob-store"
 }
 ```
 
@@ -153,8 +153,8 @@ The BlobService provides the following RPC methods:
 #### Using the RPC Interface
 
 ```rust
-use zoeyr_wire_protocol::BlobServiceClient;
-use zoeyr_relay::RelayClientBuilder;
+use zoe_wire_protocol::BlobServiceClient;
+use zoe_relay::RelayClientBuilder;
 
 // Connect via relay
 let mut client = RelayClientBuilder::new(server_addr, server_public_key)
@@ -220,7 +220,7 @@ console.log('Downloaded blob size:', blob.size);
 ### Using Rust (RPC)
 
 ```rust
-use zoeyr_blob_store::BlobServiceImpl;
+use zoe_blob_store::BlobServiceImpl;
 
 // Direct service usage
 let service = BlobServiceImpl::new("./blob-data").await?;
@@ -253,13 +253,13 @@ The blob store uses iroh-blobs for content-addressable storage, which provides:
 ### Standalone HTTP Server
 
 ```bash
-cargo run --bin zoeyr-blob-store
+cargo run --bin zoe-blob-store
 ```
 
 ### Integrated with Relay System
 
 ```rust
-use zoeyr_relay::RelayServerBuilder;
+use zoe_relay::RelayServerBuilder;
 
 let (server, _) = RelayServerBuilder::new(addr)
     .with_redis_url("redis://localhost:6379".to_string())
@@ -271,8 +271,8 @@ let (server, _) = RelayServerBuilder::new(addr)
 ### Direct RPC Service
 
 ```rust
-use zoeyr_relay::QuicTarpcServer;
-use zoeyr_blob_store::BlobServiceImpl;
+use zoe_relay::QuicTarpcServer;
+use zoe_blob_store::BlobServiceImpl;
 
 let blob_service = BlobServiceImpl::new("./blob-data").await?;
 let server = QuicTarpcServer::new(addr, server_key, blob_service.serve());
@@ -299,7 +299,7 @@ cargo test
 cargo run -- --port 8080 --host 127.0.0.1
 
 # With relay system
-cargo run --example relay_server --package zoeyr-relay
+cargo run --example relay_server --package zoe-relay
 ```
 
 ## Error Handling
@@ -313,7 +313,7 @@ cargo run --example relay_server --package zoeyr-relay
 ### RPC Errors
 
 ```rust
-use zoeyr_wire_protocol::BlobError;
+use zoe_wire_protocol::BlobError;
 
 match blob_client.download_blob(hash).await {
     Ok(Ok(data)) => println!("Downloaded {} bytes", data.len()),
@@ -339,4 +339,4 @@ match blob_client.download_blob(hash).await {
 
 ## License
 
-This project is part of the Zoeyr workspace and follows the same license terms. 
+This project is part of the Zoe workspace and follows the same license terms. 

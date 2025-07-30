@@ -22,7 +22,7 @@ impl CommandQueuer {
     ) -> Result<(), Error> {
         let rsp = postcard::to_vec(&response)?;
         let command = Cmd::new("LPUSH");
-        command.arg(format!("zoeyr-backoffice-response:{id}"));
+        command.arg(format!("zoe-backoffice-response:{id}"));
         command.arg(rsp);
         self.manager.send_packed_command(&command)?;
         Ok(())

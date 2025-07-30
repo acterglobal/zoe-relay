@@ -1,13 +1,13 @@
 [package]
-name = "zoeyr-relay"
+name = "zoe-relay"
 version = "0.1.0"
 edition = "2021"
-description = "Zoeyr relay server providing QUIC transport with ed25519 authentication"
+description = "Zoe relay server providing QUIC transport with ed25519 authentication"
 license = "MIT OR Apache-2.0"
 
 [dependencies]
 # Wire protocol for crypto utilities
-zoeyr-wire-protocol = { path = "../wire-protocol" }
+zoe-wire-protocol = { path = "../wire-protocol" }
 
 # Async runtime
 tokio = { workspace = true, features = ["io-util"] }
@@ -42,7 +42,17 @@ tokio-util = { version = "0.7", features = ["codec"] }
 bytes = "1.0"
 
 # specific impls
-zoeyr-blob-store = { path = "../blob-store" }
+zoe-blob-store = { path = "../blob-store" }
+
+# CLI dependencies
+clap = { version = "4.4", features = ["derive", "env"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+toml = "0.8"
+rand = "0.8"
+
+[[bin]]
+name = "zoe-relay"
+path = "src/main.rs"
 
 
 [dev-dependencies]
@@ -56,5 +66,6 @@ rand = "0.8"
 # Additional utilities for testing
 futures = "0.3"
 tracing-subscriber = "0.3"
+tempfile = "3.8"
 
 # Error types for testing (already in dependencies above)

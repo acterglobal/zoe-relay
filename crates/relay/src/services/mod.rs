@@ -1,17 +1,19 @@
 pub mod blob;
 pub mod rpc;
 
-use crate::{Service, ServiceRouter};
+use crate::{Service, ServiceRouter, ServiceError, ConnectionInfo, StreamPair};
 use async_trait::async_trait;
 pub use blob::{BlobService, BlobServiceError};
-pub use zoeyr_wire_protocol::ZoeServices;
+pub use zoe_wire_protocol::ZoeServices;
+use zoe_blob_store::BlobServiceImpl;
 
 #[derive(Debug, thiserror::Error)]
-enum AllServiceError {
+pub enum AllServiceError {
+    #[error("Blob service error: {0}")]
     Blob(BlobServiceError),
 }
 
-enum Services {
+pub enum Services {
     Blob(BlobService),
 }
 
@@ -21,12 +23,12 @@ impl Service for Services {
 
     async fn run(self) -> Result<(), Self::Error> {
         match self {
-            Services::Blob(service) => service.run().await.map_err(ServiceError::Blob),
+            Services::Blob(service) => service.run().await.map_err(AllServiceError::Blob),
         }
     }
 }
 
-struct RelayServiceRouter {
+pub struct RelayServiceRouter {
     blob_service: BlobServiceImpl,
 }
 
@@ -40,8 +42,6 @@ impl RelayServiceRouter {
 impl ServiceRouter for RelayServiceRouter {
     type ServiceId = ZoeServices;
     type Error = ServiceError;
-
-    #[doc = " The service type that handles connections"]
     type Service = Services;
 
     async fn parse_service_id(&self, service_id: u8) -> Result<Self::ServiceId, Self::Error> {
@@ -51,7 +51,7 @@ impl ServiceRouter for RelayServiceRouter {
     async fn create_service(
         &self,
         service_id: &Self::ServiceId,
-        connection_info: &ConnectionInfo,
+        _connection_info: &ConnectionInfo,
         streams: StreamPair,
     ) -> Result<Self::Service, Self::Error> {
         match service_id {
@@ -59,7 +59,7 @@ impl ServiceRouter for RelayServiceRouter {
                 streams,
                 self.blob_service.clone(),
             ))),
-            _ => Err(ServiceError::InvalidServiceId(service_id)),
+            _ => Err(ServiceError::InvalidServiceId(*service_id as u8)),
         }
     }
 }

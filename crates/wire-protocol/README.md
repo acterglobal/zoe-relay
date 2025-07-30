@@ -1,6 +1,6 @@
-# Zoeyr Wire Protocol
+# Zoe Wire Protocol
 
-The wire protocol crate provides core message definitions, cryptographic utilities, tarpc service interfaces, and authentication types for the Zoeyr messaging system.
+The wire protocol crate provides core message definitions, cryptographic utilities, tarpc service interfaces, and authentication types for the Zoe messaging system.
 
 ## Features
 
@@ -13,7 +13,7 @@ The wire protocol crate provides core message definitions, cryptographic utiliti
 ## Quick Start
 
 ```rust
-use zoeyr_wire_protocol::{
+use zoe_wire_protocol::{
     MessageFull, Message, MessageContent, Kind, Tag,
     generate_ed25519_keypair, generate_deterministic_cert_from_ed25519
 };
@@ -52,7 +52,7 @@ assert!(message_full.verify_all()?);
 Provides messaging operations over RPC:
 
 ```rust
-use zoeyr_wire_protocol::{RelayService, RelayServiceClient};
+use zoe_wire_protocol::{RelayService, RelayServiceClient};
 
 // Service methods available:
 // - get_message(id: Vec<u8>) -> RelayResult<Option<Vec<u8>>>
@@ -65,7 +65,7 @@ use zoeyr_wire_protocol::{RelayService, RelayServiceClient};
 Provides blob storage operations over RPC:
 
 ```rust
-use zoeyr_wire_protocol::{BlobService, BlobServiceClient};
+use zoe_wire_protocol::{BlobService, BlobServiceClient};
 
 // Service methods available:
 // - health_check() -> BlobResult<BlobHealth>
@@ -96,7 +96,7 @@ let blob_hash = blob_client.upload_blob(blob_data).await??;
 
 ### Core Message Structure
 
-Messages in Zoeyr follow this structure:
+Messages in Zoe follow this structure:
 
 ```rust
 pub struct MessageFull<T> {
@@ -132,7 +132,7 @@ store it
 ### Ed25519 Key Management
 
 ```rust
-use zoeyr_wire_protocol::{
+use zoe_wire_protocol::{
     generate_ed25519_keypair,
     load_ed25519_key_from_hex,
     save_ed25519_key_to_hex,
@@ -158,7 +158,7 @@ let loaded_public_key = load_ed25519_public_key_from_hex(&hex_public_key)?;
 Generate TLS certificates that embed ed25519 public keys:
 
 ```rust
-use zoeyr_wire_protocol::{
+use zoe_wire_protocol::{
     generate_deterministic_cert_from_ed25519,
     extract_ed25519_from_cert,
 };
@@ -183,7 +183,7 @@ assert_eq!(extracted_key.to_bytes(), ed25519_key.verifying_key().to_bytes());
 The protocol supports dynamic challenge-response authentication:
 
 ```rust
-use zoeyr_wire_protocol::{DynamicSession, SessionManager};
+use zoe_wire_protocol::{DynamicSession, SessionManager};
 
 let client_key = generate_ed25519_keypair();
 let session_manager = SessionManager::new();
@@ -216,7 +216,7 @@ assert!(is_valid);
 The wire protocol defines a comprehensive set of message types for relay communication:
 
 ```rust
-use zoeyr_wire_protocol::ProtocolMessage;
+use zoe_wire_protocol::ProtocolMessage;
 
 // Authentication flow
 let auth_challenge = ProtocolMessage::AuthChallenge {
@@ -240,13 +240,13 @@ The crate includes comprehensive test coverage:
 
 ```bash
 # Run all tests
-cargo test -p zoeyr-wire-protocol
+cargo test -p zoe-wire-protocol
 
 # Run crypto tests
-cargo test -p zoeyr-wire-protocol crypto::tests
+cargo test -p zoe-wire-protocol crypto::tests
 
 # Run protocol tests  
-cargo test -p zoeyr-wire-protocol tests::unit_protocol
+cargo test -p zoe-wire-protocol tests::unit_protocol
 ```
 
 ## Features Flags

@@ -1,6 +1,6 @@
-# Docker Setup for Zoeyr Relay Service Testing
+# Docker Setup for Zoe Relay Service Testing
 
-This directory contains a Docker Compose configuration for running a local Redis instance for testing the Zoeyr relay service.
+This directory contains a Docker Compose configuration for running a local Redis instance for testing the Zoe relay service.
 
 ## Quick Start
 
@@ -14,11 +14,11 @@ docker-compose up -d
 docker-compose ps
 ```
 
-You should see the `zoeyr-redis` container running on port 6379.
+You should see the `zoe-redis` container running on port 6379.
 
 ### 3. Test Redis connection
 ```bash
-docker exec -it zoeyr-redis redis-cli ping
+docker exec -it zoe-redis redis-cli ping
 ```
 
 Should return `PONG`.
@@ -26,7 +26,7 @@ Should return `PONG`.
 ### 4. Run your relay service tests
 ```bash
 # Build the test binary
-cargo build --package zoeyr-relay-service
+cargo build --package zoe-relay-service
 
 # Send test messages
 ./target/debug/relay-service-test send --count 5 --with-event --with-user

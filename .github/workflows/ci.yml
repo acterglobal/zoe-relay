@@ -19,7 +19,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: Check all targets
-        run: cargo check --workspace --all-targets --exclude zoeyr-backend-protocol
+        run: cargo check --workspace --all-targets --exclude zoe-backend-protocol
 
   test:
     name: Test Suite
@@ -46,7 +46,7 @@ jobs:
           tool: cargo-nextest
       
       - name: Run unit and integration tests
-        run: cargo nextest run --profile ci --workspace --exclude zoeyr-backend-protocol
+        run: cargo nextest run --profile ci --workspace --exclude zoe-backend-protocol
         env:
           REDIS_URL: redis://localhost:6379
 
@@ -57,11 +57,11 @@ jobs:
       matrix:
         component:
           - whatsmeow
-          - zoeyr-wire-protocol
+          - zoe-wire-protocol
           - zoey-encrypted-storage
-          - zoeyr-blob-store
-          - zoeyr-message-store
-          - zoeyr-relay
+          - zoe-blob-store
+          - zoe-message-store
+          - zoe-relay
     services:
       redis:
         image: redis:latest
@@ -102,7 +102,7 @@ jobs:
         run: cargo fmt --all -- --check
         
       - name: Run clippy
-        run: cargo clippy --workspace --all-targets --exclude zoeyr-backend-protocol -- -D warnings
+        run: cargo clippy --workspace --all-targets --exclude zoe-backend-protocol -- -D warnings
 
   security:
     name: Security Audit
@@ -147,7 +147,7 @@ jobs:
           tool: cargo-llvm-cov
 
       - name: Generate code coverage
-        run: cargo llvm-cov --workspace --exclude zoeyr-backend-protocol --lcov --output-path lcov.info
+        run: cargo llvm-cov --workspace --exclude zoe-backend-protocol --lcov --output-path lcov.info
         env:
           REDIS_URL: redis://localhost:6379
 
@@ -167,7 +167,7 @@ jobs:
       
       - name: Build examples (excluding problematic crates)
         run: |
-          cargo build --examples --workspace --exclude zoeyr-backend-protocol --exclude whatsmeow --exclude wa-bot
+          cargo build --examples --workspace --exclude zoe-backend-protocol --exclude whatsmeow --exclude wa-bot
 
   cross-compile:
     name: Cross Compilation
@@ -196,7 +196,7 @@ jobs:
           # Skip problematic crates
           cargo build --target ${{ matrix.target }} \
             --workspace \
-            --exclude zoeyr-backend-protocol \
+            --exclude zoe-backend-protocol \
             --exclude whatsmeow \
             --exclude wa-bot
 
@@ -209,7 +209,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       
       - name: Check documentation
-        run: cargo doc --workspace --exclude zoeyr-backend-protocol --no-deps --document-private-items
+        run: cargo doc --workspace --exclude zoe-backend-protocol --no-deps --document-private-items
         env:
           RUSTDOCFLAGS: "-Dwarnings"
 
@@ -226,7 +226,7 @@ jobs:
       - name: Check with MSRV
         run: |
           cargo check --workspace \
-            --exclude zoeyr-backend-protocol \
+            --exclude zoe-backend-protocol \
             --exclude whatsmeow \
             --exclude wa-bot
 
@@ -273,6 +273,6 @@ jobs:
 
       - name: Run fast tests
         run: |
-          cargo nextest run --profile fast --workspace --exclude zoeyr-backend-protocol
+          cargo nextest run --profile fast --workspace --exclude zoe-backend-protocol
         env:
           REDIS_URL: redis://localhost:6379 

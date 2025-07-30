@@ -1,14 +1,14 @@
 [package]
-name = "zoeyr-blob-store"
+name = "zoe-blob-store"
 version = "0.1.0"
 edition = "2024"
 
 [[bin]]
-name = "zoeyr-blob-store"
+name = "zoe-blob-store"
 path = "src/main.rs"
 
 [dependencies]
-zoeyr-wire-protocol = { path = "../wire-protocol" }
+zoe-wire-protocol = { path = "../wire-protocol" }
 
 # Iroh blob store dependencies
 iroh-blobs = "0.90.0"

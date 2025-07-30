@@ -13,7 +13,7 @@
 | encrypted-storage | 12/12 | ✅ All passing |
 | message-store | 4/4 | ✅ All passing |
 
-> **Note**: `zoeyr-backend-protocol` is excluded from automated tests due to unresolved serde dependency conflicts.
+> **Note**: `zoe-backend-protocol` is excluded from automated tests due to unresolved serde dependency conflicts.
 
 ## 🚀 Quick Commands
 
@@ -24,29 +24,29 @@
 cargo install cargo-nextest
 
 # Run all tests (excludes problematic crates)
-cargo nextest run --workspace --exclude zoeyr-backend-protocol
+cargo nextest run --workspace --exclude zoe-backend-protocol
 
 # Run with specific profiles
-cargo nextest run --profile ci --workspace --exclude zoeyr-backend-protocol
-cargo nextest run --profile fast --workspace --exclude zoeyr-backend-protocol
+cargo nextest run --profile ci --workspace --exclude zoe-backend-protocol
+cargo nextest run --profile fast --workspace --exclude zoe-backend-protocol
 
 # Run specific crate tests
-cargo nextest run --package zoeyr-relay
-cargo nextest run --package zoeyr-wire-protocol
+cargo nextest run --package zoe-relay
+cargo nextest run --package zoe-wire-protocol
 ```
 
 ### Standard Cargo Testing
 
 ```bash
 # Run all tests (excludes problematic crates)
-cargo test --workspace --exclude zoeyr-backend-protocol
+cargo test --workspace --exclude zoe-backend-protocol
 
 # Run specific crate tests
-cargo test --package zoeyr-relay
-cargo test --package zoeyr-wire-protocol
+cargo test --package zoe-relay
+cargo test --package zoe-wire-protocol
 
 # Run with verbose output
-cargo test --workspace --exclude zoeyr-backend-protocol --verbose
+cargo test --workspace --exclude zoe-backend-protocol --verbose
 ```
 
 ## 🎯 Nextest Configuration
@@ -71,10 +71,10 @@ The CI workflow (`.github/workflows/ci.yml`) runs comprehensive tests:
 ### CI Commands Used
 ```bash
 # Check compilation
-cargo check --workspace --all-targets --exclude zoeyr-backend-protocol
+cargo check --workspace --all-targets --exclude zoe-backend-protocol
 
 # Run tests
-cargo nextest run --profile ci --workspace --exclude zoeyr-backend-protocol
+cargo nextest run --profile ci --workspace --exclude zoe-backend-protocol
 ```
 
 ## 🔧 Dependencies
@@ -101,7 +101,7 @@ sudo systemctl start redis
 
 ### Excluded Crates
 
-- **`zoeyr-backend-protocol`**: Excluded due to serde dependency conflicts
+- **`zoe-backend-protocol`**: Excluded due to serde dependency conflicts
   - Contains Redis integration with serialization issues
   - Will be fixed in future iterations
 
@@ -115,13 +115,13 @@ sudo systemctl start redis
 ### Local Debugging
 ```bash
 # Verbose output
-cargo nextest run --verbose --workspace --exclude zoeyr-backend-protocol
+cargo nextest run --verbose --workspace --exclude zoe-backend-protocol
 
 # Run single test
-cargo nextest run --package zoeyr-relay test_name
+cargo nextest run --package zoe-relay test_name
 
 # Show stdout/stderr
-cargo nextest run --nocapture --workspace --exclude zoeyr-backend-protocol
+cargo nextest run --nocapture --workspace --exclude zoe-backend-protocol
 ```
 
 ### CI Debugging

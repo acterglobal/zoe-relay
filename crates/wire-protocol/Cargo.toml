@@ -1,8 +1,8 @@
 [package]
-name = "zoeyr-wire-protocol"
+name = "zoe-wire-protocol"
 version = "0.1.0"
 edition = "2021"
-description = "Zoeyr wire protocol with dynamic authentication, ed25519-derived TLS certificates, and relay service definitions"
+description = "Zoe wire protocol with dynamic authentication, ed25519-derived TLS certificates, and relay service definitions"
 license = "MIT OR Apache-2.0"
 
 [dependencies]
@@ -46,6 +46,9 @@ tracing = "0.1"
 
 # Async utilities  
 async-trait = "0.1"
+
+# RPC framework
+tarpc = { workspace = true }
 
 [dev-dependencies]
 # Testing framework

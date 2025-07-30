@@ -1,6 +1,6 @@
-# Zoeyr Message Store
+# Zoe Message Store
 
-The message store provides message storage, handling, streaming, and tarpc service implementation for the Zoeyr messaging system.
+The message store provides message storage, handling, streaming, and tarpc service implementation for the Zoe messaging system.
 
 ## Features
 
@@ -24,7 +24,7 @@ This crate contains the core business logic for message handling, separated from
 ### Basic Setup
 
 ```rust
-use zoeyr_message_store::{RelayConfig, RedisStorage, RelayServiceImpl};
+use zoe_message_store::{RelayConfig, RedisStorage, RelayServiceImpl};
 use std::sync::Arc;
 
 #[tokio::main]
@@ -57,8 +57,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 ### Message Storage
 
 ```rust
-use zoeyr_message_store::{RedisStorage, MessageFilters};
-use zoeyr_wire_protocol::{MessageFull, Message, Kind};
+use zoe_message_store::{RedisStorage, MessageFilters};
+use zoe_wire_protocol::{MessageFull, Message, Kind};
 use serde::{Serialize, Deserialize};
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -179,7 +179,7 @@ Authentication is handled at the QUIC transport layer via ed25519 mutual TLS. Th
 ### Redis Configuration
 
 ```rust
-use zoeyr_message_store::RedisConfig;
+use zoe_message_store::RedisConfig;
 
 let redis_config = RedisConfig {
     url: "redis://localhost:6379".to_string(),
@@ -190,7 +190,7 @@ let redis_config = RedisConfig {
 ### Service Configuration
 
 ```rust
-use zoeyr_message_store::ServiceConfig;
+use zoe_message_store::ServiceConfig;
 
 let service_config = ServiceConfig {
     max_message_size: 1024 * 1024, // 1MB
@@ -203,7 +203,7 @@ let service_config = ServiceConfig {
 The crate provides comprehensive error types:
 
 ```rust
-use zoeyr_message_store::RelayError;
+use zoe_message_store::RelayError;
 
 match storage.get_message(id).await {
     Ok(Some(message)) => println!("Found message"),
@@ -218,8 +218,8 @@ match storage.get_message(id).await {
 
 This crate is designed to be used with:
 
-- **`zoeyr-relay`**: Provides QUIC transport and service routing
-- **`zoeyr-wire-protocol`**: Defines message formats and service interfaces
+- **`zoe-relay`**: Provides QUIC transport and service routing
+- **`zoe-wire-protocol`**: Defines message formats and service interfaces
 - **Redis**: Backend storage and streaming
 
 ## License
