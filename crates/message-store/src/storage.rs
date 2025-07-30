@@ -5,9 +5,7 @@ use redis::{aio::ConnectionManager, AsyncCommands, SetOptions};
 use tracing::{info, warn};
 use zoe_wire_protocol::{MessageFilters, MessageFull, StoreKey, Tag};
 
-use crate::error::RelayError;
-
-type Result<T> = std::result::Result<T, RelayError>;
+use crate::error::{MessageStoreError, Result};
 
 // Redis key prefixes for different data types
 const MESSAGE_STREAM_NAME: &str = "message_stream";
@@ -19,18 +17,17 @@ const CHANNEL_KEY: &str = "channel";
 
 /// Redis-backed storage for the relay service
 #[derive(Clone)]
-pub struct RedisStorage {
+pub struct RedisMessageStorage {
     pub conn: Arc<tokio::sync::Mutex<ConnectionManager>>,
-    pub config: crate::config::RelayConfig,
 }
 
 // internal API
-impl RedisStorage {
+impl RedisMessageStorage {
     async fn get_inner<R: redis::FromRedisValue>(&self, id: &str) -> Result<Option<R>> {
         info!("Reading: {id}");
         let mut conn = self.conn.lock().await;
 
-        return conn.get(id).await.map_err(RelayError::Redis);
+        return conn.get(id).await.map_err(MessageStoreError::Redis);
     }
     /// Retrieve a specific message by ID as its raw data
     async fn get_inner_raw(&self, id: &str) -> Result<Option<Vec<u8>>> {
@@ -47,25 +44,24 @@ impl RedisStorage {
             return Ok(None);
         };
         let message = MessageFull::from_storage_value(&value)
-            .map_err(|e| RelayError::Serialization(e.to_string()))?;
+            .map_err(|e| MessageStoreError::Serialization(e.to_string()))?;
         Ok(Some(message))
     }
 }
 
 type RedisStreamResult = Vec<(String, Vec<(String, Vec<(Vec<u8>, Vec<u8>)>)>)>;
 
-impl RedisStorage {
+impl RedisMessageStorage {
     /// Create a new Redis storage instance
-    pub async fn new(config: crate::config::RelayConfig) -> Result<Self> {
-        let client = redis::Client::open(config.redis.url.clone()).map_err(RelayError::Redis)?;
+    pub async fn new(redis_url: String) -> Result<Self> {
+        let client = redis::Client::open(redis_url).map_err(MessageStoreError::Redis)?;
 
         let conn_manager = ConnectionManager::new(client)
             .await
-            .map_err(RelayError::Redis)?;
+            .map_err(MessageStoreError::Redis)?;
 
         Ok(Self {
             conn: Arc::new(tokio::sync::Mutex::new(conn_manager)),
-            config,
         })
     }
 
@@ -82,12 +78,15 @@ impl RedisStorage {
         // Serialize the message
         let storage_value = message
             .storage_value()
-            .map_err(|e| RelayError::Serialization(e.to_string()))?;
+            .map_err(|e| MessageStoreError::Serialization(e.to_string()))?;
 
         let message_id = hex::encode(message.id.as_bytes());
 
         // Check if the message already exists first
-        let exists: bool = conn.exists(&message_id).await.map_err(RelayError::Redis)?;
+        let exists: bool = conn
+            .exists(&message_id)
+            .await
+            .map_err(MessageStoreError::Redis)?;
 
         if exists {
             // Message already exists, return None
@@ -110,7 +109,7 @@ impl RedisStorage {
         let was_set: bool = set_cmd
             .query_async(&mut *conn)
             .await
-            .map_err(RelayError::Redis)?;
+            .map_err(MessageStoreError::Redis)?;
 
         if !was_set {
             // Another thread/process stored the message in the meantime
@@ -151,7 +150,7 @@ impl RedisStorage {
         let stream_id: String = xadd_cmd
             .query_async(&mut *conn)
             .await
-            .map_err(RelayError::Redis)?;
+            .map_err(MessageStoreError::Redis)?;
 
         // post processing the message: if we are meant to store this.
         if let Some(storage_key) = message.store_key() {
@@ -240,7 +239,7 @@ impl RedisStorage {
         limit: Option<usize>,
     ) -> Result<impl Stream<Item = Result<(Option<Vec<u8>>, String)>> + 'a> {
         if filters.is_empty() {
-            return Err(RelayError::EmptyFilters);
+            return Err(MessageStoreError::EmptyFilters);
         }
 
         let mut conn = self.conn.lock().await.clone();
@@ -271,7 +270,7 @@ impl RedisStorage {
                 let stream_result = match read.query_async(&mut conn).await {
                     Ok(stream_result) => stream_result,
                     Err(e) => {
-                        yield Err(RelayError::Redis(e));
+                        yield Err(MessageStoreError::Redis(e));
                         break;
                     }
                 };
@@ -280,7 +279,7 @@ impl RedisStorage {
                 let rows: RedisStreamResult = match redis::from_redis_value(&stream_result) {
                     Ok(rows) => rows,
                     Err(e) => {
-                        yield Err(RelayError::Redis(e));
+                        yield Err(MessageStoreError::Redis(e));
                         break;
                     }
                 };
@@ -408,7 +407,6 @@ impl RedisStorage {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::{RedisConfig, RelayConfig, ServiceConfig};
 
     use ed25519_dalek::SigningKey;
     use rand::RngCore;
@@ -422,20 +420,8 @@ mod tests {
     }
 
     /// Helper function to create a test configuration with a test Redis instance
-    fn create_test_config() -> RelayConfig {
-        RelayConfig {
-            redis: RedisConfig {
-                url: "redis://127.0.0.1:6379".to_string(),
-                pool_size: 5,
-            },
-            service: ServiceConfig {
-                max_message_size: 1024 * 1024,
-                ephemeral_retention: 3600,
-                debug: true,
-                bind_address: "127.0.0.1".to_string(),
-                port: 8080,
-            },
-        }
+    fn create_test_config() -> String {
+        "redis://127.0.0.1:6379".to_string()
     }
 
     /// Helper function to create a test message with given content
@@ -495,10 +481,10 @@ mod tests {
     async fn test_store_and_retrieve_message() {
         // Skip test if Redis is not available
         let config = create_test_config();
-        let storage = match RedisStorage::new(config.clone()).await {
+        let storage = match RedisMessageStorage::new(config.clone()).await {
             Ok(storage) => storage,
             Err(_) => {
-                eprintln!("Skipping test: Redis not available at {}", config.redis.url);
+                eprintln!("Skipping test: Redis not available at {}", config);
                 return;
             }
         };
@@ -570,10 +556,10 @@ mod tests {
         let _ = env_logger::try_init();
         // Skip test if Redis is not available
         let config = create_test_config();
-        let storage = match RedisStorage::new(config.clone()).await {
+        let storage = match RedisMessageStorage::new(config.clone()).await {
             Ok(storage) => storage,
             Err(_) => {
-                eprintln!("Skipping test: Redis not available at {}", config.redis.url);
+                eprintln!("Skipping test: Redis not available at {}", config);
                 return;
             }
         };
@@ -717,10 +703,10 @@ mod tests {
     async fn test_store_duplicate_message() {
         // Skip test if Redis is not available
         let config = create_test_config();
-        let storage = match RedisStorage::new(config.clone()).await {
+        let storage = match RedisMessageStorage::new(config.clone()).await {
             Ok(storage) => storage,
             Err(_) => {
-                eprintln!("Skipping test: Redis not available at {}", config.redis.url);
+                eprintln!("Skipping test: Redis not available at {}", config);
                 return;
             }
         };
@@ -767,10 +753,10 @@ mod tests {
     async fn test_store_message_with_tags() {
         // Skip test if Redis is not available
         let config = create_test_config();
-        let storage = match RedisStorage::new(config.clone()).await {
+        let storage = match RedisMessageStorage::new(config.clone()).await {
             Ok(storage) => storage,
             Err(_) => {
-                eprintln!("Skipping test: Redis not available at {}", config.redis.url);
+                eprintln!("Skipping test: Redis not available at {}", config);
                 return;
             }
         };
@@ -845,10 +831,10 @@ mod tests {
     async fn test_retrieve_nonexistent_message() {
         // Skip test if Redis is not available
         let config = create_test_config();
-        let storage = match RedisStorage::new(config.clone()).await {
+        let storage = match RedisMessageStorage::new(config.clone()).await {
             Ok(storage) => storage,
             Err(_) => {
-                eprintln!("Skipping test: Redis not available at {}", config.redis.url);
+                eprintln!("Skipping test: Redis not available at {}", config);
                 return;
             }
         };
@@ -872,10 +858,10 @@ mod tests {
     async fn test_ephemeral_message() {
         // Skip test if Redis is not available
         let config = create_test_config();
-        let storage = match RedisStorage::new(config.clone()).await {
+        let storage = match RedisMessageStorage::new(config.clone()).await {
             Ok(storage) => storage,
             Err(_) => {
-                eprintln!("Skipping test: Redis not available at {}", config.redis.url);
+                eprintln!("Skipping test: Redis not available at {}", config);
                 return;
             }
         };

@@ -43,6 +43,10 @@ bytes = "1.0"
 
 # specific impls
 zoe-blob-store = { path = "../blob-store" }
+zoe-message-store = { path = "../message-store" }
+
+# Pin projection for async streams
+pin-project = "1.1"
 
 # CLI dependencies
 clap = { version = "4.4", features = ["derive", "env"] }

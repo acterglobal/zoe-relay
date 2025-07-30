@@ -7,17 +7,17 @@ pub enum ServiceError {
     // 40-49 are for client errors
     #[error("Authentication failed")]
     AuthenticationFailed = 41, // 401 unauthorized in HTTP
-    
+
     #[error("Resource not found")]
-    ResourceNotFound = 44,     // 404 not found in HTTP
-    
+    ResourceNotFound = 44, // 404 not found in HTTP
+
     #[error("Invalid service ID: {0}")]
     InvalidServiceId(u8) = 40, // 400 bad request in HTTP
-    
+
     // 50-59 are for server errors
     #[error("Unknown service")]
-    UnknownService = 51,     // the service is not known
-    
+    UnknownService = 51, // the service is not known
+
     #[error("Service unavailable")]
     ServiceUnavailable = 52, // the service is known but unavailable at this point
 }

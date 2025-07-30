@@ -24,7 +24,7 @@ This crate contains the core business logic for message handling, separated from
 ### Basic Setup
 
 ```rust
-use zoe_message_store::{RelayConfig, RedisStorage, RelayServiceImpl};
+use zoe_message_store::{RelayConfig, RedisMessageStorage, RelayServiceImpl};
 use std::sync::Arc;
 
 #[tokio::main]
@@ -42,7 +42,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     // Create Redis storage
-    let storage = RedisStorage::new(config.clone()).await?;
+    let storage = RedisMessageStorage::new(config.clone()).await?;
 
     // Create service implementation
     let service = RelayServiceImpl::new(Arc::new(storage));
@@ -57,7 +57,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 ### Message Storage
 
 ```rust
-use zoe_message_store::{RedisStorage, MessageFilters};
+use zoe_message_store::{RedisMessageStorage, MessageFilters};
 use zoe_wire_protocol::{MessageFull, Message, Kind};
 use serde::{Serialize, Deserialize};
 

@@ -1,4 +1,4 @@
-use apalis_redis::{Config, ConnectionManager, RedisStorage};
+use apalis_redis::{Config, ConnectionManager, RedisMessageStorage};
 
 pub struct CommandQueuer {
     storage: ConnectionManager,
@@ -11,8 +11,8 @@ impl CommandQueuer {
         Self { storage: manager }
     }
 
-    pub fn storage<T>(&self) -> RedisStorage<T> {
-        RedisStorage::new(self.storage.clone())
+    pub fn storage<T>(&self) -> RedisMessageStorage<T> {
+        RedisMessageStorage::new(self.storage.clone())
     }
 
     pub fn respond<T: Serialize + Deserialize, E: Serialize + Deserialize>(

@@ -40,9 +40,9 @@ pub enum StreamMessage {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SubscriptionConfig {
-    filters: MessageFilters,
-    since: Option<String>,
-    limit: Option<usize>,
+    pub filters: MessageFilters,
+    pub since: Option<String>,
+    pub limit: Option<usize>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

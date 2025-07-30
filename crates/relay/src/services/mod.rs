@@ -1,20 +1,27 @@
 pub mod blob;
+pub mod messages;
 pub mod rpc;
 
-use crate::{Service, ServiceRouter, ServiceError, ConnectionInfo, StreamPair};
+use crate::{ConnectionInfo, Service, ServiceError, ServiceRouter, StreamPair};
 use async_trait::async_trait;
 pub use blob::{BlobService, BlobServiceError};
-pub use zoe_wire_protocol::ZoeServices;
+pub use messages::{MessagesService, MessagesServiceError};
 use zoe_blob_store::BlobServiceImpl;
+use zoe_message_store::RedisMessageStorage;
+pub use zoe_wire_protocol::ZoeServices;
 
 #[derive(Debug, thiserror::Error)]
 pub enum AllServiceError {
     #[error("Blob service error: {0}")]
     Blob(BlobServiceError),
+
+    #[error("Messages service error: {0}")]
+    Messages(MessagesServiceError),
 }
 
 pub enum Services {
     Blob(BlobService),
+    Messages(MessagesService),
 }
 
 #[async_trait]
@@ -24,17 +31,22 @@ impl Service for Services {
     async fn run(self) -> Result<(), Self::Error> {
         match self {
             Services::Blob(service) => service.run().await.map_err(AllServiceError::Blob),
+            Services::Messages(service) => service.run().await.map_err(AllServiceError::Messages),
         }
     }
 }
 
 pub struct RelayServiceRouter {
     blob_service: BlobServiceImpl,
+    message_service: RedisMessageStorage,
 }
 
 impl RelayServiceRouter {
-    pub fn new(blob_service: BlobServiceImpl) -> Self {
-        Self { blob_service }
+    pub fn new(blob_service: BlobServiceImpl, message_service: RedisMessageStorage) -> Self {
+        Self {
+            blob_service,
+            message_service,
+        }
     }
 }
 
@@ -59,7 +71,10 @@ impl ServiceRouter for RelayServiceRouter {
                 streams,
                 self.blob_service.clone(),
             ))),
-            _ => Err(ServiceError::InvalidServiceId(*service_id as u8)),
+            ZoeServices::Messages => Ok(Services::Messages(MessagesService::new(
+                streams,
+                self.message_service.clone(),
+            ))),
         }
     }
 }

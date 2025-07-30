@@ -7202,6 +7202,7 @@ dependencies = [
  "futures",
  "futures-util",
  "hex",
+ "pin-project",
  "postcard",
  "quinn",
  "rand 0.8.5",
@@ -7217,6 +7218,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "zoe-blob-store",
+ "zoe-message-store",
  "zoe-wire-protocol",
 ]
 
