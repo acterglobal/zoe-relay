@@ -1,12 +1,14 @@
 pub mod blob;
 pub mod crypto;
 pub mod message;
+pub mod relay;
 pub mod services;
 pub mod streaming;
 
 pub use blob::*;
 pub use crypto::*;
 pub use message::*;
+pub use relay::*;
 pub use services::*;
 pub use streaming::*; // Re-export streaming protocol types
 

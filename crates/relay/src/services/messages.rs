@@ -1,10 +1,10 @@
-use crate::{Service, StreamPair};
+use crate::Service;
 use async_trait::async_trait;
 use futures::{SinkExt, StreamExt};
 use tokio::sync::mpsc;
 use tracing::{debug, error, info};
 use zoe_message_store::{MessageStoreError, RedisMessageStorage};
-use zoe_wire_protocol::{MessageFilters, MessagesServiceRequest, StreamMessage};
+use zoe_wire_protocol::{MessageFilters, MessagesServiceRequest, StreamMessage, StreamPair};
 
 #[derive(Debug, thiserror::Error)]
 pub enum MessagesServiceError {

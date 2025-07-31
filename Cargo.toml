@@ -1,7 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/blob-store",
+    "crates/blob-store", "crates/client",
     "crates/encrypted-storage",
     "crates/message-store",
     "crates/relay",
@@ -14,12 +14,18 @@ members = [
 [workspace.dependencies]
 anyhow = "1.0"
 tokio = { version = "1.46", features = ["full"] }
+tokio-util = { version = "0.7", features = ["codec"] }
 serde = { version = "1.0", features = ["derive"] }
 tarpc = { version = "0.36", features = ["serde-transport", "tcp", "full"] }
 blake3 = "1.5"
 thiserror = "2"
 brotli = "8"
 postcard = "1.0"
+futures-util = "0.3"
+futures = "0.3"
+rand = "0.8"
+
+clap = { version = "4.4", features = ["derive", "env"] }
 
 [profile.test]
 # Optimize test compilation without losing debug info

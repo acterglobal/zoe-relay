@@ -1,56 +1,66 @@
-//! # Message Client Example
-//!
-//! Demonstrates connecting to a Zoe Relay Server and using the Messages service
-//! to subscribe to messages, publish a message, and verify it's received via the stream.
-//!
-//! ## Usage
-//!
-//! ```bash
-//! # Start the relay server first
-//! cargo run --bin zoe-relay
-//!
-//! # In another terminal, run the client
-//! cargo run --example message_client -- --address 127.0.0.1:4433 --server-key <HEX_PUBLIC_KEY>
-//! ```
-
-use anyhow::Result;
-use clap::{Arg, Command};
+// Remove unused clap imports since they're not needed in this file
 use ed25519_dalek::{SigningKey, VerifyingKey};
 use futures::{SinkExt, StreamExt};
-use quinn::{crypto::rustls::QuicClientConfig, ClientConfig, Endpoint};
+use quinn::Connection;
+use quinn::{ClientConfig, Endpoint, crypto::rustls::QuicClientConfig};
+use rand::rngs::OsRng;
 use rustls::ClientConfig as RustlsClientConfig;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tarpc::serde_transport;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::time::{timeout, Duration};
+use tokio::time::{Duration, timeout};
 use tokio_util::codec::LengthDelimitedCodec;
 use tracing::{error, info, warn};
-use zoe_relay::services::rpc::PostcardFormat;
 use zoe_wire_protocol::{
-    generate_deterministic_cert_from_ed25519, AcceptSpecificServerCertVerifier, Kind, Message,
-    MessageFilters, MessageFull, MessagesServiceRequest, StreamMessage, SubscriptionConfig,
+    AcceptSpecificServerCertVerifier, Kind, Message, MessageFilters, MessageFull,
+    MessagesServiceRequest, PostcardFormat, StreamMessage, StreamPair, SubscriptionConfig,
+    generate_deterministic_cert_from_ed25519,
 };
 
-/// Message client that connects to the relay server and tests message streaming
-struct MessageClient {
+#[derive(thiserror::Error, Debug)]
+pub enum ClientError {
+    #[error("Generic error: {0}")]
+    Generic(String),
+    #[error("TLS error: {0}")]
+    Tls(#[from] rustls::Error),
+    #[error("Quinn connect error: {0}")]
+    QuinnConnect(#[from] quinn::ConnectError),
+    #[error("Quinn connection error: {0}")]
+    QuinnConnection(#[from] quinn::ConnectionError),
+    #[error("IO error: {0}")]
+    Io(#[from] std::io::Error),
+    #[error("Crypto error: {0}")]
+    Crypto(String),
+    #[error("Address parse error: {0}")]
+    AddrParse(#[from] std::net::AddrParseError),
+}
+
+type Result<T> = std::result::Result<T, ClientError>;
+
+/// A Zoe Relay Client
+pub struct Client {
     client_key: SigningKey,
 }
 
-impl MessageClient {
-    fn new() -> Self {
+impl Client {
+    pub fn new() -> Self {
         Self {
-            client_key: SigningKey::generate(&mut rand::thread_rng()),
+            client_key: SigningKey::generate(&mut OsRng),
         }
     }
 
-    fn from_key(key: SigningKey) -> Self {
+    pub fn from_key(key: SigningKey) -> Self {
         Self { client_key: key }
     }
 
-    /// Connect to relay server and test message streaming
-    async fn run(&self, server_addr: SocketAddr, server_public_key: VerifyingKey) -> Result<()> {
+    /// Connect to relay server and return the connection
+    pub async fn connect(
+        &self,
+        server_addr: SocketAddr,
+        server_public_key: VerifyingKey,
+    ) -> Result<Connection> {
         info!("🚀 Starting message client");
         info!(
             "🔑 Client public key: {}",
@@ -68,6 +78,42 @@ impl MessageClient {
         // Connect to server
         let connection = client_endpoint.connect(server_addr, "localhost")?.await?;
         info!("✅ Connected to relay server");
+        Ok(connection)
+    }
+
+    fn create_client_endpoint(&self, server_public_key: &VerifyingKey) -> Result<Endpoint> {
+        // Generate client certificate for mutual TLS
+        let (client_certs, client_key) =
+            generate_deterministic_cert_from_ed25519(&self.client_key, "client")
+                .map_err(|e| ClientError::Crypto(e.to_string()))?;
+
+        // Create custom certificate verifier that accepts our server
+        let verifier = AcceptSpecificServerCertVerifier::new(*server_public_key);
+
+        // Create client config with client certificate for mutual TLS
+        let crypto = RustlsClientConfig::builder()
+            .dangerous()
+            .with_custom_certificate_verifier(Arc::new(verifier))
+            .with_client_auth_cert(client_certs, client_key)?;
+
+        let client_config = ClientConfig::new(Arc::new(
+            QuicClientConfig::try_from(crypto).map_err(|e| ClientError::Generic(e.to_string()))?,
+        ));
+
+        let mut endpoint = Endpoint::client("0.0.0.0:0".parse()?)?;
+        endpoint.set_default_client_config(client_config);
+
+        Ok(endpoint)
+    }
+
+    /// Run the complete message echo test
+    pub async fn run_echo_test(
+        &self,
+        server_addr: SocketAddr,
+        server_public_key: VerifyingKey,
+    ) -> Result<()> {
+        // Connect to server
+        let connection = self.connect(server_addr, server_public_key).await?;
 
         // Open bidirectional stream
         let (mut send, mut recv) = connection.open_bi().await?;
@@ -78,10 +124,14 @@ impl MessageClient {
         info!("📡 Selected Messages service (ID: {})", MESSAGES_SERVICE_ID);
 
         let service_ok = recv.read_u8().await?;
-        assert_eq!(service_ok, 1, "Service ID not acknowledged");
+        if service_ok != 1 {
+            return Err(ClientError::Generic(
+                "Service ID not acknowledged".to_string(),
+            ));
+        }
 
         // Set up postcard transport for message communication
-        let streams = zoe_relay::StreamPair { recv, send };
+        let streams = StreamPair { recv, send };
         let framed = tokio_util::codec::Framed::new(streams, LengthDelimitedCodec::new());
         let transport = serde_transport::new(framed, PostcardFormat::default());
         let (mut sink, mut stream) = transport.split();
@@ -101,13 +151,20 @@ impl MessageClient {
         };
 
         let subscribe_request = MessagesServiceRequest::Subscribe(subscription_config);
-        sink.send(subscribe_request).await?;
-        sink.flush().await?;
+        sink.send(subscribe_request)
+            .await
+            .map_err(|e| ClientError::Generic(e.to_string()))?;
+        sink.flush()
+            .await
+            .map_err(|e| ClientError::Generic(e.to_string()))?;
         info!("📬 Sent subscription request for our own messages");
 
         // Step 2: Create and publish an echo message
         let echo_content = "Hello from message client! 🚀".as_bytes().to_vec();
-        let timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|e| ClientError::Generic(e.to_string()))?
+            .as_secs();
 
         let message = Message::new_v0(
             echo_content.clone(),
@@ -118,15 +175,19 @@ impl MessageClient {
         );
 
         let message_full = MessageFull::new(message, &self.client_key)
-            .map_err(|e| anyhow::anyhow!("Failed to create MessageFull: {}", e))?;
+            .map_err(|e| ClientError::Generic(format!("Failed to create MessageFull: {}", e)))?;
         info!(
-            "📝 Created message withnm, ID: {}",
+            "📝 Created message with ID: {}",
             hex::encode(message_full.id.as_bytes())
         );
 
         let publish_request = MessagesServiceRequest::Publish(message_full.clone());
-        sink.send(publish_request).await?;
-        sink.flush().await?;
+        sink.send(publish_request)
+            .await
+            .map_err(|e| ClientError::Generic(e.to_string()))?;
+        sink.flush()
+            .await
+            .map_err(|e| ClientError::Generic(e.to_string()))?;
         info!("📤 Published echo message to relay server");
 
         // Give a small delay to ensure the message is fully processed by the server
@@ -212,105 +273,14 @@ impl MessageClient {
             info!("🎊 Message client test completed successfully!");
             Ok(())
         } else {
-            anyhow::bail!("❌ Message was not received via stream");
+            Err(ClientError::Generic(
+                "Message was not received via stream".to_string(),
+            ))
         }
     }
 
-    fn create_client_endpoint(&self, server_public_key: &VerifyingKey) -> Result<Endpoint> {
-        // Generate client certificate for mutual TLS
-        let (client_certs, client_key) =
-            generate_deterministic_cert_from_ed25519(&self.client_key, "client")?;
-
-        // Create custom certificate verifier that accepts our server
-        let verifier = AcceptSpecificServerCertVerifier::new(*server_public_key);
-
-        // Create client config with client certificate for mutual TLS
-        let crypto = RustlsClientConfig::builder()
-            .dangerous()
-            .with_custom_certificate_verifier(Arc::new(verifier))
-            .with_client_auth_cert(client_certs, client_key)?;
-
-        let client_config = ClientConfig::new(Arc::new(QuicClientConfig::try_from(crypto)?));
-
-        let mut endpoint = Endpoint::client("0.0.0.0:0".parse()?)?;
-        endpoint.set_default_client_config(client_config);
-
-        Ok(endpoint)
+    /// Get the client's public key
+    pub fn public_key(&self) -> VerifyingKey {
+        self.client_key.verifying_key()
     }
-}
-
-#[tokio::main]
-async fn main() -> Result<()> {
-    // Initialize logging
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
-        )
-        .init();
-
-    // Parse command line arguments
-    let matches = Command::new("message_client")
-        .about("Message client for testing Zoe Relay Messages service")
-        .arg(
-            Arg::new("address")
-                .short('a')
-                .long("address")
-                .value_name("ADDRESS")
-                .help("Server address to connect to")
-                .default_value("127.0.0.1:4433"),
-        )
-        .arg(
-            Arg::new("server-key")
-                .short('k')
-                .long("server-key")
-                .value_name("HEX_PUBLIC_KEY")
-                .help("Server's ed25519 public key (hex encoded)")
-                .required(true),
-        )
-        .arg(
-            Arg::new("client-key")
-                .short('c')
-                .long("client-key")
-                .value_name("HEX_PRIVATE_KEY")
-                .help("Client's ed25519 private key (hex encoded, optional - generates random if not provided)"),
-        )
-        .get_matches();
-
-    // Parse server address
-    let address: SocketAddr = matches
-        .get_one::<String>("address")
-        .unwrap()
-        .parse()
-        .map_err(|e| anyhow::anyhow!("Invalid address: {}", e))?;
-
-    // Parse server public key
-    let server_key_hex = matches.get_one::<String>("server-key").unwrap();
-    let server_key_bytes = hex::decode(server_key_hex)
-        .map_err(|e| anyhow::anyhow!("Invalid server key hex: {}", e))?;
-
-    if server_key_bytes.len() != 32 {
-        anyhow::bail!("Server key must be 32 bytes (64 hex characters)");
-    }
-
-    let server_public_key = VerifyingKey::from_bytes(&server_key_bytes.try_into().unwrap())
-        .map_err(|e| anyhow::anyhow!("Invalid ed25519 public key: {}", e))?;
-
-    // Create client (with optional private key)
-    let client = if let Some(client_key_hex) = matches.get_one::<String>("client-key") {
-        let client_key_bytes = hex::decode(client_key_hex)
-            .map_err(|e| anyhow::anyhow!("Invalid client key hex: {}", e))?;
-
-        if client_key_bytes.len() != 32 {
-            anyhow::bail!("Client key must be 32 bytes (64 hex characters)");
-        }
-
-        let client_key = SigningKey::from_bytes(&client_key_bytes.try_into().unwrap());
-        MessageClient::from_key(client_key)
-    } else {
-        MessageClient::new()
-    };
-
-    // Run the client
-    client.run(address, server_public_key).await
 }

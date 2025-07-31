@@ -99,20 +99,18 @@
 
 use anyhow::Result;
 use ed25519_dalek::{SigningKey, VerifyingKey};
-use quinn::{Connection, Endpoint, RecvStream, SendStream};
+use quinn::{Connection, Endpoint};
 use std::net::SocketAddr;
 use std::sync::Arc;
-use tarpc::tokio_serde;
-use tokio_util::codec::{FramedRead, FramedWrite, LengthDelimitedCodec};
 
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tracing::{error, info};
 use zoe_wire_protocol::{
-    extract_ed25519_from_cert, generate_deterministic_cert_from_ed25519, CryptoError,
+    extract_ed25519_from_cert, generate_deterministic_cert_from_ed25519, CryptoError, StreamPair,
     ZoeClientCertVerifier,
 };
 
-use crate::{services::rpc::PostcardFormat, Service, ServiceError, ServiceRouter};
+use crate::{Service, ServiceError, ServiceRouter};
 
 /// Information about an authenticated connection
 #[derive(Debug, Clone)]
@@ -123,37 +121,6 @@ pub struct ConnectionInfo {
     pub remote_address: SocketAddr,
     /// Timestamp when the connection was established
     pub connected_at: std::time::SystemTime,
-}
-
-/// A pair of streams for bi-directional communication
-#[derive(Debug)]
-pub struct StreamPair {
-    /// Stream for receiving data from the client
-    pub recv: RecvStream,
-    /// Stream for sending data to the client
-    pub send: SendStream,
-}
-
-type WrappedStream = FramedRead<RecvStream, LengthDelimitedCodec>;
-type WrappedSink = FramedWrite<SendStream, LengthDelimitedCodec>;
-
-// only dealing with one half of the IO
-type SerStream<I> = tokio_serde::Framed<WrappedStream, I, I, PostcardFormat>;
-type DeSink<I> = tokio_serde::Framed<WrappedSink, I, I, PostcardFormat>;
-
-impl StreamPair {
-    pub async fn send_ack(&mut self) -> std::io::Result<()> {
-        self.send.write_u8(1).await
-    }
-
-    pub fn unpack_transports<S, D>(self) -> (SerStream<S>, DeSink<D>) {
-        let StreamPair { recv, send } = self;
-        let wrapped_recv = FramedRead::new(recv, LengthDelimitedCodec::new());
-        let wrapped_send = FramedWrite::new(send, LengthDelimitedCodec::new());
-        let ser_stream = tokio_serde::Framed::new(wrapped_recv, PostcardFormat);
-        let de_sink = tokio_serde::Framed::new(wrapped_send, PostcardFormat);
-        (ser_stream, de_sink)
-    }
 }
 
 /// Main relay server that accepts QUIC connections with ed25519 authentication
@@ -427,13 +394,13 @@ mod tests {
     use ed25519_dalek::SigningKey;
     use futures::future::join;
 
+    use crate::Service;
+    use crate::{ConnectionInfo, RelayServer, ServiceRouter};
     use std::net::SocketAddr;
     use std::sync::Arc;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::sync::Notify;
     use tokio::time::{timeout, Duration};
-    use crate::Service;
-    use crate::{ConnectionInfo, RelayServer, ServiceRouter, StreamPair};
     use zoe_wire_protocol::{
         generate_deterministic_cert_from_ed25519, AcceptSpecificServerCertVerifier,
     };
@@ -612,7 +579,10 @@ mod tests {
             Ok(())
         }
 
-        fn create_client_endpoint(&self, server_public_key: &SigningKey) -> Result<quinn::Endpoint> {
+        fn create_client_endpoint(
+            &self,
+            server_public_key: &SigningKey,
+        ) -> Result<quinn::Endpoint> {
             use quinn::{crypto::rustls::QuicClientConfig, ClientConfig, Endpoint};
             use rustls::ClientConfig as RustlsClientConfig;
             use std::sync::Arc;
@@ -759,7 +729,10 @@ mod tests {
             type ServiceId = u8;
             type Service = SingleService;
 
-            async fn parse_service_id(&self, service_id: u8) -> Result<Self::ServiceId, Self::Error> {
+            async fn parse_service_id(
+                &self,
+                service_id: u8,
+            ) -> Result<Self::ServiceId, Self::Error> {
                 Ok(service_id)
             }
 
@@ -825,5 +798,4 @@ mod tests {
         println!("✅ Service ID routing test completed successfully!");
         Ok(())
     }
-
 }

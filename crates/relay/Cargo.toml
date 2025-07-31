@@ -34,11 +34,11 @@ thiserror = { workspace = true }
 
 # RPC and futures for relay service traits
 tarpc = { workspace = true }
-futures-util = "0.3"
-futures = "0.3"
+futures = { workspace = true }
+futures-util = { workspace = true }
 postcard = { workspace = true }
 serde = { workspace = true }
-tokio-util = { version = "0.7", features = ["codec"] }
+tokio-util = { workspace = true, features = ["codec"] }
 bytes = "1.0"
 
 # specific impls
@@ -52,15 +52,12 @@ pin-project = "1.1"
 clap = { version = "4.4", features = ["derive", "env"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 toml = "0.8"
-rand = "0.8"
+rand = { workspace = true }
 
 [[bin]]
 name = "zoe-relay"
 path = "src/main.rs"
 
-[[example]]
-name = "echo_message_client"
-path = "examples/echo_message_client.rs"
 
 
 [dev-dependencies]

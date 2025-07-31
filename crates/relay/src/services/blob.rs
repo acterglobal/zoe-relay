@@ -1,9 +1,11 @@
-use crate::{create_postcard_transport, Service, StreamPair};
+use crate::Service;
 use async_trait::async_trait;
 use futures::StreamExt;
 use tarpc::server::{BaseChannel, Channel};
 use zoe_blob_store::BlobServiceImpl;
-use zoe_wire_protocol::{BlobError, BlobService as _};
+use zoe_wire_protocol::{
+    postcard::create_postcard_transport, BlobError, BlobService as _, StreamPair,
+};
 
 #[derive(Debug, thiserror::Error)]
 pub enum BlobServiceError {

@@ -7084,6 +7084,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "zoe-client"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "clap",
+ "ed25519-dalek",
+ "futures",
+ "hex",
+ "quinn",
+ "rand 0.8.5",
+ "rustls",
+ "tarpc",
+ "tempfile",
+ "thiserror 2.0.12",
+ "tokio",
+ "tokio-test",
+ "tokio-util",
+ "tracing",
+ "tracing-subscriber",
+ "zoe-wire-protocol",
+]
+
+[[package]]
 name = "zoe-message-store"
 version = "0.1.0"
 dependencies = [
@@ -7188,6 +7212,7 @@ dependencies = [
  "thiserror 2.0.12",
  "tokio",
  "tokio-test",
+ "tokio-util",
  "tracing",
  "uuid",
  "x509-parser",
