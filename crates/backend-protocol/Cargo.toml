@@ -1,9 +1,0 @@
-[package]
-name = "zoe-backend-protocol"
-version = "0.1.0"
-edition = "2024"
-
-[dependencies]
-apalis = "0.7.2"
-apalis-redis = "0.7.2"
-postcard = { workspace = true }

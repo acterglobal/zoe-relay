@@ -2,9 +2,9 @@
 
 This directory contains example clients demonstrating how to interact with the Zoe Relay Server.
 
-## Message Client Example
+## Echo Message Client Example
 
-The `message_client` example demonstrates the full message streaming workflow:
+The `echo_message_client` example demonstrates the full message streaming workflow:
 
 1. **Connect** to relay server with ed25519 authentication
 2. **Subscribe** to message stream with filters
@@ -28,8 +28,8 @@ cargo run --bin zoe-relay
 Then run the message client:
 
 ```bash
-# Terminal 3: Run the message client
-cargo run --example message_client -- \
+# Terminal 3: Run the echo message client
+cargo run --example echo_message_client -- \
   --address 127.0.0.1:4433 \
   --server-key <SERVER_PUBLIC_KEY_HEX>
 ```

@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = [ "crates/backend-protocol",
+members = [
     "crates/blob-store",
     "crates/encrypted-storage",
     "crates/message-store",
