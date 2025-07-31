@@ -12,7 +12,8 @@ zoe-wire-protocol = { path = "../wire-protocol" }
 tokio = { workspace = true }
 
 # Redis client
-redis = { version = "0.32", features = ["tokio-comp", "connection-manager"] }
+redis = { version = "0.32.4", features = ["tokio-comp", "connection-manager", "r2d2"] }
+r2d2 = "0.8"
 
 # Serialization
 serde = { workspace = true, features = ["derive"] }

@@ -35,7 +35,10 @@ impl BlobService {
 impl Service for BlobService {
     type Error = BlobServiceError;
     async fn run(mut self) -> Result<(), Self::Error> {
-        self.streams.send_ack().await.map_err(BlobServiceError::IoError)?;
+        self.streams
+            .send_ack()
+            .await
+            .map_err(BlobServiceError::IoError)?;
         let s = self.service.serve();
         let transport = create_postcard_transport::<_, _>(self.streams);
         let channel = BaseChannel::with_defaults(transport);

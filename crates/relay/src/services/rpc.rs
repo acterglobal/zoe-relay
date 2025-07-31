@@ -59,7 +59,7 @@ impl AsyncWrite for StreamPair {
         match Pin::new(&mut self.send).poll_write(cx, buf) {
             Poll::Ready(Ok(n)) => Poll::Ready(Ok(n)),
             Poll::Ready(Err(e)) => {
-                Poll::Ready(Err(std::io::Error::new(std::io::ErrorKind::Other, e)))
+                Poll::Ready(Err(std::io::Error::other(e)))
             }
             Poll::Pending => Poll::Pending,
         }
@@ -72,7 +72,7 @@ impl AsyncWrite for StreamPair {
         match Pin::new(&mut self.send).poll_flush(cx) {
             Poll::Ready(Ok(())) => Poll::Ready(Ok(())),
             Poll::Ready(Err(e)) => {
-                Poll::Ready(Err(std::io::Error::new(std::io::ErrorKind::Other, e)))
+                Poll::Ready(Err(std::io::Error::other(e)))
             }
             Poll::Pending => Poll::Pending,
         }
@@ -85,40 +85,12 @@ impl AsyncWrite for StreamPair {
         match Pin::new(&mut self.send).poll_shutdown(cx) {
             Poll::Ready(Ok(())) => Poll::Ready(Ok(())),
             Poll::Ready(Err(e)) => {
-                Poll::Ready(Err(std::io::Error::new(std::io::ErrorKind::Other, e)))
+                Poll::Ready(Err(std::io::Error::other(e)))
             }
             Poll::Pending => Poll::Pending,
         }
     }
 }
-
-/// A generic tarpc service wrapper that provides postcard transport infrastructure
-///
-/// This provides the building blocks for implementing tarpc services over StreamPair
-/// with postcard serialization. Due to Rust's async trait limitations, specific
-/// service implementations need to be handled individually.
-///
-/// # Usage Pattern
-///
-/// ```rust,ignore
-/// // For a specific service like BlobService:
-/// struct BlobServiceRelay {
-///     streams: StreamPair,
-///     service: BlobServiceImpl,  
-/// }
-///
-/// impl Service for BlobServiceRelay {
-///     async fn run(self) -> Result<(), Self::Error> {
-///         let transport = create_postcard_transport::<BlobRequest, BlobResponse>(self.streams);
-///         // Handle requests with proper type safety
-///         while let Some(request) = transport.next().await {
-///             let response = self.service.handle(request).await;
-///             transport.send(response).await?;
-///         }
-///         Ok(())
-///     }
-/// }
-/// ```
 
 /// Create a postcard transport directly for manual service implementation
 ///
@@ -137,5 +109,5 @@ where
     Resp: Serialize + Send + 'static,
 {
     let framed = tokio_util::codec::Framed::new(streams, LengthDelimitedCodec::new());
-    serde_transport::new(framed, PostcardFormat::default())
+    serde_transport::new(framed, PostcardFormat)
 }

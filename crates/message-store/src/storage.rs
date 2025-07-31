@@ -20,6 +20,7 @@ const CHANNEL_KEY: &str = "channel";
 #[derive(Clone)]
 pub struct RedisMessageStorage {
     pub conn: Arc<tokio::sync::Mutex<ConnectionManager>>,
+    pub client: redis::Client,
 }
 
 // internal API
@@ -57,12 +58,13 @@ impl RedisMessageStorage {
     pub async fn new(redis_url: String) -> Result<Self> {
         let client = redis::Client::open(redis_url).map_err(MessageStoreError::Redis)?;
 
-        let conn_manager = ConnectionManager::new(client)
+        let conn_manager = ConnectionManager::new(client.clone())
             .await
             .map_err(MessageStoreError::Redis)?;
 
         Ok(Self {
             conn: Arc::new(tokio::sync::Mutex::new(conn_manager)),
+            client,
         })
     }
 
@@ -74,7 +76,7 @@ impl RedisMessageStorage {
     /// Store a message in Redis and publish to stream for real-time delivery
     /// Returns the stream ID if the message was newly stored, None if it already existed
     pub async fn store_message(&self, message: &MessageFull) -> Result<Option<String>> {
-        let mut conn = self.conn.lock().await;
+        let mut conn = { self.conn.lock().await.clone() };
 
         // Serialize the message
         let storage_value = message
@@ -84,7 +86,10 @@ impl RedisMessageStorage {
         let message_id = hex::encode(message.id.as_bytes());
 
         // Check if the message already exists first
-        let exists: bool = conn.exists(&message_id).await.map_err(MessageStoreError::Redis)?;
+        let exists: bool = conn
+            .exists(&message_id)
+            .await
+            .map_err(MessageStoreError::Redis)?;
 
         if exists {
             // Message already exists, return None
@@ -105,7 +110,7 @@ impl RedisMessageStorage {
         set_cmd.arg("NX"); // Only set if key doesn't exist
 
         let was_set: bool = set_cmd
-            .query_async(&mut *conn)
+            .query_async(&mut conn)
             .await
             .map_err(MessageStoreError::Redis)?;
 
@@ -147,7 +152,7 @@ impl RedisMessageStorage {
 
         // Execute XADD and get the stream entry ID
         let stream_id: String = xadd_cmd
-            .query_async(&mut *conn)
+            .query_async(&mut conn)
             .await
             .map_err(MessageStoreError::Redis)?;
 
@@ -241,7 +246,15 @@ impl RedisMessageStorage {
             return Err(MessageStoreError::EmptyFilters);
         }
 
-        let mut conn = self.conn.lock().await.clone();
+        let mut conn = {
+            // our streaming is complicated, we want an async conenction
+            // but if we reuse the existing connection all other requests
+            // will block. so we need to get a new connection for streaming.
+            self.client
+                .get_connection_manager()
+                .await
+                .map_err(MessageStoreError::Redis)?
+        };
         let mut since = since;
         let mut block = false;
 
@@ -287,6 +300,7 @@ impl RedisMessageStorage {
                     // nothing found yet, we move to blocking mode
                     if !block {
                         block = true;
+                        info!("Switching to blocking mode");
                         // we yield once empty when switching block mode
                         yield Ok((None, since.clone().unwrap_or_else(|| "0-0".to_string())));
                     }
@@ -296,7 +310,11 @@ impl RedisMessageStorage {
                 // TODO: would be nice to collapse this a bit
                 // and maybe have this tested separately as well
 
+                let mut did_yield = false;
+                let mut last_seen_height = since.clone();
+
                 for (stream_key, entries) in rows {
+                    info!("stream_key: {stream_key}");
                     if stream_key != MESSAGE_STREAM_NAME {
                         // should never happen in reality
                         continue;
@@ -304,6 +322,7 @@ impl RedisMessageStorage {
                     'messages: for (height, meta) in entries {
                         let mut should_yield = false;
                         let mut id = None;
+                        last_seen_height = Some(height.clone());
 
                         'meta: for (key, value) in meta {
                             // Convert Vec<u8> key to string for comparison
@@ -320,6 +339,7 @@ impl RedisMessageStorage {
                                         .map_err(|e| MessageStoreError::Serialization(e.to_string()))?;
                                     if should_yield {
                                         yield Ok((Some(message_full), height.clone()));
+                                        did_yield = true;
                                         continue 'messages;
                                     }
                                     id = Some(message_full);
@@ -335,6 +355,7 @@ impl RedisMessageStorage {
                                         };
                                         // we have a match, yield it
                                         yield Ok((Some(msg_id), height.clone()));
+                                        did_yield = true;
                                         continue 'messages;
                                     }
                                 }
@@ -349,6 +370,7 @@ impl RedisMessageStorage {
                                         };
                                         // we have a match, yield it
                                         yield Ok((Some(msg_id), height.clone()));
+                                        did_yield = true;
                                         continue 'messages;
                                     }
                                 }
@@ -363,6 +385,7 @@ impl RedisMessageStorage {
                                         };
                                         // we have a match, yield it
                                         yield Ok((Some(msg_id), height.clone()));
+                                        did_yield = true;
                                         continue 'messages;
                                     }
                                 }
@@ -377,6 +400,7 @@ impl RedisMessageStorage {
                                         };
                                         // we have a match, yield it
                                         yield Ok((Some(msg_id), height.clone()));
+                                        did_yield = true;
                                         continue 'messages;
                                     }
                                 }
@@ -386,6 +410,11 @@ impl RedisMessageStorage {
                             }
                         }
                     }
+                }
+
+                if !did_yield {
+                    info!("No messages matched filters, yielding empty");
+                    yield Ok((None, last_seen_height.clone().unwrap_or_else(|| "0-0".to_string())));
                 }
             }
         })
@@ -487,7 +516,7 @@ mod tests {
         let storage = match RedisMessageStorage::new(config.clone()).await {
             Ok(storage) => storage,
             Err(_) => {
-                eprintln!("Skipping test: Redis not available at {}", config);
+                eprintln!("Skipping test: Redis not available at {config}");
                 return;
             }
         };
@@ -562,7 +591,7 @@ mod tests {
         let storage = match RedisMessageStorage::new(config.clone()).await {
             Ok(storage) => storage,
             Err(_) => {
-                eprintln!("Skipping test: Redis not available at {}", config);
+                eprintln!("Skipping test: Redis not available at {config}");
                 return;
             }
         };
@@ -709,7 +738,7 @@ mod tests {
         let storage = match RedisMessageStorage::new(config.clone()).await {
             Ok(storage) => storage,
             Err(_) => {
-                eprintln!("Skipping test: Redis not available at {}", config);
+                eprintln!("Skipping test: Redis not available at {config}");
                 return;
             }
         };
@@ -759,7 +788,7 @@ mod tests {
         let storage = match RedisMessageStorage::new(config.clone()).await {
             Ok(storage) => storage,
             Err(_) => {
-                eprintln!("Skipping test: Redis not available at {}", config);
+                eprintln!("Skipping test: Redis not available at {config}");
                 return;
             }
         };
@@ -837,7 +866,7 @@ mod tests {
         let storage = match RedisMessageStorage::new(config.clone()).await {
             Ok(storage) => storage,
             Err(_) => {
-                eprintln!("Skipping test: Redis not available at {}", config);
+                eprintln!("Skipping test: Redis not available at {config}");
                 return;
             }
         };
@@ -864,7 +893,7 @@ mod tests {
         let storage = match RedisMessageStorage::new(config.clone()).await {
             Ok(storage) => storage,
             Err(_) => {
-                eprintln!("Skipping test: Redis not available at {}", config);
+                eprintln!("Skipping test: Redis not available at {config}");
                 return;
             }
         };

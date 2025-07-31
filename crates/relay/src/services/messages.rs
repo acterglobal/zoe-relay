@@ -1,9 +1,7 @@
-use crate::{services::rpc::PostcardFormat, Service, StreamPair};
+use crate::{Service, StreamPair};
 use async_trait::async_trait;
 use futures::{SinkExt, StreamExt};
-use tarpc::serde_transport;
 use tokio::sync::mpsc;
-use tokio_util::codec::LengthDelimitedCodec;
 use tracing::{debug, error, info};
 use zoe_message_store::{MessageStoreError, RedisMessageStorage};
 use zoe_wire_protocol::{MessageFilters, MessagesServiceRequest, StreamMessage};
@@ -39,7 +37,7 @@ async fn subscription_task(
     limit: Option<usize>,
     sender: mpsc::UnboundedSender<StreamMessage>,
 ) -> Result<(), MessagesServiceError> {
-    info!("Starting subscription task");
+    info!("Starting subscription task with filters: {:?}", filters);
 
     let stream = service.listen_for_messages(&filters, since, limit).await?;
     info!("Subscription stream created, starting to listen for messages");
@@ -49,8 +47,8 @@ async fn subscription_task(
 
     while let Some(result) = stream.next().await {
         let to_client = match result {
-            Ok((Some(message_full), height)) =>  StreamMessage::MessageReceived {
-                message: message_full,
+            Ok((Some(message), height)) => StreamMessage::MessageReceived {
+                message,
                 stream_height: height,
             },
             Ok((None, height)) => {
@@ -64,7 +62,7 @@ async fn subscription_task(
         };
 
         // Send response to main task
-        if let Err(_) = sender.send(to_client) {
+        if sender.send(to_client).is_err() {
             debug!("Main task closed, stopping subscription");
             break;
         }
@@ -80,15 +78,13 @@ impl Service for MessagesService {
 
     async fn run(self) -> Result<(), Self::Error> {
         info!("Starting MessagesService");
-        let Self {mut  streams, service } = self;
+        let Self {
+            mut streams,
+            service,
+        } = self;
         streams.send_ack().await?;
-
-        // Create the transport
-        let framed = tokio_util::codec::Framed::new(streams, LengthDelimitedCodec::new());
-        let transport = serde_transport::new(framed, PostcardFormat::default());
-
-        // Split transport into sink and stream
-        let (mut sink, mut request_stream) = transport.split();
+        let (mut incoming, mut sink) =
+            streams.unpack_transports::<MessagesServiceRequest, StreamMessage>();
 
         // Channel for receiving messages from subscription tasks
         let (mut sub_sender, mut sub_receiver) = mpsc::unbounded_channel::<StreamMessage>();
@@ -97,7 +93,7 @@ impl Service for MessagesService {
         loop {
             tokio::select! {
                 // Poll for incoming requests from client
-                request_result = request_stream.next() => {
+                request_result = incoming.next() => {
                     match request_result {
                         Some(Ok(request)) => {
                             debug!("Received request: {:?}", request);
@@ -111,14 +107,17 @@ impl Service for MessagesService {
                                         // clear the previous receiver and create a fresh one
                                         sub_receiver.close();
                                         (sub_sender, sub_receiver) = mpsc::unbounded_channel::<StreamMessage>();
-                                        debug!("Cancelled existing subscription task");
+                                        // Give the old task time to clean up
+                                        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+                                        debug!("Cancelled existing subscription task and reset channels");
                                     }
 
                                     // Start new subscription task
                                     let service_clone = service.clone();
                                     let task_sender = sub_sender.clone();
                                     let filters = config.filters;
-                                    let since = config.since;
+                                    // Always start new subscriptions from the beginning to catch all messages
+                                    let since = config.since.or_else(|| Some("0-0".to_string()));
                                     let limit = config.limit;
 
                                     let task = tokio::spawn(async move {
@@ -142,6 +141,8 @@ impl Service for MessagesService {
                                     match service.store_message(&message).await {
                                         Ok(Some(stream_id)) => {
                                             info!("Message published successfully with stream ID: {}", stream_id);
+                                            // Give subscription task a moment to pick up the message
+                                            tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
                                         }
                                         Ok(None) => {
                                             debug!("Message already existed");
@@ -154,7 +155,7 @@ impl Service for MessagesService {
                             }
                         }
                         Some(Err(e)) => {
-                            error!("Error reading request: {}", e);
+                            error!("Error reading request: {} (this may be due to client disconnecting)", e);
                             break;
                         }
                         None => {

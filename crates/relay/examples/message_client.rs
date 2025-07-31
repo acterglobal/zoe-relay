@@ -29,8 +29,8 @@ use tokio_util::codec::LengthDelimitedCodec;
 use tracing::{error, info, warn};
 use zoe_relay::services::rpc::PostcardFormat;
 use zoe_wire_protocol::{
-    generate_deterministic_cert_from_ed25519, AcceptSpecificServerCertVerifier, MessageFilters,
-    MessagesServiceRequest, StreamMessage, SubscriptionConfig, MessageFull, Message, Kind,
+    generate_deterministic_cert_from_ed25519, AcceptSpecificServerCertVerifier, Kind, Message,
+    MessageFilters, MessageFull, MessagesServiceRequest, StreamMessage, SubscriptionConfig,
 };
 
 /// Message client that connects to the relay server and tests message streaming
@@ -52,9 +52,15 @@ impl MessageClient {
     /// Connect to relay server and test message streaming
     async fn run(&self, server_addr: SocketAddr, server_public_key: VerifyingKey) -> Result<()> {
         info!("🚀 Starting message client");
-        info!("🔑 Client public key: {}", hex::encode(self.client_key.verifying_key().to_bytes()));
+        info!(
+            "🔑 Client public key: {}",
+            hex::encode(self.client_key.verifying_key().to_bytes())
+        );
         info!("🌐 Connecting to server: {}", server_addr);
-        info!("🔐 Server public key: {}", hex::encode(server_public_key.to_bytes()));
+        info!(
+            "🔐 Server public key: {}",
+            hex::encode(server_public_key.to_bytes())
+        );
 
         // Create client endpoint
         let client_endpoint = self.create_client_endpoint(&server_public_key)?;
@@ -102,7 +108,7 @@ impl MessageClient {
         // Step 2: Create and publish an echo message
         let echo_content = "Hello from message client! 🚀".as_bytes().to_vec();
         let timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
-        
+
         let message = Message::new_v0(
             echo_content.clone(),
             self.client_key.verifying_key(),
@@ -113,22 +119,29 @@ impl MessageClient {
 
         let message_full = MessageFull::new(message, &self.client_key)
             .map_err(|e| anyhow::anyhow!("Failed to create MessageFull: {}", e))?;
-        info!("📝 Created message with ID: {}", hex::encode(message_full.id.as_bytes()));
+        info!(
+            "📝 Created message withnm, ID: {}",
+            hex::encode(message_full.id.as_bytes())
+        );
 
         let publish_request = MessagesServiceRequest::Publish(message_full.clone());
         sink.send(publish_request).await?;
         sink.flush().await?;
         info!("📤 Published echo message to relay server");
 
+        // Give a small delay to ensure the message is fully processed by the server
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
         // Step 3: Wait for the message to come back via the stream
         info!("👂 Listening for messages...");
-        
-        let receive_timeout = Duration::from_secs(1);
+
+        let receive_timeout = Duration::from_secs(2);
         let mut message_received = false;
+        let max_attempts = 15;
         let mut count = 0;
 
         loop {
-            if count > 10 || message_received {
+            if count >= max_attempts || message_received {
                 break;
             }
             count += 1;
@@ -136,18 +149,30 @@ impl MessageClient {
             match timeout(receive_timeout, stream.next()).await {
                 Ok(Some(Ok(stream_message))) => {
                     match stream_message {
-                        StreamMessage::MessageReceived { message, stream_height } => {
+                        StreamMessage::MessageReceived {
+                            message,
+                            stream_height,
+                        } => {
                             info!("🎉 Received message via stream!");
                             info!("   Stream height: {}", stream_height);
                             info!("   Message ID: {}", hex::encode(message.id.as_bytes()));
                             info!("   Author: {}", hex::encode(message.author().to_bytes()));
-                            info!("   Content: {:?}", String::from_utf8_lossy(message.content()));
+                            info!(
+                                "   Content: {:?}",
+                                String::from_utf8_lossy(message.content())
+                            );
 
                             // Verify it's our message
                             if message.id.as_bytes() == message_full.id.as_bytes() {
                                 info!("✅ SUCCESS: Received our own echo message!");
-                                info!("   Original content: {:?}", String::from_utf8_lossy(&echo_content));
-                                info!("   Received content: {:?}", String::from_utf8_lossy(message.content()));
+                                info!(
+                                    "   Original content: {:?}",
+                                    String::from_utf8_lossy(&echo_content)
+                                );
+                                info!(
+                                    "   Received content: {:?}",
+                                    String::from_utf8_lossy(message.content())
+                                );
                                 message_received = true;
                             } else {
                                 warn!("⚠️  Received different message than expected");
@@ -166,10 +191,18 @@ impl MessageClient {
                     warn!("🔚 Stream ended without receiving message");
                 }
                 Err(_) => {
-                    warn!("⏰ Timeout waiting for message ({}s)", receive_timeout.as_secs());
+                    warn!(
+                        "⏰ Timeout waiting for message ({}s) - attempt {}/{}",
+                        receive_timeout.as_secs(),
+                        count,
+                        max_attempts
+                    );
                 }
             }
         }
+
+        // Give the server a moment to process any remaining messages before closing
+        tokio::time::sleep(Duration::from_millis(200)).await;
 
         // Clean shutdown
         connection.close(0u32.into(), b"test complete");
@@ -245,7 +278,8 @@ async fn main() -> Result<()> {
         .get_matches();
 
     // Parse server address
-    let address: SocketAddr = matches.get_one::<String>("address")
+    let address: SocketAddr = matches
+        .get_one::<String>("address")
         .unwrap()
         .parse()
         .map_err(|e| anyhow::anyhow!("Invalid address: {}", e))?;
@@ -254,27 +288,24 @@ async fn main() -> Result<()> {
     let server_key_hex = matches.get_one::<String>("server-key").unwrap();
     let server_key_bytes = hex::decode(server_key_hex)
         .map_err(|e| anyhow::anyhow!("Invalid server key hex: {}", e))?;
-    
+
     if server_key_bytes.len() != 32 {
         anyhow::bail!("Server key must be 32 bytes (64 hex characters)");
     }
 
-    let server_public_key = VerifyingKey::from_bytes(
-        &server_key_bytes.try_into().unwrap()
-    ).map_err(|e| anyhow::anyhow!("Invalid ed25519 public key: {}", e))?;
+    let server_public_key = VerifyingKey::from_bytes(&server_key_bytes.try_into().unwrap())
+        .map_err(|e| anyhow::anyhow!("Invalid ed25519 public key: {}", e))?;
 
     // Create client (with optional private key)
     let client = if let Some(client_key_hex) = matches.get_one::<String>("client-key") {
         let client_key_bytes = hex::decode(client_key_hex)
             .map_err(|e| anyhow::anyhow!("Invalid client key hex: {}", e))?;
-        
+
         if client_key_bytes.len() != 32 {
             anyhow::bail!("Client key must be 32 bytes (64 hex characters)");
         }
 
-        let client_key = SigningKey::from_bytes(
-            &client_key_bytes.try_into().unwrap()
-        );
+        let client_key = SigningKey::from_bytes(&client_key_bytes.try_into().unwrap());
         MessageClient::from_key(client_key)
     } else {
         MessageClient::new()

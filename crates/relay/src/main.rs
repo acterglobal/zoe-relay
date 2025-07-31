@@ -46,6 +46,13 @@ async fn main() -> Result<()> {
                 .default_value("./blob-store-data"),
         )
         .arg(
+            Arg::new("private-key")
+                .short('k')
+                .long("private-key")
+                .value_name("PRIVATE_KEY")
+                .help("Private key for the server"),
+        )
+        .arg(
             Arg::new("generate-key")
                 .long("generate-key")
                 .help("Generate a new server key and exit")
@@ -58,7 +65,7 @@ async fn main() -> Result<()> {
     if matches.get_flag("generate-key") {
         let server_key = SigningKey::generate(&mut rand::thread_rng());
         let hex_key = hex::encode(server_key.to_bytes());
-        println!("Generated server key: {}", hex_key);
+        println!("Generated server key: {hex_key}");
         println!(
             "You can use this key in your configuration file or set it via environment variable."
         );
@@ -82,6 +89,11 @@ async fn main() -> Result<()> {
         // Override blob directory if provided
         if let Some(blob_dir) = matches.get_one::<String>("blob-dir") {
             config.blob_config.data_dir = PathBuf::from(blob_dir);
+        }
+
+        if let Some(private_key) = matches.get_one::<String>("private-key") {
+            let private_key_bytes: [u8; 32] = hex::decode(private_key).unwrap().try_into().unwrap();
+            config.server_key = SigningKey::from(private_key_bytes);
         }
 
         config
@@ -119,7 +131,7 @@ async fn main() -> Result<()> {
         result = server.run() => {
             if let Err(e) = result {
                 tracing::error!("Server error: {}", e);
-                return Err(e.into());
+                return Err(e);
             }
         }
         _ = shutdown_signal => {

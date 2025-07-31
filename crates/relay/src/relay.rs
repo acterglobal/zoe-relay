@@ -102,6 +102,9 @@ use ed25519_dalek::{SigningKey, VerifyingKey};
 use quinn::{Connection, Endpoint, RecvStream, SendStream};
 use std::net::SocketAddr;
 use std::sync::Arc;
+use tarpc::tokio_serde;
+use tokio_util::codec::{FramedRead, FramedWrite, LengthDelimitedCodec};
+
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tracing::{error, info};
 use zoe_wire_protocol::{
@@ -109,7 +112,7 @@ use zoe_wire_protocol::{
     ZoeClientCertVerifier,
 };
 
-use crate::{Service, ServiceError, ServiceRouter};
+use crate::{services::rpc::PostcardFormat, Service, ServiceError, ServiceRouter};
 
 /// Information about an authenticated connection
 #[derive(Debug, Clone)]
@@ -131,9 +134,25 @@ pub struct StreamPair {
     pub send: SendStream,
 }
 
+type WrappedStream = FramedRead<RecvStream, LengthDelimitedCodec>;
+type WrappedSink = FramedWrite<SendStream, LengthDelimitedCodec>;
+
+// only dealing with one half of the IO
+type SerStream<I> = tokio_serde::Framed<WrappedStream, I, I, PostcardFormat>;
+type DeSink<I> = tokio_serde::Framed<WrappedSink, I, I, PostcardFormat>;
+
 impl StreamPair {
     pub async fn send_ack(&mut self) -> std::io::Result<()> {
         self.send.write_u8(1).await
+    }
+
+    pub fn unpack_transports<S, D>(self) -> (SerStream<S>, DeSink<D>) {
+        let StreamPair { recv, send } = self;
+        let wrapped_recv = FramedRead::new(recv, LengthDelimitedCodec::new());
+        let wrapped_send = FramedWrite::new(send, LengthDelimitedCodec::new());
+        let ser_stream = tokio_serde::Framed::new(wrapped_recv, PostcardFormat);
+        let de_sink = tokio_serde::Framed::new(wrapped_send, PostcardFormat);
+        (ser_stream, de_sink)
     }
 }
 
@@ -397,7 +416,7 @@ mod tests {
 
         let server = RelayServer::new(addr, server_key, router);
         if let Err(e) = &server {
-            println!("Server creation failed: {}", e);
+            println!("Server creation failed: {e}");
         }
         assert!(server.is_ok());
     }

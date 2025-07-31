@@ -119,19 +119,19 @@ impl Service for EchoService {
                         .send
                         .write_all(data)
                         .await
-                        .map_err(|e| TestError::Generic(format!("Write error: {}", e)))?;
+                        .map_err(|e| TestError::Generic(format!("Write error: {e}")))?;
                     streams
                         .send
                         .flush()
                         .await
-                        .map_err(|e| TestError::Generic(format!("Flush error: {}", e)))?;
+                        .map_err(|e| TestError::Generic(format!("Flush error: {e}")))?;
                 }
                 Ok(None) => {
                     println!("📪 Stream ended");
                     break;
                 }
                 Err(e) => {
-                    println!("❌ Read error: {}", e);
+                    println!("❌ Read error: {e}");
                     break;
                 }
             }
@@ -243,7 +243,7 @@ async fn test_echo_service_integration() -> Result<()> {
 
     // Get the actual bound address
     let actual_addr = server.endpoint.local_addr()?;
-    println!("🚀 Server started on {}", actual_addr);
+    println!("🚀 Server started on {actual_addr}");
 
     // Create client
     let client = TestClient::new();
@@ -309,12 +309,12 @@ async fn test_service_id_routing() -> Result<()> {
                 .send
                 .write_u8(service_id)
                 .await
-                .map_err(|e| TestError::Generic(format!("Write error: {}", e)))?;
+                .map_err(|e| TestError::Generic(format!("Write error: {e}")))?;
             streams
                 .send
                 .flush()
                 .await
-                .map_err(|e| TestError::Generic(format!("Flush error: {}", e)))?;
+                .map_err(|e| TestError::Generic(format!("Flush error: {e}")))?;
 
             // Give client time to read the response before closing
             tokio::time::sleep(Duration::from_millis(100)).await;
@@ -352,10 +352,10 @@ async fn test_service_id_routing() -> Result<()> {
             streams: StreamPair,
         ) -> Result<Self::Service, Self::Error> {
             self.received_service_id
-                .store(service_id.clone(), Ordering::SeqCst);
+                .store(*service_id, Ordering::SeqCst);
             Ok(SingleService {
                 streams,
-                service_id: service_id.clone(),
+                service_id: *service_id,
             })
         }
     }
