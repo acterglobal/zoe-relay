@@ -23,6 +23,10 @@ type SerStream<I> = tokio_serde::Framed<WrappedStream, I, I, PostcardFormat>;
 type DeSink<I> = tokio_serde::Framed<WrappedSink, I, I, PostcardFormat>;
 
 impl StreamPair {
+    pub fn new(recv: RecvStream, send: SendStream) -> Self {
+        Self { recv, send }
+    }
+
     pub async fn send_ack(&mut self) -> std::io::Result<()> {
         self.send.write_u8(1).await
     }

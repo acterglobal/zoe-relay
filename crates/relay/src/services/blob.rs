@@ -1,10 +1,10 @@
 use crate::Service;
 use async_trait::async_trait;
 use futures::StreamExt;
-use tarpc::server::{BaseChannel, Channel};
+use tarpc::{serde_transport, server::{BaseChannel, Channel}};
+use tokio_util::codec::LengthDelimitedCodec;
 use zoe_blob_store::BlobServiceImpl;
-use zoe_wire_protocol::{
-    postcard::create_postcard_transport, BlobError, BlobService as _, StreamPair,
+use zoe_wire_protocol::{BlobError, BlobService as _, PostcardFormat, StreamPair
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -42,7 +42,9 @@ impl Service for BlobService {
             .await
             .map_err(BlobServiceError::IoError)?;
         let s = self.service.serve();
-        let transport = create_postcard_transport::<_, _>(self.streams);
+
+        let framed = tokio_util::codec::Framed::new(self.streams, LengthDelimitedCodec::new());
+        let transport = serde_transport::new(framed, PostcardFormat);
         let channel = BaseChannel::with_defaults(transport);
 
         tokio::spawn(async move {

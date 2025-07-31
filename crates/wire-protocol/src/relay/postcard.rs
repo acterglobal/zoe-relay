@@ -3,11 +3,9 @@ use tokio_util::bytes;
 
 use std::pin::Pin;
 use std::task::{Context, Poll};
-use tarpc::serde_transport;
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 
 use tarpc::tokio_serde::{Deserializer, Serializer};
-use tokio_util::codec::LengthDelimitedCodec;
 
 use super::StreamPair;
 use serde::{Deserialize, Serialize};
@@ -85,24 +83,4 @@ impl AsyncWrite for StreamPair {
             Poll::Pending => Poll::Pending,
         }
     }
-}
-
-/// Create a postcard transport directly for manual service implementation
-///
-/// This is the core building block - use this to implement specific tarpc services
-/// with proper type safety and full control over the request/response handling.
-pub fn create_postcard_transport<Req, Resp>(
-    streams: StreamPair,
-) -> tarpc::serde_transport::Transport<
-    StreamPair,
-    tarpc::ClientMessage<Req>,
-    tarpc::Response<Resp>,
-    PostcardFormat,
->
-where
-    Req: for<'de> Deserialize<'de> + Send + 'static,
-    Resp: Serialize + Send + 'static,
-{
-    let framed = tokio_util::codec::Framed::new(streams, LengthDelimitedCodec::new());
-    serde_transport::new(framed, PostcardFormat)
 }

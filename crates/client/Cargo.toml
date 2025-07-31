@@ -32,6 +32,7 @@ thiserror = { workspace = true }
 
 # RPC and futures for relay service traits
 tarpc = { workspace = true }
+anyhow = { workspace = true }
 
 [[example]]
 name = "echo_message_client"
