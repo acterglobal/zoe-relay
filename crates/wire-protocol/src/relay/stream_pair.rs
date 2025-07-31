@@ -29,10 +29,17 @@ impl StreamPair {
 
     pub fn unpack_transports<S, D>(self) -> (SerStream<S>, DeSink<D>) {
         let StreamPair { recv, send } = self;
-        let wrapped_recv = FramedRead::new(recv, LengthDelimitedCodec::new());
-        let wrapped_send = FramedWrite::new(send, LengthDelimitedCodec::new());
-        let ser_stream = tokio_serde::Framed::new(wrapped_recv, PostcardFormat);
-        let de_sink = tokio_serde::Framed::new(wrapped_send, PostcardFormat);
-        (ser_stream, de_sink)
+        create_postcard_streams(recv, send)
     }
+}
+
+pub fn create_postcard_streams<S, D>(
+    recv: RecvStream,
+    send: SendStream,
+) -> (SerStream<S>, DeSink<D>) {
+    let wrapped_recv = FramedRead::new(recv, LengthDelimitedCodec::new());
+    let wrapped_send = FramedWrite::new(send, LengthDelimitedCodec::new());
+    let ser_stream = tokio_serde::Framed::new(wrapped_recv, PostcardFormat);
+    let de_sink = tokio_serde::Framed::new(wrapped_send, PostcardFormat);
+    (ser_stream, de_sink)
 }

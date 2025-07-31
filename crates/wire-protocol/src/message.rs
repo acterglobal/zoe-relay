@@ -143,7 +143,7 @@ pub struct MessageV0 {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MessageFull {
     pub id: Hash,
-    pub message: Message,
+    pub message: Box<Message>,
     // TODO: do we need to add a HMAC?
     pub signature: Signature,
 }
@@ -163,7 +163,7 @@ impl MessageFull {
 
         Ok(MessageFull {
             id,
-            message,
+            message: Box::new(message),
             signature,
         })
     }
@@ -199,7 +199,7 @@ impl MessageFull {
 
     /// The timeout for this message in the storage
     pub fn storage_timeout(&self) -> Option<u64> {
-        match &self.message {
+        match &*self.message {
             Message::MessageV0(msg) => match msg.kind {
                 Kind::Emphemeral(Some(timeout)) if timeout > 0 => Some(timeout as u64),
                 _ => None,
@@ -208,7 +208,7 @@ impl MessageFull {
     }
 
     pub fn store_key(&self) -> Option<StoreKey> {
-        match &self.message {
+        match &*self.message {
             Message::MessageV0(msg) => match &msg.kind {
                 Kind::Store(key) => Some(key.clone()),
                 _ => None,
@@ -228,31 +228,31 @@ impl MessageFull {
     }
 
     pub fn author(&self) -> &VerifyingKey {
-        match &self.message {
+        match &*self.message {
             Message::MessageV0(message) => &message.sender,
         }
     }
 
     pub fn when(&self) -> &u64 {
-        match &self.message {
+        match &*self.message {
             Message::MessageV0(message) => &message.when,
         }
     }
 
     pub fn kind(&self) -> &Kind {
-        match &self.message {
+        match &*self.message {
             Message::MessageV0(message) => &message.kind,
         }
     }
 
     pub fn tags(&self) -> &Vec<Tag> {
-        match &self.message {
+        match &*self.message {
             Message::MessageV0(message) => &message.tags,
         }
     }
 
     pub fn content(&self) -> &Vec<u8> {
-        match &self.message {
+        match &*self.message {
             Message::MessageV0(message) => &message.content,
         }
     }
@@ -263,7 +263,7 @@ impl MessageFull {
     where
         C: for<'a> Deserialize<'a>,
     {
-        match &self.message {
+        match &*self.message {
             Message::MessageV0(message) => postcard::from_bytes(&message.content),
         }
     }
@@ -331,7 +331,7 @@ mod tests {
         assert!(msg_full.verify_all().unwrap());
         // Tampering with content should fail
         let mut tampered = msg_full.clone();
-        let Message::MessageV0(ref mut msg) = tampered.message;
+        let Message::MessageV0(ref mut msg) = *tampered.message;
         // Safely tamper with the first byte (index 0) which should always exist
         if !msg.content.is_empty() {
             msg.content[0] = msg.content[0].wrapping_add(1);

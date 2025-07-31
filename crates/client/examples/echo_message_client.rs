@@ -16,10 +16,149 @@
 use anyhow::Result;
 use clap::{Arg, Command};
 use ed25519_dalek::{SigningKey, VerifyingKey};
-use std::net::SocketAddr;
-use zoe_client::Client;
+use std::{
+    net::SocketAddr,
+    time::{Duration, SystemTime, UNIX_EPOCH},
+};
+use tokio::time::timeout;
+use tracing::{info, warn};
+use zoe_client::{ClientError, MessagesService, MessagesStream, RelayClient};
+use zoe_wire_protocol::{
+    Kind, Message, MessageFilters, MessageFull, MessagesServiceRequest, StreamMessage,
+    SubscriptionConfig,
+};
 
-// Message client logic is now handled by the Client struct in the library
+/// Run the complete message echo test
+async fn run_echo_test(
+    client_key: &SigningKey,
+    messages_service: MessagesService,
+    mut messages_stream: MessagesStream,
+) -> Result<()> {
+    // Step 1: Subscribe to messages from our own key
+    let subscription_config = SubscriptionConfig {
+        filters: MessageFilters {
+            authors: Some(vec![client_key.verifying_key().to_bytes().to_vec()]),
+            channels: None,
+            events: None,
+            users: None,
+        },
+        since: None,
+        limit: None,
+    };
+
+    let subscribe_request = MessagesServiceRequest::Subscribe(subscription_config);
+    messages_service.send_raw(subscribe_request).await?;
+    info!("📬 Sent subscription request for our own messages");
+
+    // Step 2: Create and publish an echo message
+    let echo_content = "Hello from message client! 🚀".as_bytes().to_vec();
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|e| ClientError::Generic(e.to_string()))?
+        .as_secs();
+
+    let message = Message::new_v0(
+        echo_content.clone(),
+        client_key.verifying_key(),
+        timestamp,
+        Kind::Regular,
+        vec![], // no tags
+    );
+
+    let message_full = MessageFull::new(message, &client_key)
+        .map_err(|e| ClientError::Generic(format!("Failed to create MessageFull: {}", e)))?;
+    info!(
+        "📝 Created message with ID: {}",
+        hex::encode(message_full.id.as_bytes())
+    );
+
+    let message_id = message_full.id.as_bytes().clone();
+
+    messages_service.publish(message_full).await?;
+    info!("📤 Published echo message to relay server");
+
+    // Give a small delay to ensure the message is fully processed by the server
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    // Step 3: Wait for the message to come back via the stream
+    info!("👂 Listening for messages...");
+
+    let receive_timeout = Duration::from_secs(1);
+    let mut message_received = false;
+    let max_attempts = 15;
+    let mut count = 0;
+
+    loop {
+        if count >= max_attempts || message_received {
+            break;
+        }
+        count += 1;
+
+        match timeout(receive_timeout, messages_stream.recv()).await {
+            Ok(Some(stream_message)) => {
+                match stream_message {
+                    StreamMessage::MessageReceived {
+                        message,
+                        stream_height,
+                    } => {
+                        info!("🎉 Received message via stream!");
+                        info!("   Stream height: {}", stream_height);
+                        info!("   Message ID: {}", hex::encode(message.id.as_bytes()));
+                        info!("   Author: {}", hex::encode(message.author().to_bytes()));
+                        info!(
+                            "   Content: {:?}",
+                            String::from_utf8_lossy(message.content())
+                        );
+
+                        // Verify it's our message
+                        if message.id.as_bytes() == &message_id {
+                            info!("✅ SUCCESS: Received our own echo message!");
+                            info!(
+                                "   Original content: {:?}",
+                                String::from_utf8_lossy(&echo_content)
+                            );
+                            info!(
+                                "   Received content: {:?}",
+                                String::from_utf8_lossy(message.content())
+                            );
+                            message_received = true;
+                        } else {
+                            warn!("⚠️  Received different message than expected");
+                        }
+                    }
+                    StreamMessage::StreamHeightUpdate(height) => {
+                        info!("📊 Stream height update: {}", height);
+                        // Continue listening
+                    }
+                }
+            }
+            Ok(None) => {
+                warn!("🔚 Stream ended without receiving message");
+            }
+            Err(_) => {
+                warn!(
+                    "⏰ Timeout waiting for message ({}s) - attempt {}/{}",
+                    receive_timeout.as_secs(),
+                    count,
+                    max_attempts
+                );
+            }
+        }
+    }
+
+    // Give the server a moment to process any remaining messages before closing
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
+    // Clean shutdowns
+    info!("🔌 Disconnected from server");
+
+    if message_received {
+        info!("🎊 Message client test completed successfully!");
+        Ok(())
+    } else {
+        Err(anyhow::anyhow!("Message was not received via stream"))
+    }
+}
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -88,14 +227,13 @@ async fn main() -> Result<()> {
         }
 
         let client_key = SigningKey::from_bytes(&client_key_bytes.try_into().unwrap());
-        Client::from_key(client_key)
+        RelayClient::new(client_key, server_public_key, address).await?
     } else {
-        Client::new()
+        RelayClient::new_with_random_key(server_public_key, address).await?
     };
 
     // Run the echo test
-    client
-        .run_echo_test(address, server_public_key)
-        .await
-        .map_err(|e| anyhow::anyhow!("{}", e))
+    let (messages_service, messages_stream) = client.connect_message_service().await?;
+    let client_key = client.signing_key();
+    run_echo_test(&client_key, messages_service, messages_stream).await
 }
