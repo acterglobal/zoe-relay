@@ -38,6 +38,10 @@ anyhow = { workspace = true }
 name = "echo_message_client"
 path = "examples/echo_message_client.rs"
 
+[[example]]
+name = "blob_client"
+path = "examples/blob_client.rs"
+
 
 [dev-dependencies]
 # Testing framework

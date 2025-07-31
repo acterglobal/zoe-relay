@@ -1,6 +1,6 @@
 // Remove unused clap imports since they're not needed in this file
 use crate::error::{ClientError, Result};
-use crate::{MessagesService, MessagesStream};
+use crate::{MessagesService, MessagesStream, BlobService};
 use ed25519_dalek::{SigningKey, VerifyingKey};
 use quinn::Connection;
 use quinn::{ClientConfig, Endpoint, crypto::rustls::QuicClientConfig};
@@ -105,6 +105,10 @@ impl RelayClient {
 
     pub async fn connect_message_service(&self) -> Result<(MessagesService, MessagesStream)> {
         MessagesService::connect(&self.inner.connection).await
+    }
+
+    pub async fn connect_blob_service(&self) -> Result<BlobService> {
+        BlobService::connect(&self.inner.connection).await
     }
 
     /// Get the client's public key

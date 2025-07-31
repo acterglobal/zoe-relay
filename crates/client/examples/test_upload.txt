@@ -1,0 +1,15 @@
+Hello from the Zoe Blob Store! 🚀
+
+This is a test file for demonstrating the blob client example.
+
+Features demonstrated:
+- File upload to remote blob store
+- File download by hash
+- Round-trip testing (upload + download + verify)
+- Binary and text file handling
+- Command-line interface
+
+The blob store service provides a simple way to store and retrieve files
+using content-addressed storage with cryptographic hashes.
+
+Test timestamp: 2024-01-15 12:00:00 UTC
