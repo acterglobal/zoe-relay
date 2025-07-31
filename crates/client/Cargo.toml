@@ -9,23 +9,23 @@ zoe-wire-protocol = { path = "../wire-protocol" }
 
 # Async runtime
 tokio = { workspace = true, features = ["io-util"] }
-tokio-util = { workspace = true, features = ["codec"] }
+tokio-util = { workspace = true }
 futures = { workspace = true }
 rand = { workspace = true }
 
 # Logging
-tracing = "0.1"
+tracing = { workspace = true }
 
 # QUIC and TLS support
-quinn = "0.11"
-rustls = { version = "0.23", default-features = false, features = ["ring"] }
+quinn = { workspace = true }
+rustls = { workspace = true }
 
 # Cryptographic dependencies
-ed25519-dalek = { version = "2.0", features = ["rand_core"] }
+ed25519-dalek = { workspace = true }
 
 # Additional utilities
-hex = "0.4"
-async-trait = "0.1"
+hex = { workspace = true }
+async-trait = { workspace = true }
 
 # Error types for documentation examples
 thiserror = { workspace = true }
@@ -45,10 +45,10 @@ path = "examples/blob_client.rs"
 
 [dev-dependencies]
 # Testing framework
-tokio-test = "0.4"
+tokio-test = { workspace = true }
 tokio = { workspace = true, features = ["test-util", "macros", "rt-multi-thread"] }
 
 clap = { workspace = true }
 anyhow = { workspace = true }
-tracing-subscriber = "0.3"
-tempfile = "3.8"
+tracing-subscriber = { workspace = true }
+tempfile = { workspace = true }

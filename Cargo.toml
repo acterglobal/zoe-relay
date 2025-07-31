@@ -1,7 +1,8 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/blob-store", "crates/client",
+    "crates/blob-store",
+    "crates/client", 
     "crates/encrypted-storage",
     "crates/message-store",
     "crates/relay",
@@ -12,20 +13,58 @@ members = [
 ]
 
 [workspace.dependencies]
+# Core async runtime and utilities
 anyhow = "1.0"
 tokio = { version = "1.46", features = ["full"] }
 tokio-util = { version = "0.7", features = ["codec"] }
-serde = { version = "1.0", features = ["derive"] }
-tarpc = { version = "0.36", features = ["serde-transport", "tcp", "full"] }
-blake3 = "1.5"
+tokio-test = "0.4"
+
+# Error handling
 thiserror = "2"
-brotli = "8"
-postcard = "1.0"
-futures-util = "0.3"
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+postcard = { version = "1.0", features = ["use-std"] }
+
+# RPC framework
+tarpc = { version = "0.36", features = ["serde-transport", "tcp", "full"] }
+
+# Async utilities
 futures = "0.3"
+futures-util = "0.3"
+async-trait = "0.1"
+
+# Cryptography
+ed25519-dalek = { version = "2.0", features = ["rand_core"] }
+blake3 = { version = "1.5", features = ["serde"] }
 rand = "0.8"
 
+# Networking and QUIC
+quinn = "0.11"
+rustls = { version = "0.23", default-features = false, features = ["ring"] }
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Utilities
+hex = "0.4"
+uuid = { version = "1.0", features = ["v4"] }
+chrono = { version = "0.4", features = ["serde"] }
+
+# Compression
+brotli = "8"
+
+# CLI
 clap = { version = "4.4", features = ["derive", "env"] }
+
+# Testing utilities
+tempfile = "3.0"
+test-case = "3.0"
+serial_test = "3.0"
+pretty_assertions = "1.4"
+assert_matches = "1.5"
 
 [profile.test]
 # Optimize test compilation without losing debug info

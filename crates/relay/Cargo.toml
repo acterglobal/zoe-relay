@@ -8,69 +8,43 @@ license = "MIT OR Apache-2.0"
 [dependencies]
 # Wire protocol for crypto utilities
 zoe-wire-protocol = { path = "../wire-protocol" }
+zoe-message-store = { path = "../message-store" }
+zoe-blob-store = { path = "../blob-store" }
 
 # Async runtime
 tokio = { workspace = true, features = ["io-util"] }
+tokio-util = { workspace = true }
+futures = { workspace = true }
+futures-util = { workspace = true }
+rand = { workspace = true }
+serde = { workspace = true }
+tarpc = { workspace = true, features = ['serde-transport'] }
+toml = "0.9.4"
+clap = { workspace = true }
 
 # Error handling
 anyhow = { workspace = true }
-
-# Logging
-tracing = "0.1"
-
-# QUIC and TLS support
-quinn = "0.11"
-rustls = { version = "0.23", default-features = false, features = ["ring"] }
-
-# Cryptographic dependencies
-ed25519-dalek = { version = "2.0", features = ["rand_core"] }
-
-# Additional utilities
-hex = "0.4"
-async-trait = "0.1"
-
-# Error types for documentation examples
 thiserror = { workspace = true }
 
-# RPC and futures for relay service traits
-tarpc = { workspace = true }
-futures = { workspace = true }
-futures-util = { workspace = true }
-postcard = { workspace = true }
-serde = { workspace = true }
-tokio-util = { workspace = true, features = ["codec"] }
-bytes = "1.0"
+# Logging
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
 
-# specific impls
-zoe-blob-store = { path = "../blob-store" }
-zoe-message-store = { path = "../message-store" }
+# QUIC and TLS support
+quinn = { workspace = true }
+rustls = { workspace = true }
 
-# Pin projection for async streams
-pin-project = "1.1"
+# Cryptographic dependencies
+ed25519-dalek = { workspace = true }
 
-# CLI dependencies
-clap = { version = "4.4", features = ["derive", "env"] }
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-toml = "0.8"
-rand = { workspace = true }
-
-[[bin]]
-name = "zoe-relay"
-path = "src/main.rs"
-
-
+# Additional utilities
+hex = { workspace = true }
+async-trait = { workspace = true }
 
 [dev-dependencies]
 # Testing framework
-tokio-test = "0.4"
+tokio-test = { workspace = true }
 tokio = { workspace = true, features = ["test-util", "macros", "rt-multi-thread"] }
 
-# Random number generation for tests
-rand = "0.8"
-
-# Additional utilities for testing
-futures = "0.3"
-tracing-subscriber = "0.3"
-tempfile = "3.8"
-
-# Error types for testing (already in dependencies above)
+# Additional utilities for testing  
+tempfile = { workspace = true }

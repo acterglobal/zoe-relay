@@ -11,24 +11,24 @@ tokio = { workspace = true }
 tokio-util = { workspace = true, features = ["codec"] }
 
 # Serialization
-serde = { workspace = true, features = ["derive"] }
-postcard = { version = "1.0", features = ["use-std"] }
+serde = { workspace = true }
+postcard = { workspace = true }
 heapless = "0.7.2"
 
 # Cryptography
-ed25519-dalek = { version = "2.0", features = ["rand_core", "serde", "pkcs8"] }
-rand = "0.8"
+ed25519-dalek = { workspace = true, features = ["serde", "pkcs8"] }
+rand = { workspace = true }
 
 # Error handling
 anyhow = { workspace = true }
 thiserror = { workspace = true }
 
 # Hashing
-blake3 = { workspace = true, features = ["serde"] }
+blake3 = { workspace = true }
 
 # QUIC transport
-quinn = "0.11"
-rustls = { version = "0.23", default-features = false, features = ["ring"] }
+quinn = { workspace = true }
+rustls = { workspace = true }
 rcgen = "0.12"
 
 # Networking utilities
@@ -36,39 +36,39 @@ socket2 = "0.5"
 
 # Certificate parsing
 x509-parser = "0.16"
-hex = "0.4"
-uuid = { version = "1.0", features = ["v4"] }
+hex = { workspace = true }
+uuid = { workspace = true }
 
 # Encoding
 base64 = "0.21"
 
 # Logging
-tracing = "0.1"
+tracing = { workspace = true }
 
 # Async utilities  
-async-trait = "0.1"
+async-trait = { workspace = true }
 
 # RPC framework
 tarpc = { workspace = true }
 
 [dev-dependencies]
 # Testing framework
-tokio-test = "0.4"
-test-case = "3.0"
+tokio-test = { workspace = true }
+test-case = { workspace = true }
 proptest = "1.0"
 quickcheck = "1.0"
 mockall = "0.12"
-tempfile = "3.0"
-serial_test = "3.0"
+tempfile = { workspace = true }
+serial_test = { workspace = true }
 
 # Assertion utilities
-assert_matches = "1.5"
-pretty_assertions = "1.4"
+assert_matches = { workspace = true }
+pretty_assertions = { workspace = true }
 
 # Additional testing utilities
 criterion = "0.5"
 hex-literal = "0.4"
-chrono = { version = "0.4", features = ["serde"] }
+chrono = { workspace = true }
 
 [features]
 default = []

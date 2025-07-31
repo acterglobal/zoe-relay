@@ -3,44 +3,35 @@ name = "zoe-blob-store"
 version = "0.1.0"
 edition = "2024"
 
-[[bin]]
-name = "zoe-blob-store"
-path = "src/main.rs"
-
 [dependencies]
 zoe-wire-protocol = { path = "../wire-protocol" }
 
 # Iroh blob store dependencies
-iroh-blobs = "0.90.0"
-
-# HTTP server
-axum = "0.7.0"
-tokio = { version = "1.0", features = ["full"] }
-tower = "0.4"
-tower-http = { version = "0.5", features = ["cors", "fs"] }
+iroh-blobs = "0.93.0"
 
 # Serialization and utilities
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
-anyhow = "1.0"
-thiserror = "1.0"
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
 
 # Protocol handling with Tarpc
-tarpc = { version = "0.36", features = ["serde-transport", "tcp", "serde-transport-json"] }
-tracing = "0.1"
-tracing-subscriber = "0.3"
-clap = { version = "4.0", features = ["derive"] }
-chrono = { version = "0.4", features = ["serde"] }
+tokio = { workspace = true }
+tarpc = { workspace = true, features = ["serde-transport-json"] }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+clap = { workspace = true }
+chrono = { workspace = true }
 
 # HTTP client for examples
 reqwest = { version = "0.11", features = ["json"] }
 
 # File system and path handling
 path-clean = "0.1"
-tempfile = "3.0"
+tempfile = { workspace = true }
 
 # Async runtime
-futures = "0.3"
+futures = { workspace = true }
 irpc = "0.5.0"
 
 [[example]]
