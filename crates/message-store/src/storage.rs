@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use futures_util::Stream;
 use redis::{aio::ConnectionManager, AsyncCommands, SetOptions};
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 use zoe_wire_protocol::{MessageFilters, MessageFull, StoreKey, Tag};
 
 use crate::error::{MessageStoreError, Result};
@@ -430,7 +430,6 @@ impl RedisMessageStorage {
         let Some(message_id) = self.get_inner::<String>(&target_key).await? else {
             return Ok(None);
         };
-
         self.get_inner_full(&message_id).await
     }
 }

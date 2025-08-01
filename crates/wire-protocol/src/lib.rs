@@ -14,3 +14,5 @@ pub use streaming::*; // Re-export streaming protocol types
 
 // Re-export Blake3 Hash type for use in other crates
 pub use blake3::Hash;
+pub use ed25519_dalek::SigningKey;
+pub use ed25519_dalek::VerifyingKey;

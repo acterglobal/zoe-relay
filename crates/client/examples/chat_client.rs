@@ -30,6 +30,7 @@ use std::{
     net::SocketAddr,
     time::{SystemTime, UNIX_EPOCH},
 };
+use tarpc::context;
 use tokio::{
     io::{AsyncBufReadExt, BufReader, stdin},
     select,
@@ -37,8 +38,7 @@ use tokio::{
 use tracing::{error, info, warn};
 use zoe_client::{ClientError, MessagesService, RelayClient};
 use zoe_wire_protocol::{
-    Kind, Message, MessageFilters, MessageFull, MessagesServiceRequest, StreamMessage,
-    SubscriptionConfig, Tag,
+    Kind, Message, MessageFilters, MessageFull, StreamMessage, SubscriptionConfig, Tag,
 };
 
 /// Configuration for the chat client
@@ -205,8 +205,7 @@ impl ChatClient {
             limit: Some(20), // Get last 20 messages
         };
 
-        let subscribe_request = MessagesServiceRequest::Subscribe(subscription_config);
-        service.send_raw(subscribe_request).await?;
+        service.subscribe(subscription_config).await?;
 
         info!("📡 Subscribed to channel: {}", channel);
         Ok(())
@@ -248,7 +247,9 @@ impl ChatClient {
         let message_full = MessageFull::new(message, &self.config.client_key)
             .map_err(|e| ClientError::Generic(format!("Failed to create MessageFull: {e}")))?;
 
-        service.publish(message_full).await?;
+        if let Err(e) = service.publish(context::current(), message_full).await {
+            error!("❌ Failed to send message: {}", e);
+        }
         Ok(())
     }
 

@@ -1,10 +1,15 @@
 use crate::Service;
 use async_trait::async_trait;
 use futures::{SinkExt, StreamExt};
+use std::sync::Arc;
+use tarpc::server::{BaseChannel, Channel};
 use tokio::sync::mpsc;
 use tracing::{debug, error, info};
-use zoe_message_store::{MessageStoreError, RedisMessageStorage};
-use zoe_wire_protocol::{MessageFilters, MessagesServiceRequest, StreamMessage, StreamPair};
+use zoe_message_store::{MessageStoreError, MessagesRpcService, RedisMessageStorage};
+use zoe_wire_protocol::{
+    MessageFilters, MessageService as MessageServiceRpc, MessageServiceResponseWrap,
+    MessagesServiceRequestWrap, StreamMessage, StreamPair,
+};
 
 #[derive(Debug, thiserror::Error)]
 pub enum MessagesServiceError {
@@ -20,18 +25,24 @@ pub enum MessagesServiceError {
 
 pub struct MessagesService {
     streams: StreamPair,
-    service: RedisMessageStorage,
+    store: Arc<RedisMessageStorage>,
+    service: MessagesRpcService,
 }
 
 impl MessagesService {
-    pub fn new(streams: StreamPair, service: RedisMessageStorage) -> Self {
-        Self { streams, service }
+    pub fn new(streams: StreamPair, redis: RedisMessageStorage) -> Self {
+        let store = Arc::new(redis);
+        Self {
+            streams,
+            store: store.clone(),
+            service: MessagesRpcService::new(store),
+        }
     }
 }
 
 // Task to handle a subscription stream
 async fn subscription_task(
-    service: RedisMessageStorage,
+    service: Arc<RedisMessageStorage>,
     filters: MessageFilters,
     since: Option<String>,
     limit: Option<usize>,
@@ -80,15 +91,28 @@ impl Service for MessagesService {
         info!("Starting MessagesService");
         let Self {
             mut streams,
+            store,
             service,
         } = self;
         streams.send_ack().await?;
         let (mut incoming, mut sink) =
-            streams.unpack_transports::<MessagesServiceRequest, StreamMessage>();
+            streams.unpack_transports::<MessagesServiceRequestWrap, MessageServiceResponseWrap>();
 
         // Channel for receiving messages from subscription tasks
         let (mut sub_sender, mut sub_receiver) = mpsc::unbounded_channel::<StreamMessage>();
         let mut current_subscription_task: Option<tokio::task::JoinHandle<()>> = None;
+
+        let (mut client_transport, server_transport) = tarpc::transport::channel::unbounded();
+
+        let server = BaseChannel::with_defaults(server_transport);
+        let rpc_spawn = tokio::spawn(
+            server
+                .execute(service.serve())
+                // Handle all requests concurrently.
+                .for_each(|response| async move {
+                    tokio::spawn(response);
+                }),
+        );
 
         loop {
             tokio::select! {
@@ -98,7 +122,7 @@ impl Service for MessagesService {
                         Some(Ok(request)) => {
                             debug!("Received request: {:?}", request);
                             match request {
-                                MessagesServiceRequest::Subscribe(config) => {
+                                MessagesServiceRequestWrap::Subscribe(config) => {
                                     info!("Setting up subscription with filters: {:?}", config.filters);
 
                                     // Cancel existing subscription task if any
@@ -113,7 +137,7 @@ impl Service for MessagesService {
                                     }
 
                                     // Start new subscription task
-                                    let service_clone = service.clone();
+                                    let store_clone = store.clone();
                                     let task_sender = sub_sender.clone();
                                     let filters = config.filters;
                                     // Always start new subscriptions from the beginning to catch all messages
@@ -122,7 +146,7 @@ impl Service for MessagesService {
 
                                     let task = tokio::spawn(async move {
                                         if let Err(e) = subscription_task(
-                                            service_clone,
+                                            store_clone,
                                             filters,
                                             since,
                                             limit,
@@ -135,21 +159,9 @@ impl Service for MessagesService {
                                     current_subscription_task = Some(task);
                                     info!("Started new subscription task");
                                 }
-                                MessagesServiceRequest::Publish(message) => {
-                                    debug!("Publishing message with ID: {}", hex::encode(message.id.as_bytes()));
-
-                                    match service.store_message(&message).await {
-                                        Ok(Some(stream_id)) => {
-                                            info!("Message published successfully with stream ID: {}", stream_id);
-                                            // Give subscription task a moment to pick up the message
-                                            tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
-                                        }
-                                        Ok(None) => {
-                                            debug!("Message already existed");
-                                        }
-                                        Err(e) => {
-                                            error!("Failed to store message: {}", e);
-                                        }
+                                MessagesServiceRequestWrap::RpcRequest(request) => {
+                                    if let Err(e) = client_transport.send(request).await {
+                                        error!("Failed to send request to server: {}", e);
                                     }
                                 }
                             }
@@ -170,7 +182,7 @@ impl Service for MessagesService {
                     match stream_message {
                         Some(message) => {
                             // Forward message to client
-                            if let Err(e) = sink.send(message).await {
+                            if let Err(e) = sink.send(MessageServiceResponseWrap::StreamMessage(message)).await {
                                 error!("Failed to send response to client: {}", e);
                                 break;
                             }
@@ -181,10 +193,32 @@ impl Service for MessagesService {
                         }
                     }
                 }
+
+                // Poll from rpc task
+                rpc_message = client_transport.next() => {
+                    match rpc_message {
+                        Some(Ok(message)) => {
+                            // Forward message to client
+                            if let Err(e) = sink.send(MessageServiceResponseWrap::RpcResponse(message)).await {
+                                error!("Failed to send response to client: {}", e);
+                                break;
+                            }
+                        }
+                        Some(Err(e)) => {
+                            error!("Error reading RPC message: {}", e);
+                            break;
+                        }
+                        None => {
+                            debug!("RPC channel closed");
+                            // Continue running - this can happen when rpc task ends
+                        }
+                    }
+                }
             }
         }
 
         info!("MessagesService shutting down");
+        rpc_spawn.abort();
         Ok(())
     }
 }

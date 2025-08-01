@@ -1,3 +1,5 @@
+use std::ops::Deref;
+
 use crate::error::{ClientError, Result};
 use futures::{SinkExt, StreamExt};
 use quinn::Connection;
@@ -8,15 +10,23 @@ use tokio::{
     task::JoinHandle,
 };
 use zoe_wire_protocol::{
-    MessageFull, MessagesServiceRequest, StreamMessage, ZoeServices,
-    stream_pair::create_postcard_streams,
+    MessageServiceClient, MessageServiceResponseWrap, MessagesServiceRequestWrap, StreamMessage,
+    SubscriptionConfig, ZoeServices, stream_pair::create_postcard_streams,
 };
 
 pub type MessagesStream = UnboundedReceiver<StreamMessage>;
 
 pub struct MessagesService {
-    outgoing_tx: UnboundedSender<MessagesServiceRequest>,
+    outgoing_tx: UnboundedSender<MessagesServiceRequestWrap>,
+    rpc_client: MessageServiceClient,
     handle: JoinHandle<Result<()>>,
+}
+
+impl Deref for MessagesService {
+    type Target = MessageServiceClient;
+    fn deref(&self) -> &Self::Target {
+        &self.rpc_client
+    }
 }
 
 impl MessagesService {
@@ -34,10 +44,15 @@ impl MessagesService {
             ));
         }
 
-        let (mut stream, mut sink) =
-            create_postcard_streams::<StreamMessage, MessagesServiceRequest>(recv, send);
-        let (outgoing_tx, mut outgoing_rx) = unbounded_channel::<MessagesServiceRequest>();
+        let (mut stream, mut sink) = create_postcard_streams::<
+            MessageServiceResponseWrap,
+            MessagesServiceRequestWrap,
+        >(recv, send);
+        let (outgoing_tx, mut outgoing_rx) = unbounded_channel::<MessagesServiceRequestWrap>();
         let (incoming_tx, incoming_rx) = unbounded_channel::<StreamMessage>();
+
+        let (client_transport, mut server_transport) = tarpc::transport::channel::unbounded();
+        let rpc_client = MessageServiceClient::new(Default::default(), client_transport).spawn();
 
         let handle = tokio::spawn(async move {
             loop {
@@ -49,8 +64,13 @@ impl MessagesService {
                             break;
                         };
                         match incoming_message {
-                            Ok(message) => {
+                            Ok(MessageServiceResponseWrap::StreamMessage(message)) => {
                                 if let Err(e) = incoming_tx.send(message) {
+                                    return Err(ClientError::Generic(format!("Send error: {e}")));
+                                }
+                            }
+                            Ok(MessageServiceResponseWrap::RpcResponse(response)) => {
+                                if let Err(e) = server_transport.send(response).await {
                                     return Err(ClientError::Generic(format!("Send error: {e}")));
                                 }
                             }
@@ -69,6 +89,16 @@ impl MessagesService {
                             return Err(ClientError::Generic(format!("Send error: {e}")));
                         }
                     }
+                    // Poll for messages from rpc client
+                    rpc_message = server_transport.next() => {
+                        let Some(Ok(rpc_message)) = rpc_message else {
+                            tracing::info!("RPC client closed");
+                            break;
+                        };
+                        if let Err(e) = sink.send(MessagesServiceRequestWrap::RpcRequest(rpc_message)).await {
+                            return Err(ClientError::Generic(format!("Send error: {e}")));
+                        }
+                    }
                 }
             }
             Ok(())
@@ -77,22 +107,17 @@ impl MessagesService {
         Ok((
             Self {
                 outgoing_tx,
+                rpc_client,
                 handle,
             },
             incoming_rx,
         ))
     }
 
-    pub async fn publish(&self, message: MessageFull) -> Result<()> {
-        self.send_raw(MessagesServiceRequest::Publish(message))
-            .await
-    }
-
-    /// Send a message service request to the server
-    pub async fn send_raw(&self, request: MessagesServiceRequest) -> Result<()> {
+    pub async fn subscribe(&self, filters: SubscriptionConfig) -> Result<()> {
         self.outgoing_tx
-            .send(request)
-            .map_err(|_| ClientError::Generic("Service is closed".to_string()))
+            .send(MessagesServiceRequestWrap::Subscribe(filters))
+            .map_err(|e| ClientError::Generic(format!("Service is closed: {e}")))
     }
 
     /// Check if the service is closed

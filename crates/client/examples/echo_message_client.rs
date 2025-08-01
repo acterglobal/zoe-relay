@@ -20,12 +20,12 @@ use std::{
     net::SocketAddr,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
+use tarpc::context;
 use tokio::time::timeout;
-use tracing::{info, warn};
+use tracing::{error, info, warn};
 use zoe_client::{ClientError, MessagesService, MessagesStream, RelayClient};
 use zoe_wire_protocol::{
-    Kind, Message, MessageFilters, MessageFull, MessagesServiceRequest, StreamMessage,
-    SubscriptionConfig,
+    Kind, Message, MessageFilters, MessageFull, StreamMessage, SubscriptionConfig,
 };
 
 /// Run the complete message echo test
@@ -46,8 +46,7 @@ async fn run_echo_test(
         limit: None,
     };
 
-    let subscribe_request = MessagesServiceRequest::Subscribe(subscription_config);
-    messages_service.send_raw(subscribe_request).await?;
+    messages_service.subscribe(subscription_config).await?;
     info!("📬 Sent subscription request for our own messages");
 
     // Step 2: Create and publish an echo message
@@ -74,7 +73,12 @@ async fn run_echo_test(
 
     let message_id = *message_full.id.as_bytes();
 
-    messages_service.publish(message_full).await?;
+    if let Err(e) = messages_service
+        .publish(context::current(), message_full)
+        .await
+    {
+        error!("❌ Failed to send message: {}", e);
+    }
     info!("📤 Published echo message to relay server");
 
     // Give a small delay to ensure the message is fully processed by the server

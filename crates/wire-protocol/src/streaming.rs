@@ -1,6 +1,9 @@
+use blake3::Hash;
+use ed25519_dalek::VerifyingKey;
 use serde::{Deserialize, Serialize};
+use tarpc::{ClientMessage, Response};
 
-use crate::MessageFull;
+use crate::{MessageFull, StoreKey};
 
 /// Message filtering criteria for querying stored messages
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -44,9 +47,51 @@ pub struct SubscriptionConfig {
     pub since: Option<String>,
     pub limit: Option<usize>,
 }
+/// Message store service for message interaction operations
+#[tarpc::service]
+pub trait MessageService {
+    // async fn subscribe(config: SubscriptionConfig) -> Result<(), MessageError>;
+    async fn publish(message: MessageFull) -> Result<Option<String>, MessageError>;
+    async fn message(id: Hash) -> Result<Option<MessageFull>, MessageError>;
+    async fn user_data(
+        author: VerifyingKey,
+        storage_key: StoreKey,
+    ) -> Result<Option<MessageFull>, MessageError>;
+}
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum MessagesServiceRequest {
+/// Result type for message operations
+pub type MessageResult<T> = Result<T, MessageError>;
+
+/// Error types for blob operations
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, thiserror::Error)]
+pub enum MessageError {
+    #[error("Message not found: {hash}")]
+    NotFound { hash: String },
+
+    #[error("Invalid message hash: {hash}")]
+    InvalidHash { hash: String },
+
+    #[error("Storage error: {message}")]
+    StorageError { message: String },
+
+    #[error("Serialization error: {message}")]
+    SerializationError { message: String },
+
+    #[error("IO error: {message}")]
+    IoError { message: String },
+
+    #[error("Internal server error: {message}")]
+    InternalError { message: String },
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub enum MessagesServiceRequestWrap {
     Subscribe(SubscriptionConfig),
-    Publish(MessageFull),
+    RpcRequest(ClientMessage<MessageServiceRequest>),
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub enum MessageServiceResponseWrap {
+    StreamMessage(StreamMessage),
+    RpcResponse(Response<MessageServiceResponse>),
 }

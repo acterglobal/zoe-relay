@@ -1,4 +1,5 @@
 use thiserror::Error;
+use zoe_wire_protocol::MessageError;
 
 #[derive(Error, Debug)]
 pub enum MessageStoreError {
@@ -7,15 +8,6 @@ pub enum MessageStoreError {
 
     #[error("Serialization error: {0}")]
     Serialization(String),
-
-    #[error("Message not found")]
-    MessageNotFound,
-
-    #[error("Invalid message format")]
-    InvalidMessage,
-
-    #[error("Rate limit exceeded")]
-    RateLimitExceeded,
 
     #[error("Internal error: {0}")]
     Internal(String),
@@ -45,6 +37,21 @@ impl From<hex::FromHexError> for MessageStoreError {
 impl From<std::time::SystemTimeError> for MessageStoreError {
     fn from(err: std::time::SystemTimeError) -> Self {
         MessageStoreError::Internal(err.to_string())
+    }
+}
+
+impl From<MessageStoreError> for MessageError {
+    fn from(err: MessageStoreError) -> Self {
+        match err {
+            MessageStoreError::Redis(e) => MessageError::StorageError {
+                message: e.to_string(),
+            },
+            MessageStoreError::Serialization(e) => MessageError::InternalError { message: e },
+            MessageStoreError::EmptyFilters => MessageError::InternalError {
+                message: "Empty filters".to_string(),
+            },
+            MessageStoreError::Internal(e) => MessageError::InternalError { message: e },
+        }
     }
 }
 
