@@ -4,4 +4,4 @@ pub mod services;
 
 pub use client::RelayClient;
 pub use error::ClientError;
-pub use services::{MessagesService, MessagesStream, BlobService};
+pub use services::{BlobService, MessagesService, MessagesStream};

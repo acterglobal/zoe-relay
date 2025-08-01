@@ -57,7 +57,7 @@ impl BlobService {
             .client
             .download_blob(context::current(), blob_id.to_string())
             .await
-            .map_err( BlobError::RpcError)?
+            .map_err(BlobError::RpcError)?
             .map_err(BlobError::WireBlobError)?
         else {
             return Err(BlobError::NotFound {
@@ -72,7 +72,7 @@ impl BlobService {
             .client
             .upload_blob(context::current(), blob.to_vec())
             .await
-            .map_err( BlobError::RpcError)?
+            .map_err(BlobError::RpcError)?
             .map_err(BlobError::WireBlobError)?;
         Ok(hash)
     }

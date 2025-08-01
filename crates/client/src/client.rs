@@ -1,6 +1,6 @@
 // Remove unused clap imports since they're not needed in this file
 use crate::error::{ClientError, Result};
-use crate::{MessagesService, MessagesStream, BlobService};
+use crate::{BlobService, MessagesService, MessagesStream};
 use ed25519_dalek::{SigningKey, VerifyingKey};
 use quinn::Connection;
 use quinn::{ClientConfig, Endpoint, crypto::rustls::QuicClientConfig};
@@ -8,6 +8,7 @@ use rand::rngs::OsRng;
 use rustls::ClientConfig as RustlsClientConfig;
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::time::Duration;
 use tracing::info;
 use zoe_wire_protocol::{
     AcceptSpecificServerCertVerifier, generate_deterministic_cert_from_ed25519,
@@ -93,11 +94,16 @@ impl RelayClient {
             .with_custom_certificate_verifier(Arc::new(verifier))
             .with_client_auth_cert(client_certs, client_key)?;
 
-        let client_config = ClientConfig::new(Arc::new(
+        // we need to set the keep alive interval to 25 seconds, below the 30s timeout default so we keep the connection alive
+        let mut transport_config = quinn::TransportConfig::default();
+        transport_config.keep_alive_interval(Some(Duration::from_secs(25)));
+
+        let mut client_config = ClientConfig::new(Arc::new(
             QuicClientConfig::try_from(crypto).map_err(|e| ClientError::Generic(e.to_string()))?,
         ));
+        client_config.transport_config(Arc::new(transport_config));
 
-        let mut endpoint = Endpoint::client("0.0.0.0:0".parse()?)?;
+        let mut endpoint = Endpoint::client((std::net::Ipv6Addr::UNSPECIFIED, 0).into())?;
         endpoint.set_default_client_config(client_config);
 
         Ok(endpoint)

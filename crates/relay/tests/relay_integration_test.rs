@@ -8,9 +8,9 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::Notify;
 use tokio::time::{timeout, Duration};
 use zoe_relay::Service;
-use zoe_relay::{ConnectionInfo, RelayServer, ServiceRouter, StreamPair};
+use zoe_relay::{ConnectionInfo, RelayServer, ServiceRouter};
 use zoe_wire_protocol::{
-    generate_deterministic_cert_from_ed25519, AcceptSpecificServerCertVerifier,
+    generate_deterministic_cert_from_ed25519, AcceptSpecificServerCertVerifier, StreamPair,
 };
 
 #[derive(Debug, thiserror::Error)]

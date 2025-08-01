@@ -22,36 +22,36 @@
 use anyhow::Result;
 use clap::{Arg, Command};
 use ed25519_dalek::{SigningKey, VerifyingKey};
-use std::{
-    fs,
-    net::SocketAddr,
-    path::Path,
-};
-use tracing::{info, warn, error};
+use std::{fs, net::SocketAddr, path::Path};
+use tracing::{error, info, warn};
 use zoe_client::{BlobService, RelayClient};
 
 /// Upload a file to the blob store
 async fn upload_file(blob_service: &BlobService, file_path: &Path) -> Result<String> {
     info!("📁 Reading file: {}", file_path.display());
-    
+
     let file_data = fs::read(file_path)?;
     let file_size = file_data.len();
     info!("📊 File size: {} bytes", file_size);
 
     info!("📤 Uploading file to blob store...");
     let hash = blob_service.upload_blob(&file_data).await?;
-    
+
     info!("✅ File uploaded successfully!");
     info!("🔗 Blob hash: {}", hash);
     info!("📏 Uploaded {} bytes", file_size);
-    
+
     Ok(hash)
 }
 
 /// Download a blob from the store
-async fn download_blob(blob_service: &BlobService, hash: &str, output_path: Option<&Path>) -> Result<()> {
+async fn download_blob(
+    blob_service: &BlobService,
+    hash: &str,
+    output_path: Option<&Path>,
+) -> Result<()> {
     info!("📥 Downloading blob with hash: {}", hash);
-    
+
     let blob_data = blob_service.get_blob(hash).await?;
     let data_size = blob_data.len();
     info!("📊 Downloaded {} bytes", data_size);
@@ -67,7 +67,7 @@ async fn download_blob(blob_service: &BlobService, hash: &str, output_path: Opti
         } else {
             &blob_data
         };
-        
+
         // Try to display as text if it's valid UTF-8
         match std::str::from_utf8(preview) {
             Ok(text) => {
@@ -84,26 +84,29 @@ async fn download_blob(blob_service: &BlobService, hash: &str, output_path: Opti
             }
         }
     }
-    
+
     Ok(())
 }
 
 /// Run a round-trip test: upload a file, then download it back
 async fn run_roundtrip_test(blob_service: &BlobService, file_path: &Path) -> Result<()> {
-    info!("🔄 Starting round-trip test with file: {}", file_path.display());
-    
+    info!(
+        "🔄 Starting round-trip test with file: {}",
+        file_path.display()
+    );
+
     // Read original file
     let original_data = fs::read(file_path)?;
     info!("📖 Original file size: {} bytes", original_data.len());
-    
+
     // Upload file
     let hash = upload_file(blob_service, file_path).await?;
-    
+
     // Download the same blob
     info!("🔄 Now downloading the uploaded blob...");
     let downloaded_data = blob_service.get_blob(&hash).await?;
     info!("📥 Downloaded {} bytes", downloaded_data.len());
-    
+
     // Compare data
     if original_data == downloaded_data {
         info!("🎉 SUCCESS: Round-trip test passed!");
@@ -115,7 +118,7 @@ async fn run_roundtrip_test(blob_service: &BlobService, file_path: &Path) -> Res
         error!("   Downloaded size: {} bytes", downloaded_data.len());
         return Err(anyhow::anyhow!("Round-trip test failed: data mismatch"));
     }
-    
+
     Ok(())
 }
 
@@ -223,13 +226,16 @@ async fn main() -> Result<()> {
     };
 
     info!("🔗 Connected to relay server at {}", address);
-    info!("🔑 Client public key: {}", hex::encode(client.public_key().to_bytes()));
+    info!(
+        "🔑 Client public key: {}",
+        hex::encode(client.public_key().to_bytes())
+    );
 
     // Connect to blob service
     let blob_service = client.connect_blob_service().await?;
     info!("🗃️  Connected to blob service");
 
-    // Execute the requested operation  
+    // Execute the requested operation
     if let Some(file_path_str) = matches.get_one::<String>("upload") {
         let file_path = Path::new(file_path_str);
         if !file_path.exists() {
@@ -253,6 +259,6 @@ async fn main() -> Result<()> {
 
     info!("🔌 Disconnected from server");
     info!("🎊 Blob client operation completed successfully!");
-    
+
     Ok(())
 }

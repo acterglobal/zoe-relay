@@ -1,11 +1,13 @@
 use crate::Service;
 use async_trait::async_trait;
 use futures::StreamExt;
-use tarpc::{serde_transport, server::{BaseChannel, Channel}};
+use tarpc::{
+    serde_transport,
+    server::{BaseChannel, Channel},
+};
 use tokio_util::codec::LengthDelimitedCodec;
 use zoe_blob_store::BlobServiceImpl;
-use zoe_wire_protocol::{BlobError, BlobService as _, PostcardFormat, StreamPair
-};
+use zoe_wire_protocol::{BlobError, BlobService as _, PostcardFormat, StreamPair};
 
 #[derive(Debug, thiserror::Error)]
 pub enum BlobServiceError {

@@ -33,7 +33,3 @@ tempfile = { workspace = true }
 # Async runtime
 futures = { workspace = true }
 irpc = "0.5.0"
-
-[[example]]
-name = "upload_download"
-path = "examples/upload_download.rs"

@@ -5,6 +5,10 @@ edition = "2021"
 description = "Zoe relay server providing QUIC transport with ed25519 authentication"
 license = "MIT OR Apache-2.0"
 
+[[bin]]
+name = "zoe-relay"
+path = "src/main.rs"
+
 [dependencies]
 # Wire protocol for crypto utilities
 zoe-wire-protocol = { path = "../wire-protocol" }

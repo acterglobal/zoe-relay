@@ -1,217 +1,115 @@
-# Relay Examples
+# Zoe Client Examples
 
-This directory contains example clients demonstrating how to interact with the Zoe Relay Server.
+This directory contains example applications demonstrating how to use the Zoe client library to interact with a Zoe relay server.
 
-## Echo Message Client Example
+## Examples
 
-The `echo_message_client` example demonstrates the full message streaming workflow:
+### Chat Client (`chat_client.rs`)
 
-1. **Connect** to relay server with ed25519 authentication
-2. **Subscribe** to message stream with filters
-3. **Publish** a message to the relay
-4. **Receive** the message back via the stream
-5. **Verify** the round-trip was successful
+A real-time chat application that demonstrates:
 
-### Usage
+- Connecting to a Zoe relay server
+- Subscribing to channel-based messages
+- Publishing messages with channel tags
+- Live message updates in a simple CLI interface
+- Abbreviated author ID display
 
-First, start the relay server (make sure Redis is running):
+#### Usage
+
+First, start a Zoe relay server:
 
 ```bash
-# Terminal 1: Start Redis (if not already running)
-redis-server
-
-# Terminal 2: Start the relay server
+# From the relay crate directory
 cargo run --bin zoe-relay
-# Note the server's public key from the output
 ```
 
-Then run the message client:
+Then run the chat client:
 
 ```bash
-# Terminal 3: Run the echo message client
+# Basic usage with default channel "general"
+cargo run --example chat_client -- --server-key <HEX_SERVER_PUBLIC_KEY>
+
+# Connect to specific channel
+cargo run --example chat_client -- \
+  --address 127.0.0.1:4433 \
+  --server-key <HEX_SERVER_PUBLIC_KEY> \
+  --channel gaming
+
+# Use a specific client key (otherwise random key is generated)
+cargo run --example chat_client -- \
+  --server-key <HEX_SERVER_PUBLIC_KEY> \
+  --client-key <HEX_CLIENT_PRIVATE_KEY> \
+  --channel general
+```
+
+#### Features
+
+- **Real-time messaging**: Messages appear instantly as they're received
+- **Channel-based**: Each channel is isolated using channel tags
+- **User identification**: Shows abbreviated author IDs (first 4 bytes as hex)
+- **Message history**: Displays the last 20 messages when joining
+- **Simple UI**: Clean CLI interface with message timestamps
+- **Graceful exit**: Type `/quit` to exit the chat
+
+#### Example Session
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                          Zoe Chat - Channel: general                        │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ [14:23:15] a1b2c3d4: Hello everyone! 👋                                    │
+│ [14:23:32] e5f6a7b8: Hey there! How's everyone doing?                      │
+│ [14:24:01] a1b2c3d4: Great! Just testing this new chat system              │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Type your message and press Enter to send. Type '/quit' to exit.           │
+└─────────────────────────────────────────────────────────────────────────────┘
+> 
+```
+
+### Echo Message Client (`echo_message_client.rs`)
+
+A simple test client that:
+
+- Connects to the relay server
+- Subscribes to its own messages
+- Publishes an echo message
+- Verifies the message is received back through the stream
+
+#### Usage
+
+```bash
 cargo run --example echo_message_client -- \
   --address 127.0.0.1:4433 \
-  --server-key <SERVER_PUBLIC_KEY_HEX>
+  --server-key <HEX_SERVER_PUBLIC_KEY>
 ```
 
-### Example Output
+## Getting Server Public Key
+
+The server public key is displayed when you start the relay server. Look for a line like:
 
 ```
-🚀 Starting message client
-🔑 Client public key: a1b2c3d4e5f6...
-🌐 Connecting to server: 127.0.0.1:4433
-🔐 Server public key: f6e5d4c3b2a1...
-✅ Connected to relay server
-📡 Selected Messages service (ID: 10)
-🔄 Transport established, starting message flow
-📬 Sent subscription request for our own messages
-📝 Created message with ID: 1234567890abcdef...
-📤 Published echo message to relay server
-👂 Listening for messages...
-🎉 Received message via stream!
-   Stream height: 1699123456789-0
-   Message ID: 1234567890abcdef...
-   Author: a1b2c3d4e5f6...
-   Content: "Hello from message client! 🚀"
-✅ SUCCESS: Received our own echo message!
-   Original content: "Hello from message client! 🚀"
-   Received content: "Hello from message client! 🚀"
-🔌 Disconnected from server
-🎊 Message client test completed successfully!
+🔑 Server public key: a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2
 ```
 
-### Command Line Options
+## Development
 
-- `--address` / `-a`: Server address (default: `127.0.0.1:4433`)
-- `--server-key` / `-k`: Server's ed25519 public key (hex encoded, required)
-- `--client-key` / `-c`: Client's ed25519 private key (hex encoded, optional - generates random if not provided)
+### Adding New Examples
 
-### What It Tests
+1. Create a new `.rs` file in this directory
+2. Add example metadata at the top with `//!` doc comments
+3. Use the existing examples as templates
+4. Test with `cargo run --example <name>`
 
-This example verifies the complete message flow:
+### Dependencies
 
-✅ **QUIC Connection**: Establishes authenticated QUIC connection to relay server  
-✅ **Service Selection**: Connects to Messages service (ID: 10)  
-✅ **Subscription**: Sets up message filters to receive own messages  
-✅ **Message Publishing**: Creates and publishes a signed message  
-✅ **Stream Reception**: Receives the published message via the subscription stream  
-✅ **Message Verification**: Verifies the received message matches what was sent  
+Examples can use additional dependencies beyond the core client library. Add them to the `[dev-dependencies]` section in the client's `Cargo.toml`.
 
-This demonstrates that the relay server correctly:
-- Accepts QUIC connections with ed25519 authentication
-- Routes to the Messages service
-- Handles subscription requests
-- Stores messages in Redis
-- Streams messages back to subscribers in real-time
-- Maintains message integrity throughout the process
+## Architecture
 
-## Blob Client Example
+The examples demonstrate the core patterns for Zoe client applications:
 
-The `blob_client` example demonstrates the blob store functionality:
-
-1. **Connect** to relay server with ed25519 authentication
-2. **Upload** files to the remote blob store
-3. **Download** files by their content hash
-4. **Verify** round-trip integrity (upload + download + compare)
-
-### Usage
-
-First, start the relay server:
-
-```bash
-# Terminal 1: Start the relay server
-cargo run --bin zoe-relay
-# Note the server's public key from the output
-```
-
-Then run the blob client with different operations:
-
-#### Upload a File
-
-```bash
-cargo run --example blob_client -- \
-  --address 127.0.0.1:4433 \
-  --server-key <SERVER_PUBLIC_KEY_HEX> \
-  --upload ./README.md
-```
-
-#### Download a Blob
-
-```bash
-cargo run --example blob_client -- \
-  --address 127.0.0.1:4433 \
-  --server-key <SERVER_PUBLIC_KEY_HEX> \
-  --download <BLOB_HASH> \
-  --output ./downloaded_file.md
-```
-
-#### Round-trip Test
-
-```bash
-cargo run --example blob_client -- \
-  --address 127.0.0.1:4433 \
-  --server-key <SERVER_PUBLIC_KEY_HEX> \
-  --test ./crates/client/examples/test_upload.txt
-```
-
-### Example Output
-
-#### Upload Operation
-```
-🔗 Connected to relay server at 127.0.0.1:4433
-🔑 Client public key: a1b2c3d4e5f6...
-🗃️  Connected to blob service
-📁 Reading file: ./README.md
-📊 File size: 1024 bytes
-📤 Uploading file to blob store...
-✅ File uploaded successfully!
-🔗 Blob hash: b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9
-📏 Uploaded 1024 bytes
-🔌 Disconnected from server
-🎊 Blob client operation completed successfully!
-```
-
-#### Download Operation
-```
-🔗 Connected to relay server at 127.0.0.1:4433
-🔑 Client public key: a1b2c3d4e5f6...
-🗃️  Connected to blob service
-📥 Downloading blob with hash: b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9
-📊 Downloaded 1024 bytes
-💾 Writing to file: ./downloaded_file.md
-✅ File saved successfully!
-🔌 Disconnected from server
-🎊 Blob client operation completed successfully!
-```
-
-#### Round-trip Test
-```
-🔗 Connected to relay server at 127.0.0.1:4433
-🔑 Client public key: a1b2c3d4e5f6...
-🗃️  Connected to blob service
-🔄 Starting round-trip test with file: ./test_upload.txt
-📖 Original file size: 512 bytes
-📁 Reading file: ./test_upload.txt
-📊 File size: 512 bytes
-📤 Uploading file to blob store...
-✅ File uploaded successfully!
-🔗 Blob hash: c3ab8ff13720e3ad87cb6e6e5b4b1b44d1a3b7fb6e8b3c6e2e0c2b4e4a7f8e3d
-📏 Uploaded 512 bytes
-🔄 Now downloading the uploaded blob...
-📥 Downloaded 512 bytes
-🎉 SUCCESS: Round-trip test passed!
-✅ Original and downloaded data match perfectly
-🔗 Blob hash: c3ab8ff13720e3ad87cb6e6e5b4b1b44d1a3b7fb6e8b3c6e2e0c2b4e4a7f8e3d
-🔌 Disconnected from server
-🎊 Blob client operation completed successfully!
-```
-
-### Command Line Options
-
-- `--address` / `-a`: Server address (default: `127.0.0.1:4433`)
-- `--server-key` / `-k`: Server's ed25519 public key (hex encoded, required)
-- `--client-key` / `-c`: Client's ed25519 private key (hex encoded, optional - generates random if not provided)
-- `--upload` / `-u`: Upload a file to the blob store
-- `--download` / `-d`: Download a blob by its hash
-- `--output` / `-o`: Output file path for downloaded blob (only used with --download)
-- `--test` / `-t`: Run round-trip test: upload file then download it back
-
-### What It Tests
-
-This example verifies the complete blob storage workflow:
-
-✅ **QUIC Connection**: Establishes authenticated QUIC connection to relay server  
-✅ **Service Selection**: Connects to Blob service (ID: 20)  
-✅ **File Upload**: Uploads arbitrary files to content-addressed storage  
-✅ **Hash Generation**: Receives cryptographic hash for uploaded content  
-✅ **File Download**: Retrieves files by their content hash  
-✅ **Data Integrity**: Verifies downloaded data matches original exactly  
-✅ **Binary Support**: Handles both text and binary files correctly  
-
-This demonstrates that the relay server correctly:
-- Accepts QUIC connections with ed25519 authentication
-- Routes to the Blob service
-- Stores files in content-addressed storage
-- Generates consistent cryptographic hashes
-- Retrieves files by hash
-- Maintains file integrity throughout upload/download cycles
+1. **Connection**: Establish QUIC connection with mutual TLS authentication
+2. **Service Access**: Connect to specific services (messages, blob storage, etc.)
+3. **Streaming**: Handle real-time message streams
+4. **Publishing**: Send messages through the relay system
+5. **Filtering**: Subscribe to specific message types using filters

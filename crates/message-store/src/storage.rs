@@ -314,7 +314,6 @@ impl RedisMessageStorage {
                 let mut last_seen_height = since.clone();
 
                 for (stream_key, entries) in rows {
-                    info!("stream_key: {stream_key}");
                     if stream_key != MESSAGE_STREAM_NAME {
                         // should never happen in reality
                         continue;
