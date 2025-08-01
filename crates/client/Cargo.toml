@@ -3,6 +3,9 @@ name = "zoe-client"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+mls = ["dep:openmls", "dep:openmls_rust_crypto", "dep:openmls_basic_credential", "dep:openmls_memory_storage", "dep:postcard", "dep:serde"]
+
 [dependencies]
 # Wire protocol for crypto utilities
 zoe-wire-protocol = { path = "../wire-protocol" }
@@ -27,6 +30,16 @@ ed25519-dalek = { workspace = true }
 hex = { workspace = true }
 async-trait = { workspace = true }
 
+# MLS dependencies for encrypted messaging
+openmls = { version = "0.7", optional = true }
+openmls_rust_crypto = { version = "0.4", optional = true }
+openmls_basic_credential = { version = "0.4", optional = true }
+openmls_memory_storage = { version = "0.4", optional = true }
+
+serde = { workspace = true, optional = true }
+tls_codec = { version = "0.4", optional = true }
+postcard = { workspace = true, optional = true }
+
 # Error types for documentation examples
 thiserror = { workspace = true }
 
@@ -41,6 +54,11 @@ path = "examples/echo_message_client.rs"
 [[example]]
 name = "blob_client"
 path = "examples/blob_client.rs"
+
+[[example]]
+name = "mls_chat_client"
+path = "examples/mls_chat_client.rs"
+required-features = ["mls"]
 
 
 [dev-dependencies]

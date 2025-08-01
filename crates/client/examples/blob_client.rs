@@ -9,21 +9,21 @@
 //! # Start the relay server first
 //! cargo run --bin zoe-relay
 //!
-//! # In another terminal, run the client to upload a file
-//! cargo run --example blob_client -- --address 127.0.0.1:4433 --server-key <HEX_PUBLIC_KEY> --upload ./README.md
+//! # Upload a file
+//! cargo run --example blob_client -- --server-key <HEX_PUBLIC_KEY> upload ./README.md
 //!
-//! # Or download a file by hash
-//! cargo run --example blob_client -- --address 127.0.0.1:4433 --server-key <HEX_PUBLIC_KEY> --download <BLOB_HASH> --output ./downloaded_file.md
+//! # Download a file by hash
+//! cargo run --example blob_client -- --server-key <HEX_PUBLIC_KEY> download <BLOB_HASH> --output ./downloaded_file.md
 //!
-//! # Or do a round-trip test (upload then download)
-//! cargo run --example blob_client -- --address 127.0.0.1:4433 --server-key <HEX_PUBLIC_KEY> --test ./test_file.txt
+//! # Run a round-trip test (upload then download)
+//! cargo run --example blob_client -- --server-key <HEX_PUBLIC_KEY> test ./test_file.txt
 //! ```
 
 use anyhow::Result;
 use clap::{Arg, Command};
 use ed25519_dalek::{SigningKey, VerifyingKey};
 use std::{fs, net::SocketAddr, path::Path};
-use tracing::{error, info, warn};
+use tracing::{error, info};
 use zoe_client::{BlobService, RelayClient};
 
 /// Upload a file to the blob store
@@ -122,6 +122,21 @@ async fn run_roundtrip_test(blob_service: &BlobService, file_path: &Path) -> Res
     Ok(())
 }
 
+/// Blob client commands
+#[derive(Debug, Clone)]
+enum BlobCommand {
+    Upload {
+        file_path: String,
+    },
+    Download {
+        hash: String,
+        output_path: Option<String>,
+    },
+    Test {
+        file_path: String,
+    },
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     // Initialize logging
@@ -132,7 +147,7 @@ async fn main() -> Result<()> {
         )
         .init();
 
-    // Parse command line arguments
+    // Parse command line arguments using subcommands
     let matches = Command::new("blob_client")
         .about("Blob store client for testing Zoe Relay Blob service")
         .arg(
@@ -158,47 +173,53 @@ async fn main() -> Result<()> {
                 .value_name("HEX_PRIVATE_KEY")
                 .help("Client's ed25519 private key (hex encoded, optional - generates random if not provided)"),
         )
-        .arg(
-            Arg::new("upload")
-                .short('u')
-                .long("upload")
-                .value_name("FILE_PATH")
-                .help("Upload a file to the blob store")
-                .conflicts_with_all(&["download", "test"]),
+        .subcommand(
+            Command::new("upload")
+                .about("Upload a file to the blob store")
+                .arg(
+                    Arg::new("file")
+                        .value_name("FILE_PATH")
+                        .help("Path to the file to upload")
+                        .required(true),
+                )
         )
-        .arg(
-            Arg::new("download")
-                .short('d')
-                .long("download")
-                .value_name("BLOB_HASH")
-                .help("Download a blob by its hash")
-                .conflicts_with_all(&["upload", "test"]),
+        .subcommand(
+            Command::new("download")
+                .about("Download a blob by its hash")
+                .arg(
+                    Arg::new("hash")
+                        .value_name("BLOB_HASH")
+                        .help("Hash of the blob to download")
+                        .required(true),
+                )
+                .arg(
+                    Arg::new("output")
+                        .short('o')
+                        .long("output")
+                        .value_name("OUTPUT_PATH")
+                        .help("Output file path for downloaded blob"),
+                )
         )
-        .arg(
-            Arg::new("output")
-                .short('o')
-                .long("output")
-                .value_name("OUTPUT_PATH")
-                .help("Output file path for downloaded blob (only used with --download)"),
+        .subcommand(
+            Command::new("test")
+                .about("Run round-trip test: upload file then download it back")
+                .arg(
+                    Arg::new("file")
+                        .value_name("FILE_PATH")
+                        .help("Path to the file to test with")
+                        .required(true),
+                )
         )
-        .arg(
-            Arg::new("test")
-                .short('t')
-                .long("test")
-                .value_name("FILE_PATH")
-                .help("Run round-trip test: upload file then download it back")
-                .conflicts_with_all(&["upload", "download"]),
-        )
+        .subcommand_required(true)
         .get_matches();
 
-    // Parse server address
+    // Parse global arguments
     let address: SocketAddr = matches
         .get_one::<String>("address")
         .unwrap()
         .parse()
         .map_err(|e| anyhow::anyhow!("Invalid address: {}", e))?;
 
-    // Parse server public key
     let server_key_hex = matches.get_one::<String>("server-key").unwrap();
     let server_key_bytes = hex::decode(server_key_hex)
         .map_err(|e| anyhow::anyhow!("Invalid server key hex: {}", e))?;
@@ -209,6 +230,24 @@ async fn main() -> Result<()> {
 
     let server_public_key = VerifyingKey::from_bytes(&server_key_bytes.try_into().unwrap())
         .map_err(|e| anyhow::anyhow!("Invalid ed25519 public key: {}", e))?;
+
+    // Parse subcommand
+    let command = match matches.subcommand() {
+        Some(("upload", sub_matches)) => {
+            let file_path = sub_matches.get_one::<String>("file").unwrap().clone();
+            BlobCommand::Upload { file_path }
+        }
+        Some(("download", sub_matches)) => {
+            let hash = sub_matches.get_one::<String>("hash").unwrap().clone();
+            let output_path = sub_matches.get_one::<String>("output").cloned();
+            BlobCommand::Download { hash, output_path }
+        }
+        Some(("test", sub_matches)) => {
+            let file_path = sub_matches.get_one::<String>("file").unwrap().clone();
+            BlobCommand::Test { file_path }
+        }
+        _ => anyhow::bail!("Invalid subcommand"),
+    };
 
     // Create client (with optional private key)
     let client = if let Some(client_key_hex) = matches.get_one::<String>("client-key") {
@@ -236,25 +275,25 @@ async fn main() -> Result<()> {
     info!("🗃️  Connected to blob service");
 
     // Execute the requested operation
-    if let Some(file_path_str) = matches.get_one::<String>("upload") {
-        let file_path = Path::new(file_path_str);
-        if !file_path.exists() {
-            anyhow::bail!("File does not exist: {}", file_path.display());
+    match command {
+        BlobCommand::Upload { file_path } => {
+            let file_path = Path::new(&file_path);
+            if !file_path.exists() {
+                anyhow::bail!("File does not exist: {}", file_path.display());
+            }
+            upload_file(&blob_service, file_path).await?;
         }
-        upload_file(&blob_service, file_path).await?;
-    } else if let Some(hash) = matches.get_one::<String>("download") {
-        let output_path = matches.get_one::<String>("output").map(|s| Path::new(s));
-        download_blob(&blob_service, hash, output_path).await?;
-    } else if let Some(file_path_str) = matches.get_one::<String>("test") {
-        let file_path = Path::new(file_path_str);
-        if !file_path.exists() {
-            anyhow::bail!("File does not exist: {}", file_path.display());
+        BlobCommand::Download { hash, output_path } => {
+            let output_path = output_path.as_ref().map(Path::new);
+            download_blob(&blob_service, &hash, output_path).await?;
         }
-        run_roundtrip_test(&blob_service, file_path).await?;
-    } else {
-        warn!("⚠️  No operation specified. Use --upload, --download, or --test");
-        warn!("   Run with --help for usage information");
-        return Ok(());
+        BlobCommand::Test { file_path } => {
+            let file_path = Path::new(&file_path);
+            if !file_path.exists() {
+                anyhow::bail!("File does not exist: {}", file_path.display());
+            }
+            run_roundtrip_test(&blob_service, file_path).await?;
+        }
     }
 
     info!("🔌 Disconnected from server");

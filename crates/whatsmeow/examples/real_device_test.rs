@@ -36,8 +36,8 @@ fn display_qr_code(qr_data: &str) {
             // Display the QR code centered
             for line in image.lines() {
                 // Center the QR code line within our box
-                let padded_line = format!("{:^48}", line);
-                println!("│{}│", padded_line);
+                let padded_line = format!("{line:^48}");
+                println!("│{padded_line}│");
             }
 
             println!("├{}┤", "─".repeat(50));
@@ -45,8 +45,8 @@ fn display_qr_code(qr_data: &str) {
             println!("└{}┘", "─".repeat(50));
         }
         Err(e) => {
-            println!("❌ Failed to generate QR code: {}", e);
-            println!("📋 Raw QR data: {}", qr_data);
+            println!("❌ Failed to generate QR code: {e}");
+            println!("📋 Raw QR data: {qr_data}");
         }
     }
 
@@ -61,14 +61,14 @@ fn display_qr_code(qr_data: &str) {
 }
 
 fn wait_for_user_confirmation(message: &str) {
-    println!("📋 {}", message);
+    println!("📋 {message}");
     println!("   ⏸️  Press Enter when ready to continue...");
     let mut input = String::new();
     io::stdin().read_line(&mut input).unwrap();
 }
 
 fn prompt_user(message: &str) -> String {
-    print!("{}", message);
+    print!("{message}");
     io::stdout().flush().unwrap();
     let mut input = String::new();
     io::stdin().read_line(&mut input).unwrap();
@@ -80,7 +80,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("🚀 WhatsApp Bot - Real Device Test");
     println!("===================================");
     println!("🔥 This uses REAL WhatsApp servers and will generate scannable QR codes!");
-    println!("");
+    println!();
 
     println!("⚠️  This test requires:");
     println!("   • Real phone number");
@@ -123,7 +123,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
         Err(e) => {
-            println!("   ⚠️  QR code generation failed: {}", e);
+            println!("   ⚠️  QR code generation failed: {e}");
             println!("   💡 This might be normal if already authenticated");
             println!("   🔄 Try disconnecting and reconnecting if issues persist");
         }
@@ -135,7 +135,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Try connecting
     match bot.connect().await {
         Ok(_) => println!("   ✅ Connection attempt initiated"),
-        Err(e) => println!("   ⚠️  Connection failed: {}", e),
+        Err(e) => println!("   ⚠️  Connection failed: {e}"),
     }
 
     // Check connection status multiple times with better feedback
@@ -143,7 +143,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut connected = false;
 
     for attempt in 1..=10 {
-        println!("   📡 Connection check {}/10...", attempt);
+        println!("   📡 Connection check {attempt}/10...");
 
         match bot.get_connection_status().await {
             Ok(status) => match status {
@@ -166,7 +166,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     println!("   🚪 Status: Logged out - QR code scan may be required");
                 }
             },
-            Err(e) => println!("   ❌ Status check error: {}", e),
+            Err(e) => println!("   ❌ Status check error: {e}"),
         }
 
         if attempt < 10 {
@@ -183,13 +183,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         match bot.get_contacts().await {
             Ok(contacts) => {
                 println!("   ✅ Retrieved {} contacts", contacts.len());
-                if contacts.len() > 0 {
+                if !contacts.is_empty() {
                     println!("   👥 First few contacts:");
                     for (i, contact) in contacts.iter().take(3).enumerate() {
                         let name = contact
-                            .name
-                            .as_ref()
-                            .map(|s| s.as_str())
+                            .name.as_deref()
                             .unwrap_or("<No Name>");
                         println!("      {}. {} ({})", i + 1, name, contact.jid);
                     }
@@ -198,7 +196,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                 }
             }
-            Err(e) => println!("   ⚠️  Contact retrieval failed: {}", e),
+            Err(e) => println!("   ⚠️  Contact retrieval failed: {e}"),
         }
 
         // Test groups
@@ -206,7 +204,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         match bot.get_groups().await {
             Ok(groups) => {
                 println!("   ✅ Retrieved {} groups", groups.len());
-                if groups.len() > 0 {
+                if !groups.is_empty() {
                     println!("   📋 Groups:");
                     for (i, group) in groups.iter().take(3).enumerate() {
                         println!(
@@ -221,7 +219,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                 }
             }
-            Err(e) => println!("   ⚠️  Group retrieval failed: {}", e),
+            Err(e) => println!("   ⚠️  Group retrieval failed: {e}"),
         }
 
         // Optional: Send test message
@@ -234,11 +232,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     "🤖 Test message from Rust WhatsApp bot at {}",
                     chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC")
                 );
-                println!("   📝 Sending: {}", message);
+                println!("   📝 Sending: {message}");
 
                 match bot.send_message(&recipient, &message).await {
-                    Ok(msg_id) => println!("   ✅ Message sent! ID: {}", msg_id),
-                    Err(e) => println!("   ❌ Message failed: {}", e),
+                    Ok(msg_id) => println!("   ✅ Message sent! ID: {msg_id}"),
+                    Err(e) => println!("   ❌ Message failed: {e}"),
                 }
             } else {
                 println!("   ❌ Invalid recipient format");
@@ -264,7 +262,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("\n5️⃣ Cleanup");
     match bot.disconnect().await {
         Ok(_) => println!("   ✅ Disconnected successfully"),
-        Err(e) => println!("   ⚠️  Disconnect failed: {}", e),
+        Err(e) => println!("   ⚠️  Disconnect failed: {e}"),
     }
 
     Ok(())

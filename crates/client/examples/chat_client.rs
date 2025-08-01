@@ -173,11 +173,10 @@ impl ChatClient {
                                 break;
                             }
 
-                            if !trimmed.is_empty() {
-                                if let Err(e) = self.send_message(&messages_service, &trimmed).await {
+                            if !trimmed.is_empty()
+                                && let Err(e) = self.send_message(&messages_service, &trimmed).await {
                                     error!("❌ Failed to send message: {}", e);
                                 }
-                            }
                         }
                         Err(e) => {
                             error!("❌ Failed to read input: {}", e);
@@ -247,7 +246,7 @@ impl ChatClient {
         );
 
         let message_full = MessageFull::new(message, &self.config.client_key)
-            .map_err(|e| ClientError::Generic(format!("Failed to create MessageFull: {}", e)))?;
+            .map_err(|e| ClientError::Generic(format!("Failed to create MessageFull: {e}")))?;
 
         service.publish(message_full).await?;
         Ok(())
@@ -284,7 +283,7 @@ impl ChatClient {
         } else {
             for message in &self.messages {
                 let formatted = message.format_for_display();
-                println!("│ {:<75} │", formatted);
+                println!("│ {formatted:<75} │");
             }
         }
 
@@ -343,7 +342,7 @@ fn parse_args() -> Result<ChatConfig> {
         .map_err(|e| anyhow::anyhow!("Invalid server address: {}", e))?;
 
     let server_key_hex = matches.get_one::<String>("server-key").unwrap();
-    let server_key_bytes = hex::decode(&server_key_hex)
+    let server_key_bytes = hex::decode(server_key_hex)
         .map_err(|e| anyhow::anyhow!("Invalid server key hex: {}", e))?;
     let server_key = VerifyingKey::try_from(server_key_bytes.as_slice())
         .map_err(|e| anyhow::anyhow!("Invalid server key: {}", e))?;
@@ -351,7 +350,7 @@ fn parse_args() -> Result<ChatConfig> {
     let channel = matches.get_one::<String>("channel").unwrap().clone();
 
     let client_key = if let Some(client_key_hex) = matches.get_one::<String>("client-key") {
-        let client_key_bytes = hex::decode(&client_key_hex)
+        let client_key_bytes = hex::decode(client_key_hex)
             .map_err(|e| anyhow::anyhow!("Invalid client key hex: {}", e))?;
         SigningKey::try_from(client_key_bytes.as_slice())
             .map_err(|e| anyhow::anyhow!("Invalid client key: {}", e))?

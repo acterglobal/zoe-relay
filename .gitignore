@@ -4,3 +4,4 @@
 blob-store-data/
 target
 relay_server.key
+*.bin

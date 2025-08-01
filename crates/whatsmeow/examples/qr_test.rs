@@ -42,8 +42,8 @@ async fn main() -> Result<()> {
 
                         // Display the QR code
                         for line in image.lines() {
-                            let padded_line = format!("{:^48}", line);
-                            println!("│{}│", padded_line);
+                            let padded_line = format!("{line:^48}");
+                            println!("│{padded_line}│");
                         }
 
                         println!("├{}┤", "─".repeat(50));
@@ -51,14 +51,14 @@ async fn main() -> Result<()> {
                         println!("└{}┘", "─".repeat(50));
                     }
                     Err(e) => {
-                        println!("❌ Failed to generate visual QR code: {}", e);
-                        println!("🔗 Raw QR data: {}", qr_code);
+                        println!("❌ Failed to generate visual QR code: {e}");
+                        println!("🔗 Raw QR data: {qr_code}");
                     }
                 }
             }
         }
         Err(e) => {
-            println!("❌ QR code generation failed: {}", e);
+            println!("❌ QR code generation failed: {e}");
         }
     }
 

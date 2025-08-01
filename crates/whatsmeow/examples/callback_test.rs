@@ -15,10 +15,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     match bot.get_connection_status().await {
         Ok(status) => {
             println!("   ✅ Connection status callback worked!");
-            println!("   📡 Status: {:?}", status);
+            println!("   📡 Status: {status:?}");
         }
         Err(e) => {
-            println!("   ❌ Connection status callback failed: {}", e);
+            println!("   ❌ Connection status callback failed: {e}");
         }
     }
 
@@ -40,7 +40,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
         Err(e) => {
-            println!("   ⚠️  QR code callback failed: {}", e);
+            println!("   ⚠️  QR code callback failed: {e}");
             println!("   💡 This might be expected if not authenticated");
         }
     }
@@ -55,7 +55,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             );
         }
         Err(e) => {
-            println!("   ⚠️  Contacts callback failed: {}", e);
+            println!("   ⚠️  Contacts callback failed: {e}");
         }
     }
 

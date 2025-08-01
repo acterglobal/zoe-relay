@@ -65,14 +65,14 @@ async fn run_echo_test(
         vec![], // no tags
     );
 
-    let message_full = MessageFull::new(message, &client_key)
-        .map_err(|e| ClientError::Generic(format!("Failed to create MessageFull: {}", e)))?;
+    let message_full = MessageFull::new(message, client_key)
+        .map_err(|e| ClientError::Generic(format!("Failed to create MessageFull: {e}")))?;
     info!(
         "📝 Created message with ID: {}",
         hex::encode(message_full.id.as_bytes())
     );
 
-    let message_id = message_full.id.as_bytes().clone();
+    let message_id = *message_full.id.as_bytes();
 
     messages_service.publish(message_full).await?;
     info!("📤 Published echo message to relay server");
@@ -235,5 +235,5 @@ async fn main() -> Result<()> {
     // Run the echo test
     let (messages_service, messages_stream) = client.connect_message_service().await?;
     let client_key = client.signing_key();
-    run_echo_test(&client_key, messages_service, messages_stream).await
+    run_echo_test(client_key, messages_service, messages_stream).await
 }

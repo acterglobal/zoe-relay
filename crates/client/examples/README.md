@@ -66,6 +66,105 @@ cargo run --example chat_client -- \
 > 
 ```
 
+### MLS Chat Client (`mls_chat_client.rs`)
+
+**🔐 End-to-End Encrypted Chat using Message Layer Security (MLS) - Proof of Concept**
+
+A proof-of-concept implementation demonstrating MLS integration architecture:
+
+- **End-to-End Encryption**: Messages encrypted using MLS protocol
+- **Forward Secrecy**: Past messages remain secure even if keys are compromised
+- **Group Messaging**: Secure multi-party encrypted conversations
+- **Key Management**: Automated MLS key rotation and group state management
+- **Out-of-Band Setup**: Secure key package exchange for group joining
+
+#### Quick Start
+
+**Create an encrypted group:**
+```bash
+cargo run --example mls_chat_client --features mls -- --server-key <HEX_SERVER_PUBLIC_KEY> --user-name Alice create-group
+```
+
+**Generate key package (for someone who wants to join):**
+```bash
+cargo run --example mls_chat_client --features mls -- --server-key <HEX_SERVER_PUBLIC_KEY> --user-name Bob create-group
+# This generates bob_keypackage.bin which Bob shares with Alice
+```
+
+**Add member to group:**
+```bash
+cargo run --example mls_chat_client --features mls -- --server-key <HEX_SERVER_PUBLIC_KEY> --user-name Alice add-member --key-package bob_keypackage.bin
+# This generates welcome_bob.bin which Alice shares with Bob
+```
+
+**Join group with welcome message:**
+```bash
+cargo run --example mls_chat_client --features mls -- --server-key <HEX_SERVER_PUBLIC_KEY> --user-name Bob join --welcome welcome_bob.bin
+```
+
+#### Available Subcommands
+
+- `create-group` - Create a new MLS group and generate key package
+- `add-member --key-package <file>` - Add a member to existing group (generates welcome message)
+- `join --welcome <file>` - Join a group using a Welcome message
+- `chat` - Resume existing chat session
+
+#### MLS Flow Summary
+
+1. **Alice creates group** → `alice_keypackage.bin` (stays with Alice)
+2. **Bob generates key package** → `bob_keypackage.bin` (Bob shares with Alice)
+3. **Alice adds Bob** → `welcome_bob.bin` (Alice shares with Bob)
+4. **Bob joins** → Uses `welcome_bob.bin` to join Alice's group
+
+**📖 For detailed setup instructions and multi-client coordination, see [MLS_CHAT_README.md](./MLS_CHAT_README.md)**
+
+#### Security Features
+
+- **MLS Protocol**: RFC 9420 compliant implementation
+- **Cryptographic Authentication**: All messages cryptographically signed and verified
+- **Group Membership**: Secure member addition/removal with cryptographic verification
+- **Persistent Security**: Group state maintained across sessions
+- **Forward Secrecy**: Key rotation ensures past message security
+
+### Blob Client (`blob_client.rs`)
+
+A client for testing the blob storage service that demonstrates:
+
+- Uploading files to the blob store and receiving unique content hashes
+- Downloading files by their hash with optional file output
+- Round-trip testing to verify upload/download integrity
+- Binary content detection and preview functionality
+
+#### Usage
+
+**Upload a file:**
+```bash
+cargo run --example blob_client -- --server-key <HEX_SERVER_PUBLIC_KEY> upload ./README.md
+```
+
+**Download a file:**
+```bash
+cargo run --example blob_client -- --server-key <HEX_SERVER_PUBLIC_KEY> download <BLOB_HASH> --output ./downloaded_file.md
+```
+
+**Test round-trip (upload + download):**
+```bash
+cargo run --example blob_client -- --server-key <HEX_SERVER_PUBLIC_KEY> test ./test_file.txt
+```
+
+#### Available Subcommands
+
+- `upload <file>` - Upload a file to the blob store
+- `download <hash> [--output <file>]` - Download a blob by its hash
+- `test <file>` - Run round-trip test: upload file then download it back
+
+#### Features
+
+- **Content-Addressed Storage**: Files identified by their cryptographic hash
+- **Binary & Text Support**: Handles any file type with intelligent preview
+- **Integrity Verification**: Hash-based verification ensures data integrity
+- **Flexible Output**: Download to file or display content preview
+
 ### Echo Message Client (`echo_message_client.rs`)
 
 A simple test client that:
