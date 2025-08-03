@@ -6,6 +6,9 @@ test-threads = 4
 [profile.ci]
 # Optimized for CI
 test-threads = 4
+fail-fast = false
+retries = 2
+slow-timeout = { period = "10s", terminate-after = 2, grace-period = "5s" }
 
 [profile.fast]
 # Fast tests with more parallelism
