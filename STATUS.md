@@ -25,15 +25,15 @@
 
 ### ToDo:
  - [ ] Improved Message streaming:
-   - [ ] ignoring of emphemral messages
-   - [ ] store once (not once per stream)
+   - [x] ignoring of emphemral messages
+   - [x] store once (not once per stream)
    - [ ] separate streams per filter
  - [ ] updating of subscriptions
    - [ ] catching up on newly added subscriptions while running a subscription
  - [ ] End-2-End-Testing over redis
  - [ ] generic client interface
  - [ ] allow firehose services per allow-list
- - [ ] only accept user-set-keys for authenticated ed25519 auth if set to secret
+ - [ ] only accept user-set-keys for authenticated ed25519 auth if set to
 
 ## Client
 - Client as per quic definition: the one connecting is the client

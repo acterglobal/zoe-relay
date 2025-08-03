@@ -7625,6 +7625,7 @@ dependencies = [
  "tokio",
  "tokio-test",
  "tracing",
+ "tracing-subscriber",
  "uuid",
  "zoe-wire-protocol",
 ]

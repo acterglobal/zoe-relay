@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use futures_util::Stream;
 use redis::{aio::ConnectionManager, AsyncCommands, SetOptions};
-use tracing::{info, warn};
+use tracing::{debug, error, info, warn};
 use zoe_wire_protocol::{MessageFilters, MessageFull, StoreKey, Tag};
 
 use crate::error::{MessageStoreError, Result};
@@ -10,7 +10,7 @@ use crate::error::{MessageStoreError, Result};
 // Redis key prefixes for different data types
 const MESSAGE_STREAM_NAME: &str = "message_stream";
 const ID_KEY: &str = "id";
-const MESSAGE_FULL_KEY: &str = "m_full";
+const EXPIRATION_KEY: &str = "exp";
 const EVENT_KEY: &str = "event";
 const AUTHOR_KEY: &str = "author";
 const USER_KEY: &str = "user";
@@ -39,6 +39,14 @@ impl RedisMessageStorage {
     async fn get_inner_full(&self, id: &str) -> Result<Option<MessageFull>> {
         let mut conn = self.conn.lock().await.clone();
         Self::get_full(&mut conn, id).await
+    }
+
+    async fn get_message_full(
+        conn: &mut ConnectionManager,
+        id: &[u8],
+    ) -> Result<Option<MessageFull>> {
+        let message_id = hex::encode(id);
+        Self::get_full(conn, &message_id).await
     }
 
     async fn get_full(conn: &mut ConnectionManager, id: &str) -> Result<Option<MessageFull>> {
@@ -93,17 +101,28 @@ impl RedisMessageStorage {
 
         if exists {
             // Message already exists, return None
-            info!("Message already exists, ignoring to store");
+            debug!("Message already exists, ignoring to store");
             return Ok(None);
         }
 
         // Build SET command - only add expiration if timeout is set and > 0
         let mut set_cmd = redis::cmd("SET");
         set_cmd.arg(&message_id).arg(storage_value.to_vec());
+        let mut ex_time = None;
 
         if let Some(timeout) = message.storage_timeout() {
             if timeout > 0 {
+                let expiration_time = message.when().saturating_add(timeout);
+                if expiration_time
+                    < std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)?
+                        .as_secs()
+                {
+                    debug!("Message is expired, ignoring to store");
+                    return Ok(None);
+                }
                 set_cmd.arg("EX").arg(timeout);
+                ex_time = Some(expiration_time);
             }
         }
 
@@ -123,9 +142,13 @@ impl RedisMessageStorage {
         let mut xadd_cmd = redis::cmd("XADD");
         xadd_cmd.arg(MESSAGE_STREAM_NAME).arg("*"); // auto-generate ID
 
+        if let Some(expiration_time) = ex_time {
+            xadd_cmd
+                .arg(EXPIRATION_KEY)
+                .arg(expiration_time.to_le_bytes().to_vec());
+        }
         // Add the message data
-        xadd_cmd.arg(ID_KEY).arg(message_id.clone());
-        xadd_cmd.arg(MESSAGE_FULL_KEY).arg(storage_value.to_vec());
+        xadd_cmd.arg(ID_KEY).arg(message.id.as_bytes());
 
         // Extract indexable tags from the message and add directly to command
         for tag in message.tags() {
@@ -231,8 +254,8 @@ impl RedisMessageStorage {
 
     /// Retrieve a specific message by ID
     pub async fn get_message(&self, id: &[u8]) -> Result<Option<MessageFull>> {
-        let message_id = hex::encode(id);
-        self.get_inner_full(&message_id).await
+        let mut conn = { self.conn.lock().await.clone() };
+        Self::get_message_full(&mut conn, id).await
     }
 
     /// Listen for messages matching filters (streaming)
@@ -250,6 +273,13 @@ impl RedisMessageStorage {
             // our streaming is complicated, we want an async conenction
             // but if we reuse the existing connection all other requests
             // will block. so we need to get a new connection for streaming.
+            self.client
+                .get_connection_manager()
+                .await
+                .map_err(MessageStoreError::Redis)?
+        };
+        let mut fetch_con = {
+            // and one we need to read actual message data
             self.client
                 .get_connection_manager()
                 .await
@@ -331,82 +361,78 @@ impl RedisMessageStorage {
                             // yielding if our filters match
                             match key_str.as_ref() {
                                 ID_KEY => {
+                                    id = Some(value);
                                     // ignored
                                 }
-                                MESSAGE_FULL_KEY => {
-                                    let message_full = MessageFull::from_storage_value(&value)
-                                        .map_err(|e| MessageStoreError::Serialization(e.to_string()))?;
-                                    if should_yield {
-                                        yield Ok((Some(message_full), height.clone()));
-                                        did_yield = true;
+
+                                //  reading of metadata:
+                                //  is this already expired?
+                                EXPIRATION_KEY => {
+                                    let expiration_time = match value.try_into().map(u64::from_le_bytes) {
+                                        Ok(expiration_time) => expiration_time,
+                                        Err(e) => {
+                                            error!("Message has a bad expiration time: {:?}", e);
+                                            continue 'meta;
+                                        }
+                                    };
+                                    let current_time = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_secs();
+                                    if expiration_time < current_time {
+                                        // the message is expired, we don't yield it
+                                        debug!("Message is expired, ignoring to yield");
                                         continue 'messages;
                                     }
-                                    id = Some(message_full);
+
                                 }
+
+                                // checking for filters
                                 EVENT_KEY => {
                                     let event_id = value;
                                     if filters.events.is_some() && filters.events.as_ref().unwrap().contains(&event_id) {
-                                        let Some(msg_id) = id else {
-                                            // we don't have an id yet, mark for yielding,
-                                            // once it is found
-                                            should_yield = true;
-                                            continue 'meta;
-                                        };
-                                        // we have a match, yield it
-                                        yield Ok((Some(msg_id), height.clone()));
-                                        did_yield = true;
-                                        continue 'messages;
+                                        should_yield = true;
+                                        break 'meta;
                                     }
                                 }
                                 AUTHOR_KEY => {
                                     let author_id = value;
                                     if filters.authors.is_some() && filters.authors.as_ref().unwrap().contains(&author_id) {
-                                        let Some(msg_id) = id else {
-                                            // we don't have an id yet, mark for yielding,
-                                            // once it is found
-                                            should_yield = true;
-                                            continue 'meta;
-                                        };
-                                        // we have a match, yield it
-                                        yield Ok((Some(msg_id), height.clone()));
-                                        did_yield = true;
-                                        continue 'messages;
+                                        should_yield = true;
+                                        break 'meta;
                                     }
                                 }
                                 USER_KEY => {
                                     let user_id = value;
                                     if filters.users.is_some() && filters.users.as_ref().unwrap().contains(&user_id) {
-                                        let Some(msg_id) = id else {
-                                            // we don't have an id yet, mark for yielding,
-                                            // once it is found
-                                            should_yield = true;
-                                            continue 'meta;
-                                        };
-                                        // we have a match, yield it
-                                        yield Ok((Some(msg_id), height.clone()));
-                                        did_yield = true;
-                                        continue 'messages;
+                                        should_yield = true;
+                                        break 'meta;
                                     }
                                 }
                                 CHANNEL_KEY => {
                                     let channel_id = value;
                                     if filters.channels.is_some() && filters.channels.as_ref().unwrap().contains(&channel_id) {
-                                        let Some(msg_id) = id else {
-                                            // we don't have an id yet, mark for yielding,
-                                            // once it is found
-                                            should_yield = true;
-                                            continue 'meta;
-                                        };
-                                        // we have a match, yield it
-                                        yield Ok((Some(msg_id), height.clone()));
-                                        did_yield = true;
-                                        continue 'messages;
+                                        should_yield = true;
+                                        break 'meta;
                                     }
                                 }
                                 _ => {
                                     // irrelevant key, continue
                                 }
                             }
+                        }
+
+                        // Now decide whether to yield based on collected info
+                        if should_yield {
+                            let Some(msg_id) = id else {
+                                error!("Message ID not found in stream info");
+                                continue 'messages;
+                            };
+                            info!("Message ID found in stream info: {}", hex::encode(&msg_id));
+                            let Some(msg_full) = Self::get_message_full(&mut fetch_con, &msg_id).await? else {
+                                // we need to fetch the message
+                                error!("Message not found in storage. odd");
+                                continue 'messages;
+                            };
+                            yield Ok((Some(msg_full), height.clone()));
+                            did_yield = true;
                         }
                     }
                 }
@@ -944,5 +970,377 @@ mod tests {
         // Note: We don't test the actual expiration here as it would require waiting
         // and could make the test flaky. In a real integration test, you might want
         // to use a shorter timeout and wait, or mock the time functionality.
+    }
+
+    #[tokio::test]
+    async fn test_expired_ephemeral_message_not_stored() {
+        let _ = tracing_subscriber::fmt::try_init();
+
+        // Skip test if Redis is not available
+        let config = create_test_config();
+        let storage = match RedisMessageStorage::new(config.clone()).await {
+            Ok(storage) => storage,
+            Err(_) => {
+                eprintln!("Skipping test: Redis not available at {config}");
+                return;
+            }
+        };
+
+        // Create a test message with ephemeral kind that's already expired
+        let test_content = TestContent {
+            text: "Already expired ephemeral message".to_string(),
+            value: 888,
+        };
+
+        let mut secret_bytes = [0u8; 32];
+        rand::thread_rng().fill_bytes(&mut secret_bytes);
+        let signing_key = SigningKey::from_bytes(&secret_bytes);
+        let verifying_key = signing_key.verifying_key();
+
+        // Create message with timestamp from 10 seconds ago and 5 second timeout
+        // This means it expired 5 seconds ago
+        let past_timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+            .saturating_sub(10);
+
+        let message = Message::new_typed(
+            test_content,
+            verifying_key,
+            past_timestamp,
+            Kind::Emphemeral(Some(5)), // 5 second timeout, but message is 10 seconds old
+            vec![],
+        )
+        .unwrap();
+
+        let message_full = MessageFull::new(message, &signing_key)
+            .expect("Failed to create expired ephemeral message");
+
+        // Store the expired ephemeral message
+        let stored = storage
+            .store_message(&message_full)
+            .await
+            .expect("Failed to store expired ephemeral message");
+
+        // The message should not have been stored
+        assert!(
+            stored.is_none(),
+            "Expired ephemeral message should not have been stored"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_expired_ephemeral_message_not_retrievable() {
+        let _ = tracing_subscriber::fmt::try_init();
+
+        // Skip test if Redis is not available
+        let config = create_test_config();
+        let storage = match RedisMessageStorage::new(config.clone()).await {
+            Ok(storage) => storage,
+            Err(_) => {
+                eprintln!("Skipping test: Redis not available at {config}");
+                return;
+            }
+        };
+
+        // Create a test message with ephemeral kind that's already expired
+        let test_content = TestContent {
+            text: "Already expired ephemeral message".to_string(),
+            value: 888,
+        };
+
+        let mut secret_bytes = [0u8; 32];
+        rand::thread_rng().fill_bytes(&mut secret_bytes);
+        let signing_key = SigningKey::from_bytes(&secret_bytes);
+        let verifying_key = signing_key.verifying_key();
+
+        // Create message with timestamp from 10 seconds ago and 5 second timeout
+        // This means it expired 5 seconds ago
+        let past_timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+
+        let message = Message::new_typed(
+            test_content,
+            verifying_key,
+            past_timestamp,
+            Kind::Emphemeral(Some(1)), // 1 second timeout
+            vec![],
+        )
+        .unwrap();
+
+        let message_full = MessageFull::new(message, &signing_key)
+            .expect("Failed to create expired ephemeral message");
+
+        // Store the expired ephemeral message
+        let stored = storage
+            .store_message(&message_full)
+            .await
+            .expect("Failed to store expired ephemeral message");
+
+        // The message should still be stored initially (Redis will handle expiration)
+        assert!(
+            stored.is_some(),
+            "Expiring ephemeral message should be stored"
+        );
+
+        // We'll attempt retrieval after a small delay to allow Redis to process expiration
+        tokio::time::sleep(tokio::time::Duration::from_millis(1100)).await;
+
+        let retrieved = storage
+            .get_message(message_full.id.as_bytes())
+            .await
+            .expect("Should not error when retrieving expired message");
+
+        assert!(
+            retrieved.is_none(),
+            "Expired ephemeral message should not be retrievable"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_expired_ephemeral_message_not_in_stream() {
+        let _ = tracing_subscriber::fmt::try_init();
+
+        // Skip test if Redis is not available
+        let config = create_test_config();
+        let storage = match RedisMessageStorage::new(config.clone()).await {
+            Ok(storage) => storage,
+            Err(_) => {
+                eprintln!("Skipping test: Redis not available at {config}");
+                return;
+            }
+        };
+
+        // Create a test message with ephemeral kind that's already expired
+        let test_content = TestContent {
+            text: "Expired ephemeral for stream test".to_string(),
+            value: 999,
+        };
+
+        let mut secret_bytes = [0u8; 32];
+        rand::thread_rng().fill_bytes(&mut secret_bytes);
+        let signing_key = SigningKey::from_bytes(&secret_bytes);
+        let verifying_key = signing_key.verifying_key();
+        let author_bytes = verifying_key.to_bytes().to_vec();
+
+        // Create message with timestamp from 10 seconds ago and 5 second timeout
+        let past_timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+            .saturating_sub(10);
+
+        let message = Message::new_typed(
+            test_content,
+            verifying_key,
+            past_timestamp,
+            Kind::Emphemeral(Some(5)), // 5 second timeout, but message is 10 seconds old
+            vec![],
+        )
+        .unwrap();
+
+        let message_full = MessageFull::new(message, &signing_key)
+            .expect("Failed to create expired ephemeral message");
+
+        // Set up stream listener with author filter
+        use zoe_wire_protocol::MessageFilters;
+        let filters = MessageFilters {
+            authors: Some(vec![author_bytes]),
+            channels: None,
+            events: None,
+            users: None,
+        };
+
+        let stream = storage
+            .listen_for_messages(&filters, None, Some(10))
+            .await
+            .expect("Failed to create message stream");
+
+        let mut stream = Box::pin(stream);
+
+        // Store the expired ephemeral message
+        let stored = storage
+            .store_message(&message_full)
+            .await
+            .expect("Failed to store expired ephemeral message");
+
+        assert!(
+            stored.is_none(),
+            "Expired ephemeral message should not be stored"
+        );
+
+        // Give some time for potential stream processing
+        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+
+        // Read from stream with timeout - we should not receive the expired message
+        use futures_util::StreamExt;
+        let stream_result =
+            tokio::time::timeout(tokio::time::Duration::from_millis(500), stream.next()).await;
+
+        match stream_result {
+            Ok(Some(Ok((msg_opt, _height)))) => {
+                // If we receive a message, it should not be our expired ephemeral message
+                if let Some(received_msg) = msg_opt {
+                    assert_ne!(
+                        received_msg.id, message_full.id,
+                        "Should not receive expired ephemeral message in stream"
+                    );
+                } else {
+                    // Received height update without message - this is expected
+                }
+            }
+            Ok(Some(Err(e))) => {
+                panic!("Stream error: {e:?}");
+            }
+            Ok(None) => {
+                // Stream ended - this is fine
+            }
+            Err(_) => {
+                // Timeout - this is what we expect for expired messages
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_valid_ephemeral_message_expires_from_stream() {
+        let _ = tracing_subscriber::fmt::try_init();
+
+        // Skip test if Redis is not available
+        let config = create_test_config();
+        let storage = match RedisMessageStorage::new(config.clone()).await {
+            Ok(storage) => storage,
+            Err(_) => {
+                eprintln!("Skipping test: Redis not available at {config}");
+                return;
+            }
+        };
+
+        // Create a test message with ephemeral kind (2 second timeout)
+        let test_content = TestContent {
+            text: "Valid ephemeral message for expiration test".to_string(),
+            value: 1111,
+        };
+
+        let mut secret_bytes = [0u8; 32];
+        rand::thread_rng().fill_bytes(&mut secret_bytes);
+        let signing_key = SigningKey::from_bytes(&secret_bytes);
+        let verifying_key = signing_key.verifying_key();
+        let author_bytes = verifying_key.to_bytes().to_vec();
+
+        let message = Message::new_typed(
+            test_content,
+            verifying_key,
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs(),
+            Kind::Emphemeral(Some(3)), // 3 second timeout
+            vec![],
+        )
+        .unwrap();
+
+        let message_full = MessageFull::new(message, &signing_key)
+            .expect("Failed to create valid ephemeral message");
+
+        // Set up stream listener to check if message appears in stream
+        use zoe_wire_protocol::MessageFilters;
+        let filters = MessageFilters {
+            authors: Some(vec![author_bytes]),
+            channels: None,
+            events: None,
+            users: None,
+        };
+
+        let stream = storage
+            .listen_for_messages(&filters, None, None) // start from latest, no limit
+            .await
+            .expect("Failed to create message stream");
+
+        // Store the ephemeral message
+        let stored = storage
+            .store_message(&message_full)
+            .await
+            .expect("Failed to store ephemeral message");
+        assert!(stored.is_some(), "Ephemeral message should be newly stored");
+
+        // Verify it can be retrieved immediately
+        let retrieved = storage
+            .get_message(message_full.id.as_bytes())
+            .await
+            .expect("Failed to retrieve ephemeral message")
+            .expect("Ephemeral message should be found immediately");
+
+        assert_eq!(
+            retrieved.id, message_full.id,
+            "Retrieved ephemeral message should match original"
+        );
+
+        let mut stream = Box::pin(stream);
+
+        // The message should be available in the stream initially
+        use futures_util::StreamExt;
+        let stream_result =
+            tokio::time::timeout(tokio::time::Duration::from_secs(1), stream.next()).await;
+
+        let found_in_stream = match stream_result {
+            Ok(Some(Ok((Some(received_msg), _height)))) => received_msg.id == message_full.id,
+            _ => false,
+        };
+
+        assert!(
+            found_in_stream,
+            "Valid ephemeral message should be found in stream initially"
+        );
+
+        // Wait for the message to expire (3 seconds + buffer)
+        tokio::time::sleep(tokio::time::Duration::from_secs(4)).await;
+
+        // Verify the message is no longer retrievable after expiration
+        let retrieved_after_expiry = storage
+            .get_message(message_full.id.as_bytes())
+            .await
+            .expect("Should not error when retrieving expired message");
+
+        assert!(
+            retrieved_after_expiry.is_none(),
+            "Ephemeral message should not be retrievable after expiration"
+        );
+
+        // Now create a new stream starting from the beginning to test that
+        // the expired message doesn't show up
+        let new_stream = storage
+            .listen_for_messages(&filters, None, None) // start from beginning, read all
+            .await
+            .expect("Failed to create new message stream");
+
+        let mut new_stream = Box::pin(new_stream);
+
+        // Read from the stream - the expired message should be filtered out
+        let stream_result =
+            tokio::time::timeout(tokio::time::Duration::from_secs(2), new_stream.next()).await;
+
+        match stream_result {
+            Ok(Some(Ok((Some(received_msg), _height)))) => {
+                if received_msg.id == message_full.id {
+                    panic!("Expired ephemeral message should not be found in new stream! Got message ID: {}", hex::encode(received_msg.id.as_bytes()));
+                }
+                // Got a different (non-expired) message - this is fine
+            }
+            Ok(Some(Ok((None, _height)))) => {
+                // Height update without message - this is expected for expired messages
+            }
+            Ok(Some(Err(e))) => {
+                panic!("Stream error: {e:?}");
+            }
+            Ok(None) => {
+                // Stream ended - this is fine
+            }
+            Err(_) => {
+                // Timeout - this is expected when no valid messages are found
+            }
+        }
     }
 }
