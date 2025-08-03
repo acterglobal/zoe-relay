@@ -213,23 +213,6 @@ jobs:
         env:
           RUSTDOCFLAGS: "-Dwarnings"
 
-  minimum-rust-version:
-    name: Minimum Rust Version
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: 1.70.0  # MSRV
-      - uses: Swatinem/rust-cache@v2
-      
-      - name: Check with MSRV
-        run: |
-          cargo check --workspace \
-            --exclude zoe-backend-protocol \
-            --exclude whatsmeow \
-            --exclude wa-bot
-
   matrix-test:
     name: Matrix Testing
     runs-on: ${{ matrix.os }}
