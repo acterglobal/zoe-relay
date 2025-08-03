@@ -7549,6 +7549,7 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.12",
  "tokio",
+ "tokio-test",
  "tracing",
  "tracing-subscriber",
  "zoe-wire-protocol",

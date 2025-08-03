@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use futures_util::Stream;
 use redis::{aio::ConnectionManager, AsyncCommands, SetOptions};
-use tracing::{debug, info, warn};
+use tracing::{info, warn};
 use zoe_wire_protocol::{MessageFilters, MessageFull, StoreKey, Tag};
 
 use crate::error::{MessageStoreError, Result};

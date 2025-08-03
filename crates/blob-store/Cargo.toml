@@ -33,3 +33,6 @@ tempfile = { workspace = true }
 # Async runtime
 futures = { workspace = true }
 irpc = "0.5.0"
+
+[dev-dependencies]
+tokio-test = "0.4"
