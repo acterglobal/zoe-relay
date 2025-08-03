@@ -7,7 +7,7 @@
 - ✅ Cryptographic operations (ed25519, TLS certificates, mutual auth)
 - ✅ Service routing by ID with start byte per quic stream
 - ✅ Wire auth via ed25519 mutual certificate verification
-- [ ] Upgrade additional ed25519 via further auth-protocol
+- [ ] Upgrade additional ed25519 accounts via further auth-protocol
 
 ### Storage
 - ✅ Storage RPC
@@ -33,7 +33,7 @@
  - [ ] End-2-End-Testing over redis
  - [ ] generic client interface
  - [ ] allow firehose services per allow-list
- - [ ] only accept user-set-keys for authenticated ed25519 auth
+ - [ ] only accept user-set-keys for authenticated ed25519 auth if set to secret
 
 ## Client
 - Client as per quic definition: the one connecting is the client

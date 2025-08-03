@@ -58,7 +58,7 @@ jobs:
         component:
           - whatsmeow
           - zoe-wire-protocol
-          - zoey-encrypted-storage
+          - zoe-encrypted-storage
           - zoe-blob-store
           - zoe-message-store
           - zoe-relay

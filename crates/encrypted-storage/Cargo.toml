@@ -1,5 +1,5 @@
 [package]
-name = "zoey-encrypted-storage"
+name = "zoe-encrypted-storage"
 version = "0.1.0"
 edition = "2024"
 

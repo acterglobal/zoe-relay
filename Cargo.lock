@@ -7587,6 +7587,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "zoe-encrypted-storage"
+version = "0.1.0"
+dependencies = [
+ "aead",
+ "aes-gcm",
+ "blake3",
+ "brotli",
+ "thiserror 2.0.12",
+]
+
+[[package]]
 name = "zoe-message-store"
 version = "0.1.0"
 dependencies = [
@@ -7692,15 +7703,4 @@ dependencies = [
  "tracing",
  "uuid",
  "x509-parser",
-]
-
-[[package]]
-name = "zoey-encrypted-storage"
-version = "0.1.0"
-dependencies = [
- "aead",
- "aes-gcm",
- "blake3",
- "brotli",
- "thiserror 2.0.12",
 ]
