@@ -123,8 +123,6 @@ struct GroupState {
     version: u32,                        // Version for backward compatibility
 }
 
-
-
 impl Default for GroupState {
     fn default() -> Self {
         Self {
@@ -184,23 +182,26 @@ impl MLSChatClient {
         // This ensures the same user always gets the same MLS keys across sessions
         // Use the client key as the seed for MLS key generation
         let client_key_bytes = config.client_key.to_bytes();
-        
+
         // Generate 32-byte seed for ED25519 private key from client key
         let mut private_key_bytes = [0u8; 32];
         private_key_bytes.copy_from_slice(&client_key_bytes);
-        
+
         // Create ED25519 signing key from private bytes
         let signing_key = ed25519_dalek::SigningKey::from_bytes(&private_key_bytes);
         let verifying_key = signing_key.verifying_key();
-        
+
         // Convert to the format expected by SignatureKeyPair::from_raw
         let signature_keys = SignatureKeyPair::from_raw(
             SignatureScheme::ED25519,
             private_key_bytes.to_vec(),
             verifying_key.to_bytes().to_vec(),
         );
-        
-        info!("🔑 Generated persistent MLS signature keys for {}", config.user_name);
+
+        info!(
+            "🔑 Generated persistent MLS signature keys for {}",
+            config.user_name
+        );
 
         let credential = BasicCredential::new(config.user_name.as_bytes().to_vec());
         let credential_with_key = CredentialWithKey {
@@ -299,18 +300,18 @@ impl MLSChatClient {
             self.load_existing_group().await
         } else {
             info!("🔍 No local group found, checking for welcome messages...");
-            
+
             // Connect to message service temporarily to check for welcome messages
-            let (messages_service, mut messages_stream) = 
+            let (messages_service, mut messages_stream) =
                 self.relay_client.connect_message_service().await?;
-                
+
             // Subscribe to the channel to receive messages
             Self::subscribe_to_channel(&messages_service, self.config.channel.clone()).await?;
-            
+
             // Wait briefly for any pending welcome messages
             let timeout_duration = std::time::Duration::from_secs(3);
             let start_time = std::time::Instant::now();
-            
+
             while start_time.elapsed() < timeout_duration {
                 tokio::select! {
                     stream_result = messages_stream.recv() => {
@@ -320,7 +321,7 @@ impl MLSChatClient {
                                 // Continue trying in case there are more messages
                                 continue;
                             }
-                            
+
                             // Check if we successfully joined a group
                             if self.mls_group.is_some() {
                                 info!("✅ Successfully joined group via welcome message!");
@@ -333,7 +334,7 @@ impl MLSChatClient {
                     }
                 }
             }
-            
+
             // Fail if no group found
             Err(anyhow!(
                 "❌ No MLS group found! Use 'create-group' to create a new group first, or wait for a welcome message."
@@ -447,10 +448,7 @@ impl MLSChatClient {
     }
 
     /// Add a member to existing group using real OpenMLS operations
-    async fn add_member_real_mls(
-        &mut self,
-        user_public_key: &str,
-    ) -> Result<()> {
+    async fn add_member_real_mls(&mut self, user_public_key: &str) -> Result<()> {
         info!(
             "👥 Adding member to group using real OpenMLS with public key: {}",
             user_public_key
@@ -464,7 +462,11 @@ impl MLSChatClient {
         // Ensure we have an MLS group
         let mls_group = match &mut self.mls_group {
             Some(group) => group,
-            None => return Err(anyhow!("No MLS group available - only group creators can add members")),
+            None => {
+                return Err(anyhow!(
+                    "No MLS group available - only group creators can add members"
+                ));
+            }
         };
 
         info!(
@@ -473,8 +475,13 @@ impl MLSChatClient {
         );
 
         // Deserialize the KeyPackageBundle using postcard (since OpenMLS supports Serde serialization)
-        let key_package_bundle: KeyPackageBundle = postcard::from_bytes(&member_key_package.key_package_bytes)
-            .map_err(|e| anyhow!("Failed to deserialize KeyPackageBundle with postcard: {:?}", e))?;
+        let key_package_bundle: KeyPackageBundle =
+            postcard::from_bytes(&member_key_package.key_package_bytes).map_err(|e| {
+                anyhow!(
+                    "Failed to deserialize KeyPackageBundle with postcard: {:?}",
+                    e
+                )
+            })?;
 
         // Extract the KeyPackage from the bundle
         let key_package = key_package_bundle.key_package().clone();
@@ -497,7 +504,10 @@ impl MLSChatClient {
             .propose_add_member(&self.provider, &self.signature_keys, &key_package)
             .map_err(|e| anyhow!("Failed to create Add proposal: {:?}", e))?;
 
-        info!("📝 Created Add proposal for {}", member_key_package.user_name);
+        info!(
+            "📝 Created Add proposal for {}",
+            member_key_package.user_name
+        );
 
         // Commit the proposal to advance the group epoch and generate Welcome message
         let (commit, welcome_option, _group_info) = mls_group
@@ -519,7 +529,8 @@ impl MLSChatClient {
 
         // Send welcome message to the new member if generated
         if let Some(welcome_message) = welcome_option {
-            self.send_mls_welcome_message(&welcome_message, &member_key_package).await?;
+            self.send_mls_welcome_message(&welcome_message, &member_key_package)
+                .await?;
         } else {
             warn!("⚠️  No Welcome message generated - this shouldn't happen for Add operations");
         }
@@ -571,7 +582,9 @@ impl MLSChatClient {
         let message_full = MessageFull::new(message, &self.config.client_key)
             .map_err(|e| anyhow!("Failed to create MessageFull: {}", e))?;
 
-        let _ = messages_service.publish(context::current(), message_full).await
+        let _ = messages_service
+            .publish(context::current(), message_full)
+            .await
             .map_err(|e| anyhow!("Failed to send commit message: {}", e))?;
 
         info!("✅ MLS commit message sent successfully");
@@ -584,7 +597,10 @@ impl MLSChatClient {
         welcome: &MlsMessageOut,
         target_member: &SerializableKeyPackage,
     ) -> Result<()> {
-        info!("📨 Sending OpenMLS Welcome message to {}", target_member.user_name);
+        info!(
+            "📨 Sending OpenMLS Welcome message to {}",
+            target_member.user_name
+        );
 
         // Serialize the Welcome message
         let welcome_bytes = welcome
@@ -618,20 +634,20 @@ impl MLSChatClient {
         let message_full = MessageFull::new(message, &self.config.client_key)
             .map_err(|e| anyhow!("Failed to create MessageFull: {}", e))?;
 
-        let _ = messages_service.publish(context::current(), message_full).await
+        let _ = messages_service
+            .publish(context::current(), message_full)
+            .await
             .map_err(|e| anyhow!("Failed to send Welcome message: {}", e))?;
 
-        info!("✅ OpenMLS Welcome message sent to {}", target_member.user_name);
+        info!(
+            "✅ OpenMLS Welcome message sent to {}",
+            target_member.user_name
+        );
         Ok(())
     }
 
-
-
     /// Try to process a message as an OpenMLS welcome message
-    async fn try_process_mls_welcome(
-        &self,
-        message: &MessageFull,
-    ) -> Result<Option<Welcome>> {
+    async fn try_process_mls_welcome(&self, message: &MessageFull) -> Result<Option<Welcome>> {
         // Check if this message has a User tag targeting us
         let my_public_key = self.config.client_key.verifying_key().to_bytes().to_vec();
         let has_user_tag = message.tags().iter().any(|tag| {
@@ -663,15 +679,11 @@ impl MLSChatClient {
     }
 
     /// Join group from real OpenMLS welcome message
-    async fn join_from_mls_welcome(
-        &mut self,
-        welcome: Welcome,
-    ) -> Result<()> {
+    async fn join_from_mls_welcome(&mut self, welcome: Welcome) -> Result<()> {
         info!("🎉 Joining MLS group via real OpenMLS welcome message");
 
         // Create MLS group from welcome message using OpenMLS
-        let mls_group_join_config = MlsGroupJoinConfig::builder()
-            .build();
+        let mls_group_join_config = MlsGroupJoinConfig::builder().build();
 
         let mls_group = StagedWelcome::new_from_welcome(
             &self.provider,
@@ -728,8 +740,10 @@ impl MLSChatClient {
 
     /// Handle MLS commit message with deterministic ordering (NIP-EE style)
     async fn handle_mls_commit_message(&mut self, message: &MessageFull) -> Result<()> {
-        info!("📥 Processing MLS commit message from {}", 
-              hex::encode(&message.author().to_bytes()[..4]));
+        info!(
+            "📥 Processing MLS commit message from {}",
+            hex::encode(&message.author().to_bytes()[..4])
+        );
 
         // Skip our own commit messages (we already applied them locally)
         if *message.author() == self.config.client_key.verifying_key() {
@@ -764,7 +778,7 @@ impl MLSChatClient {
         match processed_message.into_content() {
             ProcessedMessageContent::StagedCommitMessage(staged_commit) => {
                 info!("🔄 Applying staged commit to group state");
-                
+
                 // Merge the staged commit into our group state
                 mls_group
                     .merge_staged_commit(&self.provider, *staged_commit)
@@ -772,15 +786,20 @@ impl MLSChatClient {
 
                 // Update our epoch tracking
                 self.group_epoch = mls_group.epoch().as_u64();
-                
-                info!("✅ Successfully applied commit - group epoch now: {}", self.group_epoch);
-                
+
+                info!(
+                    "✅ Successfully applied commit - group epoch now: {}",
+                    self.group_epoch
+                );
+
                 // Save updated group state
                 self.save_mls_group_state().await?;
-                
+
                 // Log membership change
-                info!("👥 Group membership updated via commit from {}", 
-                      hex::encode(&message.author().to_bytes()[..4]));
+                info!(
+                    "👥 Group membership updated via commit from {}",
+                    hex::encode(&message.author().to_bytes()[..4])
+                );
             }
             _ => {
                 warn!("⚠️  Expected staged commit but got different message type - ignoring");
@@ -789,8 +808,6 @@ impl MLSChatClient {
 
         Ok(())
     }
-
-
 
     /// Load existing group with support for both conceptual and real MLS state
     async fn load_existing_group(&mut self) -> Result<()> {
@@ -812,7 +829,10 @@ impl MLSChatClient {
 
         // Check if this is a real MLS group (version 2+) or needs upgrade
         if group_state.version >= 2 && group_state.group_data == b"real_mls_group" {
-            info!("✅ Loading existing real MLS group state (version {})", group_state.version);
+            info!(
+                "✅ Loading existing real MLS group state (version {})",
+                group_state.version
+            );
         } else {
             info!("⚠️  Loading legacy conceptual group state - will upgrade to real MLS");
         }
@@ -858,8 +878,12 @@ impl MLSChatClient {
             .map_err(|e| anyhow!("Failed to generate key package: {:?}", e))?;
 
         // Serialize the KeyPackageBundle using postcard (since OpenMLS supports Serde serialization)
-        let key_package_bytes = postcard::to_allocvec(&key_package_bundle)
-            .map_err(|e| anyhow!("Failed to serialize KeyPackageBundle with postcard: {:?}", e))?;
+        let key_package_bytes = postcard::to_allocvec(&key_package_bundle).map_err(|e| {
+            anyhow!(
+                "Failed to serialize KeyPackageBundle with postcard: {:?}",
+                e
+            )
+        })?;
 
         let real_key_package = SerializableKeyPackage {
             key_package_bytes,
@@ -906,10 +930,10 @@ impl MLSChatClient {
     async fn ensure_real_mls_group(&mut self) -> Result<()> {
         // In a production implementation, this would properly restore the OpenMLS group
         // For now, we ensure we have a real MLS group by creating a new one if needed
-        
+
         if self.mls_group.is_none() {
             info!("🔧 No MLS group found - creating a new real MLS group");
-            
+
             let mls_group_create_config = MlsGroupCreateConfig::builder()
                 .ciphersuite(Ciphersuite::MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519)
                 .build();
@@ -927,7 +951,7 @@ impl MLSChatClient {
         } else {
             info!("✅ Using existing real MLS group");
         }
-        
+
         Ok(())
     }
 
@@ -936,7 +960,7 @@ impl MLSChatClient {
         // For now, we'll save a simplified state that tracks that we're using real MLS
         // In a production implementation, you'd want to properly persist the OpenMLS group
         // but that requires more complex state management than we can implement here
-        
+
         let simplified_state = GroupState {
             group_data: b"real_mls_group".to_vec(), // Marker that this is a real MLS group
             epoch: self.group_epoch,
@@ -1101,11 +1125,12 @@ impl MLSChatClient {
             StreamMessage::MessageReceived { message, .. } => {
                 // Implement event-based coordination similar to NIP-EE
                 // All group operations are handled as events on the relay network
-                
+
                 // First, try to identify and handle group coordination events
                 if let Some(event_type) = self.identify_group_event(message).await? {
                     info!("📋 Processing group coordination event: {:?}", event_type);
-                    self.handle_group_coordination_event(message, event_type).await?;
+                    self.handle_group_coordination_event(message, event_type)
+                        .await?;
                     self.display_interface().await;
                     return Ok(());
                 }
@@ -1119,8 +1144,6 @@ impl MLSChatClient {
         }
         Ok(())
     }
-
-
 
     /// Identify the type of group coordination event (NIP-EE inspired)
     async fn identify_group_event(&self, message: &MessageFull) -> Result<Option<GroupEventType>> {
@@ -1187,8 +1210,10 @@ impl MLSChatClient {
     async fn handle_key_package_event(&mut self, message: &MessageFull) -> Result<()> {
         // In a real implementation, this would process key package publications
         // For now, just log the event
-        info!("📦 Received key package publication from {}", 
-              hex::encode(&message.author().to_bytes()[..4]));
+        info!(
+            "📦 Received key package publication from {}",
+            hex::encode(&message.author().to_bytes()[..4])
+        );
         Ok(())
     }
 
@@ -1196,8 +1221,10 @@ impl MLSChatClient {
     async fn handle_membership_update_event(&mut self, message: &MessageFull) -> Result<()> {
         // In a real implementation, this would process membership changes
         // For now, just log the event
-        info!("🔄 Received membership update from {}", 
-              hex::encode(&message.author().to_bytes()[..4]));
+        info!(
+            "🔄 Received membership update from {}",
+            hex::encode(&message.author().to_bytes()[..4])
+        );
         Ok(())
     }
 
@@ -1350,8 +1377,6 @@ impl MLSChatClient {
         }
     }
 
-
-
     /// Send an MLS group encrypted message using real OpenMLS
     async fn send_mls_encrypted_message(
         &mut self,
@@ -1364,7 +1389,9 @@ impl MLSChatClient {
         let mls_group = match &mut self.mls_group {
             Some(group) => group,
             None => {
-                return Err(anyhow!("No MLS group available - join a group first or create one"));
+                return Err(anyhow!(
+                    "No MLS group available - join a group first or create one"
+                ));
             }
         };
 
@@ -1433,8 +1460,6 @@ impl MLSChatClient {
 
         Ok(())
     }
-
-
 
     /// Add a message to the display buffer
     fn add_message(&mut self, message: EncryptedChatMessage) {
@@ -1540,7 +1565,7 @@ impl MLSChatClient {
     async fn handle_add_member_command_sync(&mut self, public_key: &str) {
         println!("🔍 Adding member with public key: {}", public_key);
 
-                                match self.add_member_real_mls(public_key).await {
+        match self.add_member_real_mls(public_key).await {
             Ok(_) => {
                 println!("✅ Member added successfully using real OpenMLS!");
                 println!("📤 Commit and Welcome messages sent via relay.");
@@ -1560,7 +1585,7 @@ impl MLSChatClient {
         println!("\n📋 Press Enter to continue chatting...");
         let mut input = String::new();
         let _ = std::io::stdin().read_line(&mut input);
-        
+
         // Note: We don't need to refresh display here as the main loop will handle it
     }
 }
@@ -1711,7 +1736,10 @@ async fn main() -> Result<()> {
             println!("💡 Next steps:");
             println!("   1. Use '/add <public-key>' to invite members");
             println!("   2. Use 'chat' command to start the conversation");
-            println!("📋 Example: cargo run --example mls_chat_client --features mls -- --server-key <key> --user-name {} --channel {} chat", config.user_name, config.channel);
+            println!(
+                "📋 Example: cargo run --example mls_chat_client --features mls -- --server-key <key> --user-name {} --channel {} chat",
+                config.user_name, config.channel
+            );
         }
         MLSCommand::Chat => {
             // Run the interactive chat interface

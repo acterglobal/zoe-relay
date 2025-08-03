@@ -186,9 +186,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 if !contacts.is_empty() {
                     println!("   👥 First few contacts:");
                     for (i, contact) in contacts.iter().take(3).enumerate() {
-                        let name = contact
-                            .name.as_deref()
-                            .unwrap_or("<No Name>");
+                        let name = contact.name.as_deref().unwrap_or("<No Name>");
                         println!("      {}. {} ({})", i + 1, name, contact.jid);
                     }
                     if contacts.len() > 3 {

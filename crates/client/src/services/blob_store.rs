@@ -4,7 +4,7 @@ use tarpc::{context, serde_transport};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio_util::codec::LengthDelimitedCodec;
 use zoe_wire_protocol::{
-    BlobError as WireBlobError, BlobServiceClient, PostcardFormat, StreamPair, ZoeServices,
+    BlobError as WireError, BlobServiceClient, PostcardFormat, StreamPair, ZoeServices,
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -22,7 +22,7 @@ pub enum BlobError {
     RpcError(tarpc::client::RpcError),
 
     #[error("Wire blob error: {0}")]
-    WireBlobError(WireBlobError),
+    WireError(WireError),
 }
 
 type Result<T> = std::result::Result<T, BlobError>;
@@ -58,7 +58,7 @@ impl BlobService {
             .download_blob(context::current(), blob_id.to_string())
             .await
             .map_err(BlobError::RpcError)?
-            .map_err(BlobError::WireBlobError)?
+            .map_err(BlobError::WireError)?
         else {
             return Err(BlobError::NotFound {
                 hash: blob_id.to_string(),
@@ -73,7 +73,7 @@ impl BlobService {
             .upload_blob(context::current(), blob.to_vec())
             .await
             .map_err(BlobError::RpcError)?
-            .map_err(BlobError::WireBlobError)?;
+            .map_err(BlobError::WireError)?;
         Ok(hash)
     }
 }
