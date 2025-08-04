@@ -138,18 +138,6 @@ impl RedisMessageStorage {
         let msg_id_bytes = message.id.as_bytes();
         let message_id = hex::encode(msg_id_bytes);
 
-        // Check if the message already exists first
-        let exists: bool = conn
-            .exists(&message_id)
-            .await
-            .map_err(MessageStoreError::Redis)?;
-
-        if exists {
-            // Message already exists, return None
-            debug!("Message already exists, ignoring to store");
-            return Ok(None);
-        }
-
         // Build SET command - only add expiration if timeout is set and > 0
         let mut set_cmd = redis::cmd("SET");
         set_cmd.arg(&message_id).arg(storage_value.to_vec());
@@ -179,7 +167,7 @@ impl RedisMessageStorage {
             .map_err(MessageStoreError::Redis)?;
 
         if !was_set {
-            // Another thread/process stored the message in the meantime
+            // Was already stored, nothing for us to do.
             return Ok(None);
         }
 

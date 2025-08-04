@@ -7,7 +7,7 @@ use tokio::sync::{mpsc, RwLock};
 use tracing::{debug, error, info, warn};
 use zoe_message_store::{MessageStoreError, MessagesRpcService, RedisMessageStorage};
 use zoe_wire_protocol::{
-    CatchUpRequest, CatchUpResponse, FilterUpdateRequest, MessageFilters,
+    CatchUpRequest, CatchUpResponse, MessageFilters,
     MessageService as MessageServiceRpc, MessageServiceResponseWrap, MessagesServiceRequestWrap,
     StreamMessage, StreamPair,
 };
@@ -66,9 +66,14 @@ async fn subscription_task(
         tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
     };
 
-    info!("Starting subscription with initial filters: {:?}", initial_filters);
+    info!(
+        "Starting subscription with initial filters: {:?}",
+        initial_filters
+    );
 
-    let stream = service.listen_for_messages(&initial_filters, since, limit).await?;
+    let stream = service
+        .listen_for_messages(&initial_filters, since, limit)
+        .await?;
     info!("Subscription stream created, starting to listen for messages");
 
     // Pin the stream so we can use it with .next()
@@ -136,7 +141,10 @@ async fn handle_catch_up_request(
                         next_since: None, // Could be enhanced for pagination
                     };
 
-                    if sender.send(MessageServiceResponseWrap::CatchUpResponse(response)).is_err() {
+                    if sender
+                        .send(MessageServiceResponseWrap::CatchUpResponse(response))
+                        .is_err()
+                    {
                         debug!("Main task closed, stopping catch-up");
                         break;
                     }
@@ -165,12 +173,18 @@ async fn handle_catch_up_request(
             next_since: None,
         };
 
-        if sender.send(MessageServiceResponseWrap::CatchUpResponse(response)).is_err() {
+        if sender
+            .send(MessageServiceResponseWrap::CatchUpResponse(response))
+            .is_err()
+        {
             debug!("Main task closed during final catch-up send");
         }
     }
 
-    info!("Catch-up request completed for request_id: {}", request.request_id);
+    info!(
+        "Catch-up request completed for request_id: {}",
+        request.request_id
+    );
     Ok(())
 }
 
@@ -195,7 +209,8 @@ impl Service for MessagesService {
         let mut current_subscription_task: Option<tokio::task::JoinHandle<()>> = None;
 
         // Channel for receiving responses (including catch-up responses)
-        let (response_sender, mut response_receiver) = mpsc::unbounded_channel::<MessageServiceResponseWrap>();
+        let (response_sender, mut response_receiver) =
+            mpsc::unbounded_channel::<MessageServiceResponseWrap>();
 
         let (mut client_transport, server_transport) = tarpc::transport::channel::unbounded();
 
@@ -290,7 +305,7 @@ impl Service for MessagesService {
                                     // Spawn catch-up task
                                     let store_clone = store.clone();
                                     let response_sender_clone = response_sender.clone();
-                                    
+
                                     tokio::spawn(async move {
                                         if let Err(e) = handle_catch_up_request(
                                             store_clone,

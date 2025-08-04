@@ -5,11 +5,11 @@ use rand::rngs::OsRng;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tokio::time::{timeout, Duration};
-use tracing_subscriber;
 
 use zoe_message_store::RedisMessageStorage;
 use zoe_wire_protocol::{
-    CatchUpRequest, FilterField, FilterOperation, FilterUpdateRequest, MessageFilters, MessageFull, Tag, Message, Kind,
+    CatchUpRequest, FilterField, FilterOperation, FilterUpdateRequest, Kind, Message,
+    MessageFilters, MessageFull, Tag,
 };
 
 // Test helper to set up tracing
@@ -52,8 +52,8 @@ fn create_test_message(
 async fn setup_test_storage() -> Result<RedisMessageStorage> {
     // Use a random database number to avoid conflicts between parallel tests
     let db_num = rand::random::<u8>() % 15 + 1; // Use databases 1-15 (avoid 0 which might be used elsewhere)
-    let redis_url = format!("redis://127.0.0.1:6379/{}", db_num);
-    
+    let redis_url = format!("redis://127.0.0.1:6379/{db_num}");
+
     let client = redis::Client::open(redis_url).expect("Failed to create Redis client");
     let conn = client
         .get_connection_manager()
@@ -95,19 +95,21 @@ async fn test_message_storage_and_retrieval() -> Result<()> {
         users: None,
     };
 
-    let stream = storage.listen_for_messages(&filters, Some("0-0".to_string()), None).await?;
+    let stream = storage
+        .listen_for_messages(&filters, Some("0-0".to_string()), None)
+        .await?;
     tokio::pin!(stream);
 
     // Should receive the message we just stored
     let result = timeout(Duration::from_secs(2), stream.next()).await;
     assert!(result.is_ok(), "Timeout waiting for message");
-    
+
     let stream_result = result.unwrap();
     assert!(stream_result.is_some(), "Stream should yield a result");
-    
+
     let storage_result = stream_result.unwrap();
     assert!(storage_result.is_ok(), "Storage result should be ok");
-    
+
     let (message_opt, _height) = storage_result.unwrap();
     assert!(message_opt.is_some(), "Message should be present");
 
@@ -140,7 +142,9 @@ async fn test_channel_catch_up_functionality() -> Result<()> {
     }
 
     // Test catch-up functionality
-    let catch_up_stream = storage.catch_up(FilterField::Channel, channel_id, None).await?;
+    let catch_up_stream = storage
+        .catch_up(FilterField::Channel, channel_id, None)
+        .await?;
     tokio::pin!(catch_up_stream);
 
     let mut retrieved_messages = Vec::new();
@@ -165,10 +169,7 @@ async fn test_filter_operations() -> Result<()> {
     let mut filters = MessageFilters::default();
 
     // Test adding channels
-    let add_channels = FilterOperation::add_channels(vec![
-        b"general".to_vec(),
-        b"tech".to_vec(),
-    ]);
+    let add_channels = FilterOperation::add_channels(vec![b"general".to_vec(), b"tech".to_vec()]);
     filters.apply_operation(&add_channels);
 
     assert_eq!(
@@ -224,7 +225,7 @@ async fn test_concurrent_catch_up_and_live_streaming() -> Result<()> {
 
     // Store some historical messages
     for i in 1..=3 {
-        let msg = create_test_message(channel_id, &keypair, &format!("Historical {}", i));
+        let msg = create_test_message(channel_id, &keypair, &format!("Historical {i}"));
         storage.store_message(&msg).await?;
     }
 
@@ -236,11 +237,15 @@ async fn test_concurrent_catch_up_and_live_streaming() -> Result<()> {
         users: None,
     };
 
-    let live_stream = storage.listen_for_messages(&filters, Some("0-0".to_string()), None).await?;
+    let live_stream = storage
+        .listen_for_messages(&filters, Some("0-0".to_string()), None)
+        .await?;
     tokio::pin!(live_stream);
 
     // Start catch-up stream
-    let catch_up_stream = storage.catch_up(FilterField::Channel, channel_id, None).await?;
+    let catch_up_stream = storage
+        .catch_up(FilterField::Channel, channel_id, None)
+        .await?;
     tokio::pin!(catch_up_stream);
 
     // Collect messages from both streams
@@ -261,22 +266,28 @@ async fn test_concurrent_catch_up_and_live_streaming() -> Result<()> {
     loop {
         let timeout_result = timeout(Duration::from_millis(500), catch_up_stream.next()).await;
         match timeout_result {
-            Ok(Some(stream_result)) => {
-                match stream_result {
-                    Ok((message, _)) => {
-                        catch_up_messages.push(String::from_utf8_lossy(message.content()).to_string());
-                    }
-                    Err(_) => break,
+            Ok(Some(stream_result)) => match stream_result {
+                Ok((message, _)) => {
+                    catch_up_messages.push(String::from_utf8_lossy(message.content()).to_string());
                 }
-            }
+                Err(_) => break,
+            },
             Ok(None) => break, // Stream ended
             Err(_) => break,   // Timeout
         }
     }
 
     // Both streams should have the historical messages (allow for some timing variations)
-    assert!(live_messages.len() >= 2, "Live messages: got {}, expected at least 2", live_messages.len());
-    assert!(catch_up_messages.len() >= 2, "Catch-up messages: got {}, expected at least 2", catch_up_messages.len());
+    assert!(
+        live_messages.len() >= 2,
+        "Live messages: got {}, expected at least 2",
+        live_messages.len()
+    );
+    assert!(
+        catch_up_messages.len() >= 2,
+        "Catch-up messages: got {}, expected at least 2",
+        catch_up_messages.len()
+    );
 
     // Send a new live message
     let live_msg = create_test_message(channel_id, &keypair, "New live message");
@@ -324,7 +335,7 @@ async fn test_filter_state_management() -> Result<()> {
         if let Some(ref mut filters) = *guard {
             // Add tech channel
             filters.apply_operation(&FilterOperation::add_channels(vec![b"tech".to_vec()]));
-            
+
             // Add author filter
             filters.apply_operation(&FilterOperation::add_authors(vec![b"alice".to_vec()]));
         }
@@ -369,7 +380,9 @@ async fn test_multiple_channel_catch_up() -> Result<()> {
 
     // Test catch-up for each channel
     for (i, channel) in channels.iter().enumerate() {
-        let catch_up_stream = storage.catch_up(FilterField::Channel, channel, None).await?;
+        let catch_up_stream = storage
+            .catch_up(FilterField::Channel, channel, None)
+            .await?;
         tokio::pin!(catch_up_stream);
 
         let mut messages = Vec::new();
@@ -397,7 +410,7 @@ async fn test_race_condition_prevention_logic() -> Result<()> {
 
     // Store historical messages in new channel
     for i in 1..=3 {
-        let msg = create_test_message(new_channel, &keypair, &format!("History {}", i));
+        let msg = create_test_message(new_channel, &keypair, &format!("History {i}"));
         storage.store_message(&msg).await?;
     }
 
@@ -410,8 +423,9 @@ async fn test_race_condition_prevention_logic() -> Result<()> {
         users: None,
     };
 
-    let live_stream = storage.listen_for_messages(&initial_filters, Some("0-0".to_string()), None).await?;
-    tokio::pin!(live_stream);
+    let _live_stream = storage
+        .listen_for_messages(&initial_filters, Some("0-0".to_string()), None)
+        .await?;
 
     // 2. "Update" filters to include new channel (simulated)
     let updated_filters = MessageFilters {
@@ -422,7 +436,9 @@ async fn test_race_condition_prevention_logic() -> Result<()> {
     };
 
     // 3. Start catch-up for new channel (parallel to live stream)
-    let catch_up_stream = storage.catch_up(FilterField::Channel, new_channel, None).await?;
+    let catch_up_stream = storage
+        .catch_up(FilterField::Channel, new_channel, None)
+        .await?;
     tokio::pin!(catch_up_stream);
 
     // 4. Send new message to new channel during the race
@@ -436,21 +452,21 @@ async fn test_race_condition_prevention_logic() -> Result<()> {
     loop {
         let timeout_result = timeout(Duration::from_millis(500), catch_up_stream.next()).await;
         match timeout_result {
-            Ok(Some(stream_result)) => {
-                match stream_result {
-                    Ok((message, _)) => {
-                        all_messages.insert(String::from_utf8_lossy(message.content()).to_string());
-                    }
-                    Err(_) => break,
+            Ok(Some(stream_result)) => match stream_result {
+                Ok((message, _)) => {
+                    all_messages.insert(String::from_utf8_lossy(message.content()).to_string());
                 }
-            }
+                Err(_) => break,
+            },
             Ok(None) => break, // Stream ended
             Err(_) => break,   // Timeout
         }
     }
 
     // Start new live stream with updated filters
-    let updated_stream = storage.listen_for_messages(&updated_filters, Some("0-0".to_string()), None).await?;
+    let updated_stream = storage
+        .listen_for_messages(&updated_filters, Some("0-0".to_string()), None)
+        .await?;
     tokio::pin!(updated_stream);
 
     // Collect a few messages from the updated live stream
@@ -472,18 +488,27 @@ async fn test_race_condition_prevention_logic() -> Result<()> {
     }
 
     // Should have caught most or all messages (allow for timing variations)
-    println!("All messages collected: {:?}", all_messages);
-    
+    println!("All messages collected: {all_messages:?}");
+
     // The key test: we should have at least some messages and no obvious duplicates
-    assert!(all_messages.len() >= 3, "Should have at least 3 messages, got {}", all_messages.len());
-    
+    assert!(
+        all_messages.len() >= 3,
+        "Should have at least 3 messages, got {}",
+        all_messages.len()
+    );
+
     // Check for expected messages (at least some should be present)
-    let expected_messages = vec!["History 1", "History 2", "History 3", "Message during race"];
-    let found_count = expected_messages.iter()
+    let expected_messages = ["History 1", "History 2", "History 3", "Message during race"];
+    #[allow(clippy::unnecessary_to_owned)]
+    let found_count = expected_messages
+        .iter()
         .filter(|msg| all_messages.contains(&msg.to_string()))
         .count();
-    
-    assert!(found_count >= 3, "Should find at least 3 expected messages, found {}", found_count);
+
+    assert!(
+        found_count >= 3,
+        "Should find at least 3 expected messages, found {found_count}"
+    );
 
     Ok(())
 }
@@ -516,12 +541,8 @@ async fn test_generic_catch_up_requests() -> Result<()> {
     assert_eq!(channel_request.request_id, "channel-req");
 
     // Test author catch-up request construction
-    let author_request = CatchUpRequest::for_author(
-        author_id.to_vec(),
-        None,
-        Some(50),
-        "author-req".to_string(),
-    );
+    let author_request =
+        CatchUpRequest::for_author(author_id.to_vec(), None, Some(50), "author-req".to_string());
 
     assert_eq!(author_request.filter_field, FilterField::Author);
     assert_eq!(author_request.filter_value, author_id.to_vec());
@@ -563,54 +584,60 @@ async fn test_generic_catch_up_requests() -> Result<()> {
     storage.store_message(&msg1).await?;
 
     // Test channel catch-up works
-    let channel_stream = storage.catch_up(FilterField::Channel, channel_id, None).await?;
+    let channel_stream = storage
+        .catch_up(FilterField::Channel, channel_id, None)
+        .await?;
     tokio::pin!(channel_stream);
-    
+
     let mut channel_messages = Vec::new();
     loop {
         let timeout_result = timeout(Duration::from_millis(100), channel_stream.next()).await;
         match timeout_result {
-            Ok(Some(stream_result)) => {
-                match stream_result {
-                    Ok((message, _)) => {
-                        channel_messages.push(String::from_utf8_lossy(message.content()).to_string());
-                    }
-                    Err(_) => break,
+            Ok(Some(stream_result)) => match stream_result {
+                Ok((message, _)) => {
+                    channel_messages.push(String::from_utf8_lossy(message.content()).to_string());
                 }
-            }
+                Err(_) => break,
+            },
             Ok(None) => break, // Stream ended
             Err(_) => break,   // Timeout
         }
     }
 
-    assert!(!channel_messages.is_empty(), "Should have retrieved channel messages");
+    assert!(
+        !channel_messages.is_empty(),
+        "Should have retrieved channel messages"
+    );
     assert!(channel_messages.contains(&"Channel message".to_string()));
 
     // Test author catch-up works
-    let author_stream = storage.catch_up(FilterField::Author, author_id, None).await?;
+    let author_stream = storage
+        .catch_up(FilterField::Author, author_id, None)
+        .await?;
     tokio::pin!(author_stream);
-    
+
     let mut author_messages = Vec::new();
     loop {
         let timeout_result = timeout(Duration::from_millis(100), author_stream.next()).await;
         match timeout_result {
-            Ok(Some(stream_result)) => {
-                match stream_result {
-                    Ok((message, _)) => {
-                        author_messages.push(String::from_utf8_lossy(message.content()).to_string());
-                    }
-                    Err(_) => break,
+            Ok(Some(stream_result)) => match stream_result {
+                Ok((message, _)) => {
+                    author_messages.push(String::from_utf8_lossy(message.content()).to_string());
                 }
-            }
+                Err(_) => break,
+            },
             Ok(None) => break, // Stream ended
             Err(_) => break,   // Timeout
         }
     }
 
-    assert!(!author_messages.is_empty(), "Should have retrieved author messages");
+    assert!(
+        !author_messages.is_empty(),
+        "Should have retrieved author messages"
+    );
     assert!(author_messages.contains(&"Channel message".to_string()));
 
     println!("✅ Generic catch-up requests work for all filter field types");
-    
+
     Ok(())
 }

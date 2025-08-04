@@ -11,8 +11,8 @@ use zoe_wire_protocol::{
 async fn setup_test_storage() -> RedisMessageStorage {
     // Use a random database number to avoid conflicts between parallel tests
     let db_num = rand::random::<u8>() % 15 + 1; // Use databases 1-15 (avoid 0 which might be used elsewhere)
-    let redis_url = format!("redis://127.0.0.1:6379/{}", db_num);
-    
+    let redis_url = format!("redis://127.0.0.1:6379/{db_num}");
+
     let client = redis::Client::open(redis_url).expect("Failed to create Redis client");
     let conn = client
         .get_connection_manager()

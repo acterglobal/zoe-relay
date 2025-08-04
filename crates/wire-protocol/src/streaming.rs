@@ -320,16 +320,21 @@ pub struct FilterUpdateRequest {
 /// Generic catch-up request for historical messages of any filter field type
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CatchUpRequest {
-    pub filter_field: FilterField,    // What type of filter (Channel, Author, Event, User)
-    pub filter_value: Vec<u8>,        // The ID/value to catch up on
-    pub since: Option<String>,        // Redis stream ID
+    pub filter_field: FilterField, // What type of filter (Channel, Author, Event, User)
+    pub filter_value: Vec<u8>,     // The ID/value to catch up on
+    pub since: Option<String>,     // Redis stream ID
     pub max_messages: Option<usize>,
-    pub request_id: String,           // For tracking response
+    pub request_id: String, // For tracking response
 }
 
 impl CatchUpRequest {
     /// Convenience constructor for channel catch-up
-    pub fn for_channel(channel_id: Vec<u8>, since: Option<String>, max_messages: Option<usize>, request_id: String) -> Self {
+    pub fn for_channel(
+        channel_id: Vec<u8>,
+        since: Option<String>,
+        max_messages: Option<usize>,
+        request_id: String,
+    ) -> Self {
         Self {
             filter_field: FilterField::Channel,
             filter_value: channel_id,
@@ -340,7 +345,12 @@ impl CatchUpRequest {
     }
 
     /// Convenience constructor for author catch-up
-    pub fn for_author(author_id: Vec<u8>, since: Option<String>, max_messages: Option<usize>, request_id: String) -> Self {
+    pub fn for_author(
+        author_id: Vec<u8>,
+        since: Option<String>,
+        max_messages: Option<usize>,
+        request_id: String,
+    ) -> Self {
         Self {
             filter_field: FilterField::Author,
             filter_value: author_id,
@@ -351,7 +361,12 @@ impl CatchUpRequest {
     }
 
     /// Convenience constructor for event catch-up
-    pub fn for_event(event_id: Vec<u8>, since: Option<String>, max_messages: Option<usize>, request_id: String) -> Self {
+    pub fn for_event(
+        event_id: Vec<u8>,
+        since: Option<String>,
+        max_messages: Option<usize>,
+        request_id: String,
+    ) -> Self {
         Self {
             filter_field: FilterField::Event,
             filter_value: event_id,
@@ -362,7 +377,12 @@ impl CatchUpRequest {
     }
 
     /// Convenience constructor for user catch-up
-    pub fn for_user(user_id: Vec<u8>, since: Option<String>, max_messages: Option<usize>, request_id: String) -> Self {
+    pub fn for_user(
+        user_id: Vec<u8>,
+        since: Option<String>,
+        max_messages: Option<usize>,
+        request_id: String,
+    ) -> Self {
         Self {
             filter_field: FilterField::User,
             filter_value: user_id,
@@ -377,11 +397,11 @@ impl CatchUpRequest {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CatchUpResponse {
     pub request_id: String,
-    pub filter_field: FilterField,    // What type of filter was requested
-    pub filter_value: Vec<u8>,        // The ID/value that was caught up on
+    pub filter_field: FilterField, // What type of filter was requested
+    pub filter_value: Vec<u8>,     // The ID/value that was caught up on
     pub messages: Vec<MessageFull>,
-    pub is_complete: bool,            // False if more batches coming
-    pub next_since: Option<String>,   // For pagination
+    pub is_complete: bool,          // False if more batches coming
+    pub next_since: Option<String>, // For pagination
 }
 
 #[derive(Debug, Serialize, Deserialize)]
