@@ -52,3 +52,5 @@ tokio = { workspace = true, features = ["test-util", "macros", "rt-multi-thread"
 
 # Additional utilities for testing  
 tempfile = { workspace = true }
+redis = { version = "0.32.4", features = ["tokio-comp", "connection-manager"] }
+tracing-subscriber = { workspace = true }

@@ -74,6 +74,21 @@ impl MessagesService {
                                     return Err(ClientError::Generic(format!("Send error: {e}")));
                                 }
                             }
+                            Ok(MessageServiceResponseWrap::CatchUpResponse(catch_up_response)) => {
+                                // Log catch-up response for now - could be forwarded to a specific handler
+                                tracing::info!(
+                                    "Received catch-up response: request_id={}, filter_field={:?}, message_count={}",
+                                    catch_up_response.request_id,
+                                    catch_up_response.filter_field,
+                                    catch_up_response.messages.len()
+                                );
+                                // TODO: Forward to a catch-up response handler if needed
+                            }
+                            Ok(MessageServiceResponseWrap::FilterUpdateAck) => {
+                                // Log filter update acknowledgment
+                                tracing::info!("Received filter update acknowledgment");
+                                // TODO: Forward to a filter update handler if needed
+                            }
                             Err(e) => {
                                 return Err(ClientError::Generic(format!("Stream error: {e}")));
                             }
