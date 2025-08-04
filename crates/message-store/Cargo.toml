@@ -10,6 +10,7 @@ zoe-wire-protocol = { path = "../wire-protocol" }
 
 # Async runtime
 tokio = { workspace = true }
+futures = { workspace = true }
 
 # Redis client
 redis = { version = "0.32.4", features = ["tokio-comp", "connection-manager", "r2d2"] }

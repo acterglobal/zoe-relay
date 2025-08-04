@@ -6,18 +6,18 @@ use quinn::Connection;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     select,
-    sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel},
+    sync::mpsc::{UnboundedReceiver, unbounded_channel},
     task::JoinHandle,
 };
 use zoe_wire_protocol::{
-    MessageServiceClient, MessageServiceResponseWrap, MessagesServiceRequestWrap, StreamMessage,
-    SubscriptionConfig, ZoeServices, stream_pair::create_postcard_streams,
+    CatchUpRequest, FilterUpdateRequest, MessageServiceClient, MessageServiceResponseWrap,
+    MessagesServiceRequestWrap, StreamMessage, SubscriptionConfig, ZoeServices,
+    stream_pair::create_postcard_streams,
 };
 
 pub type MessagesStream = UnboundedReceiver<StreamMessage>;
 
 pub struct MessagesService {
-    outgoing_tx: UnboundedSender<MessagesServiceRequestWrap>,
     rpc_client: MessageServiceClient,
     handle: JoinHandle<Result<()>>,
 }
@@ -48,7 +48,6 @@ impl MessagesService {
             MessageServiceResponseWrap,
             MessagesServiceRequestWrap,
         >(recv, send);
-        let (outgoing_tx, mut outgoing_rx) = unbounded_channel::<MessagesServiceRequestWrap>();
         let (incoming_tx, incoming_rx) = unbounded_channel::<StreamMessage>();
 
         let (client_transport, mut server_transport) = tarpc::transport::channel::unbounded();
@@ -84,24 +83,10 @@ impl MessagesService {
                                 );
                                 // TODO: Forward to a catch-up response handler if needed
                             }
-                            Ok(MessageServiceResponseWrap::FilterUpdateAck) => {
-                                // Log filter update acknowledgment
-                                tracing::info!("Received filter update acknowledgment");
-                                // TODO: Forward to a filter update handler if needed
-                            }
+                            // FilterUpdateAck is now handled as RPC responses, not streaming messages
                             Err(e) => {
                                 return Err(ClientError::Generic(format!("Stream error: {e}")));
                             }
-                        }
-                    }
-                    // Send messages from client to server
-                    msg = outgoing_rx.recv() => {
-                        let Some(request) =  msg else {
-                            tracing::info!("Outgoing channel closed");
-                            break;
-                        };
-                        if let Err(e) = sink.send(request).await {
-                            return Err(ClientError::Generic(format!("Send error: {e}")));
                         }
                     }
                     // Poll for messages from rpc client
@@ -110,7 +95,8 @@ impl MessagesService {
                             tracing::info!("RPC client closed");
                             break;
                         };
-                        if let Err(e) = sink.send(MessagesServiceRequestWrap::RpcRequest(rpc_message)).await {
+                        // Send RPC message directly since MessagesServiceRequestWrap is now just ClientMessage
+                        if let Err(e) = sink.send(rpc_message).await {
                             return Err(ClientError::Generic(format!("Send error: {e}")));
                         }
                     }
@@ -119,20 +105,36 @@ impl MessagesService {
             Ok(())
         });
 
-        Ok((
-            Self {
-                outgoing_tx,
-                rpc_client,
-                handle,
-            },
-            incoming_rx,
-        ))
+        Ok((Self { rpc_client, handle }, incoming_rx))
     }
 
-    pub async fn subscribe(&self, filters: SubscriptionConfig) -> Result<()> {
-        self.outgoing_tx
-            .send(MessagesServiceRequestWrap::Subscribe(filters))
-            .map_err(|e| ClientError::Generic(format!("Service is closed: {e}")))
+    pub async fn subscribe(&self, filters: SubscriptionConfig) -> Result<String> {
+        // Use RPC client directly for subscription - returns subscription ID
+        self.rpc_client
+            .subscribe(tarpc::context::current(), filters)
+            .await
+            .map_err(|e| ClientError::Generic(format!("Subscription failed: {e}")))?
+            .map_err(|e| ClientError::Generic(format!("Subscription error: {e}")))
+    }
+
+    pub async fn update_filters(
+        &self,
+        subscription_id: String,
+        request: FilterUpdateRequest,
+    ) -> Result<()> {
+        self.rpc_client
+            .update_filters(tarpc::context::current(), subscription_id, request)
+            .await
+            .map_err(|e| ClientError::Generic(format!("Update filters failed: {e}")))?
+            .map_err(|e| ClientError::Generic(format!("Update filters error: {e}")))
+    }
+
+    pub async fn catch_up(&self, request: CatchUpRequest) -> Result<String> {
+        self.rpc_client
+            .catch_up(tarpc::context::current(), request)
+            .await
+            .map_err(|e| ClientError::Generic(format!("Catch up failed: {e}")))?
+            .map_err(|e| ClientError::Generic(format!("Catch up error: {e}")))
     }
 
     /// Check if the service is closed

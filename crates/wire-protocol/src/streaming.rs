@@ -277,13 +277,22 @@ pub struct SubscriptionConfig {
 /// Message store service for message interaction operations
 #[tarpc::service]
 pub trait MessageService {
-    // async fn subscribe(config: SubscriptionConfig) -> Result<(), MessageError>;
+    // Core message operations
     async fn publish(message: MessageFull) -> Result<Option<String>, MessageError>;
     async fn message(id: Hash) -> Result<Option<MessageFull>, MessageError>;
     async fn user_data(
         author: VerifyingKey,
         storage_key: StoreKey,
     ) -> Result<Option<MessageFull>, MessageError>;
+
+    // Subscription management - now RPC calls with direct acknowledgment
+    async fn subscribe(config: SubscriptionConfig) -> Result<String, MessageError>; // Returns subscription_id
+    async fn update_filters(
+        subscription_id: String,
+        request: FilterUpdateRequest,
+    ) -> Result<(), MessageError>;
+    async fn catch_up(request: CatchUpRequest) -> Result<String, MessageError>; // Returns catch_up_id for tracking
+    async fn unsubscribe(subscription_id: String) -> Result<(), MessageError>;
 }
 
 /// Result type for message operations
@@ -404,33 +413,19 @@ pub struct CatchUpResponse {
     pub next_since: Option<String>, // For pagination
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-pub enum MessagesServiceRequestWrap {
-    /// Initial subscription setup
-    Subscribe(SubscriptionConfig),
-
-    /// Live filter updates (no stream restart)
-    UpdateFilters(FilterUpdateRequest),
-
-    /// Parallel catch-up request for historical messages
-    CatchUp(CatchUpRequest),
-
-    /// RPC request forwarding
-    RpcRequest(ClientMessage<MessageServiceRequest>),
-}
+/// Simplified request wrapper - now just RPC requests
+/// All subscription, filter updates, and catch-up requests are now handled as RPC calls
+pub type MessagesServiceRequestWrap = ClientMessage<MessageServiceRequest>;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub enum MessageServiceResponseWrap {
-    /// Streaming messages (live or historical)
+    /// Streaming messages from background listener tasks
     StreamMessage(StreamMessage),
 
-    /// Catch-up response with batched historical messages
+    /// Catch-up response with batched historical messages from background catch-up tasks
     CatchUpResponse(CatchUpResponse),
 
-    /// Filter update acknowledgment
-    FilterUpdateAck,
-
-    /// RPC response forwarding
+    /// RPC response (includes subscription/filter update acknowledgments)
     RpcResponse(Response<MessageServiceResponse>),
 }
 
