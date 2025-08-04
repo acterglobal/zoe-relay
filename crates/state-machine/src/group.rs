@@ -1,0 +1,447 @@
+use aes_gcm::{
+    Aes256Gcm, Key, Nonce,
+    aead::{Aead, KeyInit},
+};
+use blake3::Hash;
+use ed25519_dalek::{SigningKey, VerifyingKey};
+use rand::{Rng, thread_rng};
+use std::collections::HashMap;
+
+use zoe_wire_protocol::{Kind, Message, MessageFull, Tag};
+
+use crate::{
+    DgaError, DgaResult, EncryptedGroupPayload, GroupActivityEvent, GroupEncryptionKey,
+    GroupEncryptionState, GroupKeyInfo, GroupRole, GroupSettings, GroupState,
+};
+
+/// Digital Group Assistant - manages encrypted groups using the wire protocol
+#[derive(Debug)]
+pub struct DigitalGroupAssistant {
+    /// All group states managed by this DGA instance
+    /// Key is the Blake3 hash of the CreateGroup message (which serves as both group ID and root event ID)
+    pub(crate) groups: HashMap<Hash, GroupState>,
+    /// Encryption keys for groups (never sent over wire - obtained via inbox system)
+    pub(crate) group_keys: HashMap<Hash, GroupEncryptionState>,
+}
+
+/// Result of creating a new group
+#[derive(Debug, Clone)]
+pub struct CreateGroupResult {
+    /// The created group's unique identifier (Blake3 hash of the CreateGroup message)
+    /// This is also the root event ID used as channel tag for subsequent events
+    pub group_id: Hash,
+    /// The full message that was created
+    pub message: MessageFull,
+}
+
+/// Configuration for creating a new encrypted group
+#[derive(Debug, Clone)]
+pub struct CreateGroupConfig {
+    /// Human-readable group name
+    pub name: String,
+    /// Optional description
+    pub description: Option<String>,
+    /// Group metadata
+    pub metadata: HashMap<String, String>,
+    /// Group settings
+    pub settings: GroupSettings,
+    /// Optional pre-generated encryption key (if None, a new key will be generated)
+    pub encryption_key: Option<GroupEncryptionKey>,
+}
+
+impl DigitalGroupAssistant {
+    /// Create a new DGA instance
+    pub fn new() -> Self {
+        Self {
+            groups: HashMap::new(),
+            group_keys: HashMap::new(),
+        }
+    }
+
+    /// Add an encryption key for a group (obtained via inbox system)
+    pub fn add_group_key(&mut self, group_id: Hash, key: GroupEncryptionKey) {
+        let encryption_state = GroupEncryptionState {
+            current_key: key,
+            previous_keys: Vec::new(),
+        };
+        self.group_keys.insert(group_id, encryption_state);
+    }
+
+    /// Generate a new AES-256 encryption key for a group
+    pub fn generate_group_key(key_id: Vec<u8>, timestamp: u64) -> GroupEncryptionKey {
+        let mut rng = thread_rng();
+        let mut key = [0u8; 32];
+        rng.fill(&mut key);
+
+        GroupEncryptionKey {
+            key,
+            key_id,
+            created_at: timestamp,
+        }
+    }
+
+    /// Create a new encrypted group, returning the root event message to be sent
+    pub fn create_group(
+        &mut self,
+        config: CreateGroupConfig,
+        creator: &SigningKey,
+        timestamp: u64,
+    ) -> DgaResult<CreateGroupResult> {
+        // Generate or use provided encryption key
+        let encryption_key = config.encryption_key.unwrap_or_else(|| {
+            let key_id = blake3::hash(format!("group_key_{timestamp}").as_bytes())
+                .as_bytes()
+                .to_vec();
+            Self::generate_group_key(key_id, timestamp)
+        });
+
+        // Create key info (metadata about the key, not the key itself)
+        let key_info = GroupKeyInfo {
+            key_id: encryption_key.key_id.clone(),
+            algorithm: "AES-256-GCM".to_string(),
+            derivation_params: None,
+        };
+
+        // Create the group creation event (no group_id needed since it will be the message hash)
+        let event = GroupActivityEvent::CreateGroup {
+            name: config.name.clone(),
+            description: config.description.clone(),
+            metadata: config.metadata.clone(),
+            settings: config.settings.clone(),
+            key_info,
+        };
+
+        // Encrypt the event before creating the wire protocol message
+        let encrypted_payload = self.encrypt_group_event(&event, &encryption_key)?;
+
+        // Create the wire protocol message with encrypted payload
+        let message = Message::new_typed(
+            encrypted_payload,
+            creator.verifying_key(),
+            timestamp,
+            Kind::Regular, // Group creation events should be permanently stored
+            vec![],        // No tags needed for the root event
+        )?;
+
+        // Sign the message and create MessageFull
+        let message_full = MessageFull::new(message, creator)?;
+        let group_id = message_full.id; // The group ID is the Blake3 hash of this message
+
+        // Store the encryption key
+        let encryption_state = GroupEncryptionState {
+            current_key: encryption_key,
+            previous_keys: Vec::new(),
+        };
+        self.group_keys.insert(group_id, encryption_state);
+
+        // Create the initial group state
+        let group_state = GroupState::new(
+            group_id,
+            config.name,
+            config.description,
+            config.metadata,
+            config.settings,
+            creator.verifying_key(),
+            timestamp,
+        );
+
+        // Store the group state
+        self.groups.insert(group_id, group_state);
+
+        Ok(CreateGroupResult {
+            group_id,
+            message: message_full,
+        })
+    }
+
+    /// Create an encrypted message for a group activity event
+    /// The group_id parameter should be the Blake3 hash of the CreateGroup message
+    pub fn create_group_event_message(
+        &self,
+        group_id: Hash,
+        event: GroupActivityEvent,
+        sender: &SigningKey,
+        timestamp: u64,
+    ) -> DgaResult<MessageFull> {
+        // Find the group to verify it exists
+        let _group_state = self
+            .groups
+            .get(&group_id)
+            .ok_or_else(|| DgaError::GroupNotFound(format!("{group_id:?}")))?;
+
+        // Get the encryption key for this group
+        let encryption_state = self.group_keys.get(&group_id).ok_or_else(|| {
+            DgaError::InvalidEvent(format!(
+                "No encryption key available for group {group_id:?}"
+            ))
+        })?;
+
+        // Encrypt the event
+        let encrypted_payload = self.encrypt_group_event(&event, &encryption_state.current_key)?;
+
+        // Create the message with the group ID (root event ID) as a channel tag
+        let message = Message::new_typed(
+            encrypted_payload,
+            sender.verifying_key(),
+            timestamp,
+            Kind::Regular,
+            vec![Tag::Event {
+                id: group_id,   // The group ID is the root event ID
+                relays: vec![], // Could be populated with known relays
+            }],
+        )?;
+
+        // Sign and return the message
+        MessageFull::new(message, sender).map_err(DgaError::WireProtocol)
+    }
+
+    /// Process an incoming group event message
+    pub fn process_group_event(&mut self, message_full: &MessageFull) -> DgaResult<()> {
+        // Verify the message
+        if !message_full.verify_all()? {
+            return Err(DgaError::InvalidEvent(
+                "Message verification failed".to_string(),
+            ));
+        }
+
+        // Extract the encrypted payload from the message
+        let Message::MessageV0(message) = message_full.message.as_ref();
+
+        // Deserialize the encrypted payload
+        let encrypted_payload: EncryptedGroupPayload = postcard::from_bytes(&message.content)?;
+        let sender = message.sender;
+        let timestamp = message.when;
+
+        // Determine the group ID and decrypt the event
+        let (group_id, event) = if message.tags.is_empty() {
+            // This is a root event (CreateGroup) - the group ID is the message ID itself
+            let group_id = message_full.id;
+
+            // Get the encryption key for this group (must have been added via inbox system)
+            let encryption_state = self.group_keys.get(&group_id).ok_or_else(|| {
+                DgaError::InvalidEvent(format!(
+                    "No encryption key available for group {group_id:?}"
+                ))
+            })?;
+
+            let event =
+                self.decrypt_group_event(&encrypted_payload, &encryption_state.current_key)?;
+            (group_id, event)
+        } else {
+            // This is a subsequent event - find the group by channel tag
+            let group_id = self.find_group_by_event_tag(&message.tags)?;
+
+            // Get the encryption key for this group
+            let encryption_state = self.group_keys.get(&group_id).ok_or_else(|| {
+                DgaError::InvalidEvent(format!(
+                    "No encryption key available for group {group_id:?}"
+                ))
+            })?;
+
+            let event =
+                self.decrypt_group_event(&encrypted_payload, &encryption_state.current_key)?;
+            (group_id, event)
+        };
+
+        // Handle the root event (group creation) specially
+        match &event {
+            GroupActivityEvent::CreateGroup {
+                name,
+                description,
+                metadata,
+                settings,
+                ..
+            } => {
+                // This is a root event - create the group state
+                let group_state = GroupState::new(
+                    group_id,
+                    name.clone(),
+                    description.clone(),
+                    metadata.clone(),
+                    settings.clone(),
+                    sender,
+                    timestamp,
+                );
+
+                self.groups.insert(group_id, group_state);
+                return Ok(());
+            }
+            _ => {
+                // This is a subsequent event - apply to existing group state
+                let group_state = self
+                    .groups
+                    .get_mut(&group_id)
+                    .ok_or_else(|| DgaError::GroupNotFound(format!("{group_id:?}")))?;
+
+                // Apply the event to the group state
+                group_state.apply_event(&event, message_full.id, sender, timestamp)?;
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Find a group by looking for Event tags in the message
+    fn find_group_by_event_tag(&self, tags: &[Tag]) -> DgaResult<Hash> {
+        for tag in tags {
+            if let Tag::Event { id, .. } = tag
+                && self.groups.contains_key(id)
+            {
+                return Ok(*id);
+            }
+        }
+        Err(DgaError::InvalidEvent(
+            "No valid group channel tag found".to_string(),
+        ))
+    }
+
+    /// Get a group's current state
+    pub fn get_group_state(&self, group_id: &Hash) -> Option<&GroupState> {
+        self.groups.get(group_id)
+    }
+
+    /// Get all managed groups
+    pub fn get_all_groups(&self) -> &HashMap<Hash, GroupState> {
+        &self.groups
+    }
+
+    /// Check if a user is a member of a specific group
+    pub fn is_member(&self, group_id: &Hash, user: &VerifyingKey) -> bool {
+        self.groups
+            .get(group_id)
+            .map(|group| group.is_member(user))
+            .unwrap_or(false)
+    }
+
+    /// Get a user's role in a specific group
+    pub fn get_member_role(&self, group_id: &Hash, user: &VerifyingKey) -> Option<&GroupRole> {
+        self.groups
+            .get(group_id)
+            .and_then(|group| group.get_member_role(user))
+    }
+
+    /// List all groups a user is a member of
+    pub fn get_user_groups(&self, user: &VerifyingKey) -> Vec<&GroupState> {
+        self.groups
+            .values()
+            .filter(|group| group.is_member(user))
+            .collect()
+    }
+
+    /// Create a subscription filter for a specific group
+    /// This returns the Event tag that should be used to subscribe to group events
+    pub fn create_group_subscription_filter(&self, group_id: &Hash) -> DgaResult<Tag> {
+        // Verify the group exists
+        if !self.groups.contains_key(group_id) {
+            return Err(DgaError::GroupNotFound(format!("{group_id:?}")));
+        }
+
+        Ok(Tag::Event {
+            id: *group_id,  // The group ID is the root event ID
+            relays: vec![], // Could be populated with known relays
+        })
+    }
+
+    /// Encrypt a group event using AES-GCM
+    pub(crate) fn encrypt_group_event(
+        &self,
+        event: &GroupActivityEvent,
+        key: &GroupEncryptionKey,
+    ) -> DgaResult<EncryptedGroupPayload> {
+        // Serialize the event
+        let plaintext = postcard::to_stdvec(event)?;
+
+        // Create AES-GCM cipher
+        let aes_key = Key::<Aes256Gcm>::from_slice(&key.key);
+        let cipher = Aes256Gcm::new(aes_key);
+
+        // Generate random nonce
+        let mut rng = thread_rng();
+        let mut nonce_bytes = [0u8; 12];
+        rng.fill(&mut nonce_bytes);
+        let nonce = Nonce::from_slice(&nonce_bytes);
+
+        // Encrypt the data
+        let ciphertext = cipher
+            .encrypt(nonce, plaintext.as_ref())
+            .map_err(|e| DgaError::InvalidEvent(format!("Encryption failed: {e}")))?;
+
+        Ok(EncryptedGroupPayload {
+            ciphertext,
+            nonce: nonce_bytes,
+            key_id: key.key_id.clone(),
+        })
+    }
+
+    /// Decrypt a group event using AES-GCM
+    pub(crate) fn decrypt_group_event(
+        &self,
+        payload: &EncryptedGroupPayload,
+        key: &GroupEncryptionKey,
+    ) -> DgaResult<GroupActivityEvent> {
+        // Verify key ID matches
+        if payload.key_id != key.key_id {
+            return Err(DgaError::InvalidEvent("Key ID mismatch".to_string()));
+        }
+
+        // Create AES-GCM cipher
+        let aes_key = Key::<Aes256Gcm>::from_slice(&key.key);
+        let cipher = Aes256Gcm::new(aes_key);
+        let nonce = Nonce::from_slice(&payload.nonce);
+
+        // Decrypt the data
+        let plaintext = cipher
+            .decrypt(nonce, payload.ciphertext.as_ref())
+            .map_err(|e| DgaError::InvalidEvent(format!("Decryption failed: {e}")))?;
+
+        // Deserialize the event
+        let event: GroupActivityEvent = postcard::from_bytes(&plaintext)?;
+        Ok(event)
+    }
+}
+
+impl Default for DigitalGroupAssistant {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+// Helper functions for common encrypted group operations
+
+/// Create a leave group event
+pub fn create_leave_group_event(message: Option<String>) -> GroupActivityEvent {
+    GroupActivityEvent::LeaveGroup { message }
+}
+
+/// Create a role update event
+pub fn create_role_update_event(member: VerifyingKey, role: GroupRole) -> GroupActivityEvent {
+    GroupActivityEvent::UpdateMemberRole { member, role }
+}
+
+/// Create a custom group activity event
+pub fn create_group_activity_event(
+    activity_type: String,
+    payload: Vec<u8>,
+    metadata: HashMap<String, String>,
+) -> GroupActivityEvent {
+    GroupActivityEvent::GroupActivity {
+        activity_type,
+        payload,
+        metadata,
+    }
+}
+
+/// Create a group update event
+pub fn create_group_update_event(
+    name: Option<String>,
+    description: Option<String>,
+    metadata_updates: HashMap<String, Option<String>>,
+    settings_updates: Option<GroupSettings>,
+) -> GroupActivityEvent {
+    GroupActivityEvent::UpdateGroup {
+        name,
+        description,
+        metadata_updates,
+        settings_updates,
+    }
+}

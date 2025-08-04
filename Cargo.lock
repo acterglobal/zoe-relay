@@ -7666,6 +7666,21 @@ name = "zoe-signal-bot"
 version = "0.1.0"
 
 [[package]]
+name = "zoe-state-machine"
+version = "0.1.0"
+dependencies = [
+ "aes-gcm",
+ "blake3",
+ "chrono",
+ "ed25519-dalek",
+ "postcard",
+ "rand 0.8.5",
+ "serde",
+ "thiserror 1.0.69",
+ "zoe-wire-protocol",
+]
+
+[[package]]
 name = "zoe-wa-bot"
 version = "0.1.0"
 

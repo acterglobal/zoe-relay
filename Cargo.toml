@@ -6,7 +6,7 @@ members = [
     "crates/encrypted-storage",
     "crates/message-store",
     "crates/relay",
-    "crates/signal-bot",
+    "crates/signal-bot", "crates/state-machine",
     "crates/wa-bot",
     "crates/whatsmeow",
     "crates/wire-protocol",
