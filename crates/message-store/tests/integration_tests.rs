@@ -209,13 +209,25 @@ async fn test_channel_streams_storage_and_retrieval() {
     assert_eq!(channel_a_messages.len(), 3);
 
     // Verify messages are in correct order by content
-    let content1 = String::from_utf8_lossy(channel_a_messages[0].content());
+    let content1 = String::from_utf8_lossy(
+        channel_a_messages[0]
+            .raw_content()
+            .expect("Expected raw content"),
+    );
     assert_eq!(content1, "Message 1 in channel A");
 
-    let content2 = String::from_utf8_lossy(channel_a_messages[1].content());
+    let content2 = String::from_utf8_lossy(
+        channel_a_messages[1]
+            .raw_content()
+            .expect("Expected raw content"),
+    );
     assert_eq!(content2, "Message 2 in channel A");
 
-    let content3 = String::from_utf8_lossy(channel_a_messages[2].content());
+    let content3 = String::from_utf8_lossy(
+        channel_a_messages[2]
+            .raw_content()
+            .expect("Expected raw content"),
+    );
     assert_eq!(content3, "Message 3 in channel A");
 
     // Test channel B catch-up
@@ -237,7 +249,11 @@ async fn test_channel_streams_storage_and_retrieval() {
     }
 
     assert_eq!(channel_b_messages.len(), 1);
-    let content_b = String::from_utf8_lossy(channel_b_messages[0].content());
+    let content_b = String::from_utf8_lossy(
+        channel_b_messages[0]
+            .raw_content()
+            .expect("Expected raw content"),
+    );
     assert_eq!(content_b, "Message 1 in channel B");
 }
 
@@ -347,7 +363,11 @@ async fn test_comprehensive_scenario() {
     }
 
     assert_eq!(tech_messages.len(), 1);
-    let tech_content = String::from_utf8_lossy(tech_messages[0].content());
+    let tech_content = String::from_utf8_lossy(
+        tech_messages[0]
+            .raw_content()
+            .expect("Expected raw content"),
+    );
     assert_eq!(tech_content, "Tech discussion started");
 
     // User joins urgent channel and blocks a user in one atomic operation
@@ -392,6 +412,10 @@ async fn test_comprehensive_scenario() {
     }
 
     assert_eq!(urgent_messages.len(), 1);
-    let urgent_content = String::from_utf8_lossy(urgent_messages[0].content());
+    let urgent_content = String::from_utf8_lossy(
+        urgent_messages[0]
+            .raw_content()
+            .expect("Expected raw content"),
+    );
     assert_eq!(urgent_content, "URGENT: Server down!");
 }

@@ -1,18 +1,16 @@
-use aes_gcm::{
-    Aes256Gcm, Key, Nonce,
-    aead::{Aead, KeyInit},
-};
+// ChaCha20-Poly1305 and AES-GCM functionality moved to crypto module
 use blake3::Hash;
 use ed25519_dalek::{SigningKey, VerifyingKey};
-use rand::{Rng, thread_rng};
+// Random number generation moved to wire-protocol crypto module
 use std::collections::HashMap;
 
 use zoe_wire_protocol::{Kind, Message, MessageFull, Tag};
 
 use crate::{
-    DgaError, DgaResult, EncryptedGroupPayload, GroupActivityEvent, GroupEncryptionKey,
-    GroupEncryptionState, GroupKeyInfo, GroupRole, GroupSettings, GroupState,
+    DgaError, DgaResult, GroupActivityEvent, GroupEncryptionState, GroupKeyInfo, GroupRole,
+    GroupSettings, GroupState,
 };
+use zoe_wire_protocol::{ChaCha20Poly1305Content, Content, EncryptionKey, MnemonicPhrase};
 
 /// Digital Group Assistant - manages encrypted groups using the wire protocol
 #[derive(Debug)]
@@ -46,7 +44,7 @@ pub struct CreateGroupConfig {
     /// Group settings
     pub settings: GroupSettings,
     /// Optional pre-generated encryption key (if None, a new key will be generated)
-    pub encryption_key: Option<GroupEncryptionKey>,
+    pub encryption_key: Option<EncryptionKey>,
 }
 
 impl DigitalGroupAssistant {
@@ -59,7 +57,7 @@ impl DigitalGroupAssistant {
     }
 
     /// Add an encryption key for a group (obtained via inbox system)
-    pub fn add_group_key(&mut self, group_id: Hash, key: GroupEncryptionKey) {
+    pub fn add_group_key(&mut self, group_id: Hash, key: EncryptionKey) {
         let encryption_state = GroupEncryptionState {
             current_key: key,
             previous_keys: Vec::new(),
@@ -67,17 +65,36 @@ impl DigitalGroupAssistant {
         self.group_keys.insert(group_id, encryption_state);
     }
 
-    /// Generate a new AES-256 encryption key for a group
-    pub fn generate_group_key(key_id: Vec<u8>, timestamp: u64) -> GroupEncryptionKey {
-        let mut rng = thread_rng();
-        let mut key = [0u8; 32];
-        rng.fill(&mut key);
+    /// Generate a new encryption key for a group (ChaCha20-Poly1305)
+    pub fn generate_group_key(timestamp: u64) -> EncryptionKey {
+        EncryptionKey::generate(timestamp)
+    }
 
-        GroupEncryptionKey {
-            key,
-            key_id,
-            created_at: timestamp,
-        }
+    /// Create a group key from a mnemonic phrase
+    pub fn create_key_from_mnemonic(
+        mnemonic: &MnemonicPhrase,
+        passphrase: &str,
+        group_name: &str,
+        timestamp: u64,
+    ) -> DgaResult<EncryptionKey> {
+        let context = format!("dga-group-{group_name}");
+
+        EncryptionKey::from_mnemonic(mnemonic, passphrase, &context, timestamp)
+            .map_err(|e| DgaError::CryptoError(format!("Key derivation failed: {e}")))
+    }
+
+    /// Recover a group key from a mnemonic phrase with specific salt
+    pub fn recover_key_from_mnemonic(
+        mnemonic: &MnemonicPhrase,
+        passphrase: &str,
+        group_name: &str,
+        salt: &[u8; 32],
+        timestamp: u64,
+    ) -> DgaResult<EncryptionKey> {
+        let context = format!("dga-group-{group_name}");
+
+        EncryptionKey::from_mnemonic_with_salt(mnemonic, passphrase, &context, salt, timestamp)
+            .map_err(|e| DgaError::CryptoError(format!("Key recovery failed: {e}")))
     }
 
     /// Create a new encrypted group, returning the root event message to be sent
@@ -88,18 +105,20 @@ impl DigitalGroupAssistant {
         timestamp: u64,
     ) -> DgaResult<CreateGroupResult> {
         // Generate or use provided encryption key
-        let encryption_key = config.encryption_key.unwrap_or_else(|| {
-            let key_id = blake3::hash(format!("group_key_{timestamp}").as_bytes())
-                .as_bytes()
-                .to_vec();
-            Self::generate_group_key(key_id, timestamp)
-        });
+        let encryption_key = config
+            .encryption_key
+            .unwrap_or_else(|| Self::generate_group_key(timestamp));
 
         // Create key info (metadata about the key, not the key itself)
         let key_info = GroupKeyInfo {
             key_id: encryption_key.key_id.clone(),
-            algorithm: "AES-256-GCM".to_string(),
-            derivation_params: None,
+            algorithm: "chacha20-poly1305".to_string(),
+            derivation_params: encryption_key.derivation_info.as_ref().map(|info| {
+                let mut params = HashMap::new();
+                params.insert("method".to_string(), info.method.clone());
+                params.insert("context".to_string(), info.context.clone());
+                params
+            }),
         };
 
         // Create the group creation event (no group_id needed since it will be the message hash)
@@ -115,13 +134,13 @@ impl DigitalGroupAssistant {
         let encrypted_payload = self.encrypt_group_event(&event, &encryption_key)?;
 
         // Create the wire protocol message with encrypted payload
-        let message = Message::new_typed(
+        let message = Message::new_v0_encrypted(
             encrypted_payload,
             creator.verifying_key(),
             timestamp,
             Kind::Regular, // Group creation events should be permanently stored
             vec![],        // No tags needed for the root event
-        )?;
+        );
 
         // Sign the message and create MessageFull
         let message_full = MessageFull::new(message, creator)?;
@@ -180,7 +199,7 @@ impl DigitalGroupAssistant {
         let encrypted_payload = self.encrypt_group_event(&event, &encryption_state.current_key)?;
 
         // Create the message with the group ID (root event ID) as a channel tag
-        let message = Message::new_typed(
+        let message = Message::new_v0_encrypted(
             encrypted_payload,
             sender.verifying_key(),
             timestamp,
@@ -189,7 +208,7 @@ impl DigitalGroupAssistant {
                 id: group_id,   // The group ID is the root event ID
                 relays: vec![], // Could be populated with known relays
             }],
-        )?;
+        );
 
         // Sign and return the message
         MessageFull::new(message, sender).map_err(DgaError::WireProtocol)
@@ -207,8 +226,15 @@ impl DigitalGroupAssistant {
         // Extract the encrypted payload from the message
         let Message::MessageV0(message) = message_full.message.as_ref();
 
-        // Deserialize the encrypted payload
-        let encrypted_payload: EncryptedGroupPayload = postcard::from_bytes(&message.content)?;
+        // Get the encrypted payload from the message content
+        let encrypted_payload = match &message.content {
+            Content::ChaCha20Poly1305(encrypted) => encrypted,
+            Content::Raw(_) => {
+                return Err(DgaError::InvalidEvent(
+                    "Expected encrypted content but found raw content".to_string(),
+                ));
+            }
+        };
         let sender = message.sender;
         let timestamp = message.when;
 
@@ -225,7 +251,7 @@ impl DigitalGroupAssistant {
             })?;
 
             let event =
-                self.decrypt_group_event(&encrypted_payload, &encryption_state.current_key)?;
+                self.decrypt_group_event(encrypted_payload, &encryption_state.current_key)?;
             (group_id, event)
         } else {
             // This is a subsequent event - find the group by channel tag
@@ -239,7 +265,7 @@ impl DigitalGroupAssistant {
             })?;
 
             let event =
-                self.decrypt_group_event(&encrypted_payload, &encryption_state.current_key)?;
+                self.decrypt_group_event(encrypted_payload, &encryption_state.current_key)?;
             (group_id, event)
         };
 
@@ -342,57 +368,32 @@ impl DigitalGroupAssistant {
         })
     }
 
-    /// Encrypt a group event using AES-GCM
+    /// Encrypt a group event using ChaCha20-Poly1305
     pub(crate) fn encrypt_group_event(
         &self,
         event: &GroupActivityEvent,
-        key: &GroupEncryptionKey,
-    ) -> DgaResult<EncryptedGroupPayload> {
+        key: &EncryptionKey,
+    ) -> DgaResult<ChaCha20Poly1305Content> {
         // Serialize the event
         let plaintext = postcard::to_stdvec(event)?;
 
-        // Create AES-GCM cipher
-        let aes_key = Key::<Aes256Gcm>::from_slice(&key.key);
-        let cipher = Aes256Gcm::new(aes_key);
-
-        // Generate random nonce
-        let mut rng = thread_rng();
-        let mut nonce_bytes = [0u8; 12];
-        rng.fill(&mut nonce_bytes);
-        let nonce = Nonce::from_slice(&nonce_bytes);
-
-        // Encrypt the data
-        let ciphertext = cipher
-            .encrypt(nonce, plaintext.as_ref())
-            .map_err(|e| DgaError::InvalidEvent(format!("Encryption failed: {e}")))?;
-
-        Ok(EncryptedGroupPayload {
-            ciphertext,
-            nonce: nonce_bytes,
-            key_id: key.key_id.clone(),
-        })
+        // Encrypt using ChaCha20-Poly1305
+        key.encrypt_content(&plaintext)
+            .map_err(|e| DgaError::CryptoError(format!("Group event encryption failed: {e}")))
     }
 
-    /// Decrypt a group event using AES-GCM
+    /// Decrypt a group event using ChaCha20-Poly1305
     pub(crate) fn decrypt_group_event(
         &self,
-        payload: &EncryptedGroupPayload,
-        key: &GroupEncryptionKey,
+        payload: &ChaCha20Poly1305Content,
+        key: &EncryptionKey,
     ) -> DgaResult<GroupActivityEvent> {
-        // Verify key ID matches
-        if payload.key_id != key.key_id {
-            return Err(DgaError::InvalidEvent("Key ID mismatch".to_string()));
-        }
+        // Note: No key ID verification needed since key is determined by channel context
 
-        // Create AES-GCM cipher
-        let aes_key = Key::<Aes256Gcm>::from_slice(&key.key);
-        let cipher = Aes256Gcm::new(aes_key);
-        let nonce = Nonce::from_slice(&payload.nonce);
-
-        // Decrypt the data
-        let plaintext = cipher
-            .decrypt(nonce, payload.ciphertext.as_ref())
-            .map_err(|e| DgaError::InvalidEvent(format!("Decryption failed: {e}")))?;
+        // Decrypt using ChaCha20-Poly1305
+        let plaintext = key
+            .decrypt_content(payload)
+            .map_err(|e| DgaError::CryptoError(format!("Group event decryption failed: {e}")))?;
 
         // Deserialize the event
         let event: GroupActivityEvent = postcard::from_bytes(&plaintext)?;

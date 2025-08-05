@@ -111,7 +111,9 @@ async fn run_echo_test(
                         info!("   Author: {}", hex::encode(message.author().to_bytes()));
                         info!(
                             "   Content: {:?}",
-                            String::from_utf8_lossy(message.content())
+                            String::from_utf8_lossy(
+                                message.raw_content().expect("Expected raw content")
+                            )
                         );
 
                         // Verify it's our message
@@ -123,7 +125,9 @@ async fn run_echo_test(
                             );
                             info!(
                                 "   Received content: {:?}",
-                                String::from_utf8_lossy(message.content())
+                                String::from_utf8_lossy(
+                                    message.raw_content().expect("Expected raw content")
+                                )
                             );
                             message_received = true;
                         } else {

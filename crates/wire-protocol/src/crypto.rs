@@ -4,6 +4,16 @@ use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
 use x509_parser::oid_registry::asn1_rs::oid;
 use x509_parser::prelude::*;
 
+// ChaCha20-Poly1305 and mnemonic support
+use argon2::{Argon2, PasswordHasher};
+use bip39::{Language, Mnemonic};
+use chacha20poly1305::{
+    aead::{Aead, AeadCore, KeyInit, OsRng},
+    ChaCha20Poly1305, Key, Nonce,
+};
+use rand::{thread_rng, RngCore};
+use serde::{Deserialize, Serialize};
+
 #[derive(Debug, thiserror::Error)]
 pub enum CryptoError {
     #[error("Parse error: {0}")]
@@ -14,6 +24,18 @@ pub enum CryptoError {
 
     #[error("Not found")]
     Ed25519KeyNotFound,
+
+    #[error("Encryption error: {0}")]
+    EncryptionError(String),
+
+    #[error("Decryption error: {0}")]
+    DecryptionError(String),
+
+    #[error("Mnemonic error: {0}")]
+    MnemonicError(String),
+
+    #[error("Key derivation error: {0}")]
+    KeyDerivationError(String),
 }
 
 pub type Result<T> = std::result::Result<T, CryptoError>;
@@ -392,6 +414,270 @@ impl rustls::server::danger::ClientCertVerifier for ZoeClientCertVerifier {
     }
 }
 
+// ==================== ChaCha20-Poly1305 & Mnemonic Support ====================
+
+/// Mnemonic phrase for key derivation
+#[derive(Debug, Clone)]
+pub struct MnemonicPhrase {
+    pub phrase: String,
+    pub language: Language,
+}
+
+impl MnemonicPhrase {
+    /// Generate a new 24-word mnemonic phrase
+    pub fn generate() -> Result<Self> {
+        // Generate 32 bytes of entropy for 24 words
+        let mut entropy = [0u8; 32];
+        thread_rng().fill_bytes(&mut entropy);
+
+        let mnemonic = Mnemonic::from_entropy_in(Language::English, &entropy)
+            .map_err(|e| CryptoError::MnemonicError(format!("Failed to generate mnemonic: {e}")))?;
+
+        Ok(Self {
+            phrase: mnemonic.to_string(),
+            language: Language::English,
+        })
+    }
+
+    /// Create from existing phrase
+    pub fn from_phrase(phrase: &str, language: Language) -> Result<Self> {
+        // Validate the mnemonic
+        Mnemonic::parse_in(language, phrase)
+            .map_err(|e| CryptoError::MnemonicError(format!("Invalid mnemonic phrase: {e}")))?;
+
+        Ok(Self {
+            phrase: phrase.to_string(),
+            language,
+        })
+    }
+
+    /// Derive a seed from the mnemonic with optional passphrase
+    pub fn to_seed(&self, passphrase: &str) -> Result<[u8; 64]> {
+        let mnemonic = Mnemonic::parse_in(self.language, &self.phrase)
+            .map_err(|e| CryptoError::MnemonicError(format!("Invalid mnemonic: {e}")))?;
+
+        Ok(mnemonic.to_seed(passphrase))
+    }
+
+    /// Get the phrase as string (be careful with this!)
+    pub fn phrase(&self) -> &str {
+        &self.phrase
+    }
+}
+
+/// Information about how a key was derived
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct KeyDerivationInfo {
+    /// Key derivation method used
+    pub method: String, // e.g., "bip39+argon2"
+    /// Salt used for derivation
+    pub salt: Vec<u8>,
+    /// Argon2 parameters used
+    pub argon2_params: Argon2Params,
+    /// Context string used for derivation
+    pub context: String, // e.g., "dga-group-key"
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Argon2Params {
+    pub memory: u32,
+    pub iterations: u32,
+    pub parallelism: u32,
+}
+
+impl Default for Argon2Params {
+    fn default() -> Self {
+        Self {
+            memory: 65536,  // 64 MB
+            iterations: 3,  // 3 iterations
+            parallelism: 4, // 4 threads
+        }
+    }
+}
+
+/// ChaCha20-Poly1305 encryption key
+#[derive(Debug, Clone)]
+pub struct EncryptionKey {
+    /// The actual key bytes (32 bytes for ChaCha20)
+    pub key: [u8; 32],
+    /// Key identifier
+    pub key_id: Vec<u8>,
+    /// When this key was created
+    pub created_at: u64,
+    /// Optional derivation info (for mnemonic-derived keys)
+    pub derivation_info: Option<KeyDerivationInfo>,
+}
+
+/// Minimal encrypted content for wire protocol messages
+/// Optimized for space - no key_id since it's determined by channel context
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ChaCha20Poly1305Content {
+    /// Encrypted data + authentication tag
+    pub ciphertext: Vec<u8>,
+    /// ChaCha20-Poly1305 nonce (fixed 12 bytes for space efficiency)
+    pub nonce: [u8; 12],
+}
+
+impl EncryptionKey {
+    /// Generate a random encryption key
+    pub fn generate(timestamp: u64) -> Self {
+        let mut key = [0u8; 32];
+        let mut key_id = vec![0u8; 16];
+        thread_rng().fill_bytes(&mut key);
+        thread_rng().fill_bytes(&mut key_id);
+
+        Self {
+            key,
+            key_id,
+            created_at: timestamp,
+            derivation_info: None,
+        }
+    }
+
+    /// Derive an encryption key from a mnemonic phrase
+    pub fn from_mnemonic(
+        mnemonic: &MnemonicPhrase,
+        passphrase: &str,
+        context: &str, // e.g., "dga-group-key"
+        timestamp: u64,
+    ) -> Result<Self> {
+        // Generate a random salt
+        let mut salt = [0u8; 32];
+        thread_rng().fill_bytes(&mut salt);
+
+        Self::from_mnemonic_with_salt(mnemonic, passphrase, context, &salt, timestamp)
+    }
+
+    /// Derive an encryption key from a mnemonic phrase with specific salt (for key recovery)
+    pub fn from_mnemonic_with_salt(
+        mnemonic: &MnemonicPhrase,
+        passphrase: &str,
+        context: &str,
+        salt: &[u8; 32],
+        timestamp: u64,
+    ) -> Result<Self> {
+        // First get the BIP39 seed
+        let seed = mnemonic.to_seed(passphrase)?;
+
+        // Then use Argon2 to derive the actual encryption key
+        let argon2_params = Argon2Params::default();
+        let argon2 = Argon2::new(
+            argon2::Algorithm::Argon2id,
+            argon2::Version::V0x13,
+            argon2::Params::new(
+                argon2_params.memory,
+                argon2_params.iterations,
+                argon2_params.parallelism,
+                Some(32), // output length
+            )
+            .map_err(|e| CryptoError::KeyDerivationError(format!("Invalid Argon2 params: {e}")))?,
+        );
+
+        // Combine seed with context for key derivation
+        let mut input = Vec::new();
+        input.extend_from_slice(&seed);
+        input.extend_from_slice(context.as_bytes());
+
+        // Create salt for argon2 - use first 16 bytes encoded as base64 without padding
+        use base64::Engine;
+        let salt_bytes = &salt[..16]; // argon2 salt should be 16 bytes
+        let salt_b64 = base64::engine::general_purpose::STANDARD_NO_PAD.encode(salt_bytes);
+        let salt_ref = argon2::password_hash::Salt::from_b64(&salt_b64)
+            .map_err(|e| CryptoError::KeyDerivationError(format!("Salt error: {e}")))?;
+
+        let password_hash = argon2
+            .hash_password(&input, salt_ref)
+            .map_err(|e| CryptoError::KeyDerivationError(format!("Key derivation failed: {e}")))?;
+
+        // Extract the key bytes
+        let mut key = [0u8; 32];
+        let hash = password_hash.hash.unwrap();
+        let hash_bytes = hash.as_bytes();
+        key.copy_from_slice(&hash_bytes[..32]);
+
+        // Generate key ID from the derivation parameters
+        let mut key_id_input = Vec::new();
+        key_id_input.extend_from_slice(salt);
+        key_id_input.extend_from_slice(context.as_bytes());
+        let key_id = blake3::hash(&key_id_input).as_bytes()[..16].to_vec();
+
+        Ok(Self {
+            key,
+            key_id,
+            created_at: timestamp,
+            derivation_info: Some(KeyDerivationInfo {
+                method: "bip39+argon2".to_string(),
+                salt: salt.to_vec(),
+                argon2_params,
+                context: context.to_string(),
+            }),
+        })
+    }
+
+    /// Encrypt data to minimal ChaCha20Poly1305Content (no key_id for wire protocol)
+    pub fn encrypt_content(&self, plaintext: &[u8]) -> Result<ChaCha20Poly1305Content> {
+        let key = Key::from_slice(&self.key);
+        let cipher = ChaCha20Poly1305::new(key);
+
+        // Generate random nonce
+        let nonce = ChaCha20Poly1305::generate_nonce(&mut OsRng);
+
+        let ciphertext = cipher.encrypt(&nonce, plaintext).map_err(|e| {
+            CryptoError::EncryptionError(format!("ChaCha20 encryption failed: {e}"))
+        })?;
+
+        let mut nonce_bytes = [0u8; 12];
+        nonce_bytes.copy_from_slice(&nonce);
+
+        Ok(ChaCha20Poly1305Content {
+            ciphertext,
+            nonce: nonce_bytes,
+        })
+    }
+
+    /// Decrypt ChaCha20Poly1305Content (assumes correct key based on channel context)
+    pub fn decrypt_content(&self, content: &ChaCha20Poly1305Content) -> Result<Vec<u8>> {
+        let key = Key::from_slice(&self.key);
+        let cipher = ChaCha20Poly1305::new(key);
+        let nonce = Nonce::from_slice(&content.nonce);
+
+        cipher
+            .decrypt(nonce, content.ciphertext.as_ref())
+            .map_err(|e| CryptoError::DecryptionError(format!("ChaCha20 decryption failed: {e}")))
+    }
+}
+
+/// Generate an ed25519 signing key from a mnemonic phrase
+pub fn generate_ed25519_from_mnemonic(
+    mnemonic: &MnemonicPhrase,
+    passphrase: &str,
+    context: &str, // e.g., "ed25519-signing-key"
+) -> Result<SigningKey> {
+    // Get the BIP39 seed
+    let seed = mnemonic.to_seed(passphrase)?;
+
+    // Use Blake3 to derive ed25519 key material from seed + context
+    let mut input = Vec::new();
+    input.extend_from_slice(&seed);
+    input.extend_from_slice(context.as_bytes());
+
+    let key_material = blake3::hash(&input);
+    let key_bytes = key_material.as_bytes();
+
+    // ed25519 keys are 32 bytes - SigningKey::from_bytes doesn't return Result
+    Ok(SigningKey::from_bytes(key_bytes))
+}
+
+/// Recover an ed25519 signing key from a mnemonic phrase (deterministic)
+pub fn recover_ed25519_from_mnemonic(
+    mnemonic: &MnemonicPhrase,
+    passphrase: &str,
+    context: &str,
+) -> Result<SigningKey> {
+    // Same as generate - it's deterministic
+    generate_ed25519_from_mnemonic(mnemonic, passphrase, context)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -439,5 +725,42 @@ mod tests {
         let loaded_pubkey = load_ed25519_public_key_from_hex(&hex_string).unwrap();
 
         assert_eq!(pubkey.to_bytes(), loaded_pubkey.to_bytes());
+    }
+
+    #[test]
+    fn test_mnemonic_generation() {
+        let mnemonic = MnemonicPhrase::generate().unwrap();
+        // Should be 24 words
+        assert_eq!(mnemonic.phrase().split_whitespace().count(), 24);
+    }
+
+    #[test]
+    fn test_chacha20_content_encryption_roundtrip() {
+        let key = EncryptionKey::generate(1640995200);
+        let plaintext = b"Hello, encrypted world!";
+
+        let encrypted = key.encrypt_content(plaintext).unwrap();
+        let decrypted = key.decrypt_content(&encrypted).unwrap();
+
+        assert_eq!(plaintext, decrypted.as_slice());
+        assert_eq!(encrypted.nonce.len(), 12);
+    }
+
+    #[test]
+    fn test_encryption_key_from_mnemonic() {
+        let mnemonic = MnemonicPhrase::from_phrase(
+            "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon art",
+            Language::English
+        ).unwrap();
+
+        let key =
+            EncryptionKey::from_mnemonic(&mnemonic, "test passphrase", "test-context", 1640995200)
+                .unwrap();
+
+        assert!(key.derivation_info.is_some());
+        assert_eq!(
+            key.derivation_info.as_ref().unwrap().context,
+            "test-context"
+        );
     }
 }

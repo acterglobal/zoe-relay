@@ -68,7 +68,9 @@ impl ChatMessage {
                 let author_bytes = msg_full.author().to_bytes();
                 let author_id = hex::encode(&author_bytes[..4]); // First 4 bytes as hex
 
-                let content = String::from_utf8_lossy(msg_full.content()).to_string();
+                let content =
+                    String::from_utf8_lossy(msg_full.raw_content().expect("Expected raw content"))
+                        .to_string();
                 let timestamp = *msg_full.when();
 
                 Ok(ChatMessage {

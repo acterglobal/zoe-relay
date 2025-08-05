@@ -3,6 +3,8 @@ use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
 use postcard::to_vec;
 use serde::{Deserialize, Serialize};
 
+use crate::crypto::ChaCha20Poly1305Content;
+
 mod store_key;
 pub use store_key::StoreKey;
 
@@ -44,28 +46,58 @@ pub enum Kind {
     ClearStore(StoreKey), // clear the given storekey of the user, if the events timestamp is larger than the stored one
 }
 
-// impl StoreKey {
-//     /// Deserialize from storage value
-//     pub fn from_storage_value(value: &str) -> Result<Self, Box<dyn std::error::Error>> {
-//         let bytes = hex::decode(value)?;
-//         let store_key: Self = postcard::from_bytes(&bytes)?;
-//         Ok(store_key)
-//     }
+/// Message content variants supporting both raw bytes and encrypted content
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub enum Content {
+    /// Raw byte conten
+    Raw(Vec<u8>),
+    /// ChaCha20-Poly1305 encrypted content (minimal overhead)
+    /// Key determined by message context (channel tags, etc.)
+    ChaCha20Poly1305(ChaCha20Poly1305Content),
+}
 
-//     /// Serialize to storage value
-//     pub fn to_storage_value(&self) -> Result<String, Box<dyn std::error::Error>> {
-//         let bytes = postcard::to_vec::<_, 4096>(self)?;
-//         Ok(hex::encode(bytes))
-//     }
-// }
+impl Content {
+    /// Create raw content from bytes
+    pub fn raw(data: Vec<u8>) -> Self {
+        Content::Raw(data)
+    }
 
-// impl Kind {
-//     /// Serialize to storage value
-//     pub fn to_storage_value(&self) -> Result<String, Box<dyn std::error::Error>> {
-//         let bytes = postcard::to_vec::<_, 4096>(self)?;
-//         Ok(hex::encode(bytes))
-//     }
-// }
+    /// Create raw content from serializable object
+    pub fn raw_typed<T: Serialize>(data: &T) -> Result<Self, postcard::Error> {
+        Ok(Content::Raw(postcard::to_stdvec(data)?))
+    }
+
+    /// Create encrypted content
+    pub fn encrypted(content: ChaCha20Poly1305Content) -> Self {
+        Content::ChaCha20Poly1305(content)
+    }
+
+    /// Get the raw bytes if this is raw content
+    pub fn as_raw(&self) -> Option<&Vec<u8>> {
+        match self {
+            Content::Raw(data) => Some(data),
+            Content::ChaCha20Poly1305(_) => None,
+        }
+    }
+
+    /// Get the encrypted content if this is encrypted
+    pub fn as_encrypted(&self) -> Option<&ChaCha20Poly1305Content> {
+        match self {
+            Content::Raw(_) => None,
+            Content::ChaCha20Poly1305(content) => Some(content),
+        }
+    }
+
+    /// Check if this content is encrypted
+    pub fn is_encrypted(&self) -> bool {
+        matches!(self, Content::ChaCha20Poly1305(_))
+    }
+
+    /// Check if this content is raw
+    pub fn is_raw(&self) -> bool {
+        matches!(self, Content::Raw(_))
+    }
+}
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub enum Message {
@@ -106,7 +138,23 @@ impl Message {
             when,
             kind,
             tags,
-            content,
+            content: Content::Raw(content),
+        })
+    }
+
+    pub fn new_v0_encrypted(
+        content: ChaCha20Poly1305Content,
+        sender: VerifyingKey,
+        when: u64,
+        kind: Kind,
+        tags: Vec<Tag>,
+    ) -> Self {
+        Message::MessageV0(MessageV0 {
+            sender,
+            when,
+            kind,
+            tags,
+            content: Content::ChaCha20Poly1305(content),
         })
     }
 
@@ -125,7 +173,30 @@ impl Message {
             when,
             kind,
             tags,
-            content: postcard::to_stdvec(&content)?,
+            content: Content::Raw(postcard::to_stdvec(&content)?),
+        }))
+    }
+
+    pub fn new_typed_encrypted<T>(
+        content: T,
+        encryption_key: &crate::crypto::EncryptionKey,
+        sender: VerifyingKey,
+        when: u64,
+        kind: Kind,
+        tags: Vec<Tag>,
+    ) -> Result<Self, Box<dyn std::error::Error>>
+    where
+        T: Serialize,
+    {
+        let plaintext = postcard::to_stdvec(&content)?;
+        let encrypted_content = encryption_key.encrypt_content(&plaintext)?;
+
+        Ok(Message::MessageV0(MessageV0 {
+            sender,
+            when,
+            kind,
+            tags,
+            content: Content::ChaCha20Poly1305(encrypted_content),
         }))
     }
 }
@@ -137,7 +208,7 @@ pub struct MessageV0 {
     pub kind: Kind,
     #[serde(default)]
     pub tags: Vec<Tag>,
-    pub content: Vec<u8>,
+    pub content: Content,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -251,20 +322,55 @@ impl MessageFull {
         }
     }
 
-    pub fn content(&self) -> &Vec<u8> {
+    pub fn content(&self) -> &Content {
         match &*self.message {
             Message::MessageV0(message) => &message.content,
         }
     }
+
+    /// Get raw content bytes if this message contains raw content
+    pub fn raw_content(&self) -> Option<&Vec<u8>> {
+        self.content().as_raw()
+    }
+
+    /// Get encrypted content if this message contains encrypted content
+    pub fn encrypted_content(&self) -> Option<&ChaCha20Poly1305Content> {
+        self.content().as_encrypted()
+    }
 }
 
 impl MessageFull {
-    pub fn try_deserialize_content<C>(&self) -> Result<C, postcard::Error>
+    /// Try to deserialize content if it's raw (unencrypted)
+    pub fn try_deserialize_content<C>(&self) -> Result<C, Box<dyn std::error::Error>>
     where
         C: for<'a> Deserialize<'a>,
     {
         match &*self.message {
-            Message::MessageV0(message) => postcard::from_bytes(&message.content),
+            Message::MessageV0(message) => match &message.content {
+                Content::Raw(bytes) => Ok(postcard::from_bytes(bytes)?),
+                Content::ChaCha20Poly1305(_) => {
+                    Err("Cannot deserialize encrypted content without decryption key".into())
+                }
+            },
+        }
+    }
+
+    /// Try to deserialize encrypted content by decrypting it first
+    pub fn try_deserialize_encrypted_content<C>(
+        &self,
+        encryption_key: &crate::crypto::EncryptionKey,
+    ) -> Result<C, Box<dyn std::error::Error>>
+    where
+        C: for<'a> Deserialize<'a>,
+    {
+        match &*self.message {
+            Message::MessageV0(message) => match &message.content {
+                Content::Raw(_) => Err("Content is not encrypted".into()),
+                Content::ChaCha20Poly1305(encrypted) => {
+                    let plaintext = encryption_key.decrypt_content(encrypted)?;
+                    Ok(postcard::from_bytes(&plaintext)?)
+                }
+            },
         }
     }
 }
@@ -332,9 +438,18 @@ mod tests {
         // Tampering with content should fail
         let mut tampered = msg_full.clone();
         let Message::MessageV0(ref mut msg) = *tampered.message;
-        // Safely tamper with the first byte (index 0) which should always exist
-        if !msg.content.is_empty() {
-            msg.content[0] = msg.content[0].wrapping_add(1);
+        // Safely tamper with the content based on its type
+        match &mut msg.content {
+            Content::Raw(ref mut data) => {
+                if !data.is_empty() {
+                    data[0] = data[0].wrapping_add(1);
+                }
+            }
+            Content::ChaCha20Poly1305(ref mut encrypted) => {
+                if !encrypted.ciphertext.is_empty() {
+                    encrypted.ciphertext[0] = encrypted.ciphertext[0].wrapping_add(1);
+                }
+            }
         }
         assert!(!tampered.verify_all().unwrap());
     }

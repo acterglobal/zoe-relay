@@ -73,28 +73,7 @@ pub struct GroupKeyInfo {
     pub derivation_params: Option<HashMap<String, String>>,
 }
 
-/// AES encryption key for a group
-/// This is never sent over the wire - distributed via separate inbox system
-#[derive(Debug, Clone)]
-pub struct GroupEncryptionKey {
-    /// The actual AES key bytes
-    pub key: [u8; 32], // 256-bit AES key
-    /// Key identifier matching GroupKeyInfo
-    pub key_id: Vec<u8>,
-    /// When this key was created/distributed
-    pub created_at: u64,
-}
-
-/// Encrypted payload for group messages
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct EncryptedGroupPayload {
-    /// AES-GCM encrypted data
-    pub ciphertext: Vec<u8>,
-    /// AES-GCM nonce/IV
-    pub nonce: [u8; 12], // 96-bit nonce for AES-GCM
-    /// Key identifier to help recipients know which key to use
-    pub key_id: Vec<u8>,
-}
+// GroupEncryptionKey and EncryptedGroupPayload moved to crypto.rs
 
 /// Group settings and configuration for encrypted groups
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]

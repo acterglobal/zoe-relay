@@ -351,18 +351,22 @@ fn test_invalid_key_id_decryption_error() {
     // Create group
     let result = dga.create_group(config, &alice_key, timestamp).unwrap();
 
-    // Create a fake encrypted payload with wrong key ID
-    let fake_payload = EncryptedGroupPayload {
-        ciphertext: vec![1, 2, 3, 4, 5],
-        nonce: [0; 12],
-        key_id: vec![99, 99, 99], // Wrong key ID
+    // Create a fake encrypted payload with invalid ciphertext
+    let fake_payload = ChaCha20Poly1305Content {
+        ciphertext: vec![1, 2, 3, 4, 5], // Invalid ciphertext
+        nonce: [0; 12],                  // All zeros nonce
     };
 
     let encryption_key = &dga.group_keys.get(&result.group_id).unwrap().current_key;
     let result = dga.decrypt_group_event(&fake_payload, encryption_key);
 
     assert!(result.is_err());
-    assert!(result.unwrap_err().to_string().contains("Key ID mismatch"));
+    assert!(
+        result
+            .unwrap_err()
+            .to_string()
+            .contains("decryption failed")
+    );
 }
 
 #[test]
@@ -442,19 +446,212 @@ fn test_subscription_filter_creation() {
 
 #[test]
 fn test_group_key_generation() {
-    let key_id = vec![1, 2, 3, 4];
     let timestamp = 1234567890;
 
-    let key1 = DigitalGroupAssistant::generate_group_key(key_id.clone(), timestamp);
-    let key2 = DigitalGroupAssistant::generate_group_key(key_id.clone(), timestamp);
+    let key1 = DigitalGroupAssistant::generate_group_key(timestamp);
+    let key2 = DigitalGroupAssistant::generate_group_key(timestamp);
 
     // Keys should be different (random generation)
     assert_ne!(key1.key, key2.key);
 
-    // But metadata should match
-    assert_eq!(key1.key_id, key2.key_id);
+    // Key IDs should also be different (randomly generated)
+    assert_ne!(key1.key_id, key2.key_id);
     assert_eq!(key1.created_at, key2.created_at);
 
     // Key should be proper length
     assert_eq!(key1.key.len(), 32); // 256 bits
+}
+
+#[test]
+fn test_create_key_from_mnemonic() {
+    use crate::MnemonicPhrase;
+    use bip39::Language;
+
+    // Use a known test mnemonic
+    let mnemonic = MnemonicPhrase::from_phrase(
+        "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon art",
+        Language::English
+    ).unwrap();
+
+    let group_name = "test-group";
+    let passphrase = "test-passphrase";
+    let timestamp = 1640995200;
+
+    let key = DigitalGroupAssistant::create_key_from_mnemonic(
+        &mnemonic, passphrase, group_name, timestamp,
+    )
+    .unwrap();
+
+    // Verify key properties
+    assert_eq!(key.key.len(), 32);
+    assert_eq!(key.created_at, timestamp);
+    assert!(key.derivation_info.is_some());
+
+    let derivation_info = key.derivation_info.as_ref().unwrap();
+    assert_eq!(derivation_info.method, "bip39+argon2");
+    assert_eq!(derivation_info.context, "dga-group-test-group");
+}
+
+#[test]
+fn test_recover_key_from_mnemonic() {
+    use crate::MnemonicPhrase;
+
+    // Generate a mnemonic and derive a key
+    let mnemonic = MnemonicPhrase::generate().unwrap();
+    let group_name = "recovery-test-group";
+    let passphrase = "recovery-passphrase";
+    let timestamp = 1640995200;
+
+    // Create initial key
+    let original_key = DigitalGroupAssistant::create_key_from_mnemonic(
+        &mnemonic, passphrase, group_name, timestamp,
+    )
+    .unwrap();
+
+    // Extract salt for recovery
+    let derivation_info = original_key.derivation_info.as_ref().unwrap();
+    let mut salt = [0u8; 32];
+    salt.copy_from_slice(&derivation_info.salt);
+
+    // Recover the key using the same parameters
+    let recovered_key = DigitalGroupAssistant::recover_key_from_mnemonic(
+        &mnemonic, passphrase, group_name, &salt, timestamp,
+    )
+    .unwrap();
+
+    // Keys should be identical
+    assert_eq!(original_key.key, recovered_key.key);
+    assert_eq!(original_key.key_id, recovered_key.key_id);
+    assert_eq!(original_key.created_at, recovered_key.created_at);
+}
+
+#[test]
+fn test_mnemonic_key_integration_with_group_creation() {
+    use crate::{CreateGroupConfig, GroupSettings, MnemonicPhrase};
+    use ed25519_dalek::SigningKey;
+    use std::collections::HashMap;
+
+    let mut dga = DigitalGroupAssistant::new();
+    let alice_key = SigningKey::generate(&mut rand::thread_rng());
+    let timestamp = chrono::Utc::now().timestamp() as u64;
+
+    // Generate mnemonic and create encryption key
+    let mnemonic = MnemonicPhrase::generate().unwrap();
+    let encryption_key = DigitalGroupAssistant::create_key_from_mnemonic(
+        &mnemonic,
+        "test-passphrase",
+        "integration-test-group",
+        timestamp,
+    )
+    .unwrap();
+
+    // Create group with mnemonic-derived key
+    let config = CreateGroupConfig {
+        name: "Integration Test Group".to_string(),
+        description: Some("Testing mnemonic key integration".to_string()),
+        metadata: {
+            let mut metadata = HashMap::new();
+            metadata.insert("key_source".to_string(), "mnemonic".to_string());
+            metadata
+        },
+        settings: GroupSettings::default(),
+        encryption_key: Some(encryption_key.clone()),
+    };
+
+    let result = dga.create_group(config, &alice_key, timestamp).unwrap();
+
+    // Verify group was created successfully
+    assert!(dga.groups.contains_key(&result.group_id));
+    assert!(dga.group_keys.contains_key(&result.group_id));
+
+    // Verify the key is properly stored
+    let stored_key = &dga.group_keys.get(&result.group_id).unwrap().current_key;
+    assert_eq!(stored_key.key, encryption_key.key);
+    assert_eq!(stored_key.key_id, encryption_key.key_id);
+}
+
+#[test]
+fn test_invalid_mnemonic_phrase_error() {
+    use crate::MnemonicPhrase;
+    use zoe_wire_protocol::bip39::Language;
+
+    // Test with invalid mnemonic phrase
+    let result = MnemonicPhrase::from_phrase(
+        "invalid mnemonic phrase that should fail checksum",
+        Language::English,
+    );
+
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_mnemonic_key_different_contexts_produce_different_keys() {
+    use crate::MnemonicPhrase;
+
+    let mnemonic = MnemonicPhrase::generate().unwrap();
+    let passphrase = "same-passphrase";
+    let timestamp = 1640995200;
+
+    // Same mnemonic, different contexts should produce different keys
+    let key1 = DigitalGroupAssistant::create_key_from_mnemonic(
+        &mnemonic,
+        passphrase,
+        "group-one",
+        timestamp,
+    )
+    .unwrap();
+
+    let key2 = DigitalGroupAssistant::create_key_from_mnemonic(
+        &mnemonic,
+        passphrase,
+        "group-two",
+        timestamp,
+    )
+    .unwrap();
+
+    // Keys should be different
+    assert_ne!(key1.key, key2.key);
+    assert_ne!(key1.key_id, key2.key_id);
+
+    // But derivation info should show different contexts
+    let info1 = key1.derivation_info.as_ref().unwrap();
+    let info2 = key2.derivation_info.as_ref().unwrap();
+    assert_eq!(info1.context, "dga-group-group-one");
+    assert_eq!(info2.context, "dga-group-group-two");
+}
+
+#[test]
+fn test_mnemonic_key_different_passphrases_produce_different_keys() {
+    use crate::MnemonicPhrase;
+
+    let mnemonic = MnemonicPhrase::generate().unwrap();
+    let group_name = "same-group";
+    let timestamp = 1640995200;
+
+    // Same mnemonic, different passphrases should produce different keys
+    let key1 = DigitalGroupAssistant::create_key_from_mnemonic(
+        &mnemonic,
+        "passphrase-one",
+        group_name,
+        timestamp,
+    )
+    .unwrap();
+
+    let key2 = DigitalGroupAssistant::create_key_from_mnemonic(
+        &mnemonic,
+        "passphrase-two",
+        group_name,
+        timestamp,
+    )
+    .unwrap();
+
+    // Keys should be different
+    assert_ne!(key1.key, key2.key);
+    assert_ne!(key1.key_id, key2.key_id);
+
+    // Context should be the same, but salts should be different (random)
+    let info1 = key1.derivation_info.as_ref().unwrap();
+    let info2 = key2.derivation_info.as_ref().unwrap();
+    assert_eq!(info1.context, info2.context);
+    assert_ne!(info1.salt, info2.salt); // Different random salts
 }

@@ -115,7 +115,7 @@ async fn test_message_storage_and_retrieval() -> Result<()> {
 
     let received_message = message_opt.unwrap();
     assert_eq!(
-        String::from_utf8_lossy(received_message.content()),
+        String::from_utf8_lossy(received_message.raw_content().unwrap()),
         "Test message content"
     );
 
@@ -150,7 +150,8 @@ async fn test_channel_catch_up_functionality() -> Result<()> {
     let mut retrieved_messages = Vec::new();
     while let Some(result) = catch_up_stream.next().await {
         let (message, (_global_height, _local_height)) = result?;
-        retrieved_messages.push(String::from_utf8_lossy(message.content()).to_string());
+        retrieved_messages
+            .push(String::from_utf8_lossy(message.raw_content().unwrap()).to_string());
     }
 
     assert_eq!(retrieved_messages.len(), 3);
@@ -257,7 +258,8 @@ async fn test_concurrent_catch_up_and_live_streaming() -> Result<()> {
         if let Some(result) = timeout(Duration::from_secs(2), live_stream.next()).await? {
             let (message_opt, _height) = result?;
             if let Some(message) = message_opt {
-                live_messages.push(String::from_utf8_lossy(message.content()).to_string());
+                live_messages
+                    .push(String::from_utf8_lossy(message.raw_content().unwrap()).to_string());
             }
         }
     }
@@ -268,7 +270,8 @@ async fn test_concurrent_catch_up_and_live_streaming() -> Result<()> {
         match timeout_result {
             Ok(Some(stream_result)) => match stream_result {
                 Ok((message, _)) => {
-                    catch_up_messages.push(String::from_utf8_lossy(message.content()).to_string());
+                    catch_up_messages
+                        .push(String::from_utf8_lossy(message.raw_content().unwrap()).to_string());
                 }
                 Err(_) => break,
             },
@@ -297,7 +300,7 @@ async fn test_concurrent_catch_up_and_live_streaming() -> Result<()> {
     if let Some(result) = timeout(Duration::from_secs(2), live_stream.next()).await? {
         let (message_opt, _height) = result?;
         if let Some(message) = message_opt {
-            let content = String::from_utf8_lossy(message.content());
+            let content = String::from_utf8_lossy(message.raw_content().unwrap());
             assert_eq!(content, "New live message");
         }
     }
@@ -388,7 +391,7 @@ async fn test_multiple_channel_catch_up() -> Result<()> {
         let mut messages = Vec::new();
         while let Some(result) = catch_up_stream.next().await {
             let (message, _) = result?;
-            messages.push(String::from_utf8_lossy(message.content()).to_string());
+            messages.push(String::from_utf8_lossy(message.raw_content().unwrap()).to_string());
         }
 
         assert_eq!(messages.len(), 2);
@@ -454,7 +457,9 @@ async fn test_race_condition_prevention_logic() -> Result<()> {
         match timeout_result {
             Ok(Some(stream_result)) => match stream_result {
                 Ok((message, _)) => {
-                    all_messages.insert(String::from_utf8_lossy(message.content()).to_string());
+                    all_messages.insert(
+                        String::from_utf8_lossy(message.raw_content().unwrap()).to_string(),
+                    );
                 }
                 Err(_) => break,
             },
@@ -476,7 +481,9 @@ async fn test_race_condition_prevention_logic() -> Result<()> {
             Ok(Some(stream_result)) => {
                 match stream_result {
                     Ok((Some(message), _)) => {
-                        all_messages.insert(String::from_utf8_lossy(message.content()).to_string());
+                        all_messages.insert(
+                            String::from_utf8_lossy(message.raw_content().unwrap()).to_string(),
+                        );
                     }
                     Ok((None, _)) => continue, // Height update
                     Err(_) => break,
@@ -595,7 +602,8 @@ async fn test_generic_catch_up_requests() -> Result<()> {
         match timeout_result {
             Ok(Some(stream_result)) => match stream_result {
                 Ok((message, _)) => {
-                    channel_messages.push(String::from_utf8_lossy(message.content()).to_string());
+                    channel_messages
+                        .push(String::from_utf8_lossy(message.raw_content().unwrap()).to_string());
                 }
                 Err(_) => break,
             },
@@ -622,7 +630,8 @@ async fn test_generic_catch_up_requests() -> Result<()> {
         match timeout_result {
             Ok(Some(stream_result)) => match stream_result {
                 Ok((message, _)) => {
-                    author_messages.push(String::from_utf8_lossy(message.content()).to_string());
+                    author_messages
+                        .push(String::from_utf8_lossy(message.raw_content().unwrap()).to_string());
                 }
                 Err(_) => break,
             },

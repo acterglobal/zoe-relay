@@ -28,6 +28,9 @@ pub enum DgaError {
 
     #[error("Invalid group configuration: {0}")]
     InvalidGroupConfig(String),
+
+    #[error("Crypto error: {0}")]
+    CryptoError(String),
 }
 
 pub type DgaResult<T> = Result<T, DgaError>;

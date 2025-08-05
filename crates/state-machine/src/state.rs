@@ -3,9 +3,8 @@ use ed25519_dalek::VerifyingKey;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-use crate::{
-    DgaError, DgaResult, GroupActivityEvent, GroupEncryptionKey, GroupRole, GroupSettings,
-};
+use crate::{DgaError, DgaResult, GroupActivityEvent, GroupRole, GroupSettings};
+use zoe_wire_protocol::EncryptionKey;
 
 /// The complete state of a group, maintained as an event-sourced state machine
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -52,9 +51,9 @@ pub struct GroupMember {
 #[derive(Debug, Clone)]
 pub struct GroupEncryptionState {
     /// Current encryption key
-    pub current_key: GroupEncryptionKey,
+    pub current_key: EncryptionKey,
     /// Previous keys (for decrypting old messages during key rotation)
-    pub previous_keys: Vec<GroupEncryptionKey>,
+    pub previous_keys: Vec<EncryptionKey>,
 }
 
 /// A snapshot of a group's state at a specific point in time
