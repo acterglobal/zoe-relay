@@ -3,7 +3,7 @@ use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
 use postcard::to_vec;
 use serde::{Deserialize, Serialize};
 
-use crate::crypto::ChaCha20Poly1305Content;
+use crate::{crypto::ChaCha20Poly1305Content, Ed25519EncryptedContent};
 
 mod store_key;
 pub use store_key::StoreKey;
@@ -54,6 +54,9 @@ pub enum Content {
     /// ChaCha20-Poly1305 encrypted content (minimal overhead)
     /// Key determined by message context (channel tags, etc.)
     ChaCha20Poly1305(ChaCha20Poly1305Content),
+    /// Ed25519-derived ChaCha20-Poly1305 encrypted content
+    /// Simple encryption using ed25519 keypair from mnemonic
+    Ed25519Encrypted(Ed25519EncryptedContent),
 }
 
 impl Content {
@@ -72,11 +75,17 @@ impl Content {
         Content::ChaCha20Poly1305(content)
     }
 
+    /// Create ed25519-encrypted content
+    pub fn ed25519_encrypted(content: Ed25519EncryptedContent) -> Self {
+        Content::Ed25519Encrypted(content)
+    }
+
     /// Get the raw bytes if this is raw content
     pub fn as_raw(&self) -> Option<&Vec<u8>> {
         match self {
             Content::Raw(data) => Some(data),
             Content::ChaCha20Poly1305(_) => None,
+            Content::Ed25519Encrypted(_) => None,
         }
     }
 
@@ -85,12 +94,25 @@ impl Content {
         match self {
             Content::Raw(_) => None,
             Content::ChaCha20Poly1305(content) => Some(content),
+            Content::Ed25519Encrypted(_) => None,
+        }
+    }
+
+    /// Get the ed25519-encrypted content if this is ed25519-encrypted
+    pub fn as_ed25519_encrypted(&self) -> Option<&Ed25519EncryptedContent> {
+        match self {
+            Content::Raw(_) => None,
+            Content::ChaCha20Poly1305(_) => None,
+            Content::Ed25519Encrypted(content) => Some(content),
         }
     }
 
     /// Check if this content is encrypted
     pub fn is_encrypted(&self) -> bool {
-        matches!(self, Content::ChaCha20Poly1305(_))
+        matches!(
+            self,
+            Content::ChaCha20Poly1305(_) | Content::Ed25519Encrypted(_)
+        )
     }
 
     /// Check if this content is raw
@@ -155,6 +177,22 @@ impl Message {
             kind,
             tags,
             content: Content::ChaCha20Poly1305(content),
+        })
+    }
+
+    pub fn new_v0_ed25519_encrypted(
+        content: Ed25519EncryptedContent,
+        sender: VerifyingKey,
+        when: u64,
+        kind: Kind,
+        tags: Vec<Tag>,
+    ) -> Self {
+        Message::MessageV0(MessageV0 {
+            sender,
+            when,
+            kind,
+            tags,
+            content: Content::Ed25519Encrypted(content),
         })
     }
 
@@ -351,6 +389,9 @@ impl MessageFull {
                 Content::ChaCha20Poly1305(_) => {
                     Err("Cannot deserialize encrypted content without decryption key".into())
                 }
+                Content::Ed25519Encrypted(_) => {
+                    Err("Cannot deserialize ed25519-encrypted content without signing key".into())
+                }
             },
         }
     }
@@ -368,6 +409,31 @@ impl MessageFull {
                 Content::Raw(_) => Err("Content is not encrypted".into()),
                 Content::ChaCha20Poly1305(encrypted) => {
                     let plaintext = encryption_key.decrypt_content(encrypted)?;
+                    Ok(postcard::from_bytes(&plaintext)?)
+                }
+                Content::Ed25519Encrypted(_) => {
+                    Err("Cannot decrypt ed25519-encrypted content with EncryptionKey - use signing key instead".into())
+                }
+            },
+        }
+    }
+
+    /// Try to deserialize ed25519-encrypted content by decrypting it first
+    pub fn try_deserialize_ed25519_encrypted_content<C>(
+        &self,
+        signing_key: &ed25519_dalek::SigningKey,
+    ) -> Result<C, Box<dyn std::error::Error>>
+    where
+        C: for<'a> Deserialize<'a>,
+    {
+        match &*self.message {
+            Message::MessageV0(message) => match &message.content {
+                Content::Raw(_) => Err("Content is not encrypted".into()),
+                Content::ChaCha20Poly1305(_) => {
+                    Err("Cannot decrypt ChaCha20Poly1305 content with signing key - use EncryptionKey instead".into())
+                }
+                Content::Ed25519Encrypted(encrypted) => {
+                    let plaintext = encrypted.decrypt(signing_key)?;
                     Ok(postcard::from_bytes(&plaintext)?)
                 }
             },
@@ -446,6 +512,11 @@ mod tests {
                 }
             }
             Content::ChaCha20Poly1305(ref mut encrypted) => {
+                if !encrypted.ciphertext.is_empty() {
+                    encrypted.ciphertext[0] = encrypted.ciphertext[0].wrapping_add(1);
+                }
+            }
+            Content::Ed25519Encrypted(ref mut encrypted) => {
                 if !encrypted.ciphertext.is_empty() {
                     encrypted.ciphertext[0] = encrypted.ciphertext[0].wrapping_add(1);
                 }

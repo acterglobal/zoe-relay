@@ -7626,6 +7626,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "bip39",
  "clap",
  "ed25519-dalek",
  "futures",
@@ -7639,6 +7640,7 @@ dependencies = [
  "rand 0.8.5",
  "rustls",
  "serde",
+ "serde_json",
  "tarpc",
  "tempfile",
  "thiserror 2.0.12",

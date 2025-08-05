@@ -60,6 +60,10 @@ name = "mls_chat_client"
 path = "examples/mls_chat_client.rs"
 required-features = ["mls"]
 
+[[example]]
+name = "encrypted_personal_data"
+path = "examples/encrypted_personal_data.rs"
+
 
 [dev-dependencies]
 # Testing framework
@@ -70,3 +74,7 @@ clap = { workspace = true }
 anyhow = { workspace = true }
 tracing-subscriber = { workspace = true }
 tempfile = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+postcard = { workspace = true }
+bip39 = "2.1"

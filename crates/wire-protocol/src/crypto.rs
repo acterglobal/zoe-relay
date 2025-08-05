@@ -518,6 +518,78 @@ pub struct ChaCha20Poly1305Content {
     pub nonce: [u8; 12],
 }
 
+/// Ed25519-derived ChaCha20-Poly1305 encrypted content
+/// Simple user-friendly encryption using only ed25519 keypair derived from mnemonic
+/// Public key is available from message sender field - no need to duplicate
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Ed25519EncryptedContent {
+    /// Encrypted data + authentication tag
+    pub ciphertext: Vec<u8>,
+    /// ChaCha20-Poly1305 nonce (12 bytes)
+    pub nonce: [u8; 12],
+}
+
+impl Ed25519EncryptedContent {
+    /// Encrypt data using ed25519 private key
+    /// Derives a ChaCha20 key from the ed25519 private key deterministically
+    pub fn encrypt(plaintext: &[u8], signing_key: &ed25519_dalek::SigningKey) -> Result<Self> {
+        use chacha20poly1305::aead::{Aead, OsRng};
+        use chacha20poly1305::{AeadCore, ChaCha20Poly1305, Key, KeyInit};
+
+        // Derive ChaCha20 key from ed25519 private key using Blake3
+        let ed25519_private_bytes = signing_key.to_bytes();
+        let mut key_derivation_input = Vec::new();
+        key_derivation_input.extend_from_slice(&ed25519_private_bytes);
+        key_derivation_input.extend_from_slice(b"ed25519-to-chacha20-key-derivation");
+
+        let derived_key_hash = blake3::hash(&key_derivation_input);
+        let chacha_key = Key::from_slice(derived_key_hash.as_bytes());
+        let cipher = ChaCha20Poly1305::new(chacha_key);
+
+        // Generate random nonce
+        let nonce = ChaCha20Poly1305::generate_nonce(&mut OsRng);
+
+        let ciphertext = cipher.encrypt(&nonce, plaintext).map_err(|e| {
+            CryptoError::EncryptionError(format!("Ed25519-derived ChaCha20 encryption failed: {e}"))
+        })?;
+
+        let mut nonce_bytes = [0u8; 12];
+        nonce_bytes.copy_from_slice(&nonce);
+
+        Ok(Self {
+            ciphertext,
+            nonce: nonce_bytes,
+        })
+    }
+
+    /// Decrypt data using ed25519 private key
+    /// Must be the same private key that was used for encryption
+    pub fn decrypt(&self, signing_key: &ed25519_dalek::SigningKey) -> Result<Vec<u8>> {
+        use chacha20poly1305::aead::Aead;
+        use chacha20poly1305::{ChaCha20Poly1305, Key, KeyInit, Nonce};
+
+        // Derive the same ChaCha20 key from ed25519 private key
+        let ed25519_private_bytes = signing_key.to_bytes();
+        let mut key_derivation_input = Vec::new();
+        key_derivation_input.extend_from_slice(&ed25519_private_bytes);
+        key_derivation_input.extend_from_slice(b"ed25519-to-chacha20-key-derivation");
+
+        let derived_key_hash = blake3::hash(&key_derivation_input);
+        let chacha_key = Key::from_slice(derived_key_hash.as_bytes());
+        let cipher = ChaCha20Poly1305::new(chacha_key);
+
+        let nonce = Nonce::from_slice(&self.nonce);
+
+        cipher
+            .decrypt(nonce, self.ciphertext.as_ref())
+            .map_err(|e| {
+                CryptoError::DecryptionError(format!(
+                    "Ed25519-derived ChaCha20 decryption failed: {e}"
+                ))
+            })
+    }
+}
+
 impl EncryptionKey {
     /// Generate a random encryption key
     pub fn generate(timestamp: u64) -> Self {

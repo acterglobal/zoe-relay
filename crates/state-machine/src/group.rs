@@ -234,6 +234,11 @@ impl DigitalGroupAssistant {
                     "Expected encrypted content but found raw content".to_string(),
                 ));
             }
+            Content::Ed25519Encrypted(_) => {
+                return Err(DgaError::InvalidEvent(
+                    "Ed25519-encrypted content is not supported for group events".to_string(),
+                ));
+            }
         };
         let sender = message.sender;
         let timestamp = message.when;
