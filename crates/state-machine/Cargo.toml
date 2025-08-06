@@ -4,6 +4,8 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+# App primitives for common types
+zoe-app-primitives = { path = "../app-primitives" }
 zoe-wire-protocol = { path = "../wire-protocol" }
 serde = { version = "1.0", features = ["derive"] }
 blake3 = "1.5"

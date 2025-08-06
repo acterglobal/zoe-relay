@@ -1,0 +1,16 @@
+[package]
+name = "zoe-app-primitives"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+# Cryptographic types
+ed25519-dalek = { workspace = true }
+
+# Storage and encryption
+zoe-encrypted-storage = { path = "../encrypted-storage" }
+
+# Serialization
+serde = { workspace = true }
+
+

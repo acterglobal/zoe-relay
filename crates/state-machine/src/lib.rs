@@ -4,7 +4,6 @@
 //! as messages between participants to organize state machines of organizational objects.
 
 pub mod error;
-pub mod events;
 pub mod group;
 pub mod state;
 
@@ -12,7 +11,6 @@ pub mod state;
 mod tests;
 
 pub use error::*;
-pub use events::*;
 pub use group::*;
 pub use state::*;
 
@@ -24,3 +22,9 @@ pub use zoe_wire_protocol::{
 
 // Re-export bip39 for tests and examples
 pub use zoe_wire_protocol::bip39;
+
+// Re-export common group types from app-primitives for convenience
+pub use zoe_app_primitives::{
+    EncryptionSettings, GroupActivityEvent, GroupKeyInfo, GroupPermissions, GroupRole,
+    GroupSettings, Permission,
+};

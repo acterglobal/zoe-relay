@@ -3,7 +3,8 @@ use ed25519_dalek::VerifyingKey;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-use crate::{DgaError, DgaResult, GroupActivityEvent, GroupRole, GroupSettings};
+use crate::{DgaError, DgaResult};
+use zoe_app_primitives::{GroupActivityEvent, GroupRole, GroupSettings, Permission};
 use zoe_wire_protocol::EncryptionKey;
 
 /// The complete state of a group, maintained as an event-sourced state machine
@@ -179,7 +180,7 @@ impl GroupState {
     pub fn check_permission(
         &self,
         member: &VerifyingKey,
-        required_permission: &crate::Permission,
+        required_permission: &Permission,
     ) -> DgaResult<()> {
         match self.members.get(member) {
             Some(member_info) => {

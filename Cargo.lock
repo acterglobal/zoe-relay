@@ -7735,6 +7735,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "zoe-app-primitives"
+version = "0.1.0"
+dependencies = [
+ "ed25519-dalek",
+ "serde",
+ "zoe-encrypted-storage",
+]
+
+[[package]]
 name = "zoe-blob-store"
 version = "0.1.0"
 dependencies = [
@@ -7788,6 +7797,7 @@ dependencies = [
  "tokio-util",
  "tracing",
  "tracing-subscriber",
+ "zoe-app-primitives",
  "zoe-blob-store",
  "zoe-encrypted-storage",
  "zoe-wire-protocol",
@@ -7911,6 +7921,7 @@ dependencies = [
  "rand 0.8.5",
  "serde",
  "thiserror 1.0.69",
+ "zoe-app-primitives",
  "zoe-wire-protocol",
 ]
 
