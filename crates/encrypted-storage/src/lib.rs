@@ -57,6 +57,7 @@ use aes_gcm::{
 };
 use blake3::Hasher;
 use brotli::{CompressorWriter, Decompressor};
+use serde::{Deserialize, Serialize};
 use std::io::{Cursor, Read, Write};
 use thiserror::Error;
 
@@ -93,7 +94,7 @@ pub type ConvergentEncryptionKey = [u8; 32];
 ///
 /// Contains information needed for decryption, including whether compression
 /// was applied and the original file size.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ConvergentEncryptionInfo {
     /// The encryption key derived from the content
     pub key: ConvergentEncryptionKey,
@@ -106,7 +107,7 @@ pub struct ConvergentEncryptionInfo {
 /// Configuration for Brotli compression settings
 ///
 /// Controls when and how compression is applied during encryption.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CompressionConfig {
     /// Whether to enable compression
     pub enabled: bool,

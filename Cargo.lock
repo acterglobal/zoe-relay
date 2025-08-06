@@ -7788,6 +7788,8 @@ dependencies = [
  "tokio-util",
  "tracing",
  "tracing-subscriber",
+ "zoe-blob-store",
+ "zoe-encrypted-storage",
  "zoe-wire-protocol",
 ]
 
@@ -7825,6 +7827,7 @@ dependencies = [
  "aes-gcm",
  "blake3",
  "brotli",
+ "serde",
  "thiserror 2.0.12",
 ]
 

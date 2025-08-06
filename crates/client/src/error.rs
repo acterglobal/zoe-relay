@@ -14,6 +14,12 @@ pub enum ClientError {
     Crypto(String),
     #[error("Address parse error: {0}")]
     AddrParse(#[from] std::net::AddrParseError),
+    #[error("File storage error: {0}")]
+    FileStorage(String),
+    #[error("Encryption error: {0}")]
+    Encryption(#[from] zoe_encrypted_storage::ConvergentEncryptionError),
+    #[error("Blob store error: {0}")]
+    BlobStore(#[from] zoe_blob_store::BlobStoreError),
 }
 
 pub type Result<T> = std::result::Result<T, ClientError>;

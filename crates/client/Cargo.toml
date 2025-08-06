@@ -4,11 +4,15 @@ version = "0.1.0"
 edition = "2024"
 
 [features]
-mls = ["dep:openmls", "dep:openmls_rust_crypto", "dep:openmls_basic_credential", "dep:openmls_memory_storage", "dep:postcard", "dep:serde"]
+mls = ["dep:openmls", "dep:openmls_rust_crypto", "dep:openmls_basic_credential", "dep:openmls_memory_storage", "dep:postcard"]
 
 [dependencies]
 # Wire protocol for crypto utilities
 zoe-wire-protocol = { path = "../wire-protocol" }
+
+# Storage dependencies
+zoe-encrypted-storage = { path = "../encrypted-storage" }
+zoe-blob-store = { path = "../blob-store" }
 
 # Async runtime
 tokio = { workspace = true, features = ["io-util"] }
@@ -36,7 +40,7 @@ openmls_rust_crypto = { version = "0.4", optional = true }
 openmls_basic_credential = { version = "0.4", optional = true }
 openmls_memory_storage = { version = "0.4", optional = true }
 
-serde = { workspace = true, optional = true }
+serde = { workspace = true }
 tls_codec = { version = "0.4", optional = true }
 postcard = { workspace = true, optional = true }
 
@@ -63,6 +67,10 @@ required-features = ["mls"]
 [[example]]
 name = "encrypted_personal_data"
 path = "examples/encrypted_personal_data.rs"
+
+[[example]]
+name = "file_storage_example"
+path = "examples/file_storage_example.rs"
 
 
 [dev-dependencies]
