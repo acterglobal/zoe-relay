@@ -200,6 +200,89 @@ jobs:
             --exclude whatsmeow \
             --exclude wa-bot
 
+  mobile-cross-compile:
+    name: Mobile & Platform Cross Compilation (zoe-client)
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          # Apple targets (iOS) - run on macOS
+          - target: aarch64-apple-ios
+            os: macos-latest
+          - target: x86_64-apple-ios
+            os: macos-latest
+          - target: aarch64-apple-darwin
+            os: macos-latest
+          - target: x86_64-apple-darwin
+            os: macos-latest
+          # Android targets - run on Linux
+          - target: aarch64-linux-android
+            os: ubuntu-latest
+          - target: armv7-linux-androideabi
+            os: ubuntu-latest
+          - target: x86_64-linux-android
+            os: ubuntu-latest
+          - target: i686-linux-android
+            os: ubuntu-latest
+          # Linux targets - run on Linux
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-latest
+          # Windows targets - run on Windows
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+          - target: i686-pc-windows-msvc
+            os: windows-latest
+          - target: x86_64-pc-windows-gnu
+            os: windows-latest
+          
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+      
+      - name: Install Android NDK (Linux)
+        if: contains(matrix.target, 'android') && matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y wget unzip
+          wget -q https://dl.google.com/android/repository/android-ndk-r25c-linux.zip
+          unzip -q android-ndk-r25c-linux.zip
+          echo "ANDROID_NDK_HOME=$PWD/android-ndk-r25c" >> $GITHUB_ENV
+          echo "NDK_HOME=$PWD/android-ndk-r25c" >> $GITHUB_ENV
+          
+      - name: Setup Android environment (Linux)
+        if: contains(matrix.target, 'android') && matrix.os == 'ubuntu-latest'
+        run: |
+          # Setup linker paths for Android targets
+          mkdir -p ~/.cargo
+          cat >> ~/.cargo/config.toml << EOF
+          [target.aarch64-linux-android]
+          linker = "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android21-clang"
+          
+          [target.armv7-linux-androideabi]
+          linker = "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/armv7a-linux-androideabi21-clang"
+          
+          [target.x86_64-linux-android]
+          linker = "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/x86_64-linux-android21-clang"
+          
+          [target.i686-linux-android]
+          linker = "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/i686-linux-android21-clang"
+          EOF
+          
+      - name: Install cross-compilation tools (Linux ARM)
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu
+          
+      - name: Cross compile zoe-client for ${{ matrix.target }}
+        run: |
+          cargo build --target ${{ matrix.target }} --package zoe-client
+
   documentation:
     name: Documentation
     runs-on: ubuntu-latest
