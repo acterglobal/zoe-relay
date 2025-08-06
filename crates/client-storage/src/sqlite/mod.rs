@@ -1,4 +1,4 @@
-pub mod storage;
 pub mod migrations;
+pub mod storage;
 
 pub use storage::SqliteMessageStorage;

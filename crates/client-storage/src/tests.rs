@@ -1,11 +1,11 @@
 #[cfg(test)]
 mod integration_tests {
-    use crate::storage::{MessageQuery, MessageStorage, StorageConfig};
     use crate::sqlite::SqliteMessageStorage;
+    use crate::storage::{MessageQuery, MessageStorage, StorageConfig};
     use ed25519_dalek::SigningKey;
     use rand::rngs::OsRng;
     use tempfile::TempDir;
-    use zoe_wire_protocol::{Hash, Kind, Message, MessageV0, MessageFull, Tag, Content};
+    use zoe_wire_protocol::{Content, Hash, Kind, Message, MessageFull, MessageV0, Tag};
 
     // Helper function to create a test message
     fn create_test_message(content: &str, signing_key: &SigningKey) -> MessageFull {
@@ -24,7 +24,11 @@ mod integration_tests {
     }
 
     // Helper function to create a test message with specific timestamp
-    fn create_message_with_time(content: &str, signing_key: &SigningKey, timestamp: u64) -> MessageFull {
+    fn create_message_with_time(
+        content: &str,
+        signing_key: &SigningKey,
+        timestamp: u64,
+    ) -> MessageFull {
         let message = Message::MessageV0(MessageV0 {
             sender: signing_key.verifying_key(),
             when: timestamp,
@@ -59,8 +63,10 @@ mod integration_tests {
         let (config, _temp_dir) = create_test_storage_config();
         let encryption_key = [0u8; 32];
 
-        let storage = SqliteMessageStorage::new(config, &encryption_key).await.unwrap();
-        
+        let storage = SqliteMessageStorage::new(config, &encryption_key)
+            .await
+            .unwrap();
+
         assert!(storage.health_check().await.unwrap());
     }
 
@@ -70,7 +76,9 @@ mod integration_tests {
         let encryption_key = [1u8; 32];
         let signing_key = SigningKey::generate(&mut OsRng);
 
-        let storage = SqliteMessageStorage::new(config, &encryption_key).await.unwrap();
+        let storage = SqliteMessageStorage::new(config, &encryption_key)
+            .await
+            .unwrap();
         let message = create_test_message("Hello, world!", &signing_key);
         let message_id = message.id;
 
@@ -80,7 +88,7 @@ mod integration_tests {
         // Retrieve the message
         let retrieved = storage.get_message(&message_id).await.unwrap();
         assert!(retrieved.is_some());
-        
+
         let retrieved = retrieved.unwrap();
         assert_eq!(retrieved.id, message.id);
         // Both messages should have the same author
@@ -91,7 +99,7 @@ mod integration_tests {
             Message::MessageV0(msg) => msg.sender,
         };
         assert_eq!(retrieved_author, original_author);
-        
+
         // Compare message content
         let original_content = match &*message.message {
             Message::MessageV0(msg) => &msg.content,
@@ -107,8 +115,10 @@ mod integration_tests {
         let (config, _temp_dir) = create_test_storage_config();
         let encryption_key = [2u8; 32];
 
-        let storage = SqliteMessageStorage::new(config, &encryption_key).await.unwrap();
-        
+        let storage = SqliteMessageStorage::new(config, &encryption_key)
+            .await
+            .unwrap();
+
         // Try to retrieve a non-existent message
         let fake_hash = Hash::from_bytes([0u8; 32]);
         let result = storage.get_message(&fake_hash).await.unwrap();
@@ -121,7 +131,9 @@ mod integration_tests {
         let encryption_key = [3u8; 32];
         let signing_key = SigningKey::generate(&mut OsRng);
 
-        let storage = SqliteMessageStorage::new(config, &encryption_key).await.unwrap();
+        let storage = SqliteMessageStorage::new(config, &encryption_key)
+            .await
+            .unwrap();
         let message = create_test_message("To be deleted", &signing_key);
         let message_id = message.id;
 
@@ -152,7 +164,9 @@ mod integration_tests {
         let signing_key1 = SigningKey::generate(&mut OsRng);
         let signing_key2 = SigningKey::generate(&mut OsRng);
 
-        let storage = SqliteMessageStorage::new(config, &encryption_key).await.unwrap();
+        let storage = SqliteMessageStorage::new(config, &encryption_key)
+            .await
+            .unwrap();
 
         // Store messages from two different authors
         let message1 = create_test_message("Message from author 1", &signing_key1);
@@ -196,7 +210,9 @@ mod integration_tests {
         let encryption_key = [5u8; 32];
         let signing_key = SigningKey::generate(&mut OsRng);
 
-        let storage = SqliteMessageStorage::new(config, &encryption_key).await.unwrap();
+        let storage = SqliteMessageStorage::new(config, &encryption_key)
+            .await
+            .unwrap();
 
         let base_time = 1000000000u64; // Some base timestamp
 
@@ -230,7 +246,10 @@ mod integration_tests {
 
         let filtered_messages = storage.query_messages(&query).await.unwrap();
         assert_eq!(filtered_messages.len(), 1);
-        assert_eq!(get_message_timestamp(&filtered_messages[0]), base_time + 1000);
+        assert_eq!(
+            get_message_timestamp(&filtered_messages[0]),
+            base_time + 1000
+        );
     }
 
     #[tokio::test]
@@ -239,7 +258,9 @@ mod integration_tests {
         let encryption_key = [6u8; 32];
         let signing_key = SigningKey::generate(&mut OsRng);
 
-        let storage = SqliteMessageStorage::new(config, &encryption_key).await.unwrap();
+        let storage = SqliteMessageStorage::new(config, &encryption_key)
+            .await
+            .unwrap();
 
         // Initially empty
         assert_eq!(storage.get_message_count().await.unwrap(), 0);
@@ -270,7 +291,9 @@ mod integration_tests {
         let encryption_key = [7u8; 32];
         let signing_key = SigningKey::generate(&mut OsRng);
 
-        let storage = SqliteMessageStorage::new(config, &encryption_key).await.unwrap();
+        let storage = SqliteMessageStorage::new(config, &encryption_key)
+            .await
+            .unwrap();
 
         // Add some messages
         let message1 = create_test_message("Message 1", &signing_key);
@@ -292,7 +315,9 @@ mod integration_tests {
         let (config, _temp_dir) = create_test_storage_config();
         let encryption_key = [8u8; 32];
 
-        let storage = SqliteMessageStorage::new(config, &encryption_key).await.unwrap();
+        let storage = SqliteMessageStorage::new(config, &encryption_key)
+            .await
+            .unwrap();
 
         // Maintenance should complete successfully
         storage.maintenance().await.unwrap();
@@ -306,7 +331,9 @@ mod integration_tests {
         let signing_key = SigningKey::generate(&mut OsRng);
 
         // Create storage with first key
-        let storage1 = SqliteMessageStorage::new(config.clone(), &encryption_key1).await.unwrap();
+        let storage1 = SqliteMessageStorage::new(config.clone(), &encryption_key1)
+            .await
+            .unwrap();
         let message = create_test_message("Encrypted message", &signing_key);
         storage1.store_message(&message).await.unwrap();
         drop(storage1);
@@ -316,7 +343,9 @@ mod integration_tests {
         assert!(result.is_err());
 
         // Open with correct key - should succeed
-        let storage2 = SqliteMessageStorage::new(config, &encryption_key1).await.unwrap();
+        let storage2 = SqliteMessageStorage::new(config, &encryption_key1)
+            .await
+            .unwrap();
         let retrieved = storage2.get_message(&message.id).await.unwrap();
         assert!(retrieved.is_some());
     }
@@ -328,7 +357,9 @@ mod integration_tests {
         let signing_key = SigningKey::generate(&mut OsRng);
 
         let storage = std::sync::Arc::new(
-            SqliteMessageStorage::new(config, &encryption_key).await.unwrap()
+            SqliteMessageStorage::new(config, &encryption_key)
+                .await
+                .unwrap(),
         );
 
         // Spawn multiple tasks that store messages concurrently
@@ -336,7 +367,7 @@ mod integration_tests {
         for i in 0..10 {
             let storage = storage.clone();
             let signing_key = signing_key.clone();
-            
+
             let handle = tokio::spawn(async move {
                 let message = create_test_message(&format!("Concurrent message {i}"), &signing_key);
                 storage.store_message(&message).await.unwrap();

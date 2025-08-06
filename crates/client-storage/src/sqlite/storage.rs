@@ -1,11 +1,11 @@
 use async_trait::async_trait;
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::{Connection, OptionalExtension, params};
 use std::sync::{Arc, Mutex};
 use zoe_wire_protocol::{Hash, MessageFull, Tag};
 
+use super::migrations;
 use crate::error::{Result, StorageError};
 use crate::storage::{MessageQuery, MessageStorage, StorageConfig, StorageStats};
-use super::migrations;
 
 /// SQLite-based message storage with SQLCipher encryption
 pub struct SqliteMessageStorage {
@@ -17,15 +17,13 @@ impl SqliteMessageStorage {
     /// Create a new SQLite storage instance with encryption
     pub async fn new(config: StorageConfig, encryption_key: &[u8; 32]) -> Result<Self> {
         let db_path = &config.database_path;
-        
+
         // Ensure parent directory exists
         if let Some(parent) = db_path.parent() {
-            std::fs::create_dir_all(parent)
-                .map_err(|e| StorageError::Io(e))?;
+            std::fs::create_dir_all(parent).map_err(StorageError::Io)?;
         }
 
-        let mut conn = Connection::open(db_path)
-            .map_err(|e| StorageError::Database(e))?;
+        let mut conn = Connection::open(db_path).map_err(StorageError::Database)?;
 
         // Set up SQLCipher encryption
         Self::setup_encryption(&mut conn, encryption_key)?;
@@ -39,7 +37,10 @@ impl SqliteMessageStorage {
         // Verify database is accessible
         Self::verify_database_access(&mut conn)?;
 
-        tracing::info!("SQLite message storage initialized at: {}", db_path.display());
+        tracing::info!(
+            "SQLite message storage initialized at: {}",
+            db_path.display()
+        );
 
         Ok(Self {
             conn: Arc::new(Mutex::new(conn)),
@@ -50,14 +51,19 @@ impl SqliteMessageStorage {
     /// Set up SQLCipher encryption on the database connection
     fn setup_encryption(conn: &mut Connection, encryption_key: &[u8; 32]) -> Result<()> {
         let key_hex = hex::encode(encryption_key);
-        
-        // Set the encryption key
-        conn.execute(&format!("PRAGMA key = '{}'", key_hex), [])
-            .map_err(|e| StorageError::Encryption(format!("Failed to set encryption key: {}", e)))?;
+
+        // Set the encryption key using execute_batch for PRAGMA commands
+        conn.execute_batch(&format!("PRAGMA key = '{key_hex}';"))
+            .map_err(|e| StorageError::Encryption(format!("Failed to set encryption key: {e}")))?;
 
         // Verify we can access the database (will fail if wrong key)
-        conn.execute("SELECT COUNT(*) FROM sqlite_master", [])
-            .map_err(|e| StorageError::Encryption(format!("Database access verification failed - invalid key?: {}", e)))?;
+        let _count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM sqlite_master", [], |row| row.get(0))
+            .map_err(|e| {
+                StorageError::Encryption(format!(
+                    "Database access verification failed - invalid key?: {e}"
+                ))
+            })?;
 
         tracing::debug!("Database encryption configured successfully");
         Ok(())
@@ -66,7 +72,7 @@ impl SqliteMessageStorage {
     /// Configure SQLite for optimal performance in embedded/mobile scenarios
     fn configure_sqlite(conn: &mut Connection, config: &StorageConfig) -> Result<()> {
         let mut pragma_statements = vec![
-            "PRAGMA foreign_keys = ON".to_string(),  // Enable foreign key constraints
+            "PRAGMA foreign_keys = ON".to_string(), // Enable foreign key constraints
             "PRAGMA temp_store = memory".to_string(), // Store temp tables in RAM
         ];
 
@@ -81,7 +87,7 @@ impl SqliteMessageStorage {
         // Set cache size if configured
         if let Some(cache_size_kb) = config.cache_size_kb {
             // SQLite cache_size is in pages, negative value means KB
-            pragma_statements.push(format!("PRAGMA cache_size = -{}", cache_size_kb));
+            pragma_statements.push(format!("PRAGMA cache_size = -{cache_size_kb}"));
         }
 
         // Memory mapping for better performance (128MB)
@@ -89,8 +95,8 @@ impl SqliteMessageStorage {
 
         // Execute all pragma statements
         for pragma in pragma_statements {
-            conn.execute(&pragma, [])
-                .map_err(|e| StorageError::Database(e))?;
+            conn.execute_batch(&format!("{pragma};"))
+                .map_err(StorageError::Database)?;
             tracing::debug!("Applied: {}", pragma);
         }
 
@@ -100,33 +106,40 @@ impl SqliteMessageStorage {
     /// Verify database is accessible and has expected schema
     fn verify_database_access(conn: &mut Connection) -> Result<()> {
         // Check that required tables exist
-        let required_tables = vec![
-            "messages", "storage_metadata", 
-            "tag_events", "tag_users", "tag_channels"
+        let required_tables = [
+            "messages",
+            "storage_metadata",
+            "tag_events",
+            "tag_users",
+            "tag_channels",
         ];
-        
-        let table_names = required_tables.iter()
-            .map(|name| format!("'{}'", name))
+
+        let table_names = required_tables
+            .iter()
+            .map(|name| format!("'{name}'"))
             .collect::<Vec<_>>()
             .join(",");
 
         let table_count: i32 = conn
             .prepare(&format!(
-                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ({})", 
-                table_names
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ({table_names})"
             ))
             .map_err(StorageError::Database)?
             .query_row([], |row| row.get(0))
             .map_err(StorageError::Database)?;
 
         if table_count < required_tables.len() as i32 {
-            return Err(StorageError::Internal(
-                format!("Required tables not found - expected {}, found {}. Migration may have failed", 
-                       required_tables.len(), table_count)
-            ));
+            return Err(StorageError::Internal(format!(
+                "Required tables not found - expected {}, found {}. Migration may have failed",
+                required_tables.len(),
+                table_count
+            )));
         }
 
-        tracing::debug!("Database access verification successful - found all {} required tables", table_count);
+        tracing::debug!(
+            "Database access verification successful - found all {} required tables",
+            table_count
+        );
         Ok(())
     }
 
@@ -138,7 +151,10 @@ impl SqliteMessageStorage {
     }
 
     /// Build complete SQL query and parameters for message queries using tag tables
-    fn build_query_sql(query: &MessageQuery, config: &StorageConfig) -> Result<(String, Vec<Box<dyn rusqlite::ToSql>>)> {
+    fn build_query_sql(
+        query: &MessageQuery,
+        config: &StorageConfig,
+    ) -> Result<(String, Vec<Box<dyn rusqlite::ToSql>>)> {
         let mut joins = Vec::new();
         let mut conditions = Vec::new();
         let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
@@ -204,7 +220,9 @@ impl SqliteMessageStorage {
             " ORDER BY m.timestamp DESC"
         };
 
-        let limit = query.limit.unwrap_or(config.max_query_limit.unwrap_or(1000));
+        let limit = query
+            .limit
+            .unwrap_or(config.max_query_limit.unwrap_or(1000));
         let offset = query.offset.unwrap_or(0);
 
         // Add limit and offset parameters
@@ -212,14 +230,11 @@ impl SqliteMessageStorage {
         params.push(Box::new(offset));
 
         let sql = format!(
-            "SELECT DISTINCT m.data FROM messages m{}{}{} LIMIT ? OFFSET ?",
-            joins_clause, where_clause, order_clause
+            "SELECT DISTINCT m.data FROM messages m{joins_clause}{where_clause}{order_clause} LIMIT ? OFFSET ?"
         );
 
         Ok((sql, params))
     }
-
-
 }
 
 #[async_trait]
@@ -227,15 +242,16 @@ impl MessageStorage for SqliteMessageStorage {
     type Error = StorageError;
 
     async fn store_message(&self, message: &MessageFull) -> Result<()> {
-        let mut conn = self.conn.lock().map_err(|e| {
-            StorageError::Internal(format!("Failed to acquire database lock: {}", e))
-        })?;
+        let mut conn = self
+            .conn
+            .lock()
+            .map_err(|e| StorageError::Internal(format!("Failed to acquire database lock: {e}")))?;
 
         let id = message.id.as_bytes();
-        
+
         // Serialize the entire message for key-value storage
         let data = postcard::to_stdvec(message)?;
-        
+
         // Extract fields for indexing
         let (author, timestamp, tags) = match &*message.message {
             zoe_wire_protocol::Message::MessageV0(msg) => {
@@ -247,36 +263,31 @@ impl MessageStorage for SqliteMessageStorage {
 
         // Start transaction for atomic updates
         let tx = conn.savepoint()?;
-        
+
         // Store the message in key-value format
         tx.execute(
             "INSERT OR REPLACE INTO messages (id, data, author, timestamp) VALUES (?, ?, ?, ?)",
             params![id, data, author, timestamp],
         )?;
 
-        // Clear existing tag entries for this message
-        tx.execute("DELETE FROM tag_events WHERE message_id = ?", params![id])?;
-        tx.execute("DELETE FROM tag_users WHERE message_id = ?", params![id])?;
-        tx.execute("DELETE FROM tag_channels WHERE message_id = ?", params![id])?;
-
         // Insert tag entries
         for tag in tags {
             match tag {
                 Tag::Event { id: event_id, .. } => {
                     tx.execute(
-                        "INSERT INTO tag_events (message_id, event_id) VALUES (?, ?)",
+                        "INSERT OR REPLACE INTO tag_events (message_id, event_id) VALUES (?, ?)",
                         params![id, event_id.as_bytes()],
                     )?;
                 }
                 Tag::User { id: user_id, .. } => {
                     tx.execute(
-                        "INSERT INTO tag_users (message_id, user_id) VALUES (?, ?)",
+                        "INSERT OR REPLACE INTO tag_users (message_id, user_id) VALUES (?, ?)",
                         params![id, user_id],
                     )?;
                 }
                 Tag::Channel { id: channel_id, .. } => {
                     tx.execute(
-                        "INSERT INTO tag_channels (message_id, channel_id) VALUES (?, ?)",
+                        "INSERT OR REPLACE INTO tag_channels (message_id, channel_id) VALUES (?, ?)",
                         params![id, channel_id],
                     )?;
                 }
@@ -292,9 +303,10 @@ impl MessageStorage for SqliteMessageStorage {
     }
 
     async fn get_message(&self, id: &Hash) -> Result<Option<MessageFull>> {
-        let conn = self.conn.lock().map_err(|e| {
-            StorageError::Internal(format!("Failed to acquire database lock: {}", e))
-        })?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| StorageError::Internal(format!("Failed to acquire database lock: {e}")))?;
 
         let result = conn
             .prepare("SELECT data FROM messages WHERE id = ?")?
@@ -314,49 +326,49 @@ impl MessageStorage for SqliteMessageStorage {
     }
 
     async fn delete_message(&self, id: &Hash) -> Result<bool> {
-        let conn = self.conn.lock().map_err(|e| {
-            StorageError::Internal(format!("Failed to acquire database lock: {}", e))
-        })?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| StorageError::Internal(format!("Failed to acquire database lock: {e}")))?;
 
         // Delete from messages table - foreign key constraints will cascade to tag tables
         let changes = conn.execute("DELETE FROM messages WHERE id = ?", params![id.as_bytes()])?;
-        
+
         Ok(changes > 0)
     }
 
     async fn query_messages(&self, query: &MessageQuery) -> Result<Vec<MessageFull>> {
-        let conn = self.conn.lock().map_err(|e| {
-            StorageError::Internal(format!("Failed to acquire database lock: {}", e))
-        })?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| StorageError::Internal(format!("Failed to acquire database lock: {e}")))?;
 
         let (sql, params) = Self::build_query_sql(query, &self.config)?;
         let mut stmt = conn.prepare(&sql)?;
-        
+
         // Convert dynamic parameters to rusqlite-compatible format
-        let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter()
-            .map(|p| p.as_ref())
-            .collect();
-        
+        let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+
         let rows = stmt.query_map(&*param_refs, |row| {
             let data: Vec<u8> = row.get("data")?;
             Ok(data)
         })?;
-        
+
         let mut messages = Vec::new();
         for row in rows {
             let data = row?;
             let message: MessageFull = postcard::from_bytes(&data)?;
-            
+
             // Handle Protected tag filtering (requires post-query filtering)
-            if let Some(target_tag) = &query.tag {
-                if matches!(target_tag, Tag::Protected) {
-                    let tags = Self::extract_tags(&message)?;
-                    if !tags.contains(target_tag) {
-                        continue;
-                    }
+            if let Some(target_tag) = &query.tag
+                && matches!(target_tag, Tag::Protected)
+            {
+                let tags = Self::extract_tags(&message)?;
+                if !tags.contains(target_tag) {
+                    continue;
                 }
             }
-            
+
             messages.push(message);
         }
 
@@ -364,9 +376,10 @@ impl MessageStorage for SqliteMessageStorage {
     }
 
     async fn get_message_count(&self) -> Result<u64> {
-        let conn = self.conn.lock().map_err(|e| {
-            StorageError::Internal(format!("Failed to acquire database lock: {}", e))
-        })?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| StorageError::Internal(format!("Failed to acquire database lock: {e}")))?;
 
         let count: i64 = conn
             .prepare("SELECT COUNT(*) FROM messages")?
@@ -376,9 +389,10 @@ impl MessageStorage for SqliteMessageStorage {
     }
 
     async fn get_storage_stats(&self) -> Result<StorageStats> {
-        let conn = self.conn.lock().map_err(|e| {
-            StorageError::Internal(format!("Failed to acquire database lock: {}", e))
-        })?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| StorageError::Internal(format!("Failed to acquire database lock: {e}")))?;
 
         let message_count: i64 = conn
             .prepare("SELECT COUNT(*) FROM messages")?
@@ -407,9 +421,10 @@ impl MessageStorage for SqliteMessageStorage {
     }
 
     async fn clear_all_messages(&self) -> Result<()> {
-        let conn = self.conn.lock().map_err(|e| {
-            StorageError::Internal(format!("Failed to acquire database lock: {}", e))
-        })?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| StorageError::Internal(format!("Failed to acquire database lock: {e}")))?;
 
         conn.execute("DELETE FROM messages", [])?;
         tracing::info!("Cleared all messages from storage");
@@ -424,27 +439,29 @@ impl MessageStorage for SqliteMessageStorage {
     }
 
     async fn maintenance(&self) -> Result<()> {
-        let conn = self.conn.lock().map_err(|e| {
-            StorageError::Internal(format!("Failed to acquire database lock: {}", e))
-        })?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| StorageError::Internal(format!("Failed to acquire database lock: {e}")))?;
 
         // Run VACUUM to reclaim space and optimize database
         conn.execute("VACUUM", [])?;
-        
+
         // Analyze tables for query optimization
         conn.execute("ANALYZE", [])?;
-        
+
         tracing::info!("Database maintenance completed");
         Ok(())
     }
 
     async fn health_check(&self) -> Result<bool> {
-        let conn = self.conn.lock().map_err(|e| {
-            StorageError::Internal(format!("Failed to acquire database lock: {}", e))
-        })?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| StorageError::Internal(format!("Failed to acquire database lock: {e}")))?;
 
         // Simple query to verify database is accessible
-        match conn.execute("SELECT 1", []) {
+        match conn.query_row("SELECT 1", [], |_| Ok(())) {
             Ok(_) => Ok(true),
             Err(e) => {
                 tracing::error!("Health check failed: {}", e);
