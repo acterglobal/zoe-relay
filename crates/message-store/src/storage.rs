@@ -418,9 +418,9 @@ impl RedisMessageStorage {
     }
 
     /// Check which messages the server already has and return their global stream IDs.
-    /// Returns a vec of Option<String> in the same order as the input, where:
-    /// - Some(stream_id) means the server has the message with that global stream ID  
-    /// - None means the server doesn't have this message yet
+    /// Returns a vec of `Option<String>` in the same order as the input, where:
+    /// - `Some(stream_id)` means the server has the message with that global stream ID  
+    /// - `None` means the server doesn't have this message yet
     pub async fn check_messages(&self, message_ids: &[Hash]) -> Result<Vec<Option<String>>> {
         if message_ids.is_empty() {
             return Ok(vec![]);

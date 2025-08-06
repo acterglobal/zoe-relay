@@ -287,9 +287,9 @@ pub trait MessageService {
 
     // Bulk operations for sync
     /// Check which messages the server already has and return their global stream IDs.
-    /// Returns a vec of Option<String> in the same order as the input, where:
-    /// - Some(stream_id) means the server has the message with that global stream ID
-    /// - None means the server doesn't have this message yet
+    /// Returns a vec of `Option<String>` in the same order as the input, where:
+    /// - `Some(stream_id)` means the server has the message with that global stream ID
+    /// - `None` means the server doesn't have this message yet
     async fn check_messages(message_ids: Vec<Hash>) -> Result<Vec<Option<String>>, MessageError>;
 
     // Subscription management - now RPC calls with direct acknowledgment
