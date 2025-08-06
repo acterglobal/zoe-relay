@@ -1,7 +1,7 @@
 use blake3::Hash;
 use ed25519_dalek::VerifyingKey;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use crate::{DgaError, DgaResult};
 use zoe_app_primitives::{GroupActivityEvent, GroupRole, GroupSettings, Permission};
@@ -18,7 +18,7 @@ pub struct GroupState {
     /// Current group description
     pub description: Option<String>,
     /// Group metadata
-    pub metadata: HashMap<String, String>,
+    pub metadata: BTreeMap<String, String>,
     /// Current group settings
     pub settings: GroupSettings,
     /// Group members and their roles (anyone with the key can participate)
@@ -44,7 +44,7 @@ pub struct GroupMember {
     /// When they were last active
     pub last_active: u64,
     /// Member-specific metadata
-    pub metadata: HashMap<String, String>,
+    pub metadata: BTreeMap<String, String>,
 }
 
 /// Encryption state for a group
@@ -71,7 +71,7 @@ impl GroupState {
         group_id: Hash, // This is both the group ID and root event ID
         name: String,
         description: Option<String>,
-        metadata: HashMap<String, String>,
+        metadata: BTreeMap<String, String>,
         settings: GroupSettings,
         creator: VerifyingKey,
         timestamp: u64,
@@ -84,7 +84,7 @@ impl GroupState {
                 role: GroupRole::Owner,
                 joined_at: timestamp,
                 last_active: timestamp,
-                metadata: HashMap::new(),
+                metadata: BTreeMap::new(),
             },
         );
 
@@ -232,7 +232,7 @@ impl GroupState {
                     role: GroupRole::Member, // Default role for new key holders
                     joined_at: timestamp,
                     last_active: timestamp,
-                    metadata: HashMap::new(),
+                    metadata: BTreeMap::new(),
                 },
             );
         }
@@ -265,7 +265,7 @@ impl GroupState {
         sender: VerifyingKey,
         name: Option<String>,
         description: Option<String>,
-        metadata_updates: HashMap<String, Option<String>>,
+        metadata_updates: BTreeMap<String, Option<String>>,
         settings_updates: Option<GroupSettings>,
     ) -> DgaResult<()> {
         // Check permission
@@ -327,7 +327,7 @@ impl GroupState {
         sender: VerifyingKey,
         _activity_type: String,
         _payload: Vec<u8>,
-        _metadata: HashMap<String, String>,
+        _metadata: BTreeMap<String, String>,
         timestamp: u64,
     ) -> DgaResult<()> {
         // Check permission to post activities

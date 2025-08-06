@@ -1,8 +1,9 @@
 // ChaCha20-Poly1305 and AES-GCM functionality moved to crypto module
 use blake3::Hash;
 use ed25519_dalek::{SigningKey, VerifyingKey};
+use zoe_app_primitives::Image;
 // Random number generation moved to wire-protocol crypto module
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use zoe_wire_protocol::{Kind, Message, MessageFull, Tag};
 
@@ -40,7 +41,7 @@ pub struct CreateGroupConfig {
     /// Optional description
     pub description: Option<String>,
     /// Group metadata
-    pub metadata: HashMap<String, String>,
+    pub metadata: BTreeMap<String, String>,
     /// Group settings
     pub settings: GroupSettings,
     /// Optional pre-generated encryption key (if None, a new key will be generated)
@@ -114,7 +115,7 @@ impl DigitalGroupAssistant {
             key_id: encryption_key.key_id.clone(),
             algorithm: "chacha20-poly1305".to_string(),
             derivation_params: encryption_key.derivation_info.as_ref().map(|info| {
-                let mut params = HashMap::new();
+                let mut params = BTreeMap::new();
                 params.insert("method".to_string(), info.method.clone());
                 params.insert("context".to_string(), info.context.clone());
                 params
@@ -430,7 +431,7 @@ pub fn create_role_update_event(member: VerifyingKey, role: GroupRole) -> GroupA
 pub fn create_group_activity_event(
     activity_type: String,
     payload: Vec<u8>,
-    metadata: HashMap<String, String>,
+    metadata: BTreeMap<String, String>,
 ) -> GroupActivityEvent {
     GroupActivityEvent::GroupActivity {
         activity_type,
@@ -443,15 +444,17 @@ pub fn create_group_activity_event(
 pub fn create_group_update_event(
     name: Option<String>,
     description: Option<String>,
-    metadata_updates: HashMap<String, Option<String>>,
+    metadata_updates: BTreeMap<String, Option<String>>,
     settings_updates: Option<GroupSettings>,
+    avatar: Option<Option<Image>>,
+    background: Option<Option<Image>>,
 ) -> GroupActivityEvent {
     GroupActivityEvent::UpdateGroup {
         name,
         description,
         metadata_updates,
         settings_updates,
-        avatar: None,
-        background: None,
+        avatar,
+        background,
     }
 }

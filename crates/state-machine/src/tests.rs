@@ -1,7 +1,7 @@
 use crate::*;
 use ed25519_dalek::SigningKey;
 use rand::thread_rng;
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use zoe_wire_protocol::Tag;
 
 fn create_test_keys() -> (SigningKey, SigningKey) {
@@ -16,7 +16,7 @@ fn create_test_group_config() -> CreateGroupConfig {
         name: "Test Group".to_string(),
         description: Some("A test group for unit tests".to_string()),
         metadata: {
-            let mut metadata = HashMap::new();
+            let mut metadata = BTreeMap::new();
             metadata.insert("category".to_string(), "testing".to_string());
             metadata
         },
@@ -69,7 +69,7 @@ fn test_encrypt_decrypt_group_event() {
         "test_activity".to_string(),
         b"Hello, encrypted world!".to_vec(),
         {
-            let mut metadata = HashMap::new();
+            let mut metadata = BTreeMap::new();
             metadata.insert("test".to_string(), "value".to_string());
             metadata
         },
@@ -140,7 +140,7 @@ fn test_encrypted_group_activity() {
         "welcome_message".to_string(),
         b"Welcome to our encrypted group!".to_vec(),
         {
-            let mut metadata = HashMap::new();
+            let mut metadata = BTreeMap::new();
             metadata.insert("message_type".to_string(), "announcement".to_string());
             metadata
         },
@@ -191,7 +191,7 @@ fn test_new_member_via_activity() {
     let bob_activity = create_group_activity_event(
         "greeting".to_string(),
         b"Hello everyone! Thanks for the key.".to_vec(),
-        HashMap::new(),
+        Default::default(),
     );
 
     let bob_message = bob_dga
@@ -237,7 +237,7 @@ fn test_role_update() {
     let bob_activity = create_group_activity_event(
         "join_greeting".to_string(),
         b"Hello!".to_vec(),
-        HashMap::new(),
+        Default::default(),
     );
     let bob_message = bob_dga
         .create_group_event_message(result.group_id, bob_activity, &bob_key, timestamp + 5)
@@ -284,7 +284,7 @@ fn test_leave_group_event() {
     bob_dga.groups.insert(result.group_id, group_state);
 
     let bob_activity =
-        create_group_activity_event("join".to_string(), b"Joining".to_vec(), HashMap::new());
+        create_group_activity_event("join".to_string(), b"Joining".to_vec(), Default::default());
     let bob_message = bob_dga
         .create_group_event_message(result.group_id, bob_activity, &bob_key, timestamp + 5)
         .unwrap();
@@ -327,7 +327,7 @@ fn test_missing_encryption_key_error() {
 
     // Try to create an event without the key
     let activity_event =
-        create_group_activity_event("test".to_string(), b"test".to_vec(), HashMap::new());
+        create_group_activity_event("test".to_string(), b"test".to_vec(), Default::default());
 
     let result =
         dga.create_group_event_message(result.group_id, activity_event, &alice_key, timestamp + 1);
@@ -392,7 +392,7 @@ fn test_permission_denied_for_role_update() {
     bob_dga.groups.insert(result.group_id, group_state);
 
     let bob_activity =
-        create_group_activity_event("join".to_string(), b"Joining".to_vec(), HashMap::new());
+        create_group_activity_event("join".to_string(), b"Joining".to_vec(), Default::default());
     let bob_message = bob_dga
         .create_group_event_message(result.group_id, bob_activity, &bob_key, timestamp + 5)
         .unwrap();
@@ -529,7 +529,6 @@ fn test_recover_key_from_mnemonic() {
 fn test_mnemonic_key_integration_with_group_creation() {
     use crate::{CreateGroupConfig, GroupSettings, MnemonicPhrase};
     use ed25519_dalek::SigningKey;
-    use std::collections::HashMap;
 
     let mut dga = DigitalGroupAssistant::new();
     let alice_key = SigningKey::generate(&mut rand::thread_rng());
@@ -550,7 +549,7 @@ fn test_mnemonic_key_integration_with_group_creation() {
         name: "Integration Test Group".to_string(),
         description: Some("Testing mnemonic key integration".to_string()),
         metadata: {
-            let mut metadata = HashMap::new();
+            let mut metadata = BTreeMap::new();
             metadata.insert("key_source".to_string(), "mnemonic".to_string());
             metadata
         },

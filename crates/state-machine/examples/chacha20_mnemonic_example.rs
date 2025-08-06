@@ -1,5 +1,5 @@
 use ed25519_dalek::SigningKey;
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use zoe_state_machine::{CreateGroupConfig, DigitalGroupAssistant, GroupSettings, MnemonicPhrase};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -39,7 +39,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         name: group_name.to_string(),
         description: Some("A secure group using ChaCha20 and mnemonic phrases".to_string()),
         metadata: {
-            let mut metadata = HashMap::new();
+            let mut metadata = BTreeMap::new();
             metadata.insert("encryption".to_string(), "chacha20-poly1305".to_string());
             metadata.insert("key_derivation".to_string(), "bip39+argon2".to_string());
             metadata

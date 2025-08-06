@@ -6,7 +6,8 @@
 
 use ed25519_dalek::VerifyingKey;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::BTreeMap;
+use std::net::SocketAddr;
 
 use crate::file::Image;
 
@@ -26,7 +27,7 @@ pub enum GroupActivityEvent {
         /// Optional description of the group's purpose
         description: Option<String>,
         /// Group metadata (tags, categories, etc.)
-        metadata: HashMap<String, String>,
+        metadata: BTreeMap<String, String>,
         /// Initial group settings
         settings: GroupSettings,
         /// Key derivation info or key identifier (not the actual key)
@@ -48,7 +49,7 @@ pub enum GroupActivityEvent {
         /// New description (if changing)
         description: Option<String>,
         /// Metadata updates (None value = delete key)
-        metadata_updates: HashMap<String, Option<String>>,
+        metadata_updates: BTreeMap<String, Option<String>>,
         /// Settings updates
         settings_updates: Option<GroupSettings>,
         /// New avatar image (None to remove avatar)
@@ -88,7 +89,7 @@ pub enum GroupActivityEvent {
         /// Activity payload (serialized custom data)
         payload: Vec<u8>,
         /// Optional activity metadata
-        metadata: HashMap<String, String>,
+        metadata: BTreeMap<String, String>,
     },
 }
 
@@ -113,7 +114,7 @@ pub struct GroupKeyInfo {
     ///
     /// Can contain additional context or parameters needed for key derivation
     /// schemes like PBKDF2, scrypt, or custom key derivation methods.
-    pub derivation_params: Option<HashMap<String, String>>,
+    pub derivation_params: Option<BTreeMap<String, String>>,
 }
 
 /// Group settings and configuration for encrypted groups
@@ -328,7 +329,7 @@ impl GroupKeyInfo {
     }
 
     /// Add derivation parameters
-    pub fn with_derivation_params(mut self, params: HashMap<String, String>) -> Self {
+    pub fn with_derivation_params(mut self, params: BTreeMap<String, String>) -> Self {
         self.derivation_params = Some(params);
         self
     }
@@ -381,5 +382,225 @@ impl EncryptionSettings {
     pub fn with_additional_context(mut self, context: String) -> Self {
         self.additional_context = Some(context);
         self
+    }
+}
+
+/// Relay endpoint information for group participants
+///
+/// Contains the network address and public key needed to connect to a relay server.
+/// Multiple relay endpoints can be provided to a group participant for redundancy,
+/// with the list order indicating priority preference.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RelayEndpoint {
+    /// Network address of the relay server
+    ///
+    /// This is the socket address (IP:port) where the relay server
+    /// can be reached for QUIC connections.
+    pub address: SocketAddr,
+
+    /// Ed25519 public key of the relay server
+    ///
+    /// Used to verify the relay server's identity during the QUIC TLS handshake.
+    /// This prevents man-in-the-middle attacks and ensures the client is
+    /// connecting to the correct relay server.
+    pub public_key: VerifyingKey,
+
+    /// Optional human-readable name for the relay
+    ///
+    /// Can be used for display purposes or debugging. Examples:
+    /// "Primary Relay", "EU West", "Backup Server", etc.
+    pub name: Option<String>,
+
+    /// Additional relay metadata
+    ///
+    /// Can store information like geographic region, performance metrics,
+    /// supported features, or other relay-specific data.
+    pub metadata: BTreeMap<String, String>,
+}
+
+/// Complete information needed for a participant to join an encrypted group
+///
+/// This structure contains everything a new participant needs to join and
+/// participate in an encrypted group, including the group metadata, encryption
+/// keys, channel information, and relay endpoints for communication.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct GroupJoinInfo {
+    /// Hash ID of the initial CreateGroup message
+    ///
+    /// This serves as the unique channel ID for the group and is derived
+    /// from the Blake3 hash of the initial CreateGroup message.
+    pub channel_id: String,
+
+    /// Group information from the CreateGroup event
+    ///
+    /// Contains the group name, description, metadata, settings, and other
+    /// information that was specified when the group was created.
+    pub group_info: GroupInfo,
+
+    /// Encryption key for the group
+    ///
+    /// The shared AES key used to encrypt and decrypt group messages.
+    /// This is the raw key bytes that participants need to encrypt/decrypt
+    /// group communications.
+    pub encryption_key: [u8; 32],
+
+    /// Key derivation information
+    ///
+    /// Contains metadata about how the encryption key was derived,
+    /// including key ID and derivation parameters. This helps participants
+    /// identify and manage the correct encryption keys.
+    pub key_info: GroupKeyInfo,
+
+    /// List of relay endpoints (ordered by priority)
+    ///
+    /// Contains the relay servers that participants can use to communicate
+    /// within the group. The list is ordered by priority, with the first
+    /// endpoint being the preferred relay. Participants should try relays
+    /// in order until they find one that works.
+    pub relay_endpoints: Vec<RelayEndpoint>,
+
+    /// Optional invitation metadata
+    ///
+    /// Additional information about the invitation, such as who sent it,
+    /// when it was created, expiration time, or invitation-specific settings.
+    pub invitation_metadata: BTreeMap<String, String>,
+}
+
+/// Group information extracted from CreateGroup event
+///
+/// Contains the essential group information that participants need to know
+/// about a group, derived from the original CreateGroup event.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct GroupInfo {
+    /// Human-readable group name
+    pub name: String,
+
+    /// Optional description of the group's purpose
+    pub description: Option<String>,
+
+    /// Group metadata (tags, categories, etc.)
+    pub metadata: BTreeMap<String, String>,
+
+    /// Group settings and permissions
+    pub settings: GroupSettings,
+
+    /// Optional group avatar image
+    pub avatar: Option<Image>,
+
+    /// Optional group background image
+    pub background: Option<Image>,
+}
+
+impl RelayEndpoint {
+    /// Create a new relay endpoint with minimal required fields
+    pub fn new(address: SocketAddr, public_key: VerifyingKey) -> Self {
+        Self {
+            address,
+            public_key,
+            name: None,
+            metadata: BTreeMap::new(),
+        }
+    }
+
+    /// Set a human-readable name for this relay
+    pub fn with_name(mut self, name: String) -> Self {
+        self.name = Some(name);
+        self
+    }
+
+    /// Add metadata to this relay endpoint
+    pub fn with_metadata(mut self, key: String, value: String) -> Self {
+        self.metadata.insert(key, value);
+        self
+    }
+
+    /// Get the relay's display name (name if set, otherwise address)
+    pub fn display_name(&self) -> String {
+        self.name
+            .clone()
+            .unwrap_or_else(|| self.address.to_string())
+    }
+}
+
+impl GroupJoinInfo {
+    /// Create new group join information
+    pub fn new(
+        channel_id: String,
+        group_info: GroupInfo,
+        encryption_key: [u8; 32],
+        key_info: GroupKeyInfo,
+        relay_endpoints: Vec<RelayEndpoint>,
+    ) -> Self {
+        Self {
+            channel_id,
+            group_info,
+            encryption_key,
+            key_info,
+            relay_endpoints,
+            invitation_metadata: BTreeMap::new(),
+        }
+    }
+
+    /// Add metadata to the invitation
+    pub fn with_invitation_metadata(mut self, key: String, value: String) -> Self {
+        self.invitation_metadata.insert(key, value);
+        self
+    }
+
+    /// Add a relay endpoint to the list
+    pub fn add_relay(mut self, endpoint: RelayEndpoint) -> Self {
+        self.relay_endpoints.push(endpoint);
+        self
+    }
+
+    /// Get the primary (first priority) relay endpoint
+    pub fn primary_relay(&self) -> Option<&RelayEndpoint> {
+        self.relay_endpoints.first()
+    }
+
+    /// Get all relay endpoints ordered by priority
+    pub fn relays_by_priority(&self) -> &[RelayEndpoint] {
+        &self.relay_endpoints
+    }
+
+    /// Check if this invitation has any relay endpoints
+    pub fn has_relays(&self) -> bool {
+        !self.relay_endpoints.is_empty()
+    }
+}
+
+impl GroupInfo {
+    /// Create group info from a CreateGroup event
+    pub fn from_create_group_event(
+        name: String,
+        description: Option<String>,
+        metadata: BTreeMap<String, String>,
+        settings: GroupSettings,
+        avatar: Option<Image>,
+        background: Option<Image>,
+    ) -> Self {
+        Self {
+            name,
+            description,
+            metadata,
+            settings,
+            avatar,
+            background,
+        }
+    }
+
+    /// Get the group's display name
+    pub fn display_name(&self) -> &str {
+        &self.name
+    }
+
+    /// Check if the group has an avatar
+    pub fn has_avatar(&self) -> bool {
+        self.avatar.is_some()
+    }
+
+    /// Check if the group has a background image
+    pub fn has_background(&self) -> bool {
+        self.background.is_some()
     }
 }

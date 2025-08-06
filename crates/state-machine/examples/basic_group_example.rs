@@ -1,5 +1,5 @@
 use ed25519_dalek::SigningKey;
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use zoe_state_machine::{
     CreateGroupConfig, DigitalGroupAssistant, GroupSettings, create_group_activity_event,
 };
@@ -18,7 +18,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         name: "My Test Group".to_string(),
         description: Some("A test group for the DGA protocol".to_string()),
         metadata: {
-            let mut metadata = HashMap::new();
+            let mut metadata = BTreeMap::new();
             metadata.insert("category".to_string(), "testing".to_string());
             metadata
         },
@@ -55,7 +55,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "welcome_message".to_string(),
         b"Welcome to our encrypted test group!".to_vec(),
         {
-            let mut metadata = std::collections::HashMap::new();
+            let mut metadata = BTreeMap::new();
             metadata.insert("message_type".to_string(), "announcement".to_string());
             metadata
         },
