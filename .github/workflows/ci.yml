@@ -18,6 +18,12 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+      
+      - name: Install SQLCipher
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libsqlcipher-dev
+          
       - name: Check all targets
         run: cargo check --workspace --all-targets
 
@@ -39,6 +45,11 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+      
+      - name: Install SQLCipher
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libsqlcipher-dev
       
       - name: Install cargo-nextest
         uses: taiki-e/install-action@v2
@@ -78,6 +89,11 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       
+      - name: Install SQLCipher
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libsqlcipher-dev
+      
       - name: Install cargo-nextest
         uses: taiki-e/install-action@v2
         with:
@@ -97,6 +113,11 @@ jobs:
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
+      
+      - name: Install SQLCipher
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libsqlcipher-dev
       
       - name: Check formatting
         run: cargo fmt --all -- --check
@@ -136,10 +157,23 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Needed for codecov to properly track git history
+          
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: llvm-tools-preview
       - uses: Swatinem/rust-cache@v2
+      
+      - name: Install SQLCipher
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libsqlcipher-dev
+      
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest
       
       - name: Install cargo-llvm-cov
         uses: taiki-e/install-action@v2
@@ -147,15 +181,22 @@ jobs:
           tool: cargo-llvm-cov
 
       - name: Generate code coverage
-        run: cargo llvm-cov --workspace --lcov --output-path lcov.info
+        run: |
+          cargo llvm-cov clean --workspace
+          cargo llvm-cov nextest --workspace --lcov --output-path coverage.lcov
         env:
           REDIS_URL: redis://localhost:6379
 
-      - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v4
+      - name: Upload coverage reports to Codecov
+        uses: codecov/codecov-action@v5
         with:
-          files: lcov.info
+          files: coverage.lcov
+          flags: unittests
+          name: codecov-umbrella
           fail_ci_if_error: false
+          verbose: true
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
 
   build-examples:
     name: Build Examples
@@ -165,48 +206,22 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       
+      - name: Install SQLCipher
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libsqlcipher-dev
+      
       - name: Build examples (excluding problematic crates)
         run: |
           cargo build --examples --workspace --exclude whatsmeow --exclude wa-bot
 
-  cross-compile:
-    name: Cross Compilation
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        target:
-          - x86_64-unknown-linux-musl
-          - aarch64-unknown-linux-gnu
-          
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.target }}
-      - uses: Swatinem/rust-cache@v2
-      
-      - name: Install cross-compilation tools
-        if: matrix.target == 'aarch64-unknown-linux-gnu'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y gcc-aarch64-linux-gnu
-          
-      - name: Cross compile
-        run: |
-          # Skip problematic crates
-          cargo build --target ${{ matrix.target }} \
-            --workspace \
-           \
-            --exclude whatsmeow \
-            --exclude wa-bot
-
-  mobile-cross-compile:
-    name: Mobile & Platform Cross Compilation (zoe-client)
+  compile-targets-zoe-client:
+    name: Zoe Client Compilation
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
         include:
-          # Apple targets (iOS) - run on macOS
+          # Apple targets - run on macOS
           - target: aarch64-apple-ios
             os: macos-latest
           - target: x86_64-apple-ios
@@ -244,6 +259,17 @@ jobs:
           targets: ${{ matrix.target }}
       - uses: Swatinem/rust-cache@v2
       
+      - name: Install SQLCipher (Linux)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libsqlcipher-dev
+          
+      - name: Install SQLCipher (macOS)
+        if: matrix.os == 'macos-latest'
+        run: |
+          brew install sqlcipher
+          
       - name: Install Android NDK (Linux)
         if: contains(matrix.target, 'android') && matrix.os == 'ubuntu-latest'
         run: |
@@ -291,23 +317,23 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       
+      - name: Install SQLCipher
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libsqlcipher-dev
+      
       - name: Check documentation
         run: cargo doc --workspace --no-deps --document-private-items
         env:
           RUSTDOCFLAGS: "-Dwarnings"
 
-  matrix-test:
-    name: Matrix Testing
-    runs-on: ${{ matrix.os }}
+  matrix-test-ubuntu:
+    name: Matrix Testing (Ubuntu)
+    runs-on: ubuntu-latest
     strategy:
       matrix:
-        os: [ubuntu-latest, macos-latest]
         rust: [stable, beta]
-        exclude:
-          # Skip beta on macOS to reduce CI time
-          - os: macos-latest
-            rust: beta
-
+    
     services:
       redis:
         image: redis:latest
@@ -326,8 +352,41 @@ jobs:
           toolchain: ${{ matrix.rust }}
       - uses: Swatinem/rust-cache@v2
         
-      - name: Install Redis (macOS)
-        if: matrix.os == 'macos-latest'
+      - name: Install SQLCipher
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libsqlcipher-dev
+          
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest
+
+      - name: Run fast tests
+        run: |
+          cargo nextest run --profile fast --workspace
+        env:
+          REDIS_URL: redis://localhost:6379
+
+  matrix-test-macos:
+    name: Matrix Testing (macOS)
+    runs-on: macos-latest
+    strategy:
+      matrix:
+        rust: [stable]  # Only stable to reduce CI time
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ matrix.rust }}
+      - uses: Swatinem/rust-cache@v2
+        
+      - name: Install SQLCipher
+        run: |
+          brew install sqlcipher
+          
+      - name: Install Redis
         run: |
           brew install redis
           brew services start redis

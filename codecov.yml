@@ -1,0 +1,60 @@
+# Codecov configuration for zoeyr
+# Documentation: https://docs.codecov.com/docs/codecov-yaml
+
+codecov:
+  require_ci_to_pass: true
+  notify:
+    wait_for_ci: true
+
+coverage:
+  precision: 2
+  round: down
+  range: "70...90"
+
+  status:
+    project:
+      default:
+        target: 75%
+        threshold: 2%
+        base: auto
+        flags:
+          - unittests
+    patch:
+      default:
+        target: 70%
+        threshold: 5%
+        base: auto
+        flags:
+          - unittests
+
+comment:
+  layout: "reach, diff, flags, tree, footer"
+  behavior: default
+  require_changes: true
+  require_base: false
+  require_head: true
+
+ignore:
+  - "*/tests/*"
+  - "*/benches/*"
+  - "*/examples/*"
+  - "crates/whatsmeow/*"  # Go code, not Rust
+  - "crates/wa-bot/*"     # May have external dependencies
+  - "target/*"
+  - "**/*.md"
+  - "**/build.rs"
+
+flag_management:
+  default_rules:
+    carryforward: true
+    statuses:
+      - type: project
+        target: 75%
+      - type: patch
+        target: 70%
+
+flags:
+  unittests:
+    paths:
+      - crates/
+    carryforward: true
