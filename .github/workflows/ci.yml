@@ -143,7 +143,7 @@ jobs:
           cargo build --examples --workspace --exclude whatsmeow --exclude wa-bot
 
   compile-targets-zoe-client:
-    name: Zoe Client Compilation
+    name: Zoe Client Compile
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
@@ -244,9 +244,20 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y gcc-aarch64-linux-gnu
           
+          # Setup linker configuration for aarch64-unknown-linux-gnu
+          mkdir -p ~/.cargo
+          cat >> ~/.cargo/config.toml << EOF
+          [target.aarch64-unknown-linux-gnu]
+          linker = "aarch64-linux-gnu-gcc"
+          EOF
+          
+          # Set environment variables for C compiler and archiver (needed by ring and other native crates)
+          echo "CC_aarch64_unknown_linux_gnu=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
+          echo "AR_aarch64_unknown_linux_gnu=aarch64-linux-gnu-ar" >> $GITHUB_ENV
+          
       - name: Cross compile zoe-client for ${{ matrix.target }}
         run: |
-          cargo build --target ${{ matrix.target }} --package zoe-client
+          cargo build --release --target ${{ matrix.target }} --package zoe-client
 
   documentation:
     name: Documentation
