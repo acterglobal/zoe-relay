@@ -4,8 +4,8 @@
 //! This crate contains the building blocks that are shared between different
 //! layers of the Zoe ecosystem.
 
-pub mod file_storage;
+pub mod file;
 pub mod group;
 
-pub use file_storage::*;
+pub use file::{CompressionConfig, ConvergentEncryptionInfo, FileRef, Image};
 pub use group::*;

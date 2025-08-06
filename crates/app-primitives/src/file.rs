@@ -4,15 +4,21 @@
 //! encrypted and stored in blob storage systems.
 
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::BTreeMap;
+// Re-export encryption types from zoe-encrypted-storage for convenience
+pub use zoe_encrypted_storage::{CompressionConfig, ConvergentEncryptionInfo};
 
-/// Information about a stored file, containing everything needed to retrieve it
+pub mod image;
+
+pub use image::Image;
+
+/// Reference to a stored file, containing everything needed to retrieve it
 ///
 /// This type represents metadata for files that have been encrypted using
 /// convergent encryption and stored in a content-addressable blob store.
 /// It contains all the information needed to retrieve and decrypt the file later.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct StoredFileInfo {
+pub struct FileRef {
     /// Hash of the encrypted blob in storage
     ///
     /// This is the content-addressable hash used by the blob storage system
@@ -29,7 +35,8 @@ pub struct StoredFileInfo {
     ///
     /// The name of the file when it was stored. This is kept for
     /// reference and display purposes and doesn't affect retrieval.
-    pub filename: String,
+    /// This is optional to support cases where filename is not relevant.
+    pub filename: Option<String>,
 
     /// MIME type or file extension for reference
     ///
@@ -42,25 +49,22 @@ pub struct StoredFileInfo {
     /// Arbitrary key-value metadata that applications can use to store
     /// additional information about the file (e.g., original timestamps,
     /// user tags, categories, etc.).
-    pub metadata: HashMap<String, String>,
+    pub metadata: BTreeMap<String, String>,
 }
 
-// Re-export encryption types from zoe-encrypted-storage for convenience
-pub use zoe_encrypted_storage::{CompressionConfig, ConvergentEncryptionInfo};
-
-impl StoredFileInfo {
-    /// Create a new StoredFileInfo with minimal required fields
+impl FileRef {
+    /// Create a new FileRef with minimal required fields
     pub fn new(
         blob_hash: String,
         encryption_info: ConvergentEncryptionInfo,
-        filename: String,
+        filename: Option<String>,
     ) -> Self {
         Self {
             blob_hash,
             encryption_info,
             filename,
             content_type: None,
-            metadata: HashMap::new(),
+            metadata: BTreeMap::new(),
         }
     }
 
@@ -76,17 +80,19 @@ impl StoredFileInfo {
         self
     }
 
-    /// Get the filename
-    pub fn filename(&self) -> &str {
-        &self.filename
+    /// Get the filename (if available)
+    pub fn filename(&self) -> Option<&str> {
+        self.filename.as_deref()
     }
 
-    /// Get file extension from the filename
+    /// Get file extension from the filename (if available)
     pub fn file_extension(&self) -> Option<String> {
-        std::path::Path::new(&self.filename)
-            .extension()
-            .and_then(|ext| ext.to_str())
-            .map(|s| s.to_string())
+        self.filename.as_ref().and_then(|filename| {
+            std::path::Path::new(filename)
+                .extension()
+                .and_then(|ext| ext.to_str())
+                .map(|s| s.to_string())
+        })
     }
 
     /// Get the original file size (from encryption info)

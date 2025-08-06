@@ -128,6 +128,8 @@ impl DigitalGroupAssistant {
             metadata: config.metadata.clone(),
             settings: config.settings.clone(),
             key_info,
+            avatar: None,
+            background: None,
         };
 
         // Encrypt the event before creating the wire protocol message
@@ -449,5 +451,7 @@ pub fn create_group_update_event(
         description,
         metadata_updates,
         settings_updates,
+        avatar: None,
+        background: None,
     }
 }

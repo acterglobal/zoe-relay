@@ -137,6 +137,7 @@ impl GroupState {
                 description,
                 metadata_updates,
                 settings_updates,
+                ..
             } => {
                 self.handle_update_group(
                     sender,

@@ -8,6 +8,8 @@ use ed25519_dalek::VerifyingKey;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+use crate::file::Image;
+
 /// Activity events for encrypted group management in the DGA protocol
 ///
 /// All events are encrypted with AES-GCM using the group's shared key.
@@ -30,6 +32,10 @@ pub enum GroupActivityEvent {
         /// Key derivation info or key identifier (not the actual key)
         /// Used to help participants derive or identify the correct AES key
         key_info: GroupKeyInfo,
+        /// Optional group avatar image
+        avatar: Option<Image>,
+        /// Optional group background image
+        background: Option<Image>,
     },
 
     /// Update group metadata (name, description, settings)
@@ -45,6 +51,10 @@ pub enum GroupActivityEvent {
         metadata_updates: HashMap<String, Option<String>>,
         /// Settings updates
         settings_updates: Option<GroupSettings>,
+        /// New avatar image (None to remove avatar)
+        avatar: Option<Option<Image>>,
+        /// New background image (None to remove background)
+        background: Option<Option<Image>>,
     },
 
     /// Assign or change member roles

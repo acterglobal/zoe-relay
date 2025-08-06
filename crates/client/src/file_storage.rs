@@ -31,11 +31,11 @@ use crate::error::{ClientError, Result};
 use std::path::Path;
 use tokio::fs;
 use tracing::{debug, info};
-use zoe_app_primitives::StoredFileInfo;
+use zoe_app_primitives::FileRef;
 use zoe_blob_store::BlobClient;
 use zoe_encrypted_storage::{CompressionConfig, ConvergentEncryption};
 
-// StoredFileInfo is now defined in zoe-app-primitives and imported above
+// FileRef is now defined in zoe-app-primitives and imported above
 
 /// High-level file storage client that encrypts files and stores them as blobs
 #[derive(Clone)]
@@ -82,7 +82,7 @@ impl FileStorage {
     ///
     /// # Returns
     ///
-    /// `StoredFileInfo` containing the blob hash, encryption info, and metadata
+    /// `FileRef` containing the blob hash, encryption info, and metadata
     ///
     /// # Example
     ///
@@ -101,7 +101,7 @@ impl FileStorage {
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn store_file(&self, file_path: &Path) -> Result<StoredFileInfo> {
+    pub async fn store_file(&self, file_path: &Path) -> Result<FileRef> {
         info!("Storing file: {}", file_path.display());
 
         // Read file content
@@ -146,7 +146,7 @@ impl FileStorage {
             .unwrap_or("unknown")
             .to_string();
 
-        let mut stored_info = StoredFileInfo::new(blob_hash, encryption_info, filename);
+        let mut stored_info = FileRef::new(blob_hash, encryption_info, Some(filename));
 
         if let Some(content_type) = content_type {
             stored_info = stored_info.with_content_type(content_type);
@@ -167,13 +167,13 @@ impl FileStorage {
     ///
     /// # Returns
     ///
-    /// `StoredFileInfo` containing the blob hash, encryption info, and metadata
+    /// `FileRef` containing the blob hash, encryption info, and metadata
     pub async fn store_data(
         &self,
         data: &[u8],
         reference_name: &str,
         content_type: Option<String>,
-    ) -> Result<StoredFileInfo> {
+    ) -> Result<FileRef> {
         info!(
             "Storing raw data: {} ({} bytes)",
             reference_name,
@@ -200,7 +200,7 @@ impl FileStorage {
         info!("Data stored successfully with blob hash: {}", blob_hash);
 
         let mut stored_info =
-            StoredFileInfo::new(blob_hash, encryption_info, reference_name.to_string());
+            FileRef::new(blob_hash, encryption_info, Some(reference_name.to_string()));
 
         if let Some(content_type) = content_type {
             stored_info = stored_info.with_content_type(content_type);
@@ -235,16 +235,16 @@ impl FileStorage {
     /// let storage = FileStorage::new(temp_dir.path()).await?;
     ///
     /// // Assume we have stored_info from a previous store_file call
-    /// # let stored_info = zoe_client::StoredFileInfo {
+    /// # let stored_info = zoe_client::FileRef {
     /// #     blob_hash: "example".to_string(),
     /// #     encryption_info: zoe_encrypted_storage::ConvergentEncryptionInfo {
     /// #         key: [0; 32],
     /// #         was_compressed: false,
     /// #         source_size: 100,
     /// #     },
-    /// #     original_path: PathBuf::from("example.txt"),
-    /// #     original_size: 100,
+    /// #     filename: Some("example.txt".to_string()),
     /// #     content_type: None,
+    /// #     metadata: std::collections::HashMap::new(),
     /// # };
     ///
     /// let file_content = storage.retrieve_file(&stored_info).await?;
@@ -252,7 +252,7 @@ impl FileStorage {
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn retrieve_file(&self, stored_info: &StoredFileInfo) -> Result<Vec<u8>> {
+    pub async fn retrieve_file(&self, stored_info: &FileRef) -> Result<Vec<u8>> {
         info!("Retrieving file with blob hash: {}", stored_info.blob_hash);
 
         // Get encrypted data from blob storage
@@ -299,7 +299,7 @@ impl FileStorage {
     /// # Returns
     ///
     /// `true` if the file exists in storage, `false` otherwise
-    pub async fn has_file(&self, stored_info: &StoredFileInfo) -> Result<bool> {
+    pub async fn has_file(&self, stored_info: &FileRef) -> Result<bool> {
         self.blob_client
             .has_blob(&stored_info.blob_hash)
             .await
@@ -325,16 +325,16 @@ impl FileStorage {
     /// let temp_dir = tempdir()?;
     /// let storage = FileStorage::new(temp_dir.path()).await?;
     ///
-    /// # let stored_info = zoe_client::StoredFileInfo {
+    /// # let stored_info = zoe_client::FileRef {
     /// #     blob_hash: "example".to_string(),
     /// #     encryption_info: zoe_encrypted_storage::ConvergentEncryptionInfo {
     /// #         key: [0; 32],
     /// #         was_compressed: false,
     /// #         source_size: 100,
     /// #     },
-    /// #     original_path: std::path::PathBuf::from("example.txt"),
-    /// #     original_size: 100,
+    /// #     filename: Some("example.txt".to_string()),
     /// #     content_type: None,
+    /// #     metadata: std::collections::HashMap::new(),
     /// # };
     ///
     /// let output_path = Path::new("/tmp/retrieved_file.txt");
@@ -344,7 +344,7 @@ impl FileStorage {
     /// ```
     pub async fn retrieve_file_to_disk(
         &self,
-        stored_info: &StoredFileInfo,
+        stored_info: &FileRef,
         output_path: &Path,
     ) -> Result<()> {
         let file_content = self.retrieve_file(stored_info).await?;
@@ -402,7 +402,7 @@ mod tests {
 
         // Verify metadata
         assert_eq!(stored_info.original_size(), test_content.len());
-        assert_eq!(stored_info.filename(), "test_file.txt");
+        assert_eq!(stored_info.filename(), Some("test_file.txt"));
         assert!(stored_info.content_type.is_some());
 
         // Retrieve the file
@@ -429,7 +429,7 @@ mod tests {
 
         // Verify metadata
         assert_eq!(stored_info.original_size(), test_data.len());
-        assert_eq!(stored_info.filename(), reference_name);
+        assert_eq!(stored_info.filename(), Some(reference_name));
         assert_eq!(stored_info.content_type, content_type);
 
         // Retrieve the data
@@ -463,10 +463,10 @@ mod tests {
             .await
             .unwrap();
 
-        let fake_info = StoredFileInfo::new(
+        let fake_info = FileRef::new(
             fake_info_temp.blob_hash, // This hash exists in fake_storage, but not in main storage
             fake_info_temp.encryption_info,
-            "fake_file.txt".to_string(),
+            Some("fake_file.txt".to_string()),
         );
 
         // Check that fake file doesn't exist

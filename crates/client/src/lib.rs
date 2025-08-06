@@ -8,5 +8,5 @@ pub use error::ClientError;
 pub use file_storage::FileStorage;
 pub use services::{BlobService, MessagesService, MessagesStream};
 
-// Re-export StoredFileInfo from app-primitives for convenience
-pub use zoe_app_primitives::StoredFileInfo;
+// Re-export FileRef and Image from app-primitives for convenience
+pub use zoe_app_primitives::{FileRef, Image};
