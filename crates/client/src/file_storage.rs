@@ -28,9 +28,10 @@
 //! ```
 
 use crate::error::{ClientError, Result};
+use crate::services::BlobService;
 use std::path::Path;
 use tokio::fs;
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 use zoe_app_primitives::FileRef;
 use zoe_blob_store::BlobClient;
 use zoe_encrypted_storage::{CompressionConfig, ConvergentEncryption};
@@ -41,6 +42,7 @@ use zoe_encrypted_storage::{CompressionConfig, ConvergentEncryption};
 #[derive(Clone)]
 pub struct FileStorage {
     blob_client: BlobClient,
+    remote_blob_service: Option<BlobService>,
     compression_config: CompressionConfig,
 }
 
@@ -51,6 +53,7 @@ impl FileStorage {
 
         Ok(Self {
             blob_client,
+            remote_blob_service: None,
             compression_config: CompressionConfig::default(),
         })
     }
@@ -64,6 +67,36 @@ impl FileStorage {
 
         Ok(Self {
             blob_client,
+            remote_blob_service: None,
+            compression_config,
+        })
+    }
+
+    /// Create a new file storage client with remote blob service support
+    pub async fn new_with_remote(
+        blob_storage_path: &Path,
+        remote_blob_service: BlobService,
+    ) -> Result<Self> {
+        let blob_client = BlobClient::new(blob_storage_path.to_path_buf()).await?;
+
+        Ok(Self {
+            blob_client,
+            remote_blob_service: Some(remote_blob_service),
+            compression_config: CompressionConfig::default(),
+        })
+    }
+
+    /// Create a new file storage client with remote blob service and custom compression
+    pub async fn new_with_remote_and_compression(
+        blob_storage_path: &Path,
+        remote_blob_service: BlobService,
+        compression_config: CompressionConfig,
+    ) -> Result<Self> {
+        let blob_client = BlobClient::new(blob_storage_path.to_path_buf()).await?;
+
+        Ok(Self {
+            blob_client,
+            remote_blob_service: Some(remote_blob_service),
             compression_config,
         })
     }
@@ -129,9 +162,29 @@ impl FileStorage {
         );
 
         // Store encrypted data in blob storage
-        let blob_hash = self.blob_client.store_blob(encrypted_data).await?;
+        let blob_hash = self.blob_client.store_blob(encrypted_data.clone()).await?;
 
         info!("File stored successfully with blob hash: {}", blob_hash);
+
+        // Push to remote blob service if available
+        if let Some(remote_service) = &self.remote_blob_service {
+            match remote_service.upload_blob(&encrypted_data).await {
+                Ok(remote_hash) => {
+                    if remote_hash == blob_hash {
+                        info!("File successfully pushed to remote storage: {}", blob_hash);
+                    } else {
+                        warn!(
+                            "Remote hash mismatch: local={}, remote={}", 
+                            blob_hash, remote_hash
+                        );
+                    }
+                }
+                Err(e) => {
+                    warn!("Failed to push file to remote storage: {}", e);
+                    // Don't fail the operation since local storage succeeded
+                }
+            }
+        }
 
         // Determine content type from file extension
         let content_type = file_path
@@ -195,9 +248,29 @@ impl FileStorage {
         );
 
         // Store encrypted data in blob storage
-        let blob_hash = self.blob_client.store_blob(encrypted_data).await?;
+        let blob_hash = self.blob_client.store_blob(encrypted_data.clone()).await?;
 
         info!("Data stored successfully with blob hash: {}", blob_hash);
+
+        // Push to remote blob service if available
+        if let Some(remote_service) = &self.remote_blob_service {
+            match remote_service.upload_blob(&encrypted_data).await {
+                Ok(remote_hash) => {
+                    if remote_hash == blob_hash {
+                        info!("Data successfully pushed to remote storage: {}", blob_hash);
+                    } else {
+                        warn!(
+                            "Remote hash mismatch: local={}, remote={}", 
+                            blob_hash, remote_hash
+                        );
+                    }
+                }
+                Err(e) => {
+                    warn!("Failed to push data to remote storage: {}", e);
+                    // Don't fail the operation since local storage succeeded
+                }
+            }
+        }
 
         let mut stored_info =
             FileRef::new(blob_hash, encryption_info, Some(reference_name.to_string()));
@@ -256,16 +329,41 @@ impl FileStorage {
         info!("Retrieving file with blob hash: {}", stored_info.blob_hash);
 
         // Get encrypted data from blob storage
-        let encrypted_data = self
-            .blob_client
-            .get_blob(&stored_info.blob_hash)
-            .await?
-            .ok_or_else(|| {
-                ClientError::FileStorage(format!(
-                    "Blob not found with hash: {}",
-                    stored_info.blob_hash
-                ))
-            })?;
+        let encrypted_data = match self.blob_client.get_blob(&stored_info.blob_hash).await? {
+            Some(data) => {
+                debug!("Retrieved blob from local storage");
+                data
+            }
+            None => {
+                // Try to fetch from remote if available
+                if let Some(remote_service) = &self.remote_blob_service {
+                    info!("Blob not found locally, attempting remote fetch for hash: {}", stored_info.blob_hash);
+                    match remote_service.get_blob(&stored_info.blob_hash).await {
+                        Ok(remote_data) => {
+                            info!("Successfully retrieved blob from remote storage");
+                            // Store the fetched data locally for future use
+                            if let Err(e) = self.blob_client.store_blob(remote_data.clone()).await {
+                                warn!("Failed to cache remotely fetched blob locally: {}", e);
+                            } else {
+                                debug!("Cached remotely fetched blob to local storage");
+                            }
+                            remote_data
+                        }
+                        Err(e) => {
+                            return Err(ClientError::FileStorage(format!(
+                                "Blob not found locally or remotely with hash {}: {}",
+                                stored_info.blob_hash, e
+                            )));
+                        }
+                    }
+                } else {
+                    return Err(ClientError::FileStorage(format!(
+                        "Blob not found with hash: {}",
+                        stored_info.blob_hash
+                    )));
+                }
+            }
+        };
 
         debug!("Retrieved encrypted data: {} bytes", encrypted_data.len());
 
@@ -519,5 +617,85 @@ mod tests {
             stored_info1.encryption_info.key,
             stored_info2.encryption_info.key
         );
+    }
+
+    // We can't easily test with real BlobService due to connection dependencies,
+    // so these tests focus on the logic flow and error handling
+    #[tokio::test]
+    async fn test_file_storage_without_remote() {
+        let temp_dir = tempdir().unwrap();
+        let storage = FileStorage::new(temp_dir.path()).await.unwrap();
+
+        // Test that normal operations work without remote service
+        let test_data = b"Test data without remote";
+        let stored_info = storage
+            .store_data(test_data, "no_remote_test", None)
+            .await
+            .unwrap();
+
+        let retrieved_data = storage.retrieve_file(&stored_info).await.unwrap();
+        assert_eq!(retrieved_data, test_data);
+    }
+
+    #[tokio::test]
+    async fn test_remote_push_simulation() {
+        let temp_dir1 = tempdir().unwrap();
+        let temp_dir2 = tempdir().unwrap();
+        
+        // Create two separate storages to simulate local and remote
+        let local_storage = FileStorage::new(temp_dir1.path()).await.unwrap();
+        let remote_storage = FileStorage::new(temp_dir2.path()).await.unwrap();
+
+        let test_data = b"Test data for remote push simulation";
+        
+        // Store in local
+        let stored_info = local_storage
+            .store_data(test_data, "remote_push_test", None)
+            .await
+            .unwrap();
+
+        // Simulate remote push by storing the same encrypted data
+        let encrypted_data = {
+            let (encrypted, _) = zoe_encrypted_storage::ConvergentEncryption::encrypt_with_compression_config(
+                test_data,
+                zoe_encrypted_storage::CompressionConfig::default(),
+            ).unwrap();
+            encrypted
+        };
+
+        let remote_hash = remote_storage.blob_client.store_blob(encrypted_data).await.unwrap();
+        
+        // Verify the hashes should match (convergent encryption)
+        assert_eq!(stored_info.blob_hash, remote_hash);
+    }
+
+    #[tokio::test] 
+    async fn test_remote_fetch_simulation() {
+        let temp_dir1 = tempdir().unwrap();
+        let temp_dir2 = tempdir().unwrap();
+
+        // Create storages
+        let storage1 = FileStorage::new(temp_dir1.path()).await.unwrap();
+        let storage2 = FileStorage::new(temp_dir2.path()).await.unwrap();
+
+        let test_data = b"Test data for remote fetch simulation";
+        
+        // Store data in storage2 (simulating remote)
+        let stored_info = storage2
+            .store_data(test_data, "remote_fetch_test", None)
+            .await
+            .unwrap();
+
+        // Verify storage1 doesn't have it
+        assert!(!storage1.has_file(&stored_info).await.unwrap());
+
+        // Manually transfer blob (simulating remote fetch)
+        let encrypted_data = storage2.blob_client.get_blob(&stored_info.blob_hash).await.unwrap().unwrap();
+        storage1.blob_client.store_blob(encrypted_data).await.unwrap();
+
+        // Now storage1 should have it and be able to retrieve
+        assert!(storage1.has_file(&stored_info).await.unwrap());
+        let retrieved_data = storage1.retrieve_file(&stored_info).await.unwrap();
+        assert_eq!(retrieved_data, test_data);
     }
 }

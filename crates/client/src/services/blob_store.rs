@@ -25,8 +25,9 @@ pub enum BlobError {
     WireError(WireError),
 }
 
-type Result<T> = std::result::Result<T, BlobError>;
+pub type Result<T> = std::result::Result<T, BlobError>;
 
+#[derive(Clone)]
 pub struct BlobService {
     client: BlobServiceClient,
 }
