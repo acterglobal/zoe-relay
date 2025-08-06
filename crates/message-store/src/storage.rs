@@ -3,7 +3,9 @@ use std::sync::Arc;
 use futures_util::Stream;
 use redis::{aio::ConnectionManager, AsyncCommands, SetOptions};
 use tracing::{debug, error, info, warn};
-use zoe_wire_protocol::{FilterField, MessageFilters, MessageFull, PublishResult, StoreKey, Tag};
+use zoe_wire_protocol::{
+    FilterField, Hash, MessageFilters, MessageFull, PublishResult, StoreKey, Tag,
+};
 
 use crate::error::{MessageStoreError, Result};
 
@@ -413,6 +415,42 @@ impl RedisMessageStorage {
         }
 
         Ok(publish_result)
+    }
+
+    /// Check which messages the server already has and return their global stream IDs.
+    /// Returns a vec of Option<String> in the same order as the input, where:
+    /// - Some(stream_id) means the server has the message with that global stream ID  
+    /// - None means the server doesn't have this message yet
+    pub async fn check_messages(&self, message_ids: &[Hash]) -> Result<Vec<Option<String>>> {
+        if message_ids.is_empty() {
+            return Ok(vec![]);
+        }
+
+        let mut conn = { self.conn.lock().await.clone() };
+
+        let mut pipe = redis::pipe();
+        let stream_id_keys: Vec<String> = message_ids
+            .iter()
+            .map(|id| {
+                format!(
+                    "{MESSAGE_TO_STREAM_ID_PREFIX}{}",
+                    hex::encode(id.as_bytes())
+                )
+            })
+            .collect();
+
+        // Add all GET commands to pipeline
+        for stream_id_key in &stream_id_keys {
+            pipe.get(stream_id_key);
+        }
+
+        // Execute pipeline
+        let pipeline_results: Vec<Option<String>> = pipe
+            .query_async(&mut conn)
+            .await
+            .map_err(MessageStoreError::Redis)?;
+
+        Ok(pipeline_results)
     }
 
     /// Retrieve a specific message by ID

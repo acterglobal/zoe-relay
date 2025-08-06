@@ -208,6 +208,17 @@ impl MessageServiceRpc for MessagesRpcService {
             .map_err(MessageError::from)
     }
 
+    async fn check_messages(
+        self,
+        _context: ::tarpc::context::Context,
+        message_ids: Vec<Hash>,
+    ) -> Result<Vec<Option<String>>, MessageError> {
+        self.store
+            .check_messages(&message_ids)
+            .await
+            .map_err(MessageError::from)
+    }
+
     async fn subscribe(
         self,
         _context: ::tarpc::context::Context,

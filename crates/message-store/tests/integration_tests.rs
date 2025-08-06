@@ -456,3 +456,49 @@ async fn test_expired_message_handling() -> Result<(), Box<dyn std::error::Error
 
     Ok(())
 }
+
+#[tokio::test]
+async fn test_check_messages_bulk_sync() -> Result<(), Box<dyn std::error::Error>> {
+    let storage = setup_test_storage().await;
+    let keypair = SigningKey::generate(&mut OsRng);
+    let channel_id = b"test-channel";
+
+    // Create some test messages
+    let msg1 = create_test_message(channel_id, &keypair, "Message 1");
+    let msg2 = create_test_message(channel_id, &keypair, "Message 2");
+    let msg3 = create_test_message(channel_id, &keypair, "Message 3");
+
+    // Store only msg1 and msg3, leave msg2 unstored
+    let result1 = storage.store_message(&msg1).await?;
+    let result3 = storage.store_message(&msg3).await?;
+
+    let stream_id1 = result1
+        .global_stream_id()
+        .expect("Message should not be expired");
+    let stream_id3 = result3
+        .global_stream_id()
+        .expect("Message should not be expired");
+
+    // Check all three messages in bulk
+    let message_ids = vec![msg1.id, msg2.id, msg3.id];
+    let check_results = storage.check_messages(&message_ids).await?;
+
+    // Verify results are in the correct order
+    assert_eq!(check_results.len(), 3);
+    assert_eq!(check_results[0], Some(stream_id1.to_string())); // msg1 should be found
+    assert_eq!(check_results[1], None); // msg2 should not be found
+    assert_eq!(check_results[2], Some(stream_id3.to_string())); // msg3 should be found
+
+    // Test empty input
+    let empty_results = storage.check_messages(&[]).await?;
+    assert_eq!(empty_results, vec![]);
+
+    // Test with only non-existent messages
+    let msg4 = create_test_message(channel_id, &keypair, "Message 4");
+    let msg5 = create_test_message(channel_id, &keypair, "Message 5");
+    let nonexistent_ids = vec![msg4.id, msg5.id];
+    let nonexistent_results = storage.check_messages(&nonexistent_ids).await?;
+    assert_eq!(nonexistent_results, vec![None, None]);
+
+    Ok(())
+}
