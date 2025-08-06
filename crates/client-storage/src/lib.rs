@@ -7,7 +7,7 @@ mod tests;
 
 pub use error::{Result, StorageError};
 pub use sqlite::SqliteMessageStorage;
-pub use storage::{MessageQuery, MessageStorage, StorageConfig, StorageStats};
+pub use storage::{MessageQuery, MessageStorage, RelaySyncStatus, StorageConfig, StorageStats};
 
 // Storage factory for creating appropriate storage implementations
 pub struct StorageFactory;

@@ -392,4 +392,267 @@ mod integration_tests {
             assert!(message.is_some());
         }
     }
+
+    #[tokio::test]
+    async fn test_message_sync_tracking_basic() {
+        let (config, _temp_dir) = create_test_storage_config();
+        let encryption_key = [12u8; 32];
+        let storage = SqliteMessageStorage::new(config, &encryption_key)
+            .await
+            .unwrap();
+
+        // Create test messages
+        let signing_key = SigningKey::generate(&mut OsRng);
+        let message1 = create_test_message("Test message 1", &signing_key);
+        let message2 = create_test_message("Test message 2", &signing_key);
+
+        // Store messages
+        storage.store_message(&message1).await.unwrap();
+        storage.store_message(&message2).await.unwrap();
+
+        // Create relay keys
+        let relay1_key = SigningKey::generate(&mut OsRng).verifying_key();
+        let relay2_key = SigningKey::generate(&mut OsRng).verifying_key();
+
+        // Initially, all messages should be unsynced for both relays
+        let unsynced_relay1 = storage
+            .get_unsynced_messages_for_relay(&relay1_key, None)
+            .await
+            .unwrap();
+        let unsynced_relay2 = storage
+            .get_unsynced_messages_for_relay(&relay2_key, None)
+            .await
+            .unwrap();
+
+        assert_eq!(unsynced_relay1.len(), 2);
+        assert_eq!(unsynced_relay2.len(), 2);
+
+        // Mark message1 as synced to relay1
+        storage
+            .mark_message_synced(&message1.id, &relay1_key, "100")
+            .await
+            .unwrap();
+
+        // Now relay1 should have only message2 as unsynced
+        let unsynced_relay1 = storage
+            .get_unsynced_messages_for_relay(&relay1_key, None)
+            .await
+            .unwrap();
+        let unsynced_relay2 = storage
+            .get_unsynced_messages_for_relay(&relay2_key, None)
+            .await
+            .unwrap();
+
+        assert_eq!(unsynced_relay1.len(), 1);
+        assert_eq!(unsynced_relay1[0].id, message2.id);
+        assert_eq!(unsynced_relay2.len(), 2); // Still has both messages
+
+        // Mark message1 as synced to relay2 as well
+        storage
+            .mark_message_synced(&message1.id, &relay2_key, "200")
+            .await
+            .unwrap();
+
+        // Now both relays should only have message2 as unsynced
+        let unsynced_relay1 = storage
+            .get_unsynced_messages_for_relay(&relay1_key, None)
+            .await
+            .unwrap();
+        let unsynced_relay2 = storage
+            .get_unsynced_messages_for_relay(&relay2_key, None)
+            .await
+            .unwrap();
+
+        assert_eq!(unsynced_relay1.len(), 1);
+        assert_eq!(unsynced_relay2.len(), 1);
+        assert_eq!(unsynced_relay1[0].id, message2.id);
+        assert_eq!(unsynced_relay2[0].id, message2.id);
+    }
+
+    #[tokio::test]
+    async fn test_get_message_sync_status() {
+        let (config, _temp_dir) = create_test_storage_config();
+        let encryption_key = [13u8; 32];
+        let storage = SqliteMessageStorage::new(config, &encryption_key)
+            .await
+            .unwrap();
+
+        // Create test message
+        let signing_key = SigningKey::generate(&mut OsRng);
+        let message = create_test_message("Test sync status message", &signing_key);
+        storage.store_message(&message).await.unwrap();
+
+        // Create relay keys
+        let relay1_key = SigningKey::generate(&mut OsRng).verifying_key();
+        let relay2_key = SigningKey::generate(&mut OsRng).verifying_key();
+
+        // Initially, no sync status
+        let sync_status = storage.get_message_sync_status(&message.id).await.unwrap();
+        assert_eq!(sync_status.len(), 0);
+
+        // Mark as synced to relay1 and relay2
+        storage
+            .mark_message_synced(&message.id, &relay1_key, "100")
+            .await
+            .unwrap();
+        storage
+            .mark_message_synced(&message.id, &relay2_key, "200")
+            .await
+            .unwrap();
+
+        // Check sync status
+        let mut sync_status = storage.get_message_sync_status(&message.id).await.unwrap();
+        sync_status.sort_by(|a, b| a.global_stream_id.cmp(&b.global_stream_id)); // Sort for predictable testing
+
+        assert_eq!(sync_status.len(), 2);
+        assert_eq!(sync_status[0].relay_pubkey, relay1_key);
+        assert_eq!(sync_status[0].global_stream_id, "100");
+        assert_eq!(sync_status[1].relay_pubkey, relay2_key);
+        assert_eq!(sync_status[1].global_stream_id, "200");
+    }
+
+    #[tokio::test]
+    async fn test_individual_message_sync_verification() {
+        let (config, _temp_dir) = create_test_storage_config();
+        let encryption_key = [14u8; 32];
+        let storage = SqliteMessageStorage::new(config, &encryption_key)
+            .await
+            .unwrap();
+
+        // Create test messages
+        let signing_key = SigningKey::generate(&mut OsRng);
+        let message1 = create_test_message("Synced message 1", &signing_key);
+        let message2 = create_test_message("Synced message 2", &signing_key);
+        let message3 = create_test_message("Unsynced message", &signing_key);
+
+        storage.store_message(&message1).await.unwrap();
+        storage.store_message(&message2).await.unwrap();
+        storage.store_message(&message3).await.unwrap();
+
+        // Create relay key
+        let relay_key = SigningKey::generate(&mut OsRng).verifying_key();
+
+        // Initially, no messages have sync status
+        let message1_status = storage.get_message_sync_status(&message1.id).await.unwrap();
+        let message2_status = storage.get_message_sync_status(&message2.id).await.unwrap();
+        assert_eq!(message1_status.len(), 0);
+        assert_eq!(message2_status.len(), 0);
+
+        // Mark message1 and message2 as synced (but not message3)
+        storage
+            .mark_message_synced(&message1.id, &relay_key, "100")
+            .await
+            .unwrap();
+        storage
+            .mark_message_synced(&message2.id, &relay_key, "200")
+            .await
+            .unwrap();
+
+        // Verify sync status for individual messages
+        let message1_status = storage.get_message_sync_status(&message1.id).await.unwrap();
+        let message2_status = storage.get_message_sync_status(&message2.id).await.unwrap();
+        let message3_status = storage.get_message_sync_status(&message3.id).await.unwrap();
+
+        assert_eq!(message1_status.len(), 1);
+        assert_eq!(message1_status[0].global_stream_id, "100");
+        assert_eq!(message2_status.len(), 1);
+        assert_eq!(message2_status[0].global_stream_id, "200");
+        assert_eq!(message3_status.len(), 0); // Should not be synced
+    }
+
+    #[tokio::test]
+    async fn test_sync_status_update_replace() {
+        let (config, _temp_dir) = create_test_storage_config();
+        let encryption_key = [15u8; 32];
+        let storage = SqliteMessageStorage::new(config, &encryption_key)
+            .await
+            .unwrap();
+
+        // Create test message
+        let signing_key = SigningKey::generate(&mut OsRng);
+        let message = create_test_message("Update test message", &signing_key);
+        storage.store_message(&message).await.unwrap();
+
+        // Create relay key
+        let relay_key = SigningKey::generate(&mut OsRng).verifying_key();
+
+        // Mark as synced with initial stream ID
+        storage
+            .mark_message_synced(&message.id, &relay_key, "100")
+            .await
+            .unwrap();
+
+        let sync_status = storage.get_message_sync_status(&message.id).await.unwrap();
+        assert_eq!(sync_status.len(), 1);
+        assert_eq!(sync_status[0].global_stream_id, "100");
+
+        // Update with new stream ID (should replace, not add)
+        storage
+            .mark_message_synced(&message.id, &relay_key, "150")
+            .await
+            .unwrap();
+
+        let sync_status = storage.get_message_sync_status(&message.id).await.unwrap();
+        assert_eq!(sync_status.len(), 1);
+        assert_eq!(sync_status[0].global_stream_id, "150");
+    }
+
+    #[tokio::test]
+    async fn test_sync_with_limit() {
+        let (config, _temp_dir) = create_test_storage_config();
+        let encryption_key = [16u8; 32];
+        let storage = SqliteMessageStorage::new(config, &encryption_key)
+            .await
+            .unwrap();
+
+        // Create multiple test messages
+        let signing_key = SigningKey::generate(&mut OsRng);
+        let mut messages = Vec::new();
+        for i in 0..5 {
+            let message = create_test_message(&format!("Message {i}"), &signing_key);
+            storage.store_message(&message).await.unwrap();
+            messages.push(message);
+        }
+
+        let relay_key = SigningKey::generate(&mut OsRng).verifying_key();
+
+        // Test unsynced messages with limit
+        let unsynced_limited = storage
+            .get_unsynced_messages_for_relay(&relay_key, Some(3))
+            .await
+            .unwrap();
+        assert_eq!(unsynced_limited.len(), 3);
+
+        // Mark 2 messages as synced
+        storage
+            .mark_message_synced(&messages[0].id, &relay_key, "100")
+            .await
+            .unwrap();
+        storage
+            .mark_message_synced(&messages[1].id, &relay_key, "101")
+            .await
+            .unwrap();
+
+        // Test unsynced should now have 3 messages
+        let unsynced_after = storage
+            .get_unsynced_messages_for_relay(&relay_key, None)
+            .await
+            .unwrap();
+        assert_eq!(unsynced_after.len(), 3);
+
+        // Verify sync status of marked messages
+        let msg0_status = storage
+            .get_message_sync_status(&messages[0].id)
+            .await
+            .unwrap();
+        let msg1_status = storage
+            .get_message_sync_status(&messages[1].id)
+            .await
+            .unwrap();
+
+        assert_eq!(msg0_status.len(), 1);
+        assert_eq!(msg0_status[0].global_stream_id, "100");
+        assert_eq!(msg1_status.len(), 1);
+        assert_eq!(msg1_status[0].global_stream_id, "101");
+    }
 }

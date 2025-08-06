@@ -54,6 +54,7 @@ mod tests {
             "tag_events",
             "tag_users",
             "tag_channels",
+            "relay_sync_status",
         ];
 
         let table_names = required_tables

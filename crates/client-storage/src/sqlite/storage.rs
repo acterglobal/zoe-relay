@@ -5,7 +5,7 @@ use zoe_wire_protocol::{Hash, MessageFull, Tag};
 
 use super::migrations;
 use crate::error::{Result, StorageError};
-use crate::storage::{MessageQuery, MessageStorage, StorageConfig, StorageStats};
+use crate::storage::{MessageQuery, MessageStorage, RelaySyncStatus, StorageConfig, StorageStats};
 
 /// SQLite-based message storage with SQLCipher encryption
 pub struct SqliteMessageStorage {
@@ -468,5 +468,129 @@ impl MessageStorage for SqliteMessageStorage {
                 Ok(false)
             }
         }
+    }
+
+    async fn mark_message_synced(
+        &self,
+        message_id: &Hash,
+        relay_pubkey: &zoe_wire_protocol::VerifyingKey,
+        global_stream_id: &str,
+    ) -> Result<()> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| StorageError::Internal(format!("Failed to acquire database lock: {e}")))?;
+
+        let message_id_bytes = message_id.as_bytes();
+        let relay_pubkey_bytes = relay_pubkey.to_bytes();
+
+        conn.execute(
+            "INSERT OR REPLACE INTO relay_sync_status (message_id, relay_pubkey, global_stream_id) VALUES (?1, ?2, ?3)",
+            params![message_id_bytes, &relay_pubkey_bytes[..], global_stream_id],
+        )?;
+
+        tracing::debug!(
+            "Marked message {} as synced to relay {} with stream ID {}",
+            hex::encode(message_id_bytes),
+            hex::encode(relay_pubkey_bytes),
+            global_stream_id
+        );
+
+        Ok(())
+    }
+
+    async fn get_unsynced_messages_for_relay(
+        &self,
+        relay_pubkey: &zoe_wire_protocol::VerifyingKey,
+        limit: Option<usize>,
+    ) -> Result<Vec<MessageFull>> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| StorageError::Internal(format!("Failed to acquire database lock: {e}")))?;
+
+        let relay_pubkey_bytes = relay_pubkey.to_bytes();
+        let limit_clause = if let Some(l) = limit {
+            format!(" LIMIT {l}")
+        } else if let Some(default_limit) = self.config.max_query_limit {
+            format!(" LIMIT {default_limit}")
+        } else {
+            String::new()
+        };
+
+        let query = format!(
+            "SELECT m.data FROM messages m 
+             LEFT JOIN relay_sync_status r ON m.id = r.message_id AND r.relay_pubkey = ?1
+             WHERE r.message_id IS NULL
+             ORDER BY m.timestamp DESC{limit_clause}"
+        );
+
+        let mut stmt = conn.prepare(&query)?;
+        let message_iter = stmt.query_map(params![&relay_pubkey_bytes[..]], |row| {
+            let data: Vec<u8> = row.get(0)?;
+            Ok(data)
+        })?;
+
+        let mut messages = Vec::new();
+        for message_result in message_iter {
+            let data = message_result?;
+            let message: MessageFull =
+                postcard::from_bytes(&data).map_err(StorageError::Serialization)?;
+            messages.push(message);
+        }
+
+        tracing::debug!(
+            "Found {} unsynced messages for relay {}",
+            messages.len(),
+            hex::encode(relay_pubkey_bytes)
+        );
+
+        Ok(messages)
+    }
+
+    async fn get_message_sync_status(&self, message_id: &Hash) -> Result<Vec<RelaySyncStatus>> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| StorageError::Internal(format!("Failed to acquire database lock: {e}")))?;
+
+        let message_id_bytes = message_id.as_bytes();
+
+        let mut stmt = conn.prepare(
+            "SELECT relay_pubkey, global_stream_id, synced_at FROM relay_sync_status WHERE message_id = ?1"
+        )?;
+
+        let sync_iter = stmt.query_map(params![message_id_bytes], |row| {
+            let relay_pubkey_bytes: Vec<u8> = row.get(0)?;
+            let global_stream_id: String = row.get(1)?;
+            let synced_at: i64 = row.get(2)?;
+            Ok((relay_pubkey_bytes, global_stream_id, synced_at))
+        })?;
+
+        let mut sync_statuses = Vec::new();
+        for sync_result in sync_iter {
+            let (relay_pubkey_bytes, global_stream_id, synced_at) = sync_result?;
+
+            if relay_pubkey_bytes.len() != 32 {
+                return Err(StorageError::Database(rusqlite::Error::InvalidColumnType(
+                    0,
+                    "relay_pubkey".to_string(),
+                    rusqlite::types::Type::Blob,
+                )));
+            }
+
+            let mut key_array = [0u8; 32];
+            key_array.copy_from_slice(&relay_pubkey_bytes);
+            let relay_pubkey = zoe_wire_protocol::VerifyingKey::from_bytes(&key_array)
+                .map_err(|e| StorageError::Internal(format!("Invalid relay public key: {e}")))?;
+
+            sync_statuses.push(RelaySyncStatus {
+                relay_pubkey,
+                global_stream_id,
+                synced_at: synced_at as u64,
+            });
+        }
+
+        Ok(sync_statuses)
     }
 }

@@ -60,6 +60,17 @@ pub struct StorageStats {
     pub newest_message_timestamp: Option<u64>,
 }
 
+/// Sync status for a message on a specific relay
+#[derive(Debug, Clone)]
+pub struct RelaySyncStatus {
+    /// Ed25519 public key of the relay server
+    pub relay_pubkey: VerifyingKey,
+    /// Global stream ID where the message was confirmed
+    pub global_stream_id: String,
+    /// Unix timestamp when sync was confirmed
+    pub synced_at: u64,
+}
+
 /// Trait defining the storage interface for messages
 #[async_trait]
 pub trait MessageStorage: Send + Sync {
@@ -76,6 +87,27 @@ pub trait MessageStorage: Send + Sync {
 
     /// Query messages with various filters
     async fn query_messages(&self, query: &MessageQuery) -> Result<Vec<MessageFull>, Self::Error>;
+
+    /// Mark a message as synced to a relay with its global stream ID
+    async fn mark_message_synced(
+        &self,
+        message_id: &Hash,
+        relay_pubkey: &VerifyingKey,
+        global_stream_id: &str,
+    ) -> Result<(), Self::Error>;
+
+    /// Get all messages that are not yet synced to a specific relay
+    async fn get_unsynced_messages_for_relay(
+        &self,
+        relay_pubkey: &VerifyingKey,
+        limit: Option<usize>,
+    ) -> Result<Vec<MessageFull>, Self::Error>;
+
+    /// Get sync status for a specific message across all relays
+    async fn get_message_sync_status(
+        &self,
+        message_id: &Hash,
+    ) -> Result<Vec<RelaySyncStatus>, Self::Error>;
 
     /// Get messages by author with optional limit
     async fn get_messages_by_author(
