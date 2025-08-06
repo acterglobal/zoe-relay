@@ -51,7 +51,7 @@ pub enum Kind {
 /// # Content Type Design and Versioning Strategy
 ///
 /// The `Content` enum represents the payload of a message and supports different encryption
-/// schemes. **Important**: The choice of available content types and their cryptographic 
+/// schemes. **Important**: The choice of available content types and their cryptographic
 /// implementations is **hard-wired at the message version level** (e.g., `MessageV0`).
 /// This means that when a new message version is introduced (like `MessageV1`), it can
 /// have different content variants or updated cryptographic schemes.
@@ -125,7 +125,7 @@ pub enum Content {
     /// - Metadata or routing information
     /// - Binary data that should be transmitted as-is
     Raw(Vec<u8>),
-    
+
     /// ChaCha20-Poly1305 encrypted content with context-derived keys.
     ///
     /// The encryption key is determined by message context such as:
@@ -136,7 +136,7 @@ pub enum Content {
     /// This variant provides minimal serialization overhead while maintaining
     /// strong AEAD security properties.
     ChaCha20Poly1305(ChaCha20Poly1305Content),
-    
+
     /// Ed25519-derived ChaCha20-Poly1305 encrypted content.
     ///
     /// Uses Ed25519 keypairs (typically from mnemonic phrases) to derive
@@ -481,7 +481,7 @@ pub struct MessageV0 {
     /// This key is used to verify the digital signature in [`MessageFull`].
     /// The sender must possess the corresponding private key to create valid signatures.
     pub sender: VerifyingKey,
-    
+
     /// Unix timestamp in seconds when the message was created.
     ///
     /// Used for:
@@ -489,7 +489,7 @@ pub struct MessageV0 {
     /// - Expiration of ephemeral messages  
     /// - Preventing replay attacks (with reasonable clock skew tolerance)
     pub when: u64,
-    
+
     /// Message type determining storage and forwarding behavior.
     ///
     /// See [`Kind`] for details on different message types:
@@ -498,7 +498,7 @@ pub struct MessageV0 {
     /// - `Store`: Updates a specific key-value store
     /// - `ClearStore`: Clears a key-value store
     pub kind: Kind,
-    
+
     /// Tags for routing, references, and metadata.
     ///
     /// Common tag types include:
@@ -510,7 +510,7 @@ pub struct MessageV0 {
     /// Default value is an empty vector when deserializing legacy messages.
     #[serde(default)]
     pub tags: Vec<Tag>,
-    
+
     /// The message payload with optional encryption.
     ///
     /// See [`Content`] for available variants:
@@ -622,13 +622,13 @@ pub struct MessageFull {
     /// - **Tamper-evident**: Changes to message or signature change the ID
     /// - **Content-addressed**: Can be used to retrieve the message
     pub id: Hash,
-    
+
     /// The original message content and metadata.
     ///
     /// Boxed to minimize stack usage since messages can be large.
     /// Contains version-specific message data (e.g., [`MessageV0`]).
     pub message: Box<Message>,
-    
+
     /// Ed25519 digital signature over the serialized message.
     ///
     /// Created by signing `postcard::serialize(message)` with the sender's private key.
