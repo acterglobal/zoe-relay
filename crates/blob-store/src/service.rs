@@ -138,6 +138,51 @@ impl BlobService for BlobServiceImpl {
 
         Ok(Some(info))
     }
+
+    async fn check_blobs(
+        self,
+        _context: tarpc::context::Context,
+        hashes: Vec<String>,
+    ) -> BlobResult<Vec<bool>> {
+        info!("Checking existence of {} blobs", hashes.len());
+
+        if hashes.is_empty() {
+            return Ok(vec![]);
+        }
+
+        let mut results = Vec::with_capacity(hashes.len());
+
+        for hash_str in hashes {
+            // Parse the hash string
+            let hash = match hash_str.parse::<Hash>() {
+                Ok(h) => h,
+                Err(_) => {
+                    // Invalid hash format - treat as not found
+                    results.push(false);
+                    continue;
+                }
+            };
+
+            // Check if blob exists using the store's has method
+            let exists = self
+                .store
+                .has(hash)
+                .await
+                .map_err(|e| BlobError::StorageError {
+                    message: e.to_string(),
+                })?;
+
+            results.push(exists);
+        }
+
+        info!(
+            "Blob existence check complete: {}/{} found",
+            results.iter().filter(|&&exists| exists).count(),
+            results.len()
+        );
+
+        Ok(results)
+    }
 }
 
 #[cfg(test)]
@@ -435,5 +480,52 @@ mod tests {
 
         assert_eq!(info1.size_bytes, 18); // "First blob content".len()
         assert_eq!(info2.size_bytes, 19); // "Second blob content".len()
+    }
+
+    #[tokio::test]
+    async fn test_check_blobs_simple() {
+        let service = create_test_service().await;
+
+        // Upload one blob
+        let blob_data = b"Test blob".to_vec();
+        let hash = service
+            .clone()
+            .upload_blob(context::current(), blob_data)
+            .await
+            .unwrap();
+
+        // Check the uploaded blob (should exist)
+        let results = service
+            .clone()
+            .check_blobs(context::current(), vec![hash.clone()])
+            .await
+            .unwrap();
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0], true); // Should exist
+
+        // Test empty input
+        let empty_results = service
+            .clone()
+            .check_blobs(context::current(), vec![])
+            .await
+            .unwrap();
+        assert_eq!(empty_results, Vec::<bool>::new());
+
+        // Test with another uploaded blob to verify it works with multiple valid hashes
+        let blob2_data = b"Another test blob".to_vec();
+        let hash2 = service
+            .clone()
+            .upload_blob(context::current(), blob2_data)
+            .await
+            .unwrap();
+
+        // Check both hashes
+        let multi_results = service
+            .clone()
+            .check_blobs(context::current(), vec![hash.clone(), hash2.clone()])
+            .await
+            .unwrap();
+        assert_eq!(multi_results, vec![true, true]);
     }
 }

@@ -14,6 +14,13 @@ pub trait BlobService {
 
     /// Get information about a blob
     async fn get_blob_info(hash: String) -> BlobResult<Option<BlobInfo>>;
+
+    // Bulk operations for sync
+    /// Check which blobs the server already has stored.
+    /// Returns a vec of `bool` in the same order as the input, where:
+    /// - `true` means the server has the blob stored
+    /// - `false` means the server doesn't have this blob yet
+    async fn check_blobs(hashes: Vec<String>) -> BlobResult<Vec<bool>>;
 }
 
 /// Result type for blob operations
