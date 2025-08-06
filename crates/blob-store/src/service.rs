@@ -49,11 +49,7 @@ impl BlobService for BlobServiceImpl {
         })
     }
 
-    async fn upload_blob(
-        self,
-        _context: tarpc::context::Context,
-        data: Vec<u8>,
-    ) -> BlobResult<String> {
+    async fn upload(self, _context: tarpc::context::Context, data: Vec<u8>) -> BlobResult<String> {
         info!("Uploading blob of {} bytes", data.len());
 
         // Store the blob using add_bytes
@@ -70,7 +66,7 @@ impl BlobService for BlobServiceImpl {
         Ok(hash.to_string())
     }
 
-    async fn download_blob(
+    async fn download(
         self,
         _context: tarpc::context::Context,
         hash: String,
@@ -95,7 +91,7 @@ impl BlobService for BlobServiceImpl {
         Ok(Some(data.to_vec()))
     }
 
-    async fn get_blob_info(
+    async fn get_info(
         self,
         _context: tarpc::context::Context,
         hash: String,
@@ -228,7 +224,7 @@ mod tests {
         // Upload the blob
         let hash = service
             .clone()
-            .upload_blob(context::current(), test_data.clone())
+            .upload(context::current(), test_data.clone())
             .await
             .unwrap();
 
@@ -238,7 +234,7 @@ mod tests {
         // Download the blob
         let downloaded = service
             .clone()
-            .download_blob(context::current(), hash.clone())
+            .download(context::current(), hash.clone())
             .await
             .unwrap();
 
@@ -254,7 +250,7 @@ mod tests {
         let fake_hash = "b0a2b1c3d4e5f67890abcdef1234567890abcdef1234567890abcdef12345678";
         let result = service
             .clone()
-            .download_blob(context::current(), fake_hash.to_string())
+            .download(context::current(), fake_hash.to_string())
             .await
             .unwrap();
 
@@ -274,14 +270,14 @@ mod tests {
 
         let hash = service
             .clone()
-            .upload_blob(context::current(), test_data)
+            .upload(context::current(), test_data)
             .await
             .unwrap();
 
         // Get blob info
         let info = service
             .clone()
-            .get_blob_info(context::current(), hash.clone())
+            .get_info(context::current(), hash.clone())
             .await
             .unwrap();
 
@@ -303,7 +299,7 @@ mod tests {
         let fake_hash = "b0a2b1c3d4e5f67890abcdef1234567890abcdef1234567890abcdef12345678";
         let info = service
             .clone()
-            .get_blob_info(context::current(), fake_hash.to_string())
+            .get_info(context::current(), fake_hash.to_string())
             .await
             .unwrap();
 
@@ -327,7 +323,7 @@ mod tests {
         for blob_data in &blobs {
             let hash = service
                 .clone()
-                .upload_blob(context::current(), blob_data.clone())
+                .upload(context::current(), blob_data.clone())
                 .await
                 .unwrap();
             hashes.push(hash);
@@ -337,7 +333,7 @@ mod tests {
         for (i, hash) in hashes.iter().enumerate() {
             let downloaded = service
                 .clone()
-                .download_blob(context::current(), hash.clone())
+                .download(context::current(), hash.clone())
                 .await
                 .unwrap();
 
@@ -348,7 +344,7 @@ mod tests {
         for (i, hash) in hashes.iter().enumerate() {
             let info = service
                 .clone()
-                .get_blob_info(context::current(), hash.clone())
+                .get_info(context::current(), hash.clone())
                 .await
                 .unwrap();
 
@@ -367,14 +363,14 @@ mod tests {
         let empty_data = Vec::new();
         let hash = service
             .clone()
-            .upload_blob(context::current(), empty_data.clone())
+            .upload(context::current(), empty_data.clone())
             .await
             .unwrap();
 
         // Download it back
         let downloaded = service
             .clone()
-            .download_blob(context::current(), hash.clone())
+            .download(context::current(), hash.clone())
             .await
             .unwrap();
 
@@ -383,7 +379,7 @@ mod tests {
         // Check info - handle case where empty blobs might not have info
         let info_result = service
             .clone()
-            .get_blob_info(context::current(), hash)
+            .get_info(context::current(), hash)
             .await
             .unwrap();
 
@@ -404,13 +400,13 @@ mod tests {
 
         let hash = service
             .clone()
-            .upload_blob(context::current(), large_data.clone())
+            .upload(context::current(), large_data.clone())
             .await
             .unwrap();
 
         let downloaded = service
             .clone()
-            .download_blob(context::current(), hash.clone())
+            .download(context::current(), hash.clone())
             .await
             .unwrap();
 
@@ -419,7 +415,7 @@ mod tests {
         // Verify size
         let info = service
             .clone()
-            .get_blob_info(context::current(), hash)
+            .get_info(context::current(), hash)
             .await
             .unwrap()
             .unwrap();
@@ -437,12 +433,12 @@ mod tests {
 
         let hash1 = service
             .clone()
-            .upload_blob(context::current(), blob1.clone())
+            .upload(context::current(), blob1.clone())
             .await
             .unwrap();
         let hash2 = service
             .clone()
-            .upload_blob(context::current(), blob2.clone())
+            .upload(context::current(), blob2.clone())
             .await
             .unwrap();
 
@@ -452,12 +448,12 @@ mod tests {
         // Download in reverse order
         let downloaded2 = service
             .clone()
-            .download_blob(context::current(), hash2.clone())
+            .download(context::current(), hash2.clone())
             .await
             .unwrap();
         let downloaded1 = service
             .clone()
-            .download_blob(context::current(), hash1.clone())
+            .download(context::current(), hash1.clone())
             .await
             .unwrap();
 
@@ -467,13 +463,13 @@ mod tests {
         // Verify info for both
         let info1 = service
             .clone()
-            .get_blob_info(context::current(), hash1)
+            .get_info(context::current(), hash1)
             .await
             .unwrap()
             .unwrap();
         let info2 = service
             .clone()
-            .get_blob_info(context::current(), hash2)
+            .get_info(context::current(), hash2)
             .await
             .unwrap()
             .unwrap();
@@ -490,7 +486,7 @@ mod tests {
         let blob_data = b"Test blob".to_vec();
         let hash = service
             .clone()
-            .upload_blob(context::current(), blob_data)
+            .upload(context::current(), blob_data)
             .await
             .unwrap();
 
@@ -516,7 +512,7 @@ mod tests {
         let blob2_data = b"Another test blob".to_vec();
         let hash2 = service
             .clone()
-            .upload_blob(context::current(), blob2_data)
+            .upload(context::current(), blob2_data)
             .await
             .unwrap();
 
@@ -563,12 +559,12 @@ mod tests {
 
         let server_hash1 = server
             .clone()
-            .upload_blob(context::current(), server_blob1_data.clone())
+            .upload(context::current(), server_blob1_data.clone())
             .await
             .unwrap();
         let server_hash2 = server
             .clone()
-            .upload_blob(context::current(), server_blob2_data.clone())
+            .upload(context::current(), server_blob2_data.clone())
             .await
             .unwrap();
 
@@ -591,7 +587,7 @@ mod tests {
             let blob_data = client.get_blob(hash).await.unwrap().unwrap();
             let uploaded_hash = server
                 .clone()
-                .upload_blob(context::current(), blob_data)
+                .upload(context::current(), blob_data)
                 .await
                 .unwrap();
 
@@ -619,7 +615,7 @@ mod tests {
         for hash in &server_hashes {
             let blob_data = server
                 .clone()
-                .download_blob(context::current(), hash.clone())
+                .download(context::current(), hash.clone())
                 .await
                 .unwrap()
                 .unwrap();
@@ -636,7 +632,7 @@ mod tests {
         let client_blob1 = client.get_blob(&client_hash1).await.unwrap().unwrap();
         let server_blob1 = server
             .clone()
-            .download_blob(context::current(), client_hash1.clone())
+            .download(context::current(), client_hash1.clone())
             .await
             .unwrap()
             .unwrap();
@@ -689,7 +685,7 @@ mod tests {
         let remote_blob_data = b"Direct remote blob".to_vec();
         let remote_hash = server
             .clone()
-            .upload_blob(context::current(), remote_blob_data.clone())
+            .upload(context::current(), remote_blob_data.clone())
             .await
             .unwrap();
 

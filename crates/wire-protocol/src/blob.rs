@@ -7,13 +7,13 @@ pub trait BlobService {
     async fn health_check() -> BlobResult<BlobHealth>;
 
     /// Upload a blob and return its hash
-    async fn upload_blob(data: Vec<u8>) -> BlobResult<String>;
+    async fn upload(data: Vec<u8>) -> BlobResult<String>;
 
     /// Download a blob by its hash
-    async fn download_blob(hash: String) -> BlobResult<Option<Vec<u8>>>;
+    async fn download(hash: String) -> BlobResult<Option<Vec<u8>>>;
 
     /// Get information about a blob
-    async fn get_blob_info(hash: String) -> BlobResult<Option<BlobInfo>>;
+    async fn get_info(hash: String) -> BlobResult<Option<BlobInfo>>;
 
     // Bulk operations for sync
     /// Check which blobs the server already has stored.

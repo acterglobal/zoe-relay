@@ -55,7 +55,7 @@ impl BlobService {
     pub async fn get_blob(&self, blob_id: &str) -> Result<Vec<u8>> {
         let Some(blob) = self
             .client
-            .download_blob(context::current(), blob_id.to_string())
+            .download(context::current(), blob_id.to_string())
             .await
             .map_err(BlobError::RpcError)?
             .map_err(BlobError::WireError)?
@@ -70,7 +70,7 @@ impl BlobService {
     pub async fn upload_blob(&self, blob: &[u8]) -> Result<String> {
         let hash = self
             .client
-            .upload_blob(context::current(), blob.to_vec())
+            .upload(context::current(), blob.to_vec())
             .await
             .map_err(BlobError::RpcError)?
             .map_err(BlobError::WireError)?;

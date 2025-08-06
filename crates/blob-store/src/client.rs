@@ -132,7 +132,7 @@ impl BlobClient {
             .ok_or_else(|| BlobStoreError::NotFound(hash.to_string()))?;
 
         // Upload to remote
-        match remote.clone().upload_blob(context::current(), data).await {
+        match remote.clone().upload(context::current(), data).await {
             Ok(remote_hash) => {
                 info!(
                     "Successfully uploaded blob {} to remote as {}",
@@ -156,7 +156,7 @@ impl BlobClient {
         // Download from remote
         match remote
             .clone()
-            .download_blob(context::current(), hash.to_string())
+            .download(context::current(), hash.to_string())
             .await
         {
             Ok(Some(data)) => {
@@ -300,33 +300,35 @@ impl BlobClient {
         Ok(result)
     }
 
-    /// Full bidirectional sync with remote server
-    /// This is a simplified version - in practice, you'd want more sophisticated sync logic
-    pub async fn full_sync(
+    /// Sync local blobs to remote server
+    /// If no hashes are provided, syncs all local blobs
+    pub async fn sync(
         &self,
         remote: &BlobServiceImpl,
-        local_hashes: &[String],
+        local_hashes: Option<&[String]>,
     ) -> Result<SyncResult, BlobStoreError> {
-        info!(
-            "Starting full bidirectional sync with {} local blobs",
-            local_hashes.len()
-        );
+        // Get hashes to sync - either provided ones or all local blobs
+        let hashes_to_sync = match local_hashes {
+            Some(hashes) => hashes.to_vec(),
+            None => {
+                info!("No specific hashes provided, syncing all local blobs");
+                self.list_local_blobs().await?
+            }
+        };
 
-        // Step 1: Upload local blobs to remote
-        let upload_result = self.upload_blobs(remote, local_hashes).await?;
+        info!("Starting sync with {} local blobs", hashes_to_sync.len());
 
-        // Step 2: For this simple implementation, we don't have a way to list remote blobs
-        // In a real implementation, you'd add a list_blobs RPC method to get remote hashes
-        // then call download_blobs with those hashes
+        // Upload local blobs to remote (only uploads blobs that remote doesn't have)
+        let upload_result = self.upload_blobs(remote, &hashes_to_sync).await?;
 
         let result = SyncResult {
             uploaded: upload_result.uploaded,
-            downloaded: 0, // Would be implemented with remote blob listing
+            downloaded: 0, // Currently only supports upload direction
             failed: upload_result.failed,
         };
 
         info!(
-            "Full sync complete: uploaded={}, downloaded={}, failed={}",
+            "Sync complete: uploaded={}, downloaded={}, failed={}",
             result.uploaded, result.downloaded, result.failed
         );
 
@@ -441,5 +443,348 @@ mod tests {
             all_blobs.len(),
             all_blobs
         );
+    }
+
+    // Helper function to create an in-process remote server for testing
+    async fn create_test_remote_service() -> crate::BlobServiceImpl {
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().unwrap();
+        let data_dir = temp_dir.path().to_path_buf();
+
+        let service = crate::BlobServiceImpl::new(data_dir).await.unwrap();
+
+        // Prevent temp_dir from being dropped
+        std::mem::forget(temp_dir);
+
+        service
+    }
+
+    #[tokio::test]
+    async fn test_sync_empty_remote() {
+        // Test syncing when remote has no blobs - all should be uploaded
+        let client = create_test_client().await;
+        let remote = create_test_remote_service().await;
+
+        // Store some blobs locally
+        let blob1_data = b"Sync test blob 1".to_vec();
+        let blob2_data = b"Sync test blob 2".to_vec();
+        let blob3_data = b"Sync test blob 3".to_vec();
+
+        let hash1 = client.store_blob(blob1_data.clone()).await.unwrap();
+        let hash2 = client.store_blob(blob2_data.clone()).await.unwrap();
+        let hash3 = client.store_blob(blob3_data.clone()).await.unwrap();
+
+        let local_hashes = vec![hash1.clone(), hash2.clone(), hash3.clone()];
+
+        // Verify remote doesn't have these blobs initially
+        let remote_has = remote
+            .clone()
+            .check_blobs(tarpc::context::current(), local_hashes.clone())
+            .await
+            .unwrap();
+        assert_eq!(remote_has, vec![false, false, false]);
+
+        // Perform sync
+        let sync_result = client.sync(&remote, Some(&local_hashes)).await.unwrap();
+
+        // All blobs should have been uploaded
+        assert_eq!(sync_result.uploaded, 3);
+        assert_eq!(sync_result.downloaded, 0);
+        assert_eq!(sync_result.failed, 0);
+
+        // Verify remote now has all blobs
+        let remote_has_after = remote
+            .clone()
+            .check_blobs(tarpc::context::current(), local_hashes)
+            .await
+            .unwrap();
+        assert_eq!(remote_has_after, vec![true, true, true]);
+
+        // Verify data integrity
+        let remote_blob1 = remote
+            .clone()
+            .download(tarpc::context::current(), hash1)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(remote_blob1, blob1_data);
+    }
+
+    #[tokio::test]
+    async fn test_sync_partial_remote() {
+        // Test syncing when remote already has some blobs - only missing ones should be uploaded
+        let client = create_test_client().await;
+        let remote = create_test_remote_service().await;
+
+        // Store some blobs locally
+        let blob1_data = b"Partial sync blob 1".to_vec();
+        let blob2_data = b"Partial sync blob 2".to_vec();
+        let blob3_data = b"Partial sync blob 3".to_vec();
+        let blob4_data = b"Partial sync blob 4".to_vec();
+
+        let hash1 = client.store_blob(blob1_data.clone()).await.unwrap();
+        let hash2 = client.store_blob(blob2_data.clone()).await.unwrap();
+        let hash3 = client.store_blob(blob3_data.clone()).await.unwrap();
+        let hash4 = client.store_blob(blob4_data.clone()).await.unwrap();
+
+        // Pre-populate remote with some of the blobs (blob1 and blob3)
+        let _ = remote
+            .clone()
+            .upload(tarpc::context::current(), blob1_data.clone())
+            .await
+            .unwrap();
+        let _ = remote
+            .clone()
+            .upload(tarpc::context::current(), blob3_data.clone())
+            .await
+            .unwrap();
+
+        let local_hashes = vec![hash1.clone(), hash2.clone(), hash3.clone(), hash4.clone()];
+
+        // Verify remote has some but not all blobs initially
+        let remote_has = remote
+            .clone()
+            .check_blobs(tarpc::context::current(), local_hashes.clone())
+            .await
+            .unwrap();
+        assert_eq!(remote_has, vec![true, false, true, false]); // has 1&3, missing 2&4
+
+        // Perform sync
+        let sync_result = client.sync(&remote, Some(&local_hashes)).await.unwrap();
+
+        // Only the missing blobs should have been uploaded
+        assert_eq!(sync_result.uploaded, 2); // blob2 and blob4
+        assert_eq!(sync_result.downloaded, 0);
+        assert_eq!(sync_result.failed, 0);
+
+        // Verify remote now has all blobs
+        let remote_has_after = remote
+            .clone()
+            .check_blobs(tarpc::context::current(), local_hashes)
+            .await
+            .unwrap();
+        assert_eq!(remote_has_after, vec![true, true, true, true]);
+
+        // Verify data integrity of newly uploaded blobs
+        let remote_blob2 = remote
+            .clone()
+            .download(tarpc::context::current(), hash2)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(remote_blob2, blob2_data);
+
+        let remote_blob4 = remote
+            .clone()
+            .download(tarpc::context::current(), hash4)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(remote_blob4, blob4_data);
+    }
+
+    #[tokio::test]
+    async fn test_sync_complete_remote() {
+        // Test syncing when remote already has all blobs - nothing should be uploaded
+        let client = create_test_client().await;
+        let remote = create_test_remote_service().await;
+
+        // Store some blobs locally
+        let blob1_data = b"Complete sync blob 1".to_vec();
+        let blob2_data = b"Complete sync blob 2".to_vec();
+
+        let hash1 = client.store_blob(blob1_data.clone()).await.unwrap();
+        let hash2 = client.store_blob(blob2_data.clone()).await.unwrap();
+
+        // Pre-populate remote with all the blobs
+        let remote_hash1 = remote
+            .clone()
+            .upload(tarpc::context::current(), blob1_data.clone())
+            .await
+            .unwrap();
+        let remote_hash2 = remote
+            .clone()
+            .upload(tarpc::context::current(), blob2_data.clone())
+            .await
+            .unwrap();
+
+        // Verify hashes match (content-based addressing)
+        assert_eq!(hash1, remote_hash1);
+        assert_eq!(hash2, remote_hash2);
+
+        let local_hashes = vec![hash1.clone(), hash2.clone()];
+
+        // Verify remote has all blobs initially
+        let remote_has = remote
+            .clone()
+            .check_blobs(tarpc::context::current(), local_hashes.clone())
+            .await
+            .unwrap();
+        assert_eq!(remote_has, vec![true, true]);
+
+        // Perform sync
+        let sync_result = client.sync(&remote, Some(&local_hashes)).await.unwrap();
+
+        // No blobs should have been uploaded
+        assert_eq!(sync_result.uploaded, 0);
+        assert_eq!(sync_result.downloaded, 0);
+        assert_eq!(sync_result.failed, 0);
+
+        // Verify remote still has all blobs
+        let remote_has_after = remote
+            .clone()
+            .check_blobs(tarpc::context::current(), local_hashes)
+            .await
+            .unwrap();
+        assert_eq!(remote_has_after, vec![true, true]);
+    }
+
+    #[tokio::test]
+    async fn test_sync_empty_input() {
+        // Test syncing with empty blob list
+        let client = create_test_client().await;
+        let remote = create_test_remote_service().await;
+
+        let empty_hashes: Vec<String> = vec![];
+
+        // Perform sync with empty input
+        let sync_result = client.sync(&remote, Some(&empty_hashes)).await.unwrap();
+
+        // Nothing should happen
+        assert_eq!(sync_result.uploaded, 0);
+        assert_eq!(sync_result.downloaded, 0);
+        assert_eq!(sync_result.failed, 0);
+    }
+
+    #[tokio::test]
+    async fn test_sync_large_batch() {
+        // Test syncing with a larger number of blobs to verify check_blobs chunking works
+        let client = create_test_client().await;
+        let remote = create_test_remote_service().await;
+
+        let mut local_hashes = Vec::new();
+        let mut blob_data = Vec::new();
+
+        // Create 10 blobs
+        for i in 0..10 {
+            let data = format!("Large batch blob {i}").into_bytes();
+            blob_data.push(data.clone());
+            let hash = client.store_blob(data).await.unwrap();
+            local_hashes.push(hash);
+        }
+
+        // Pre-populate remote with every other blob (0, 2, 4, 6, 8)
+        for i in (0..10).step_by(2) {
+            let _ = remote
+                .clone()
+                .upload(tarpc::context::current(), blob_data[i].clone())
+                .await
+                .unwrap();
+        }
+
+        // Perform sync
+        let sync_result = client.sync(&remote, Some(&local_hashes)).await.unwrap();
+
+        // Should upload 5 blobs (the odd-numbered ones: 1, 3, 5, 7, 9)
+        assert_eq!(sync_result.uploaded, 5);
+        assert_eq!(sync_result.downloaded, 0);
+        assert_eq!(sync_result.failed, 0);
+
+        // Verify remote now has all blobs
+        let remote_has_after = remote
+            .clone()
+            .check_blobs(tarpc::context::current(), local_hashes)
+            .await
+            .unwrap();
+        assert_eq!(remote_has_after, vec![true; 10]);
+    }
+
+    #[tokio::test]
+    async fn test_sync_all_local_blobs() {
+        // Test syncing all local blobs automatically when None is passed
+        let client = create_test_client().await;
+        let remote = create_test_remote_service().await;
+
+        // Store some blobs locally
+        let blob1_data = b"Auto sync blob 1".to_vec();
+        let blob2_data = b"Auto sync blob 2".to_vec();
+        let blob3_data = b"Auto sync blob 3".to_vec();
+
+        let hash1 = client.store_blob(blob1_data.clone()).await.unwrap();
+        let hash2 = client.store_blob(blob2_data.clone()).await.unwrap();
+        let hash3 = client.store_blob(blob3_data.clone()).await.unwrap();
+
+        // Verify remote doesn't have these blobs initially
+        let all_local_hashes = vec![hash1.clone(), hash2.clone(), hash3.clone()];
+        let remote_has = remote
+            .clone()
+            .check_blobs(tarpc::context::current(), all_local_hashes.clone())
+            .await
+            .unwrap();
+        assert_eq!(remote_has, vec![false, false, false]);
+
+        // Perform sync with None (should sync all local blobs automatically)
+        let sync_result = client.sync(&remote, None).await.unwrap();
+
+        // All blobs should have been uploaded
+        assert_eq!(sync_result.uploaded, 3);
+        assert_eq!(sync_result.downloaded, 0);
+        assert_eq!(sync_result.failed, 0);
+
+        // Verify remote now has all blobs
+        let remote_has_after = remote
+            .clone()
+            .check_blobs(tarpc::context::current(), all_local_hashes)
+            .await
+            .unwrap();
+        assert_eq!(remote_has_after, vec![true, true, true]);
+
+        // Verify data integrity
+        let remote_blob2 = remote
+            .clone()
+            .download(tarpc::context::current(), hash2)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(remote_blob2, blob2_data);
+    }
+
+    #[tokio::test]
+    async fn test_sync_all_with_partial_remote() {
+        // Test syncing all local blobs when remote already has some
+        let client = create_test_client().await;
+        let remote = create_test_remote_service().await;
+
+        // Store some blobs locally
+        let blob1_data = b"Auto partial sync blob 1".to_vec();
+        let blob2_data = b"Auto partial sync blob 2".to_vec();
+
+        let hash1 = client.store_blob(blob1_data.clone()).await.unwrap();
+        let hash2 = client.store_blob(blob2_data.clone()).await.unwrap();
+
+        // Pre-populate remote with one of the blobs
+        let _ = remote
+            .clone()
+            .upload(tarpc::context::current(), blob1_data.clone())
+            .await
+            .unwrap();
+
+        // Perform sync with None (should sync all local blobs, but only upload missing ones)
+        let sync_result = client.sync(&remote, None).await.unwrap();
+
+        // Only the missing blob should have been uploaded
+        assert_eq!(sync_result.uploaded, 1); // blob2
+        assert_eq!(sync_result.downloaded, 0);
+        assert_eq!(sync_result.failed, 0);
+
+        // Verify remote now has both blobs
+        let all_hashes = vec![hash1.clone(), hash2.clone()];
+        let remote_has_after = remote
+            .clone()
+            .check_blobs(tarpc::context::current(), all_hashes)
+            .await
+            .unwrap();
+        assert_eq!(remote_has_after, vec![true, true]);
     }
 }
