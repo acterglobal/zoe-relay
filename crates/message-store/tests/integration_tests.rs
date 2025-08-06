@@ -160,32 +160,40 @@ async fn test_channel_streams_storage_and_retrieval() {
     let msg4 = create_test_message(channel_a, &keypair, "Message 3 in channel A");
 
     // Store messages in order
-    let stream_id1 = storage
+    let publish_result1 = storage
         .store_message(&msg1)
         .await
-        .expect("Failed to store msg1")
-        .expect("Expected stream ID");
+        .expect("Failed to store msg1");
+    let stream_id1 = publish_result1
+        .global_stream_id()
+        .expect("Message should not be expired");
     println!("Stored msg1 with stream ID: {stream_id1}");
 
-    let stream_id2 = storage
+    let publish_result2 = storage
         .store_message(&msg2)
         .await
-        .expect("Failed to store msg2")
-        .expect("Expected stream ID");
+        .expect("Failed to store msg2");
+    let stream_id2 = publish_result2
+        .global_stream_id()
+        .expect("Message should not be expired");
     println!("Stored msg2 with stream ID: {stream_id2}");
 
-    let stream_id3 = storage
+    let publish_result3 = storage
         .store_message(&msg3)
         .await
-        .expect("Failed to store msg3")
-        .expect("Expected stream ID");
+        .expect("Failed to store msg3");
+    let stream_id3 = publish_result3
+        .global_stream_id()
+        .expect("Message should not be expired");
     println!("Stored msg3 with stream ID: {stream_id3}");
 
-    let stream_id4 = storage
+    let publish_result4 = storage
         .store_message(&msg4)
         .await
-        .expect("Failed to store msg4")
-        .expect("Expected stream ID");
+        .expect("Failed to store msg4");
+    let stream_id4 = publish_result4
+        .global_stream_id()
+        .expect("Message should not be expired");
     println!("Stored msg4 with stream ID: {stream_id4}");
 
     // Test channel catch-up retrieval - should maintain arrival order
@@ -418,4 +426,33 @@ async fn test_comprehensive_scenario() {
             .expect("Expected raw content"),
     );
     assert_eq!(urgent_content, "URGENT: Server down!");
+}
+
+#[tokio::test]
+async fn test_expired_message_handling() -> Result<(), Box<dyn std::error::Error>> {
+    let storage = setup_test_storage().await;
+    let keypair = SigningKey::generate(&mut OsRng);
+    let channel_id = b"test-channel";
+
+    // Create an expired message (expired 1 hour ago)
+    let expired_time = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)?
+        .as_secs()
+        - 3600; // 1 hour ago
+
+    let mut message = create_test_message(channel_id, &keypair, "Expired message");
+    // Manually set the message to be expired by setting when to past and timeout
+    let Message::MessageV0(ref mut msg_v0) = message.message.as_mut();
+    msg_v0.when = expired_time;
+    msg_v0.kind = Kind::Emphemeral(Some(1)); // 1 second timeout, way past
+
+    let publish_result = storage.store_message(&message).await?;
+
+    // Should return Expired variant
+    use zoe_wire_protocol::PublishResult;
+    assert!(matches!(publish_result, PublishResult::Expired));
+    assert!(publish_result.global_stream_id().is_none());
+    assert!(!publish_result.was_stored());
+
+    Ok(())
 }

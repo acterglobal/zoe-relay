@@ -3,12 +3,13 @@ use std::sync::Arc;
 use futures_util::Stream;
 use redis::{aio::ConnectionManager, AsyncCommands, SetOptions};
 use tracing::{debug, error, info, warn};
-use zoe_wire_protocol::{FilterField, MessageFilters, MessageFull, StoreKey, Tag};
+use zoe_wire_protocol::{FilterField, MessageFilters, MessageFull, PublishResult, StoreKey, Tag};
 
 use crate::error::{MessageStoreError, Result};
 
 // Redis key prefixes for different data types
 const GLOBAL_MESSAGES_STREAM_NAME: &str = "message_stream";
+const MESSAGE_TO_STREAM_ID_PREFIX: &str = "msg_stream_id:";
 const ID_KEY: &str = "id";
 const EXPIRATION_KEY: &str = "exp";
 const EVENT_KEY: &str = "event";
@@ -16,6 +17,67 @@ const AUTHOR_KEY: &str = "author";
 const USER_KEY: &str = "user";
 const CHANNEL_KEY: &str = "channel";
 const STREAM_HEIGHT_KEY: &str = "stream_height";
+
+// Lua script for atomic message storage
+const STORE_MESSAGE_SCRIPT: &str = r#"
+local message_key = KEYS[1]
+local stream_id_key = KEYS[2] 
+local global_stream = KEYS[3]
+
+local message_data = ARGV[1]
+local message_id_bytes = ARGV[2]
+local author_bytes = ARGV[3]
+local expiration_time = ARGV[4] -- empty string if no expiration
+local timeout = ARGV[5] -- empty string if no timeout
+
+-- Try to store message with NX (only if not exists)
+local set_result
+if expiration_time ~= "" and timeout ~= "" then
+    set_result = redis.call('SET', message_key, message_data, 'EX', timeout, 'NX')
+else
+    set_result = redis.call('SET', message_key, message_data, 'NX')  
+end
+
+-- If message already exists, return existing stream ID
+if not set_result then
+    local existing_stream_id = redis.call('GET', stream_id_key)
+    if existing_stream_id then
+        return {'EXISTS', existing_stream_id}
+    else
+        return {'ERROR', 'Message exists but no stream ID mapping found'}
+    end
+end
+
+-- Message is new - add to global stream
+local xadd_args = {global_stream, '*', 'id', message_id_bytes, 'author', author_bytes}
+
+-- Add expiration if provided  
+if expiration_time ~= "" then
+    table.insert(xadd_args, 'exp')
+    -- Decode hex-encoded expiration time back to bytes
+    local exp_bytes = {}
+    for i = 1, #expiration_time, 2 do
+        local byte = expiration_time:sub(i, i+1)
+        table.insert(exp_bytes, string.char(tonumber(byte, 16)))
+    end
+    table.insert(xadd_args, table.concat(exp_bytes))
+end
+
+-- Add tags from remaining ARGV (starting at index 6)
+for i = 6, #ARGV, 2 do
+    if ARGV[i] and ARGV[i+1] then
+        table.insert(xadd_args, ARGV[i])     -- tag key
+        table.insert(xadd_args, ARGV[i+1])   -- tag value  
+    end
+end
+
+local stream_id = redis.call('XADD', unpack(xadd_args))
+
+-- Store the mapping from message-id to stream-id
+redis.call('SET', stream_id_key, stream_id)
+
+return {'STORED', stream_id}
+"#;
 
 pub type GlobalStreamHeight = String;
 pub type LocalStreamHeight = String;
@@ -126,9 +188,34 @@ impl RedisMessageStorage {
         self.get_inner_raw(&message_id).await
     }
     /// Store a message in Redis and publish to stream for real-time delivery
-    /// Returns the stream ID if the message was newly stored, None if it already existed
-    pub async fn store_message(&self, message: &MessageFull) -> Result<Option<String>> {
+    /// Returns PublishResult indicating if message was newly stored or already existed with stream ID  
+    ///
+    /// This method uses a Lua script to ensure atomicity of core operations:
+    /// 1. Message storage (SET NX)
+    /// 2. Global stream addition (XADD)
+    /// 3. Stream ID mapping (SET)
+    pub async fn store_message(&self, message: &MessageFull) -> Result<PublishResult> {
         let mut conn = { self.conn.lock().await.clone() };
+
+        // Check expiration early to avoid unnecessary work
+        let (ex_time, timeout_str) = if let Some(timeout) = message.storage_timeout() {
+            if timeout > 0 {
+                let expiration_time = message.when().saturating_add(timeout);
+                if expiration_time
+                    < std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)?
+                        .as_secs()
+                {
+                    debug!("Message is expired, ignoring to store");
+                    return Ok(PublishResult::Expired);
+                }
+                (Some(expiration_time), timeout.to_string())
+            } else {
+                (None, String::new())
+            }
+        } else {
+            (None, String::new())
+        };
 
         // Serialize the message
         let storage_value = message
@@ -138,62 +225,36 @@ impl RedisMessageStorage {
         let msg_id_bytes = message.id.as_bytes();
         let message_id = hex::encode(msg_id_bytes);
 
-        // Build SET command - only add expiration if timeout is set and > 0
-        let mut set_cmd = redis::cmd("SET");
-        set_cmd.arg(&message_id).arg(storage_value.to_vec());
-        let mut ex_time = None;
+        // Prepare Redis keys
+        let stream_id_key = format!("{MESSAGE_TO_STREAM_ID_PREFIX}{message_id}");
 
-        if let Some(timeout) = message.storage_timeout() {
-            if timeout > 0 {
-                let expiration_time = message.when().saturating_add(timeout);
-                if expiration_time
-                    < std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)?
-                        .as_secs()
-                {
-                    debug!("Message is expired, ignoring to store");
-                    return Ok(None);
-                }
-                set_cmd.arg("EX").arg(timeout);
-                ex_time = Some(expiration_time);
-            }
-        }
+        // Collect all script arguments upfront
+        let mut script_args = vec![
+            storage_value.to_vec(),               // ARGV[1] - message data
+            msg_id_bytes.to_vec(),                // ARGV[2] - message ID bytes
+            message.author().to_bytes().to_vec(), // ARGV[3] - author bytes
+        ];
+        script_args.push(
+            ex_time
+                .map_or(String::new(), |t| hex::encode(t.to_le_bytes()))
+                .into_bytes(),
+        ); // ARGV[4] - expiration time
+        script_args.push(timeout_str.into_bytes()); // ARGV[5] - timeout
 
-        set_cmd.arg("NX"); // Only set if key doesn't exist
-
-        let was_set: bool = set_cmd
-            .query_async(&mut conn)
-            .await
-            .map_err(MessageStoreError::Redis)?;
-
-        if !was_set {
-            // Was already stored, nothing for us to do.
-            return Ok(None);
-        }
-
-        // Add to stream for real-time delivery only if we successfully stored it
-        let mut xadd_cmd = redis::cmd("XADD");
-        xadd_cmd.arg(GLOBAL_MESSAGES_STREAM_NAME).arg("*"); // auto-generate ID
-
-        if let Some(expiration_time) = ex_time {
-            xadd_cmd
-                .arg(EXPIRATION_KEY)
-                .arg(expiration_time.to_le_bytes().to_vec());
-        }
-        // Add the message data
-        xadd_cmd.arg(ID_KEY).arg(msg_id_bytes);
-
-        // Extract indexable tags from the message and add directly to command
+        // Add tag data to script arguments
         for tag in message.tags() {
             match tag {
                 Tag::Event { id: event_id, .. } => {
-                    xadd_cmd.arg(EVENT_KEY).arg(event_id.as_bytes().to_vec());
+                    script_args.push(EVENT_KEY.as_bytes().to_vec());
+                    script_args.push(event_id.as_bytes().to_vec());
                 }
                 Tag::User { id: user_id, .. } => {
-                    xadd_cmd.arg(USER_KEY).arg(user_id.clone());
+                    script_args.push(USER_KEY.as_bytes().to_vec());
+                    script_args.push(user_id.clone());
                 }
                 Tag::Channel { id: channel_id, .. } => {
-                    xadd_cmd.arg(CHANNEL_KEY).arg(channel_id.clone());
+                    script_args.push(CHANNEL_KEY.as_bytes().to_vec());
+                    script_args.push(channel_id.clone());
                 }
                 Tag::Protected => {
                     // Protected messages aren't added to public stream
@@ -201,27 +262,63 @@ impl RedisMessageStorage {
             }
         }
 
-        // Add author information
-        xadd_cmd
-            .arg(AUTHOR_KEY)
-            .arg(message.author().to_bytes().to_vec());
-
-        // Execute XADD and get the stream entry ID
-        let stream_height: String = xadd_cmd
-            .query_async(&mut conn)
+        // Execute atomic Lua script
+        let script_result: Vec<String> = redis::Script::new(STORE_MESSAGE_SCRIPT)
+            .key(&message_id) // KEYS[1] - message key
+            .key(&stream_id_key) // KEYS[2] - stream ID mapping key
+            .key(GLOBAL_MESSAGES_STREAM_NAME) // KEYS[3] - global stream name
+            .arg(script_args)
+            .invoke_async(&mut conn)
             .await
             .map_err(MessageStoreError::Redis)?;
 
+        let (result_type, stream_id) = match script_result.as_slice() {
+            [result_type, stream_id] => (result_type, stream_id),
+            _ => {
+                return Err(MessageStoreError::Internal(
+                    "Invalid response from store_message script".to_string(),
+                ))
+            }
+        };
+
+        let publish_result = match result_type.as_str() {
+            "EXISTS" => PublishResult::AlreadyExists {
+                global_stream_id: stream_id.clone(),
+            },
+            "STORED" => PublishResult::StoredNew {
+                global_stream_id: stream_id.clone(),
+            },
+            "ERROR" => {
+                error!("Script error: {}", stream_id);
+                return Err(MessageStoreError::Internal(stream_id.clone()));
+            }
+            _ => {
+                return Err(MessageStoreError::Internal(format!(
+                    "Unknown script result type: {result_type}"
+                )))
+            }
+        };
+
+        let PublishResult::StoredNew {
+            ref global_stream_id,
+        } = publish_result
+        else {
+            return Ok(publish_result);
+        };
+        // Only proceed with index streams if message was newly stored
+
+        // Add to index streams (eventually consistent)
+        // These operations are not critical for correctness, so we handle them separately
         Self::add_to_index_stream(
             &mut conn,
             &format!("author:{}:stream", hex::encode(message.author().as_bytes())),
             msg_id_bytes,
-            &stream_height,
+            global_stream_id,
             ex_time,
         )
         .await?;
 
-        // NEW: Also add to per-channel streams for ordered catch-up
+        // Also add to per-channel streams for ordered catch-up
         for tag in message.tags() {
             let tags_stream = match tag {
                 Tag::Channel { id: channel_id, .. } => {
@@ -240,13 +337,13 @@ impl RedisMessageStorage {
                 &mut conn,
                 &tags_stream,
                 msg_id_bytes,
-                &stream_height,
+                global_stream_id,
                 ex_time,
             )
             .await?;
         }
 
-        // post processing the message: if we are meant to store this.
+        // Handle storage key updates (user data storage)
         if let Some(storage_key) = message.store_key() {
             let author_id = hex::encode(message.author().as_bytes());
             let storage_key_enc: u32 = storage_key.into();
@@ -262,13 +359,12 @@ impl RedisMessageStorage {
                 .set_options(&storage_id, &message_id, SetOptions::default().get(true))
                 .await?
             {
-                // there was something set, we need to make sure this isn't a problem
+                // Handle storage key conflict resolution
                 let mut previous_id: String = previous_id;
                 'retry: loop {
                     info!(redis_key = previous_id, "checking previous message");
                     let Some(previous_message) = Self::get_full(&mut conn, &previous_id).await?
                     else {
-                        // we are good, nothing was here
                         info!(
                             redis_key = storage_id,
                             "No previous message found, all good"
@@ -316,7 +412,7 @@ impl RedisMessageStorage {
             }
         }
 
-        Ok(Some(stream_height))
+        Ok(publish_result)
     }
 
     /// Retrieve a specific message by ID

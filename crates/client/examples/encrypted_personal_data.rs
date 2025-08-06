@@ -97,13 +97,15 @@ impl EncryptedPersonalDataClient {
             .map_err(|e| anyhow!("Failed to create signed message: {}", e))?;
         let (messages_service, _) = self.relay_client.connect_message_service().await?;
 
-        let message_id = messages_service
+        let publish_result = messages_service
             .publish(context::current(), message_full)
             .await??;
 
         info!("✅ Successfully stored encrypted personal data");
-        if let Some(id) = message_id {
-            info!("📝 Message ID: {:02x?}", id);
+        if let Some(stream_id) = publish_result.global_stream_id() {
+            info!("📝 Stream ID: {}", stream_id);
+        } else {
+            info!("⚠️ Message was expired and not stored");
         }
         info!(
             "🔑 Public key: {}",

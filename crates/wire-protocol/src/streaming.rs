@@ -278,7 +278,7 @@ pub struct SubscriptionConfig {
 #[tarpc::service]
 pub trait MessageService {
     // Core message operations
-    async fn publish(message: MessageFull) -> Result<Option<String>, MessageError>;
+    async fn publish(message: MessageFull) -> Result<PublishResult, MessageError>;
     async fn message(id: Hash) -> Result<Option<MessageFull>, MessageError>;
     async fn user_data(
         author: VerifyingKey,
@@ -298,7 +298,34 @@ pub trait MessageService {
 /// Result type for message operations
 pub type MessageResult<T> = Result<T, MessageError>;
 
-/// Error types for blob operations
+/// Result of publishing a message to the relay
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum PublishResult {
+    /// Message was newly stored with this global stream ID
+    StoredNew { global_stream_id: String },
+    /// Message already existed at this global stream ID  
+    AlreadyExists { global_stream_id: String },
+    /// Message was expired and not stored
+    Expired,
+}
+
+impl PublishResult {
+    /// Get the global stream ID if available (None for expired messages)
+    pub fn global_stream_id(&self) -> Option<&str> {
+        match self {
+            PublishResult::StoredNew { global_stream_id } => Some(global_stream_id),
+            PublishResult::AlreadyExists { global_stream_id } => Some(global_stream_id),
+            PublishResult::Expired => None,
+        }
+    }
+
+    /// Check if the message was stored (either new or already existed)
+    pub fn was_stored(&self) -> bool {
+        !matches!(self, PublishResult::Expired)
+    }
+}
+
+/// Error types for message operations  
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, thiserror::Error)]
 pub enum MessageError {
     #[error("Message not found: {hash}")]

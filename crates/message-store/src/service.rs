@@ -5,8 +5,8 @@ use tokio::sync::{mpsc, RwLock};
 use tracing::{debug, error, info};
 use zoe_wire_protocol::{
     CatchUpRequest, CatchUpResponse, FilterUpdateRequest, Hash, MessageError, MessageFilters,
-    MessageFull, MessageService as MessageServiceRpc, MessageServiceResponseWrap, StoreKey,
-    StreamMessage, SubscriptionConfig, VerifyingKey,
+    MessageFull, MessageService as MessageServiceRpc, MessageServiceResponseWrap, PublishResult,
+    StoreKey, StreamMessage, SubscriptionConfig, VerifyingKey,
 };
 
 /// Subscription state for tracking active subscriptions
@@ -178,7 +178,7 @@ impl MessageServiceRpc for MessagesRpcService {
         self,
         _context: ::tarpc::context::Context,
         message: MessageFull,
-    ) -> Result<Option<String>, MessageError> {
+    ) -> Result<PublishResult, MessageError> {
         self.store
             .store_message(&message)
             .await

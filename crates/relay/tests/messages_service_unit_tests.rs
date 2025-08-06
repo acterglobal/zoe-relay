@@ -84,8 +84,11 @@ async fn test_message_storage_and_retrieval() -> Result<()> {
     let test_message = create_test_message(channel_id, &keypair, "Test message content");
 
     // Store the message
-    let stream_id = storage.store_message(&test_message).await?;
-    assert!(stream_id.is_some());
+    let publish_result = storage.store_message(&test_message).await?;
+    let stream_id = publish_result
+        .global_stream_id()
+        .expect("Message should not be expired");
+    assert!(!stream_id.is_empty());
 
     // Test message streaming with filters
     let filters = MessageFilters {
