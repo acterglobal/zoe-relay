@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "crates/blob-store",
     "crates/client", 
+    "crates/client-storage",
     "crates/encrypted-storage",
     "crates/message-store",
     "crates/relay",
