@@ -1,87 +1,49 @@
-# Testing Overview
+# Testing Quick Reference
 
-## 📊 Quick Status
+## 🚀 Essential Commands
 
-**✅ 113+ tests passing across workspace (98%+ success rate)**
-
-| Component | Tests | Status |
-|-----------|--------|---------|
-| wire-protocol | 39/39 | ✅ All passing |
-| relay | 5/5 | ✅ All passing |
-| whatsmeow | 29/31 | ✅ 2 ignored |
-| blob-store | 2/2 | ✅ All passing |
-| encrypted-storage | 12/12 | ✅ All passing |
-| message-store | 4/4 | ✅ All passing |
-
-> **Note**: `zoe-backend-protocol` is excluded from automated tests due to unresolved serde dependency conflicts.
-
-## 🚀 Quick Commands
-
-### Local Testing with Nextest (Recommended)
-
+### Run All Tests
 ```bash
-# Install nextest (if not already installed)
-cargo install cargo-nextest
+# With nextest (recommended)
+cargo nextest run --all
 
-# Run all tests (excludes problematic crates)
-cargo nextest run --workspace --exclude zoe-backend-protocol
-
-# Run with specific profiles
-cargo nextest run --profile ci --workspace --exclude zoe-backend-protocol
-cargo nextest run --profile fast --workspace --exclude zoe-backend-protocol
-
-# Run specific crate tests
-cargo nextest run --package zoe-relay
-cargo nextest run --package zoe-wire-protocol
+# With standard cargo
+cargo test --workspace
 ```
 
-### Standard Cargo Testing
-
+### Run Specific Crate
 ```bash
-# Run all tests (excludes problematic crates)
-cargo test --workspace --exclude zoe-backend-protocol
-
-# Run specific crate tests
-cargo test --package zoe-relay
-cargo test --package zoe-wire-protocol
-
-# Run with verbose output
-cargo test --workspace --exclude zoe-backend-protocol --verbose
+cargo nextest run --package zoe-client-storage
+cargo test --package zoe-client-storage
 ```
 
-## 🎯 Nextest Configuration
+## 🔧 System Dependencies
 
-The project uses [nextest](https://nexte.st/) for faster and more reliable test execution. Configuration is in `.config/nextest.toml`:
+### SQLCipher (Required for client-storage tests)
 
-- **`default`**: Standard profile for local development (4 threads)
-- **`ci`**: Optimized for CI environments (4 threads)
-- **`fast`**: Higher parallelism for quick feedback (8 threads)
-
-## 🤖 Continuous Integration
-
-### GitHub Actions Workflow
-
-The CI workflow (`.github/workflows/ci.yml`) runs comprehensive tests:
-
-1. **Check Phase**: Validates compilation across all targets
-2. **Test Phase**: Runs full test suite with nextest
-3. **Integration Tests**: Includes Redis-dependent tests
-4. **Multiple Rust Versions**: Tests on stable, beta, and nightly
-
-### CI Commands Used
+**Linux (Ubuntu/Debian)**:
 ```bash
-# Check compilation
-cargo check --workspace --all-targets --exclude zoe-backend-protocol
-
-# Run tests
-cargo nextest run --profile ci --workspace --exclude zoe-backend-protocol
+sudo apt-get install libsqlcipher-dev
 ```
 
-## 🔧 Dependencies
+**Linux (Fedora/Red Hat)**:
+```bash
+sudo dnf install sqlcipher-devel
+```
 
-### Required Services
+**Linux (Arch/Manjaro)**:
+```bash
+sudo pacman -S sqlcipher
+```
 
-Some tests require Redis:
+**macOS (Homebrew)**:
+```bash
+brew install sqlcipher
+```
+
+**Windows**: See [SQLCipher documentation](https://www.zetetic.net/sqlcipher/) for installation instructions.
+
+### Redis (Required for integration tests)
 ```bash
 # Start Redis with Docker
 docker-compose up -d redis
@@ -90,64 +52,25 @@ docker-compose up -d redis
 sudo systemctl start redis
 ```
 
-### Test Categories
+## 📋 Nextest Profiles
 
-- **Unit Tests**: Core functionality testing (fast, no external deps)
-- **Integration Tests**: Component interaction (may require Redis)
-- **End-to-End Tests**: Full system workflows
-- **Examples**: Runnable demonstrations
-
-## 🚨 Known Issues & Exclusions
-
-### Excluded Crates
-
-- **`zoe-backend-protocol`**: Excluded due to serde dependency conflicts
-  - Contains Redis integration with serialization issues
-  - Will be fixed in future iterations
-
-### Compilation Fixes Applied
-
-- **Relay Crate**: Fixed trait bound issues for tarpc integration
-- **Streaming Protocol**: Resolved async compatibility problems
-
-## 🔍 Debugging Test Failures
-
-### Local Debugging
 ```bash
-# Verbose output
-cargo nextest run --verbose --workspace --exclude zoe-backend-protocol
+# Default profile (4 threads)
+cargo nextest run --all
 
-# Run single test
-cargo nextest run --package zoe-relay test_name
+# CI profile (fail-fast=false, retries=2)
+cargo nextest run --profile ci --all
 
-# Show stdout/stderr
-cargo nextest run --nocapture --workspace --exclude zoe-backend-protocol
+# Fast profile (8 threads for quick feedback)
+cargo nextest run --profile fast --all
 ```
 
-### CI Debugging
-- Check GitHub Actions logs for specific failure details
-- Ensure Redis service is running in CI environment
-- Verify all dependencies are properly cached
+## 🐛 Quick Troubleshooting
 
-## 📚 Full Documentation
+- **SQLCipher errors**: Install system SQLCipher libraries (see above)
+- **Redis connection errors**: Start Redis with `docker-compose up -d redis`
+- **Test failures**: Run with `RUST_BACKTRACE=1` for detailed errors
 
-For comprehensive information, see:
-- **[docs/testing.md](docs/testing.md)** - Complete testing guide
-- **[docs/development.md](docs/development.md)** - Development workflow
-- **[docs/architecture.md](docs/architecture.md)** - System architecture
+## 📚 Detailed Information
 
-## 🎯 Performance
-
-### Test Execution Times
-- **Unit Tests**: ~30-60 seconds
-- **Integration Tests**: ~2-3 minutes
-- **Full Suite**: ~3-5 minutes (with nextest)
-
-### Optimization Tips
-- Use `--profile fast` for quick feedback
-- Run specific packages during development
-- Leverage nextest's parallel execution
-
----
-
-**Status**: ✅ **All automated tests passing** - CI pipeline fully operational with nextest integration. 
+For comprehensive testing guidelines, see **[docs/testing.md](docs/testing.md)**.
