@@ -46,16 +46,105 @@ pub enum Kind {
     ClearStore(StoreKey), // clear the given storekey of the user, if the events timestamp is larger than the stored one
 }
 
-/// Message content variants supporting both raw bytes and encrypted content
+/// Message content variants supporting both raw bytes and encrypted content.
+///
+/// # Content Type Design and Versioning Strategy
+///
+/// The `Content` enum represents the payload of a message and supports different encryption
+/// schemes. **Important**: The choice of available content types and their cryptographic 
+/// implementations is **hard-wired at the message version level** (e.g., `MessageV0`).
+/// This means that when a new message version is introduced (like `MessageV1`), it can
+/// have different content variants or updated cryptographic schemes.
+///
+/// ## Serialization with Postcard
+///
+/// This enum uses [postcard](https://docs.rs/postcard/) for efficient binary serialization.
+/// Postcard distinguishes enum variants using a compact binary tag system:
+/// - `Raw(Vec<u8>)` → serialized as `[0, ...data bytes...]`
+/// - `ChaCha20Poly1305(content)` → serialized as `[1, ...encrypted content...]`  
+/// - `Ed25519Encrypted(content)` → serialized as `[2, ...encrypted content...]`
+///
+/// The first byte indicates which variant is being deserialized, making the format
+/// self-describing and forwards-compatible. For more details on postcard's enum
+/// handling, see: <https://docs.rs/postcard/latest/postcard/#enums>
+///
+/// ## Content Type Security Model
+///
+/// Each content type has different security properties and use cases:
+///
+/// ### `Raw` - Unencrypted Content
+/// - Used for public messages or when encryption is handled at a higher layer
+/// - Suitable for metadata, public announcements, or already-encrypted data
+/// - No confidentiality protection - readable by all message recipients
+///
+/// ### `ChaCha20Poly1305` - Context-Based Encryption
+/// - Uses ChaCha20-Poly1305 AEAD (Authenticated Encryption with Associated Data)
+/// - Encryption key derived from message context (channel tags, group keys, etc.)
+/// - Provides both confidentiality and authenticity
+/// - Minimal overhead, suitable for high-throughput scenarios
+///
+/// ### `Ed25519Encrypted` - Identity-Based Encryption
+/// - Uses Ed25519 keypairs (typically from mnemonic phrases) for key derivation
+/// - Encrypts using ChaCha20-Poly1305 with keys derived from Ed25519 operations
+/// - Suitable for direct peer-to-peer encrypted messaging
+/// - Self-contained encryption that doesn't require additional context
+///
+/// ## Version Evolution
+///
+/// When message formats evolve (e.g., `MessageV0` → `MessageV1`), the `Content` enum
+/// can be updated with:
+/// - New encryption schemes (e.g., post-quantum cryptography)
+/// - Additional metadata or structure
+/// - Different key derivation methods
+/// - Backwards-incompatible changes to existing variants
+///
+/// The versioning at the `Message` level ensures that older clients can gracefully
+/// handle unknown message versions while maintaining compatibility with supported versions.
+///
+/// ## Example Usage
+///
+/// ```rust
+/// use zoe_wire_protocol::Content;
+///
+/// // Raw content for public data
+/// let public_msg = Content::raw("Hello, world!".as_bytes().to_vec());
+///
+/// // Typed content (serialized with postcard)
+/// #[derive(serde::Serialize)]
+/// struct MyData { value: u32 }
+/// let typed_content = Content::raw_typed(&MyData { value: 42 })?;
+/// # Ok::<(), postcard::Error>(())
+/// ```
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub enum Content {
-    /// Raw byte conten
+    /// Raw byte content without encryption.
+    ///
+    /// Use this variant for:
+    /// - Public messages that don't require encryption
+    /// - Content that is already encrypted at a higher layer
+    /// - Metadata or routing information
+    /// - Binary data that should be transmitted as-is
     Raw(Vec<u8>),
-    /// ChaCha20-Poly1305 encrypted content (minimal overhead)
-    /// Key determined by message context (channel tags, etc.)
+    
+    /// ChaCha20-Poly1305 encrypted content with context-derived keys.
+    ///
+    /// The encryption key is determined by message context such as:
+    /// - Channel tags and group membership
+    /// - Shared secrets established through key exchange
+    /// - Derived keys from parent encryption contexts
+    ///
+    /// This variant provides minimal serialization overhead while maintaining
+    /// strong AEAD security properties.
     ChaCha20Poly1305(ChaCha20Poly1305Content),
-    /// Ed25519-derived ChaCha20-Poly1305 encrypted content
-    /// Simple encryption using ed25519 keypair from mnemonic
+    
+    /// Ed25519-derived ChaCha20-Poly1305 encrypted content.
+    ///
+    /// Uses Ed25519 keypairs (typically from mnemonic phrases) to derive
+    /// ChaCha20-Poly1305 encryption keys. This variant is self-contained
+    /// and suitable for:
+    /// - Direct peer-to-peer messaging
+    /// - Identity-based encryption scenarios
+    /// - Messages where context-based key derivation isn't available
     Ed25519Encrypted(Ed25519EncryptedContent),
 }
 
@@ -121,8 +210,95 @@ impl Content {
     }
 }
 
+/// Top-level message format with versioning support.
+///
+/// # Message Versioning Strategy
+///
+/// The `Message` enum provides **the primary versioning mechanism** for the wire protocol.
+/// Each variant (e.g., `MessageV0`) represents a specific version of the message format
+/// with **hard-wired cryptographic choices and content types**.
+///
+/// ## Version-Specific Design Philosophy
+///
+/// Unlike other protocols where features are negotiated dynamically, this protocol
+/// **hard-wires** cryptographic algorithms and content types into each message version.
+/// This design provides several benefits:
+///
+/// - **Security**: No downgrade attacks through feature negotiation
+/// - **Simplicity**: Clear, unambiguous message format per version
+/// - **Performance**: No runtime algorithm selection overhead
+/// - **Evolution**: Clean migration path to new cryptographic standards
+///
+/// ## Content Type Binding
+///
+/// Each message version has a **fixed set** of supported [`Content`] variants:
+/// - `MessageV0` supports: `Raw`, `ChaCha20Poly1305`, `Ed25519Encrypted`
+/// - Future versions (e.g., `MessageV1`) may support different encryption schemes
+///
+/// This binding ensures that cryptographic choices are made explicitly during protocol
+/// design rather than being negotiated at runtime.
+///
+/// ## Serialization and Wire Compatibility
+///
+/// Messages are serialized using [postcard](https://docs.rs/postcard/), which handles
+/// enum versioning through compact binary tags:
+/// - `MessageV0(data)` → serialized as `[0, ...message data...]`
+/// - `MessageV1(data)` → would serialize as `[1, ...message data...]` (future)
+///
+/// This allows clients to:
+/// 1. Quickly identify the message version from the first byte
+/// 2. Skip unknown message versions gracefully
+/// 3. Maintain backwards compatibility with supported versions
+///
+/// ## Evolution Path
+///
+/// When cryptographic standards change or new features are needed, the protocol
+/// evolves by adding new message versions:
+///
+/// ```rust,ignore
+/// #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+/// pub enum Message {
+///     MessageV0(MessageV0),        // Legacy: ChaCha20-Poly1305, Ed25519
+///     MessageV1(MessageV1),        // Future: Post-quantum crypto, new content types
+/// }
+/// ```
+///
+/// This ensures that:
+/// - Older clients continue working with `MessageV0`
+/// - Newer clients can handle both versions
+/// - Migration happens gradually and safely
+///
+/// ## Example: Version-Specific Handling
+///
+/// ```rust
+/// use zoe_wire_protocol::{Message, MessageV0, Content};
+///
+/// fn handle_message(msg: Message) {
+///     match msg {
+///         Message::MessageV0(v0_msg) => {
+///             // Handle v0-specific features
+///             match v0_msg.content {
+///                 Content::Raw(data) => { /* process raw data */ },
+///                 Content::ChaCha20Poly1305(_) => { /* decrypt with ChaCha20 */ },
+///                 Content::Ed25519Encrypted(_) => { /* decrypt with Ed25519 */ },
+///             }
+///         }
+///         // Future: MessageV1 would be handled here with its own content types
+///     }
+/// }
+/// ```
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub enum Message {
+    /// Message format version 0.
+    ///
+    /// Supports the following cryptographic primitives:
+    /// - **Signing**: Ed25519 digital signatures
+    /// - **Encryption**: ChaCha20-Poly1305 AEAD
+    /// - **Key Derivation**: Ed25519-based and context-based schemes
+    /// - **Content Types**: [`Content::Raw`], [`Content::ChaCha20Poly1305`], [`Content::Ed25519Encrypted`]
+    ///
+    /// This version is designed for high-performance messaging with modern cryptographic
+    /// standards as of 2025.
     MessageV0(MessageV0),
 }
 
@@ -239,21 +415,227 @@ impl Message {
     }
 }
 
+/// Version 0 of the message format with Ed25519 signatures and ChaCha20-Poly1305 encryption.
+///
+/// # Message Structure
+///
+/// `MessageV0` represents the core message data that gets signed and transmitted.
+/// It contains metadata (sender, timestamp, type) and the actual content payload.
+/// The message is signed using Ed25519 to create a [`MessageFull`] for transmission.
+///
+/// ## Cryptographic Binding
+///
+/// This message version **hard-wires** the following cryptographic choices:
+/// - **Digital Signatures**: Ed25519 (see [`MessageFull`])
+/// - **Content Encryption**: ChaCha20-Poly1305 AEAD (see [`Content`])
+/// - **Hash Function**: Blake3 for message IDs (see [`MessageFull::new`])
+/// - **Key Derivation**: Ed25519-based and context-based schemes
+///
+/// These choices cannot be negotiated or downgraded - they are fixed for all
+/// `MessageV0` instances to prevent cryptographic downgrade attacks.
+///
+/// ## Field Description
+///
+/// - **`sender`**: Ed25519 public key of the message author
+/// - **`when`**: Unix timestamp in seconds (for ordering and expiration)
+/// - **`kind`**: Message type determining storage and forwarding behavior
+/// - **`tags`**: Routing and reference tags (channels, users, events)
+/// - **`content`**: The actual message payload (see [`Content`] variants)
+///
+/// ## Serialization Format
+///
+/// Messages are serialized using [postcard](https://docs.rs/postcard/) for efficiency:
+///
+/// ```text
+/// [sender: 32 bytes][when: varint][kind: 1+ bytes][tags: length + data][content: 1+ bytes]
+/// ```
+///
+/// The compact binary format minimizes wire overhead while maintaining
+/// self-describing properties through postcard's type system.
+///
+/// ## Example Usage
+///
+/// ```rust
+/// use zoe_wire_protocol::{MessageV0, Content, Kind, Tag};
+/// use ed25519_dalek::SigningKey;
+/// use rand::rngs::OsRng;
+///
+/// let signing_key = SigningKey::generate(&mut OsRng);
+/// let message = MessageV0 {
+///     sender: signing_key.verifying_key(),
+///     when: 1640995200, // 2022-01-01 00:00:00 UTC
+///     kind: Kind::Regular,
+///     tags: vec![Tag::Protected],
+///     content: Content::raw("Hello, world!".as_bytes().to_vec()),
+/// };
+///
+/// // Convert to signed message for transmission
+/// use zoe_wire_protocol::{Message, MessageFull};
+/// let full_message = MessageFull::new(Message::MessageV0(message), &signing_key)?;
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub struct MessageV0 {
+    /// Ed25519 public key of the message sender.
+    ///
+    /// This key is used to verify the digital signature in [`MessageFull`].
+    /// The sender must possess the corresponding private key to create valid signatures.
     pub sender: VerifyingKey,
-    pub when: u64, // unix timestamp in seconds
+    
+    /// Unix timestamp in seconds when the message was created.
+    ///
+    /// Used for:
+    /// - Message ordering in conversations
+    /// - Expiration of ephemeral messages  
+    /// - Preventing replay attacks (with reasonable clock skew tolerance)
+    pub when: u64,
+    
+    /// Message type determining storage and forwarding behavior.
+    ///
+    /// See [`Kind`] for details on different message types:
+    /// - `Regular`: Stored permanently
+    /// - `Ephemeral`: Temporary storage with optional TTL
+    /// - `Store`: Updates a specific key-value store
+    /// - `ClearStore`: Clears a key-value store
     pub kind: Kind,
+    
+    /// Tags for routing, references, and metadata.
+    ///
+    /// Common tag types include:
+    /// - `Protected`: Message should only be forwarded to authenticated recipients
+    /// - `Event`: References another message or event by ID
+    /// - `User`: References a user identity
+    /// - `Channel`: Routes to a specific channel or group
+    ///
+    /// Default value is an empty vector when deserializing legacy messages.
     #[serde(default)]
     pub tags: Vec<Tag>,
+    
+    /// The message payload with optional encryption.
+    ///
+    /// See [`Content`] for available variants:
+    /// - `Raw`: Unencrypted data
+    /// - `ChaCha20Poly1305`: Context-encrypted data  
+    /// - `Ed25519Encrypted`: Identity-encrypted data
     pub content: Content,
 }
 
+/// Complete signed message ready for transmission and storage.
+///
+/// # Message Authentication and Integrity
+///
+/// `MessageFull` represents a complete, authenticated message that includes:
+/// 1. **Content**: The original [`Message`] (e.g., [`MessageV0`])
+/// 2. **Signature**: Ed25519 digital signature over the serialized message
+/// 3. **Identity**: Blake3 hash-based unique identifier
+///
+/// This structure ensures **non-repudiation** and **integrity** - recipients can
+/// cryptographically verify that the message came from the claimed sender and
+/// hasn't been tampered with.
+///
+/// ## Cryptographic Construction
+///
+/// The message construction follows a specific protocol:
+///
+/// 1. **Serialize**: Convert [`Message`] to bytes using [postcard](https://docs.rs/postcard/)
+/// 2. **Sign**: Create Ed25519 signature over the serialized bytes
+/// 3. **Hash**: Compute Blake3 hash of `serialized_message || signature` for the ID
+///
+/// This ensures that:
+/// - The signature covers the entire message content
+/// - The ID uniquely identifies this specific signed message
+/// - Replay attacks are prevented through unique IDs
+///
+/// ## Wire Format and Storage
+///
+/// `MessageFull` is the **canonical storage format** used throughout the system:
+/// - **Network transmission**: Serialized with postcard for efficiency
+/// - **Database storage**: Stored as binary blobs in key-value stores
+/// - **Message indexing**: ID used as primary key, sender/timestamp extracted for indexes
+///
+/// The postcard serialization format is:
+/// ```text
+/// [id: 32 bytes][message: variable][signature: 64 bytes]
+/// ```
+///
+/// ## Identity and Deduplication
+///
+/// The Blake3-based ID serves multiple purposes:
+/// - **Deduplication**: Identical signed messages have identical IDs
+/// - **Content addressing**: Messages can be retrieved by their cryptographic hash
+/// - **Integrity verification**: ID changes if any part of the message is modified
+/// - **Ordering**: IDs provide deterministic message ordering (with timestamp ties)
+///
+/// ## Security Properties
+///
+/// `MessageFull` provides the following security guarantees:
+/// - **Authentication**: Ed25519 signature proves sender identity
+/// - **Integrity**: Any modification invalidates the signature
+/// - **Non-repudiation**: Sender cannot deny creating a valid signature
+/// - **Uniqueness**: Blake3 ID prevents message duplication
+///
+/// Note: **Confidentiality** is provided by the [`Content`] encryption, not at this layer.
+///
+/// ## Example Usage
+///
+/// ```rust
+/// use zoe_wire_protocol::{MessageFull, Message, MessageV0, Content, Kind};
+/// use ed25519_dalek::SigningKey;
+/// use rand::rngs::OsRng;
+///
+/// // Create a signed message
+/// let signing_key = SigningKey::generate(&mut OsRng);
+/// let message = Message::MessageV0(MessageV0 {
+///     sender: signing_key.verifying_key(),
+///     when: 1640995200,
+///     kind: Kind::Regular,
+///     tags: vec![],
+///     content: Content::raw("Hello!".as_bytes().to_vec()),
+/// });
+///
+/// let full_message = MessageFull::new(message, &signing_key)?;
+///
+/// // Verify the signature and ID
+/// assert!(full_message.verify_all()?);
+///
+/// // The ID is deterministic for the same signed content
+/// let id = full_message.id;
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+///
+/// ## Storage Integration
+///
+/// This structure is optimized for the key-value storage architecture:
+/// - **Primary key**: `id` field for O(1) message retrieval  
+/// - **Indexed fields**: `sender` and `when` extracted from embedded message for queries
+/// - **Tag tables**: Separate tables for efficient tag-based filtering
+/// - **Blob storage**: Entire `MessageFull` serialized as atomic unit
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MessageFull {
+    /// Blake3 hash serving as the unique message identifier.
+    ///
+    /// Computed as: `Blake3(postcard::serialize(message) || signature.to_bytes())`
+    ///
+    /// This ID is:
+    /// - **Unique**: Cryptographically unlikely to collide
+    /// - **Deterministic**: Same signed message always produces same ID
+    /// - **Tamper-evident**: Changes to message or signature change the ID
+    /// - **Content-addressed**: Can be used to retrieve the message
     pub id: Hash,
+    
+    /// The original message content and metadata.
+    ///
+    /// Boxed to minimize stack usage since messages can be large.
+    /// Contains version-specific message data (e.g., [`MessageV0`]).
     pub message: Box<Message>,
-    // TODO: do we need to add a HMAC?
+    
+    /// Ed25519 digital signature over the serialized message.
+    ///
+    /// Created by signing `postcard::serialize(message)` with the sender's private key.
+    /// Recipients verify this signature using the public key in `message.sender`.
+    ///
+    /// **Security note**: The signature covers the *entire* serialized message,
+    /// including all metadata, tags, and content. This prevents partial modification attacks.
     pub signature: Signature,
 }
 
