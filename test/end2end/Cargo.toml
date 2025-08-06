@@ -1,0 +1,30 @@
+[package]
+name = "zoe-e2e-tests"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+# Core zoe crates we're testing
+zoe-relay = { path = "../../crates/relay" }
+zoe-client = { path = "../../crates/client" }
+zoe-blob-store = { path = "../../crates/blob-store" }
+zoe-message-store = { path = "../../crates/message-store" }
+zoe-wire-protocol = { path = "../../crates/wire-protocol" }
+zoe-app-primitives = { path = "../../crates/app-primitives" }
+
+# Workspace dependencies  
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+tokio-test = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+ed25519-dalek = { workspace = true }
+hex = { workspace = true }
+rand = { workspace = true }
+tempfile = { workspace = true }
+serial_test = { workspace = true }
+pretty_assertions = { workspace = true }
+
+# Redis client for message store tests
+redis = { version = "0.24", features = ["tokio-comp"] }
