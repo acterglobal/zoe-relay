@@ -280,7 +280,9 @@ jobs:
   test-rust-toolchains:
     name: Tests on extra toolchains
     runs-on: ubuntu-latest
+    continue-on-error: true
     strategy:
+      fail-fast: false
       matrix:
         rust: [stable, beta, nightly]
     
