@@ -6,6 +6,10 @@ on:
   pull_request:
     branches: [ main, develop ]
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
@@ -26,83 +30,6 @@ jobs:
           
       - name: Check all targets
         run: cargo check --workspace --all-targets
-
-  test:
-    name: Test Suite
-    runs-on: ubuntu-latest
-    services:
-      redis:
-        image: redis:latest
-        ports:
-          - 6379:6379
-        options: >-
-          --health-cmd "redis-cli ping"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      
-      - name: Install SQLCipher
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libsqlcipher-dev
-      
-      - name: Install cargo-nextest
-        uses: taiki-e/install-action@v2
-        with:
-          tool: cargo-nextest
-      
-      - name: Run unit and integration tests
-        run: cargo nextest run --profile ci --workspace
-        env:
-          REDIS_URL: redis://localhost:6379
-
-  test-specific:
-    name: Test Specific Components
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        component:
-          - whatsmeow
-          - zoe-wire-protocol
-          - zoe-encrypted-storage
-          - zoe-blob-store
-          - zoe-message-store
-          - zoe-relay
-    services:
-      redis:
-        image: redis:latest
-        ports:
-          - 6379:6379
-        options: >-
-          --health-cmd "redis-cli ping"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      
-      - name: Install SQLCipher
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libsqlcipher-dev
-      
-      - name: Install cargo-nextest
-        uses: taiki-e/install-action@v2
-        with:
-          tool: cargo-nextest
-      
-      - name: Test ${{ matrix.component }}
-        run: cargo nextest run --profile ci --package ${{ matrix.component }}
-        env:
-          REDIS_URL: redis://localhost:6379
 
   lint:
     name: Linting
@@ -141,8 +68,8 @@ jobs:
       - name: Run security audit
         run: cargo audit
 
-  coverage:
-    name: Code Coverage
+  test:
+    name: Test Suite
     runs-on: ubuntu-latest
     services:
       redis:
@@ -339,12 +266,12 @@ jobs:
         env:
           RUSTDOCFLAGS: "-Dwarnings"
 
-  matrix-test-ubuntu:
-    name: Matrix Testing (Ubuntu)
+  test-rust-toolchains:
+    name: Tests on extra toolchains
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        rust: [stable, beta]
+        rust: [stable, beta, nightly]
     
     services:
       redis:
@@ -379,37 +306,3 @@ jobs:
           cargo nextest run --profile fast --workspace
         env:
           REDIS_URL: redis://localhost:6379
-
-  matrix-test-macos:
-    name: Matrix Testing (macOS)
-    runs-on: macos-latest
-    strategy:
-      matrix:
-        rust: [stable]  # Only stable to reduce CI time
-
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: ${{ matrix.rust }}
-      - uses: Swatinem/rust-cache@v2
-        
-      - name: Install SQLCipher
-        run: |
-          brew install sqlcipher
-          
-      - name: Install Redis
-        run: |
-          brew install redis
-          brew services start redis
-          
-      - name: Install cargo-nextest
-        uses: taiki-e/install-action@v2
-        with:
-          tool: cargo-nextest
-
-      - name: Run fast tests
-        run: |
-          cargo nextest run --profile fast --workspace
-        env:
-          REDIS_URL: redis://localhost:6379 
