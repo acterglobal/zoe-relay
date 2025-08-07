@@ -7871,6 +7871,7 @@ dependencies = [
  "rand 0.8.5",
  "redis 0.24.0",
  "serial_test",
+ "tarpc",
  "tempfile",
  "tokio",
  "tokio-test",

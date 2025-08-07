@@ -25,6 +25,7 @@ rand = { workspace = true }
 tempfile = { workspace = true }
 serial_test = { workspace = true }
 pretty_assertions = { workspace = true }
+tarpc = { workspace = true }
 
 # Redis client for message store tests
 redis = { version = "0.24", features = ["tokio-comp"] }
