@@ -58,6 +58,59 @@ struct Message {
 - Message formats should leverage discriminated unions over string tags
 - Error types should be strongly typed rather than generic string messages
 
+## Data Structure Standards
+
+### CRITICAL: Prefer BTreeMaps over HashMaps
+
+**Always prioritize BTreeMaps for data structures, especially serializable types:**
+
+- ✅ **DO**: Use `BTreeMap` for key-value mappings in serializable structures
+- ✅ **DO**: Use `BTreeSet` for sets in serializable structures  
+- ✅ **DO**: Use `BTreeMap` for deterministic ordering and consistent serialization
+- ✅ **DO**: Use `BTreeMap` for better binary serialization compatibility
+- ❌ **DON'T**: Use `HashMap` unless you have a specific performance requirement
+- ❌ **DON'T**: Use `HashSet` for serializable data structures
+- ❌ **DON'T**: Mix HashMap and BTreeMap inconsistently across the codebase
+
+### Data Structure Examples
+
+**✅ CORRECT - BTreeMap usage:**
+```rust
+use std::collections::BTreeMap;
+use serde::{Deserialize, Serialize};
+
+#[derive(Serialize, Deserialize)]
+struct UserData {
+    preferences: BTreeMap<String, String>,
+    groups: BTreeMap<u64, GroupInfo>,
+}
+```
+
+**❌ INCORRECT - HashMap usage:**
+```rust
+use std::collections::HashMap;
+
+#[derive(Serialize, Deserialize)]
+struct UserData {
+    preferences: HashMap<String, String>, // Non-deterministic ordering
+    groups: HashMap<u64, GroupInfo>, // Inconsistent serialization
+}
+```
+
+### When BTreeMap is preferred (99% of cases)
+- All serializable data structures
+- Configuration data
+- State machine data  
+- Wire protocol messages
+- Database models
+- Any data that needs consistent ordering
+- General key-value storage needs
+
+### Limited exceptions for HashMap (rare cases only)
+- **ONLY** when you have measured performance bottlenecks with BTreeMap
+- **ONLY** for internal, non-serializable caches where ordering doesn't matter
+- **ONLY** when interfacing with external APIs that specifically require HashMap
+
 ## Import Standards
 
 ### CRITICAL: Prefer imports over full-path-type-definitions
