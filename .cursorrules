@@ -1,5 +1,101 @@
 # Zoeyr Project Cursor Rules
 
+## Communication Guidelines
+
+### Professional Tone
+- Be direct, helpful, and professional in responses
+- Focus on technical accuracy and clarity
+- Avoid excessive compliments or unnecessary praise
+- Get straight to the point with actionable information
+- Acknowledge requests simply and move to implementation
+- Be critical and point out when proposed ideas conflict with existing code
+
+## Type Safety Standards
+
+### CRITICAL: Prefer type-safe protocols over string-based typing
+
+**Always prioritize type safety in protocol design and implementation:**
+
+- ✅ **DO**: Use strongly-typed enums, structs, and type definitions
+- ✅ **DO**: Leverage Rust's type system to catch errors at compile time
+- ✅ **DO**: Define clear type boundaries in wire protocols and APIs
+- ✅ **DO**: Use `#[repr(u8)]` or similar for network-serializable enums
+- ❌ **DON'T**: Use string-based type discrimination when type-safe alternatives exist
+- ❌ **DON'T**: Rely on runtime string parsing for type identification
+- ❌ **DON'T**: Use magic strings or string constants for type matching
+
+### Type Safety Examples
+
+**✅ CORRECT - Type-safe approach:**
+```rust
+#[derive(Serialize, Deserialize)]
+#[repr(u8)]
+enum MessageType {
+    Text = 0,
+    Image = 1,
+    File = 2,
+}
+
+#[derive(Serialize, Deserialize)]
+struct Message {
+    msg_type: MessageType,
+    content: MessageContent,
+}
+```
+
+**❌ INCORRECT - String-based typing:**
+```rust
+#[derive(Serialize, Deserialize)]
+struct Message {
+    msg_type: String, // "text", "image", "file"
+    content: String,
+}
+```
+
+### Protocol Design
+- Wire protocols should use type-safe enumerations
+- API boundaries should enforce type constraints at compile time
+- Message formats should leverage discriminated unions over string tags
+- Error types should be strongly typed rather than generic string messages
+
+## Import Standards
+
+### CRITICAL: Prefer imports over full-path-type-definitions
+
+**Always prioritize clean imports at the top of files:**
+
+- ✅ **DO**: Use top-level imports for all types and functions
+- ✅ **DO**: Use alias renaming (`use foo::Bar as FooBar`) to resolve conflicts
+- ✅ **DO**: Group and organize imports logically
+- ❌ **DON'T**: Use full-path type definitions (`foo::bar::Baz`) in function bodies
+- ❌ **DON'T**: Inline full paths except for single-use conflict resolution
+
+### Import Examples
+
+**✅ CORRECT - Top-level imports:**
+```rust
+use std::collections::HashMap;
+use serde::{Deserialize, Serialize};
+use crate::message::Message;
+use crate::crypto::EncryptedData;
+use external_crate::Config as ExternalConfig;
+
+fn process_data(data: HashMap<String, Message>) -> EncryptedData {
+    // Use imported types directly
+}
+```
+
+**❌ INCORRECT - Full-path usage:**
+```rust
+fn process_data(data: std::collections::HashMap<String, crate::message::Message>) -> crate::crypto::EncryptedData {
+    // Avoid this pattern
+}
+```
+
+### When full paths are acceptable
+- **ONLY** when there's a name conflict and the type is used exactly once in the file
+- **ONLY** for disambiguation in macro contexts where imports don't work
+
 ## Serialization Standards
 
 ### CRITICAL: Always use postcard for serialization
