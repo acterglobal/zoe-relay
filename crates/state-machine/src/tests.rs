@@ -65,15 +65,7 @@ fn test_encrypt_decrypt_group_event() {
     let result = dga.create_group(config, &alice_key, timestamp).unwrap();
 
     // Create a test event
-    let original_event = create_group_activity_event(
-        "test_activity".to_string(),
-        b"Hello, encrypted world!".to_vec(),
-        {
-            let mut metadata = BTreeMap::new();
-            metadata.insert("test".to_string(), "value".to_string());
-            metadata
-        },
-    );
+    let original_event = create_group_activity_event(());
 
     // Get encryption key
     let encryption_state = dga.group_keys.get(&result.group_id).unwrap();
@@ -136,15 +128,7 @@ fn test_encrypted_group_activity() {
     let result = dga.create_group(config, &alice_key, timestamp).unwrap();
 
     // Create and send an activity event
-    let activity_event = create_group_activity_event(
-        "welcome_message".to_string(),
-        b"Welcome to our encrypted group!".to_vec(),
-        {
-            let mut metadata = BTreeMap::new();
-            metadata.insert("message_type".to_string(), "announcement".to_string());
-            metadata
-        },
-    );
+    let activity_event = create_group_activity_event(());
 
     let activity_message = dga
         .create_group_event_message(result.group_id, activity_event, &alice_key, timestamp + 1)
@@ -188,11 +172,7 @@ fn test_new_member_via_activity() {
     bob_dga.groups.insert(result.group_id, group_state);
 
     // Bob sends an activity
-    let bob_activity = create_group_activity_event(
-        "greeting".to_string(),
-        b"Hello everyone! Thanks for the key.".to_vec(),
-        Default::default(),
-    );
+    let bob_activity = create_group_activity_event(());
 
     let bob_message = bob_dga
         .create_group_event_message(result.group_id, bob_activity, &bob_key, timestamp + 10)
@@ -234,11 +214,7 @@ fn test_role_update() {
     let group_state = dga.get_group_state(&result.group_id).unwrap().clone();
     bob_dga.groups.insert(result.group_id, group_state);
 
-    let bob_activity = create_group_activity_event(
-        "join_greeting".to_string(),
-        b"Hello!".to_vec(),
-        Default::default(),
-    );
+    let bob_activity = create_group_activity_event(());
     let bob_message = bob_dga
         .create_group_event_message(result.group_id, bob_activity, &bob_key, timestamp + 5)
         .unwrap();
@@ -283,8 +259,7 @@ fn test_leave_group_event() {
     let group_state = dga.get_group_state(&result.group_id).unwrap().clone();
     bob_dga.groups.insert(result.group_id, group_state);
 
-    let bob_activity =
-        create_group_activity_event("join".to_string(), b"Joining".to_vec(), Default::default());
+    let bob_activity = create_group_activity_event(());
     let bob_message = bob_dga
         .create_group_event_message(result.group_id, bob_activity, &bob_key, timestamp + 5)
         .unwrap();
@@ -326,8 +301,7 @@ fn test_missing_encryption_key_error() {
     dga.group_keys.remove(&result.group_id);
 
     // Try to create an event without the key
-    let activity_event =
-        create_group_activity_event("test".to_string(), b"test".to_vec(), Default::default());
+    let activity_event = create_group_activity_event(());
 
     let result =
         dga.create_group_event_message(result.group_id, activity_event, &alice_key, timestamp + 1);
@@ -391,8 +365,7 @@ fn test_permission_denied_for_role_update() {
     let group_state = dga.get_group_state(&result.group_id).unwrap().clone();
     bob_dga.groups.insert(result.group_id, group_state);
 
-    let bob_activity =
-        create_group_activity_event("join".to_string(), b"Joining".to_vec(), Default::default());
+    let bob_activity = create_group_activity_event(());
     let bob_message = bob_dga
         .create_group_event_message(result.group_id, bob_activity, &bob_key, timestamp + 5)
         .unwrap();

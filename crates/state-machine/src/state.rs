@@ -4,7 +4,9 @@ use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
 
 use crate::{DgaError, DgaResult};
-use zoe_app_primitives::{GroupActivityEvent, GroupRole, GroupSettings, Permission};
+use zoe_app_primitives::events::GroupManagementEvent;
+use zoe_app_primitives::roles::GroupRole;
+use zoe_app_primitives::{GroupActivityEvent, GroupSettings, IdentityRef, Permission};
 use zoe_wire_protocol::EncryptionKey;
 
 /// The complete state of a group, maintained as an event-sourced state machine
@@ -104,7 +106,7 @@ impl GroupState {
     /// Apply an event to this group state, returning the updated state
     pub fn apply_event(
         &mut self,
-        event: &GroupActivityEvent,
+        event: &GroupActivityEvent<()>,
         event_id: Hash,
         sender: VerifyingKey,
         timestamp: u64,
@@ -122,50 +124,42 @@ impl GroupState {
 
         // Apply the specific event
         match event {
-            GroupActivityEvent::CreateGroup { .. } => {
-                return Err(DgaError::InvalidEvent(
-                    "Cannot apply CreateGroup event to existing group state".to_string(),
-                ));
+            GroupActivityEvent::Management(management_event) => {
+                match management_event.as_ref() {
+                    GroupManagementEvent::LeaveGroup { message } => {
+                        self.handle_leave_group(sender, message.clone(), timestamp)?;
+                    }
+
+                    GroupManagementEvent::UpdateGroup(group_info) => {
+                        // Handle group updates - simplified since GroupInfo structure changed
+                        self.name = group_info.name.clone();
+                        self.settings = group_info.settings.clone();
+                    }
+
+                    GroupManagementEvent::AssignRole { target, role } => {
+                        // Convert target to VerifyingKey for role update
+                        if let IdentityRef::Key(member_key) = target {
+                            self.handle_update_member_role(sender, *member_key, role.clone())?;
+                        }
+                    }
+
+                    GroupManagementEvent::SetIdentity(_) => {
+                        // Handle identity setting - for now just ensure sender is a member
+                        self.handle_member_announcement(sender, timestamp)?;
+                    }
+
+                    GroupManagementEvent::RemoveFromGroup { target } => {
+                        // Handle member removal
+                        if let IdentityRef::Key(member_key) = target {
+                            self.members.remove(member_key);
+                        }
+                    }
+                }
             }
 
-            GroupActivityEvent::LeaveGroup { message } => {
-                self.handle_leave_group(sender, message.clone(), timestamp)?;
-            }
-
-            GroupActivityEvent::UpdateGroup {
-                name,
-                description,
-                metadata_updates,
-                settings_updates,
-                ..
-            } => {
-                self.handle_update_group(
-                    sender,
-                    name.clone(),
-                    description.clone(),
-                    metadata_updates.clone(),
-                    settings_updates.clone(),
-                )?;
-            }
-
-            GroupActivityEvent::UpdateMemberRole { member, role } => {
-                self.handle_update_member_role(sender, *member, role.clone())?;
-            }
-
-            GroupActivityEvent::GroupActivity {
-                activity_type,
-                payload,
-                metadata,
-            } => {
-                // Ensure the sender is known as an active member
+            GroupActivityEvent::Activity(_activity_data) => {
+                // Handle custom activity
                 self.handle_member_announcement(sender, timestamp)?;
-                self.handle_group_activity(
-                    sender,
-                    activity_type.clone(),
-                    payload.clone(),
-                    metadata.clone(),
-                    timestamp,
-                )?;
             }
         }
 
@@ -210,16 +204,6 @@ impl GroupState {
         sender: VerifyingKey,
         timestamp: u64,
     ) -> DgaResult<()> {
-        // Check max active members limit
-        if let Some(max) = self.settings.max_active_members
-            && self.members.len() >= max
-            && !self.members.contains_key(&sender)
-        {
-            return Err(DgaError::InvalidEvent(
-                "Group has reached maximum active member limit".to_string(),
-            ));
-        }
-
         // Add or update member
         if let Some(existing_member) = self.members.get_mut(&sender) {
             existing_member.last_active = timestamp;

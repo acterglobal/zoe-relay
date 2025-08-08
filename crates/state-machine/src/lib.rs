@@ -25,6 +25,6 @@ pub use zoe_wire_protocol::bip39;
 
 // Re-export common group types from app-primitives for convenience
 pub use zoe_app_primitives::{
-    EncryptionSettings, GroupActivityEvent, GroupKeyInfo, GroupPermissions, GroupRole,
-    GroupSettings, Permission,
+    EncryptionSettings, GroupActivityEvent, GroupKeyInfo, GroupPermissions, GroupSettings,
+    Permission, roles::GroupRole,
 };

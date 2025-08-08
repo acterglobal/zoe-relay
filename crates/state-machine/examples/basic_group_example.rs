@@ -51,15 +51,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // but Alice can post activities to the group
 
     // Alice posts a welcome message to the group
-    let activity_event = create_group_activity_event(
-        "welcome_message".to_string(),
-        b"Welcome to our encrypted test group!".to_vec(),
-        {
-            let mut metadata = BTreeMap::new();
-            metadata.insert("message_type".to_string(), "announcement".to_string());
-            metadata
-        },
-    );
+    let activity_event = create_group_activity_event(());
 
     let activity_message = dga.create_group_event_message(
         create_result.group_id,

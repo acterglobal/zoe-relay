@@ -6,6 +6,12 @@
 
 pub mod file;
 pub mod group;
+pub mod identity;
+pub mod metadata;
+pub mod relay;
 
-pub use file::{CompressionConfig, ConvergentEncryptionInfo, FileRef, Image};
+pub use file::*;
 pub use group::*;
+pub use identity::*;
+pub use metadata::*;
+pub use relay::*;

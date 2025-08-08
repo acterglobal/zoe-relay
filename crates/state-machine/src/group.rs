@@ -1,7 +1,8 @@
 // ChaCha20-Poly1305 and AES-GCM functionality moved to crypto module
 use blake3::Hash;
 use ed25519_dalek::{SigningKey, VerifyingKey};
-use zoe_app_primitives::Image;
+use zoe_app_primitives::events::GroupManagementEvent;
+use zoe_app_primitives::{GroupInfo, IdentityRef};
 // Random number generation moved to wire-protocol crypto module
 use std::collections::{BTreeMap, HashMap};
 
@@ -125,15 +126,14 @@ impl DigitalGroupAssistant {
         };
 
         // Create the group creation event (no group_id needed since it will be the message hash)
-        let event = GroupActivityEvent::CreateGroup {
+        let group_info = GroupInfo {
             name: config.name.clone(),
-            description: config.description.clone(),
-            metadata: config.metadata.clone(),
             settings: config.settings.clone(),
             key_info,
-            avatar: None,
-            background: None,
+            metadata: Vec::new(),
         };
+        let event =
+            GroupActivityEvent::Management(Box::new(GroupManagementEvent::UpdateGroup(group_info)));
 
         // Encrypt the event before creating the wire protocol message
         let encrypted_payload = self.encrypt_group_event(&event, &encryption_key)?;
@@ -183,7 +183,7 @@ impl DigitalGroupAssistant {
     pub fn create_group_event_message(
         &self,
         group_id: Hash,
-        event: GroupActivityEvent,
+        event: GroupActivityEvent<()>,
         sender: &SigningKey,
         timestamp: u64,
     ) -> DgaResult<MessageFull> {
@@ -281,26 +281,22 @@ impl DigitalGroupAssistant {
 
         // Handle the root event (group creation) specially
         match &event {
-            GroupActivityEvent::CreateGroup {
-                name,
-                description,
-                metadata,
-                settings,
-                ..
-            } => {
-                // This is a root event - create the group state
-                let group_state = GroupState::new(
-                    group_id,
-                    name.clone(),
-                    description.clone(),
-                    metadata.clone(),
-                    settings.clone(),
-                    sender,
-                    timestamp,
-                );
+            GroupActivityEvent::Management(management_event) => {
+                if let GroupManagementEvent::UpdateGroup(group_info) = management_event.as_ref() {
+                    // This is a root event - create the group state
+                    let group_state = GroupState::new(
+                        group_id,
+                        group_info.name.clone(),
+                        None,            // description not available in simplified structure
+                        BTreeMap::new(), // metadata as BTreeMap
+                        group_info.settings.clone(),
+                        sender,
+                        timestamp,
+                    );
 
-                self.groups.insert(group_id, group_state);
-                return Ok(());
+                    self.groups.insert(group_id, group_state);
+                    return Ok(());
+                }
             }
             _ => {
                 // This is a subsequent event - apply to existing group state
@@ -381,7 +377,7 @@ impl DigitalGroupAssistant {
     /// Encrypt a group event using ChaCha20-Poly1305
     pub(crate) fn encrypt_group_event(
         &self,
-        event: &GroupActivityEvent,
+        event: &GroupActivityEvent<()>,
         key: &EncryptionKey,
     ) -> DgaResult<ChaCha20Poly1305Content> {
         // Serialize the event
@@ -397,7 +393,7 @@ impl DigitalGroupAssistant {
         &self,
         payload: &ChaCha20Poly1305Content,
         key: &EncryptionKey,
-    ) -> DgaResult<GroupActivityEvent> {
+    ) -> DgaResult<GroupActivityEvent<()>> {
         // Note: No key ID verification needed since key is determined by channel context
 
         // Decrypt using ChaCha20-Poly1305
@@ -406,7 +402,7 @@ impl DigitalGroupAssistant {
             .map_err(|e| DgaError::CryptoError(format!("Group event decryption failed: {e}")))?;
 
         // Deserialize the event
-        let event: GroupActivityEvent = postcard::from_bytes(&plaintext)?;
+        let event: GroupActivityEvent<()> = postcard::from_bytes(&plaintext)?;
         Ok(event)
     }
 }
@@ -420,43 +416,24 @@ impl Default for DigitalGroupAssistant {
 // Helper functions for common encrypted group operations
 
 /// Create a leave group event
-pub fn create_leave_group_event(message: Option<String>) -> GroupActivityEvent {
-    GroupActivityEvent::LeaveGroup { message }
+pub fn create_leave_group_event(message: Option<String>) -> GroupActivityEvent<()> {
+    GroupActivityEvent::Management(Box::new(GroupManagementEvent::LeaveGroup { message }))
 }
 
 /// Create a role update event
-pub fn create_role_update_event(member: VerifyingKey, role: GroupRole) -> GroupActivityEvent {
-    GroupActivityEvent::UpdateMemberRole { member, role }
+pub fn create_role_update_event(member: VerifyingKey, role: GroupRole) -> GroupActivityEvent<()> {
+    GroupActivityEvent::Management(Box::new(GroupManagementEvent::AssignRole {
+        target: IdentityRef::Key(member),
+        role,
+    }))
 }
 
 /// Create a custom group activity event
-pub fn create_group_activity_event(
-    activity_type: String,
-    payload: Vec<u8>,
-    metadata: BTreeMap<String, String>,
-) -> GroupActivityEvent {
-    GroupActivityEvent::GroupActivity {
-        activity_type,
-        payload,
-        metadata,
-    }
+pub fn create_group_activity_event<T>(activity_data: T) -> GroupActivityEvent<T> {
+    GroupActivityEvent::Activity(activity_data)
 }
 
 /// Create a group update event
-pub fn create_group_update_event(
-    name: Option<String>,
-    description: Option<String>,
-    metadata_updates: BTreeMap<String, Option<String>>,
-    settings_updates: Option<GroupSettings>,
-    avatar: Option<Option<Image>>,
-    background: Option<Option<Image>>,
-) -> GroupActivityEvent {
-    GroupActivityEvent::UpdateGroup {
-        name,
-        description,
-        metadata_updates,
-        settings_updates,
-        avatar,
-        background,
-    }
+pub fn create_group_update_event(group_info: GroupInfo) -> GroupActivityEvent<()> {
+    GroupActivityEvent::Management(Box::new(GroupManagementEvent::UpdateGroup(group_info)))
 }
