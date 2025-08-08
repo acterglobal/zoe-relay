@@ -488,7 +488,10 @@ fn test_create_key_from_mnemonic() {
     assert!(key.derivation_info.is_some());
 
     let derivation_info = key.derivation_info.as_ref().unwrap();
-    assert_eq!(derivation_info.method, "bip39+argon2");
+    assert_eq!(
+        derivation_info.method,
+        zoe_wire_protocol::crypto::KeyDerivationMethod::Bip39Argon2
+    );
     assert_eq!(derivation_info.context, "dga-group-test-group");
 }
 

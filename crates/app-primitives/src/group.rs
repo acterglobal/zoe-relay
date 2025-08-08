@@ -95,26 +95,20 @@ pub enum GroupActivityEvent {
 
 /// Information about the group's encryption key (not the key itself)
 ///
-/// This structure helps participants identify or derive the correct encryption key
-/// without exposing the key material itself in the event data.
+/// This enum contains typed information about different encryption algorithms
+/// and their key derivation methods, without exposing the key material itself.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct GroupKeyInfo {
-    /// Key identifier or derivation hint
+pub enum GroupKeyInfo {
+    /// ChaCha20-Poly1305 encryption with BIP39+Argon2 key derivation
     ///
-    /// This could be a hash of the key, a key ID, or derivation parameters.
-    /// It helps participants identify which key to use without revealing the key.
-    pub key_id: Vec<u8>,
-
-    /// Algorithm information
-    ///
-    /// Specifies the encryption algorithm used (e.g., "AES-256-GCM").
-    pub algorithm: String,
-
-    /// Optional additional parameters for key derivation
-    ///
-    /// Can contain additional context or parameters needed for key derivation
-    /// schemes like PBKDF2, scrypt, or custom key derivation methods.
-    pub derivation_params: Option<BTreeMap<String, String>>,
+    /// This is the standard encryption method for groups, using ChaCha20-Poly1305
+    /// for encryption and BIP39 mnemonics with Argon2 for key derivation.
+    ChaCha20Poly1305 {
+        /// Key identifier (typically a hash of the derived key)
+        key_id: Vec<u8>,
+        /// Key derivation information for recreating the key from a mnemonic
+        derivation_info: zoe_wire_protocol::crypto::KeyDerivationInfo,
+    },
 }
 
 /// Group settings and configuration for encrypted groups
@@ -319,24 +313,43 @@ pub enum GroupAction {
 }
 
 impl GroupKeyInfo {
-    /// Create a new GroupKeyInfo
-    pub fn new(key_id: Vec<u8>, algorithm: String) -> Self {
-        Self {
+    /// Create a new ChaCha20-Poly1305 GroupKeyInfo
+    pub fn new_chacha20_poly1305(
+        key_id: Vec<u8>,
+        derivation_info: zoe_wire_protocol::crypto::KeyDerivationInfo,
+    ) -> Self {
+        Self::ChaCha20Poly1305 {
             key_id,
-            algorithm,
-            derivation_params: None,
+            derivation_info,
         }
     }
 
-    /// Add derivation parameters
-    pub fn with_derivation_params(mut self, params: BTreeMap<String, String>) -> Self {
-        self.derivation_params = Some(params);
-        self
+    /// Get the key ID for this key info
+    pub fn key_id(&self) -> &[u8] {
+        match self {
+            Self::ChaCha20Poly1305 { key_id, .. } => key_id,
+        }
+    }
+
+    /// Get the algorithm name for this key info
+    pub fn algorithm(&self) -> &str {
+        match self {
+            Self::ChaCha20Poly1305 { .. } => "ChaCha20-Poly1305",
+        }
+    }
+
+    /// Get the derivation info if available
+    pub fn derivation_info(&self) -> Option<&zoe_wire_protocol::crypto::KeyDerivationInfo> {
+        match self {
+            Self::ChaCha20Poly1305 {
+                derivation_info, ..
+            } => Some(derivation_info),
+        }
     }
 
     /// Check if this key info matches a given key ID
     pub fn matches_key_id(&self, other_key_id: &[u8]) -> bool {
-        self.key_id == other_key_id
+        self.key_id() == other_key_id
     }
 }
 
@@ -602,5 +615,461 @@ impl GroupInfo {
     /// Check if the group has a background image
     pub fn has_background(&self) -> bool {
         self.background.is_some()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ed25519_dalek::SigningKey;
+    use std::collections::BTreeMap;
+    use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+
+    fn create_test_verifying_key() -> VerifyingKey {
+        let mut csprng = rand::rngs::OsRng;
+        let signing_key: SigningKey = SigningKey::generate(&mut csprng);
+        signing_key.verifying_key()
+    }
+
+    fn create_test_socket_addr() -> SocketAddr {
+        SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 8080)
+    }
+
+    fn create_test_key_derivation_info() -> zoe_wire_protocol::crypto::KeyDerivationInfo {
+        zoe_wire_protocol::crypto::KeyDerivationInfo {
+            method: zoe_wire_protocol::crypto::KeyDerivationMethod::Bip39Argon2,
+            salt: vec![1, 2, 3, 4, 5, 6, 7, 8],
+            argon2_params: zoe_wire_protocol::crypto::Argon2Params::default(),
+            context: "dga-group-key".to_string(),
+        }
+    }
+
+    fn create_test_group_key_info(key_id: Vec<u8>) -> GroupKeyInfo {
+        GroupKeyInfo::new_chacha20_poly1305(key_id, create_test_key_derivation_info())
+    }
+
+    #[test]
+    fn test_group_role_has_permission() {
+        // Test Owner permissions
+        assert!(GroupRole::Owner.has_permission(&Permission::OwnerOnly));
+        assert!(GroupRole::Owner.has_permission(&Permission::AdminOrAbove));
+        assert!(GroupRole::Owner.has_permission(&Permission::ModeratorOrAbove));
+        assert!(GroupRole::Owner.has_permission(&Permission::AllMembers));
+
+        // Test Admin permissions
+        assert!(!GroupRole::Admin.has_permission(&Permission::OwnerOnly));
+        assert!(GroupRole::Admin.has_permission(&Permission::AdminOrAbove));
+        assert!(GroupRole::Admin.has_permission(&Permission::ModeratorOrAbove));
+        assert!(GroupRole::Admin.has_permission(&Permission::AllMembers));
+
+        // Test Moderator permissions
+        assert!(!GroupRole::Moderator.has_permission(&Permission::OwnerOnly));
+        assert!(!GroupRole::Moderator.has_permission(&Permission::AdminOrAbove));
+        assert!(GroupRole::Moderator.has_permission(&Permission::ModeratorOrAbove));
+        assert!(GroupRole::Moderator.has_permission(&Permission::AllMembers));
+
+        // Test Member permissions
+        assert!(!GroupRole::Member.has_permission(&Permission::OwnerOnly));
+        assert!(!GroupRole::Member.has_permission(&Permission::AdminOrAbove));
+        assert!(!GroupRole::Member.has_permission(&Permission::ModeratorOrAbove));
+        assert!(GroupRole::Member.has_permission(&Permission::AllMembers));
+    }
+
+    #[test]
+    fn test_group_role_display_name() {
+        assert_eq!(GroupRole::Owner.display_name(), "Owner");
+        assert_eq!(GroupRole::Admin.display_name(), "Administrator");
+        assert_eq!(GroupRole::Moderator.display_name(), "Moderator");
+        assert_eq!(GroupRole::Member.display_name(), "Member");
+    }
+
+    #[test]
+    fn test_group_role_can_assign_role() {
+        // Owner can assign any role
+        assert!(GroupRole::Owner.can_assign_role(&GroupRole::Owner));
+        assert!(GroupRole::Owner.can_assign_role(&GroupRole::Admin));
+        assert!(GroupRole::Owner.can_assign_role(&GroupRole::Moderator));
+        assert!(GroupRole::Owner.can_assign_role(&GroupRole::Member));
+
+        // Admin cannot assign Owner, but can assign lower roles
+        assert!(!GroupRole::Admin.can_assign_role(&GroupRole::Owner));
+        assert!(GroupRole::Admin.can_assign_role(&GroupRole::Admin));
+        assert!(GroupRole::Admin.can_assign_role(&GroupRole::Moderator));
+        assert!(GroupRole::Admin.can_assign_role(&GroupRole::Member));
+
+        // Moderator can only assign Member role
+        assert!(!GroupRole::Moderator.can_assign_role(&GroupRole::Owner));
+        assert!(!GroupRole::Moderator.can_assign_role(&GroupRole::Admin));
+        assert!(!GroupRole::Moderator.can_assign_role(&GroupRole::Moderator));
+        assert!(GroupRole::Moderator.can_assign_role(&GroupRole::Member));
+
+        // Member cannot assign any roles
+        assert!(!GroupRole::Member.can_assign_role(&GroupRole::Owner));
+        assert!(!GroupRole::Member.can_assign_role(&GroupRole::Admin));
+        assert!(!GroupRole::Member.can_assign_role(&GroupRole::Moderator));
+        assert!(!GroupRole::Member.can_assign_role(&GroupRole::Member));
+    }
+
+    #[test]
+    fn test_group_permissions_builder() {
+        let permissions = GroupPermissions::new()
+            .update_group(Permission::AdminOrAbove)
+            .assign_roles(Permission::OwnerOnly)
+            .post_activities(Permission::AllMembers)
+            .update_encryption(Permission::OwnerOnly);
+
+        assert_eq!(permissions.update_group, Permission::AdminOrAbove);
+        assert_eq!(permissions.assign_roles, Permission::OwnerOnly);
+        assert_eq!(permissions.post_activities, Permission::AllMembers);
+        assert_eq!(permissions.update_encryption, Permission::OwnerOnly);
+    }
+
+    #[test]
+    fn test_group_permissions_can_perform_action() {
+        let permissions = GroupPermissions::default();
+
+        // Test default permissions
+        assert!(permissions.can_perform_action(&GroupRole::Owner, GroupAction::UpdateGroup));
+        assert!(permissions.can_perform_action(&GroupRole::Admin, GroupAction::UpdateGroup));
+        assert!(!permissions.can_perform_action(&GroupRole::Moderator, GroupAction::UpdateGroup));
+        assert!(!permissions.can_perform_action(&GroupRole::Member, GroupAction::UpdateGroup));
+
+        assert!(permissions.can_perform_action(&GroupRole::Owner, GroupAction::AssignRoles));
+        assert!(!permissions.can_perform_action(&GroupRole::Admin, GroupAction::AssignRoles));
+
+        assert!(permissions.can_perform_action(&GroupRole::Member, GroupAction::PostActivities));
+
+        assert!(permissions.can_perform_action(&GroupRole::Owner, GroupAction::UpdateEncryption));
+        assert!(!permissions.can_perform_action(&GroupRole::Admin, GroupAction::UpdateEncryption));
+    }
+
+    #[test]
+    fn test_group_key_info() {
+        let key_id = vec![1, 2, 3, 4];
+        let derivation_info = zoe_wire_protocol::crypto::KeyDerivationInfo {
+            method: zoe_wire_protocol::crypto::KeyDerivationMethod::Bip39Argon2,
+            salt: vec![1, 2, 3, 4, 5, 6, 7, 8],
+            argon2_params: zoe_wire_protocol::crypto::Argon2Params::default(),
+            context: "dga-group-key".to_string(),
+        };
+
+        let key_info = GroupKeyInfo::new_chacha20_poly1305(key_id.clone(), derivation_info.clone());
+
+        assert_eq!(key_info.key_id(), &key_id);
+        assert_eq!(key_info.algorithm(), "ChaCha20-Poly1305");
+        assert_eq!(key_info.derivation_info(), Some(&derivation_info));
+    }
+
+    #[test]
+    fn test_group_key_info_matches_key_id() {
+        let key_id = vec![1, 2, 3, 4];
+        let derivation_info = zoe_wire_protocol::crypto::KeyDerivationInfo {
+            method: zoe_wire_protocol::crypto::KeyDerivationMethod::Bip39Argon2,
+            salt: vec![1, 2, 3, 4, 5, 6, 7, 8],
+            argon2_params: zoe_wire_protocol::crypto::Argon2Params::default(),
+            context: "dga-group-key".to_string(),
+        };
+        let key_info = GroupKeyInfo::new_chacha20_poly1305(key_id.clone(), derivation_info);
+
+        assert!(key_info.matches_key_id(&key_id));
+        assert!(!key_info.matches_key_id(&[5, 6, 7, 8]));
+    }
+
+    #[test]
+    fn test_group_settings_builder() {
+        let permissions = GroupPermissions::default();
+        let encryption_settings = EncryptionSettings::default();
+
+        let settings = GroupSettings::new()
+            .max_active_members(Some(100))
+            .permissions(permissions.clone())
+            .encryption_settings(encryption_settings.clone());
+
+        assert_eq!(settings.max_active_members, Some(100));
+        assert_eq!(settings.permissions, permissions);
+        assert_eq!(settings.encryption_settings, encryption_settings);
+    }
+
+    #[test]
+    fn test_encryption_settings_builder() {
+        let settings = EncryptionSettings::new()
+            .with_key_rotation(3600)
+            .with_additional_context("test context".to_string());
+
+        assert!(settings.key_rotation_enabled);
+        assert_eq!(settings.key_rotation_interval, Some(3600));
+        assert_eq!(
+            settings.additional_context,
+            Some("test context".to_string())
+        );
+    }
+
+    #[test]
+    fn test_relay_endpoint() {
+        let address = create_test_socket_addr();
+        let public_key = create_test_verifying_key();
+
+        let endpoint = RelayEndpoint::new(address, public_key)
+            .with_name("Test Relay".to_string())
+            .with_metadata("region".to_string(), "us-west".to_string());
+
+        assert_eq!(endpoint.address, address);
+        assert_eq!(endpoint.public_key, public_key);
+        assert_eq!(endpoint.name, Some("Test Relay".to_string()));
+        assert_eq!(
+            endpoint.metadata.get("region"),
+            Some(&"us-west".to_string())
+        );
+    }
+
+    #[test]
+    fn test_relay_endpoint_display_name() {
+        let address = create_test_socket_addr();
+        let public_key = create_test_verifying_key();
+
+        // Without name, should use address
+        let endpoint_no_name = RelayEndpoint::new(address, public_key);
+        assert_eq!(endpoint_no_name.display_name(), address.to_string());
+
+        // With name, should use name
+        let endpoint_with_name = endpoint_no_name.with_name("Test Relay".to_string());
+        assert_eq!(endpoint_with_name.display_name(), "Test Relay");
+    }
+
+    #[test]
+    fn test_group_join_info() {
+        let channel_id = "test_channel_123".to_string();
+        let group_info = GroupInfo {
+            name: "Test Group".to_string(),
+            description: Some("A test group".to_string()),
+            metadata: BTreeMap::new(),
+            settings: GroupSettings::default(),
+            avatar: None,
+            background: None,
+        };
+        let encryption_key = [42u8; 32];
+        let key_info = create_test_group_key_info(vec![1, 2, 3]);
+        let relay_endpoint =
+            RelayEndpoint::new(create_test_socket_addr(), create_test_verifying_key());
+
+        let join_info = GroupJoinInfo::new(
+            channel_id.clone(),
+            group_info.clone(),
+            encryption_key,
+            key_info.clone(),
+            vec![relay_endpoint.clone()],
+        )
+        .with_invitation_metadata("inviter".to_string(), "alice".to_string());
+
+        assert_eq!(join_info.channel_id, channel_id);
+        assert_eq!(join_info.group_info, group_info);
+        assert_eq!(join_info.encryption_key, encryption_key);
+        assert_eq!(join_info.key_info, key_info);
+        assert_eq!(join_info.relay_endpoints, vec![relay_endpoint]);
+        assert_eq!(
+            join_info.invitation_metadata.get("inviter"),
+            Some(&"alice".to_string())
+        );
+    }
+
+    #[test]
+    fn test_group_join_info_relay_methods() {
+        let relay1 = RelayEndpoint::new(create_test_socket_addr(), create_test_verifying_key())
+            .with_name("Primary".to_string());
+        let relay2 = RelayEndpoint::new(
+            SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 8081),
+            create_test_verifying_key(),
+        )
+        .with_name("Secondary".to_string());
+
+        let mut join_info = GroupJoinInfo::new(
+            "test".to_string(),
+            GroupInfo {
+                name: "Test".to_string(),
+                description: None,
+                metadata: BTreeMap::new(),
+                settings: GroupSettings::default(),
+                avatar: None,
+                background: None,
+            },
+            [0u8; 32],
+            create_test_group_key_info(vec![1]),
+            vec![relay1.clone()],
+        );
+
+        // Test initial state
+        assert!(join_info.has_relays());
+        assert_eq!(join_info.primary_relay(), Some(&relay1));
+        assert_eq!(join_info.relays_by_priority().len(), 1);
+
+        // Add another relay
+        join_info = join_info.add_relay(relay2.clone());
+        assert_eq!(join_info.relays_by_priority().len(), 2);
+        assert_eq!(join_info.primary_relay(), Some(&relay1)); // First one is still primary
+
+        // Test with no relays
+        let empty_join_info = GroupJoinInfo::new(
+            "test".to_string(),
+            GroupInfo {
+                name: "Test".to_string(),
+                description: None,
+                metadata: BTreeMap::new(),
+                settings: GroupSettings::default(),
+                avatar: None,
+                background: None,
+            },
+            [0u8; 32],
+            create_test_group_key_info(vec![1]),
+            vec![],
+        );
+
+        assert!(!empty_join_info.has_relays());
+        assert_eq!(empty_join_info.primary_relay(), None);
+        assert!(empty_join_info.relays_by_priority().is_empty());
+    }
+
+    #[test]
+    fn test_group_info() {
+        let group_info = GroupInfo::from_create_group_event(
+            "Test Group".to_string(),
+            Some("A test group".to_string()),
+            BTreeMap::new(),
+            GroupSettings::default(),
+            None,
+            None,
+        );
+
+        assert_eq!(group_info.display_name(), "Test Group");
+        assert!(!group_info.has_avatar());
+        assert!(!group_info.has_background());
+
+        // Test with avatar and background
+        let file_ref = crate::FileRef::new(
+            "test_hash".to_string(),
+            zoe_encrypted_storage::ConvergentEncryptionInfo {
+                key: [0u8; 32],
+                was_compressed: false,
+                source_size: 1024,
+            },
+            Some("avatar.png".to_string()),
+        );
+        let avatar = Some(crate::Image::new(file_ref.clone()));
+        let background = Some(crate::Image::new(file_ref));
+
+        let group_info_with_images = GroupInfo::from_create_group_event(
+            "Test Group".to_string(),
+            None,
+            BTreeMap::new(),
+            GroupSettings::default(),
+            avatar,
+            background,
+        );
+
+        assert!(group_info_with_images.has_avatar());
+        assert!(group_info_with_images.has_background());
+    }
+
+    #[test]
+    fn test_group_permissions_default() {
+        let permissions = GroupPermissions::default();
+
+        assert_eq!(permissions.update_group, Permission::AdminOrAbove);
+        assert_eq!(permissions.assign_roles, Permission::OwnerOnly);
+        assert_eq!(permissions.post_activities, Permission::AllMembers);
+        assert_eq!(permissions.update_encryption, Permission::OwnerOnly);
+    }
+
+    #[test]
+    fn test_encryption_settings_default() {
+        let settings = EncryptionSettings::default();
+
+        assert!(!settings.key_rotation_enabled);
+        assert_eq!(settings.key_rotation_interval, None);
+        assert_eq!(settings.additional_context, None);
+    }
+
+    #[test]
+    fn test_group_settings_default() {
+        let settings = GroupSettings::default();
+
+        assert_eq!(settings.max_active_members, None);
+        assert_eq!(settings.permissions, GroupPermissions::default());
+        assert_eq!(settings.encryption_settings, EncryptionSettings::default());
+    }
+
+    #[test]
+    fn test_postcard_serialization_group_activity_event() {
+        let event = GroupActivityEvent::CreateGroup {
+            name: "Test Group".to_string(),
+            description: Some("Test Description".to_string()),
+            metadata: BTreeMap::new(),
+            settings: GroupSettings::default(),
+            key_info: create_test_group_key_info(vec![1, 2, 3]),
+            avatar: None,
+            background: None,
+        };
+
+        let serialized = postcard::to_stdvec(&event).expect("Failed to serialize");
+        let deserialized: GroupActivityEvent =
+            postcard::from_bytes(&serialized).expect("Failed to deserialize");
+
+        assert_eq!(event, deserialized);
+    }
+
+    #[test]
+    fn test_postcard_serialization_group_role() {
+        for role in [
+            GroupRole::Owner,
+            GroupRole::Admin,
+            GroupRole::Moderator,
+            GroupRole::Member,
+        ] {
+            let serialized = postcard::to_stdvec(&role).expect("Failed to serialize");
+            let deserialized: GroupRole =
+                postcard::from_bytes(&serialized).expect("Failed to deserialize");
+            assert_eq!(role, deserialized);
+        }
+    }
+
+    #[test]
+    fn test_postcard_serialization_permission() {
+        for permission in [
+            Permission::OwnerOnly,
+            Permission::AdminOrAbove,
+            Permission::ModeratorOrAbove,
+            Permission::AllMembers,
+        ] {
+            let serialized = postcard::to_stdvec(&permission).expect("Failed to serialize");
+            let deserialized: Permission =
+                postcard::from_bytes(&serialized).expect("Failed to deserialize");
+            assert_eq!(permission, deserialized);
+        }
+    }
+
+    #[test]
+    fn test_postcard_serialization_group_join_info() {
+        let join_info = GroupJoinInfo::new(
+            "test_channel".to_string(),
+            GroupInfo::from_create_group_event(
+                "Test".to_string(),
+                None,
+                BTreeMap::new(),
+                GroupSettings::default(),
+                None,
+                None,
+            ),
+            [42u8; 32],
+            create_test_group_key_info(vec![1, 2, 3]),
+            vec![RelayEndpoint::new(
+                create_test_socket_addr(),
+                create_test_verifying_key(),
+            )],
+        );
+
+        let serialized = postcard::to_stdvec(&join_info).expect("Failed to serialize");
+        let deserialized: GroupJoinInfo =
+            postcard::from_bytes(&serialized).expect("Failed to deserialize");
+
+        assert_eq!(join_info, deserialized);
     }
 }

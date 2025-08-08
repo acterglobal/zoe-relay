@@ -123,9 +123,16 @@ impl RedisMessageStorage {
         let Some(value): Option<Vec<u8>> = conn.get(id).await? else {
             return Ok(None);
         };
-        let message = MessageFull::from_storage_value(&value)
-            .map_err(|e| MessageStoreError::Serialization(e.to_string()))?;
-        Ok(Some(message))
+
+        // Try to deserialize the message - if it fails, log the error and return None
+        // This handles cases where old data with incompatible serialization formats exists
+        match MessageFull::from_storage_value(&value) {
+            Ok(message) => Ok(Some(message)),
+            Err(e) => {
+                tracing::warn!("Failed to deserialize message {}: {}. Skipping corrupted/incompatible message.", id, e);
+                Ok(None)
+            }
+        }
     }
 
     async fn add_to_index_stream(
@@ -749,8 +756,8 @@ impl RedisMessageStorage {
                             };
                             info!("Message ID found in stream info: {}", hex::encode(&msg_id));
                             let Some(msg_full) = Self::get_message_full(&mut fetch_con, &msg_id).await? else {
-                                // we need to fetch the message
-                                error!("Message not found in storage. odd");
+                                // Message not found or failed to deserialize - skip it
+                                tracing::debug!("Message {} not found or corrupted, skipping", hex::encode(&msg_id));
                                 continue 'messages;
                             };
                             yield Ok((Some(msg_full), height.clone()));

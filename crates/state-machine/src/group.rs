@@ -111,14 +111,16 @@ impl DigitalGroupAssistant {
             .unwrap_or_else(|| Self::generate_group_key(timestamp));
 
         // Create key info (metadata about the key, not the key itself)
-        let key_info = GroupKeyInfo {
+        let key_info = GroupKeyInfo::ChaCha20Poly1305 {
             key_id: encryption_key.key_id.clone(),
-            algorithm: "chacha20-poly1305".to_string(),
-            derivation_params: encryption_key.derivation_info.as_ref().map(|info| {
-                let mut params = BTreeMap::new();
-                params.insert("method".to_string(), info.method.clone());
-                params.insert("context".to_string(), info.context.clone());
-                params
+            derivation_info: encryption_key.derivation_info.clone().unwrap_or_else(|| {
+                // Default derivation info if none provided
+                zoe_wire_protocol::crypto::KeyDerivationInfo {
+                    method: zoe_wire_protocol::crypto::KeyDerivationMethod::ChaCha20Poly1305Keygen,
+                    salt: vec![],
+                    argon2_params: zoe_wire_protocol::crypto::Argon2Params::default(),
+                    context: "dga-group-key".to_string(),
+                }
             }),
         };
 

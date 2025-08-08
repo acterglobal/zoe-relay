@@ -465,11 +465,58 @@ impl MnemonicPhrase {
     }
 }
 
+/// Key derivation methods supported by the system
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum KeyDerivationMethod {
+    /// BIP39 mnemonic phrase with Argon2 key derivation
+    ///
+    /// This is the standard method for user-controlled key derivation using
+    /// a BIP39 mnemonic phrase combined with Argon2 for key stretching.
+    Bip39Argon2,
+
+    /// Direct ChaCha20-Poly1305 key generation
+    ///
+    /// Used for fallback scenarios or when no mnemonic is provided.
+    /// Keys are generated directly without mnemonic derivation.
+    ChaCha20Poly1305Keygen,
+}
+
+impl KeyDerivationMethod {
+    /// Get the string representation of this derivation method
+    ///
+    /// This is useful for compatibility with existing string-based systems
+    /// or for display purposes.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Bip39Argon2 => "bip39+argon2",
+            Self::ChaCha20Poly1305Keygen => "chacha20-poly1305-keygen",
+        }
+    }
+}
+
+impl std::fmt::Display for KeyDerivationMethod {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.as_str())
+    }
+}
+
+impl std::str::FromStr for KeyDerivationMethod {
+    type Err = String;
+
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        match s {
+            "bip39+argon2" => Ok(Self::Bip39Argon2),
+            "chacha20-poly1305-keygen" => Ok(Self::ChaCha20Poly1305Keygen),
+            _ => Err(format!("Unknown key derivation method: '{s}'")),
+        }
+    }
+}
+
 /// Information about how a key was derived
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct KeyDerivationInfo {
     /// Key derivation method used
-    pub method: String, // e.g., "bip39+argon2"
+    pub method: KeyDerivationMethod,
     /// Salt used for derivation
     pub salt: Vec<u8>,
     /// Argon2 parameters used
@@ -478,7 +525,7 @@ pub struct KeyDerivationInfo {
     pub context: String, // e.g., "dga-group-key"
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Argon2Params {
     pub memory: u32,
     pub iterations: u32,
@@ -678,7 +725,7 @@ impl EncryptionKey {
             key_id,
             created_at: timestamp,
             derivation_info: Some(KeyDerivationInfo {
-                method: "bip39+argon2".to_string(),
+                method: KeyDerivationMethod::Bip39Argon2,
                 salt: salt.to_vec(),
                 argon2_params,
                 context: context.to_string(),
@@ -834,5 +881,99 @@ mod tests {
             key.derivation_info.as_ref().unwrap().context,
             "test-context"
         );
+    }
+
+    #[test]
+    fn test_key_derivation_method_as_str() {
+        assert_eq!(KeyDerivationMethod::Bip39Argon2.as_str(), "bip39+argon2");
+        assert_eq!(
+            KeyDerivationMethod::ChaCha20Poly1305Keygen.as_str(),
+            "chacha20-poly1305-keygen"
+        );
+    }
+
+    #[test]
+    fn test_key_derivation_method_display() {
+        assert_eq!(KeyDerivationMethod::Bip39Argon2.to_string(), "bip39+argon2");
+        assert_eq!(
+            KeyDerivationMethod::ChaCha20Poly1305Keygen.to_string(),
+            "chacha20-poly1305-keygen"
+        );
+    }
+
+    #[test]
+    fn test_key_derivation_method_from_str() {
+        use std::str::FromStr;
+        assert_eq!(
+            KeyDerivationMethod::from_str("bip39+argon2"),
+            Ok(KeyDerivationMethod::Bip39Argon2)
+        );
+        assert_eq!(
+            KeyDerivationMethod::from_str("chacha20-poly1305-keygen"),
+            Ok(KeyDerivationMethod::ChaCha20Poly1305Keygen)
+        );
+        assert!(KeyDerivationMethod::from_str("unknown").is_err());
+        assert!(KeyDerivationMethod::from_str("").is_err());
+    }
+
+    #[test]
+    fn test_key_derivation_method_round_trip() {
+        use std::str::FromStr;
+        let methods = [
+            KeyDerivationMethod::Bip39Argon2,
+            KeyDerivationMethod::ChaCha20Poly1305Keygen,
+        ];
+
+        for method in methods {
+            let as_str = method.as_str();
+            let parsed = KeyDerivationMethod::from_str(as_str).expect("Should parse back");
+            assert_eq!(method, parsed);
+        }
+    }
+
+    #[test]
+    fn test_key_derivation_info_with_enum() {
+        let derivation_info = KeyDerivationInfo {
+            method: KeyDerivationMethod::Bip39Argon2,
+            salt: vec![1, 2, 3, 4],
+            argon2_params: Argon2Params::default(),
+            context: "test-context".to_string(),
+        };
+
+        assert_eq!(derivation_info.method, KeyDerivationMethod::Bip39Argon2);
+        assert_eq!(derivation_info.method.as_str(), "bip39+argon2");
+        assert_eq!(derivation_info.context, "test-context");
+    }
+
+    #[test]
+    fn test_postcard_serialization_key_derivation_method() {
+        for method in [
+            KeyDerivationMethod::Bip39Argon2,
+            KeyDerivationMethod::ChaCha20Poly1305Keygen,
+        ] {
+            let serialized = postcard::to_stdvec(&method).expect("Failed to serialize");
+            let deserialized: KeyDerivationMethod =
+                postcard::from_bytes(&serialized).expect("Failed to deserialize");
+            assert_eq!(method, deserialized);
+        }
+    }
+
+    #[test]
+    fn test_postcard_serialization_key_derivation_info() {
+        let derivation_info = KeyDerivationInfo {
+            method: KeyDerivationMethod::Bip39Argon2,
+            salt: vec![1, 2, 3, 4, 5, 6, 7, 8],
+            argon2_params: Argon2Params {
+                memory: 65536,
+                iterations: 3,
+                parallelism: 4,
+            },
+            context: "dga-group-key".to_string(),
+        };
+
+        let serialized = postcard::to_stdvec(&derivation_info).expect("Failed to serialize");
+        let deserialized: KeyDerivationInfo =
+            postcard::from_bytes(&serialized).expect("Failed to deserialize");
+        assert_eq!(derivation_info, deserialized);
     }
 }

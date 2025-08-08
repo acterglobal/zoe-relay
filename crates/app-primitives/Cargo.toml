@@ -9,8 +9,15 @@ ed25519-dalek = { workspace = true }
 
 # Storage and encryption
 zoe-encrypted-storage = { path = "../encrypted-storage" }
+zoe-wire-protocol = { path = "../wire-protocol" }
 
 # Serialization
 serde = { workspace = true }
+postcard = { workspace = true }
+
+[dev-dependencies]
+# Testing utilities
+ed25519-dalek = { workspace = true }
+rand = { workspace = true }
 
 
