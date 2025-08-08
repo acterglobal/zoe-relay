@@ -14,14 +14,14 @@ coverage:
   status:
     project:
       default:
-        target: 75%
+        target: 80%
         threshold: 2%
         base: auto
         flags:
           - unittests
     patch:
       default:
-        target: 70%
+        target: 80%
         threshold: 5%
         base: auto
         flags:
@@ -49,9 +49,9 @@ flag_management:
     carryforward: true
     statuses:
       - type: project
-        target: 75%
+        target: 80%
       - type: patch
-        target: 70%
+        target: 80%
 
 flags:
   unittests:
