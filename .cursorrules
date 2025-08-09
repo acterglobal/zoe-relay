@@ -227,6 +227,127 @@ let recovered: MyStruct = serde_json::from_str(&json)?;
 - JSON serialization would significantly increase bandwidth usage
 - Binary formats are more efficient for cryptographic operations
 
+## Code Reuse and Type Integration
+
+### CRITICAL: Always reuse and extend existing types and infrastructure
+
+**Before creating any new types or structures, ALWAYS investigate existing codebase:**
+
+- ✅ **DO**: Search the codebase thoroughly for existing similar types, structures, and patterns
+- ✅ **DO**: Extend existing types with new fields or variants when possible
+- ✅ **DO**: Amend existing enums with new variants rather than creating parallel enums
+- ✅ **DO**: Reuse existing infrastructure, services, and patterns
+- ✅ **DO**: Build upon existing state machines, events, and data structures
+- ❌ **DON'T**: Create new types that are functionally similar to existing ones
+- ❌ **DON'T**: Duplicate existing patterns or infrastructure
+- ❌ **DON'T**: Reinvent existing abstractions unless explicitly requested
+
+### Investigation Process
+
+**MANDATORY steps before creating new types:**
+
+1. **Search for existing types** using semantic search and grep:
+   - Look for similar field names, purposes, or functionality
+   - Check `app-primitives`, `wire-protocol`, `state-machine` crates first
+   - Examine existing events, states, and message types
+
+2. **Analyze existing patterns**:
+   - How are similar concepts already modeled?
+   - What existing enums or structs could be extended?
+   - Are there existing traits or interfaces to implement?
+
+3. **Consider extension over creation**:
+   - Can existing structs be extended with new fields?
+   - Can existing enums be extended with new variants?
+   - Can existing services be enhanced rather than replaced?
+
+### Extension Examples
+
+**✅ CORRECT - Extend existing enum:**
+```rust
+// Existing enum in codebase
+#[derive(Serialize, Deserialize)]
+#[repr(u8)]
+enum GroupEvent {
+    MemberJoined = 0,
+    MemberLeft = 1,
+    // Add new variant instead of creating new enum
+    MemberPromoted = 2,
+}
+```
+
+**❌ INCORRECT - Create parallel enum:**
+```rust
+// DON'T create a separate similar enum
+#[derive(Serialize, Deserialize)]
+#[repr(u8)]
+enum MembershipEvent {
+    Promoted = 0,
+    Demoted = 1,
+}
+```
+
+**✅ CORRECT - Extend existing struct:**
+```rust
+// Existing struct in codebase
+#[derive(Serialize, Deserialize)]
+struct GroupMetadata {
+    name: String,
+    description: String,
+    // Add new field instead of creating new struct
+    tags: BTreeSet<String>,
+}
+```
+
+**❌ INCORRECT - Create parallel struct:**
+```rust
+// DON'T create a separate similar struct
+#[derive(Serialize, Deserialize)]
+struct GroupTags {
+    group_id: String,
+    tags: BTreeSet<String>,
+}
+```
+
+### When New Types Are Appropriate
+
+**ONLY create new types when:**
+
+1. **Explicitly requested** by the user to create fresh/new types
+2. **Fundamentally different domain** - the concept doesn't fit existing abstractions
+3. **Clear separation of concerns** - mixing with existing types would violate single responsibility
+4. **Different serialization requirements** - incompatible with existing wire protocols
+5. **Performance isolation** - specific performance characteristics needed
+
+### Integration Guidelines
+
+**When extending existing infrastructure:**
+
+- ✅ **DO**: Follow existing naming conventions and patterns
+- ✅ **DO**: Maintain backward compatibility when possible
+- ✅ **DO**: Add comprehensive tests for new functionality
+- ✅ **DO**: Update existing documentation and examples
+- ✅ **DO**: Use existing error types and patterns
+- ❌ **DON'T**: Break existing APIs without careful consideration
+- ❌ **DON'T**: Introduce inconsistent patterns or styles
+
+### Codebase Exploration Strategy
+
+**Use these tools to find existing types:**
+
+1. **Semantic search**: "How are [concept] types modeled?" or "Where are [similar_features] implemented?"
+2. **Grep search**: Look for similar field names, struct names, or enum variants
+3. **File exploration**: Check related modules and crates systematically
+4. **Example analysis**: Look at existing examples and tests for patterns
+
+**Key locations to investigate:**
+
+- `app-primitives/src/` - Core domain types and structures
+- `wire-protocol/src/` - Network communication types
+- `state-machine/src/` - State and event types
+- `message-store/src/` - Message-related structures
+- Existing examples and tests for usage patterns
+
 ## Migration Guidelines
 
 If you encounter existing serde_json usage:
@@ -314,13 +435,15 @@ When creating user-facing code, always verify:
 ---
 
 **WORKFLOW SUMMARY:**
-1. Make your code changes using postcard (never serde_json)
-2. Write unit/integration tests for new functionality
-3. Add clear inline documentation for public APIs
-4. Run `cargo nextest run --all` and fix any test failures
-5. Run `cargo +nightly clippy --all --tests --examples --allow-dirty --allow-staged --fix`
-6. Fix any remaining clippy issues
-7. Check if existing docs need updates for user-facing changes
-8. Only then tell the user you're complete
+1. **FIRST**: Search existing codebase for similar types/patterns before creating anything new
+2. Extend existing types/infrastructure when possible rather than creating new ones
+3. Make your code changes using postcard (never serde_json)
+4. Write unit/integration tests for new functionality
+5. Add clear inline documentation for public APIs
+6. Run `cargo nextest run --all` and fix any test failures
+7. Run `cargo +nightly clippy --all --tests --examples --allow-dirty --allow-staged --fix`
+8. Fix any remaining clippy issues
+9. Check if existing docs need updates for user-facing changes
+10. Only then tell the user you're complete
 
 **Remember: This project prioritizes efficiency and binary compatibility. Always default to postcard unless you have a compelling reason for human-readable JSON format.**
