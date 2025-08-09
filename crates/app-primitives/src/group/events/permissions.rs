@@ -1,9 +1,10 @@
+use forward_compatible_enum::U32Discriminants;
 use serde::{Deserialize, Serialize};
 
 use super::roles::GroupRole;
 
 /// Actions that can be performed in a group
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum GroupAction {
     /// Update group settings and metadata
     UpdateGroup,
@@ -33,15 +34,20 @@ pub struct GroupPermissions {
 /// Permission levels for group actions
 ///
 /// Defines the minimum role level required to perform certain actions.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, U32Discriminants)]
+#[u32_discriminants(fallback = "AllMembers")]
 pub enum Permission {
     /// Only group owners
+    #[discriminant(9)]
     OwnerOnly,
     /// Owners and admins
+    #[discriminant(5)]
     AdminOrAbove,
     /// Owners, admins, and moderators
+    #[discriminant(3)]
     ModeratorOrAbove,
     /// Any group member
+    #[discriminant(0)]
     AllMembers,
 }
 

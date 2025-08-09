@@ -410,15 +410,15 @@ pub type GroupStateResult<T> = Result<T, GroupStateError>;
 /// # };
 ///
 /// // Store custom metadata about the member using structured types
-/// member.metadata.push(Metadata::Generic("department".to_string(), "engineering".to_string()));
-/// member.metadata.push(Metadata::Generic("team".to_string(), "backend".to_string()));
-/// member.metadata.push(Metadata::Generic("timezone".to_string(), "UTC-8".to_string()));
+/// member.metadata.push(Metadata::Generic { key: "department".to_string(), value: "engineering".to_string() });
+/// member.metadata.push(Metadata::Generic { key: "team".to_string(), value: "backend".to_string() });
+/// member.metadata.push(Metadata::Generic { key: "timezone".to_string(), value: "UTC-8".to_string() });
 /// member.metadata.push(Metadata::Email("member@company.com".to_string()));
 ///
 /// // Query metadata
 /// for meta in &member.metadata {
 ///     match meta {
-///         Metadata::Generic(key, value) if key == "department" => {
+///         Metadata::Generic { key, value } if key == "department" => {
 ///             println!("Member is in {} department", value);
 ///         }
 ///         Metadata::Email(email) => {
@@ -535,7 +535,7 @@ pub struct GroupMember {
 ///
 /// let metadata = vec![
 ///     Metadata::Description("Development team coordination".to_string()),
-///     Metadata::Generic("department".to_string(), "engineering".to_string()),
+///     Metadata::Generic { key: "department".to_string(), value: "engineering".to_string() },
 /// ];
 ///
 /// let group_state = GroupState::new(
@@ -659,7 +659,7 @@ impl GroupState {
     ///
     /// let metadata = vec![
     ///     Metadata::Description("Team coordination space".to_string()),
-    ///     Metadata::Generic("project".to_string(), "zoe-chat".to_string()),
+    ///     Metadata::Generic { key: "project".to_string(), value: "zoe-chat".to_string() },
     /// ];
     ///
     /// let group_state = GroupState::new(
@@ -869,6 +869,12 @@ impl GroupState {
                             self.members.remove(member_key);
                         }
                     }
+
+                    GroupManagementEvent::Unknown { discriminant, .. } => {
+                        // Unknown management event - ignore for forward compatibility
+                        // Future implementations could log this with: discriminant value {discriminant}
+                        let _ = discriminant; // Acknowledge the discriminant without warning
+                    }
                 }
             }
 
@@ -1018,7 +1024,7 @@ impl GroupState {
     /// // Group with description
     /// let metadata_with_desc = vec![
     ///     Metadata::Description("A team coordination space".to_string()),
-    ///     Metadata::Generic("category".to_string(), "work".to_string()),
+    ///     Metadata::Generic { key: "category".to_string(), value: "work".to_string() },
     /// ];
     ///
     /// let group_state = GroupState::new(
@@ -1037,7 +1043,7 @@ impl GroupState {
     ///
     /// // Group without description
     /// let metadata_no_desc = vec![
-    ///     Metadata::Generic("category".to_string(), "work".to_string()),
+    ///     Metadata::Generic { key: "category".to_string(), value: "work".to_string() },
     /// ];
     ///
     /// let group_state_no_desc = GroupState::new(
@@ -1087,9 +1093,9 @@ impl GroupState {
     ///
     /// let metadata = vec![
     ///     Metadata::Description("Team workspace".to_string()), // Not included in generic
-    ///     Metadata::Generic("department".to_string(), "engineering".to_string()),
-    ///     Metadata::Generic("project".to_string(), "zoe-chat".to_string()),
-    ///     Metadata::Generic("visibility".to_string(), "internal".to_string()),
+    ///     Metadata::Generic { key: "department".to_string(), value: "engineering".to_string() },
+    ///     Metadata::Generic { key: "project".to_string(), value: "zoe-chat".to_string() },
+    ///     Metadata::Generic { key: "visibility".to_string(), value: "internal".to_string() },
     /// ];
     ///
     /// let group_state = GroupState::new(
@@ -1129,7 +1135,7 @@ impl GroupState {
     pub fn generic_metadata(&self) -> BTreeMap<String, String> {
         let mut map = BTreeMap::new();
         for meta in &self.metadata {
-            if let Metadata::Generic(key, value) = meta {
+            if let Metadata::Generic { key, value } = meta {
                 map.insert(key.clone(), value.clone());
             }
         }

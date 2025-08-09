@@ -1,3 +1,4 @@
+use forward_compatible_enum::U32Discriminants;
 use serde::{Deserialize, Serialize};
 
 use super::permissions::Permission;
@@ -6,23 +7,30 @@ use super::permissions::Permission;
 ///
 /// Hierarchical roles that determine what actions a member can perform.
 /// Roles are ordered from highest (Owner) to lowest (Member) privilege.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(
+    Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, U32Discriminants,
+)]
+#[u32_discriminants(fallback = "Member")]
 pub enum GroupRole {
     /// Group owner (highest privilege)
     ///
     /// Can perform all actions including deleting the group and managing all other roles.
+    #[discriminant(9)]
     Owner,
     /// Administrator
     ///
     /// Can manage most group settings and moderate other members.
+    #[discriminant(5)]
     Admin,
     /// Moderator
     ///
     /// Can moderate discussions and manage some group settings.
+    #[discriminant(3)]
     Moderator,
     /// Regular member
     ///
     /// Basic participation rights, can post activities and read group content.
+    #[discriminant(0)]
     Member,
 }
 

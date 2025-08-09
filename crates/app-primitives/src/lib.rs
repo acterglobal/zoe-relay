@@ -91,7 +91,7 @@
 //! // Define structured metadata
 //! let metadata = vec![
 //!     Metadata::Description("Development team coordination".to_string()),
-//!     Metadata::Generic("department".to_string(), "engineering".to_string()),
+//!     Metadata::Generic { key: "department".to_string(), value: "engineering".to_string() },
 //! ];
 //!
 //! // Create group state
@@ -137,8 +137,8 @@
 //! let creator = SigningKey::generate(&mut rand::rngs::OsRng).verifying_key();
 //! let metadata = vec![
 //!     Metadata::Description("Project discussion space".to_string()),
-//!     Metadata::Generic("project_id".to_string(), "proj_123".to_string()),
-//!     Metadata::Generic("classification".to_string(), "internal".to_string()),
+//!     Metadata::Generic { key: "project_id".to_string(), value: "proj_123".to_string() },
+//!     Metadata::Generic { key: "classification".to_string(), value: "internal".to_string() },
 //! ];
 //!
 //! let group = GroupState::new(

@@ -1,0 +1,11 @@
+error: expected integer literal
+ --> tests/ui/non_integer_discriminant.rs:5:20
+  |
+5 |     #[discriminant("not_a_number")]  // Must be u32!
+  |                    ^^^^^^^^^^^^^^
+
+error[E0601]: `main` function not found in crate `$CRATE`
+ --> tests/ui/non_integer_discriminant.rs:8:2
+  |
+8 | }
+  |  ^ consider adding a `main` function to `$DIR/tests/ui/non_integer_discriminant.rs`

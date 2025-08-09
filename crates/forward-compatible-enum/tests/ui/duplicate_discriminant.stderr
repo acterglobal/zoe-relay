@@ -1,0 +1,12 @@
+error: duplicate discriminant value: 1
+ --> tests/ui/duplicate_discriminant.rs:7:5
+  |
+7 | /     #[discriminant(1)]  // Duplicate!
+8 | |     Variant2,
+  | |____________^
+
+error[E0601]: `main` function not found in crate `$CRATE`
+  --> tests/ui/duplicate_discriminant.rs:10:2
+   |
+10 | }
+   |  ^ consider adding a `main` function to `$DIR/tests/ui/duplicate_discriminant.rs`

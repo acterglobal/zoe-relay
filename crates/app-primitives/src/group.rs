@@ -74,7 +74,7 @@
 //! // Define group metadata
 //! let metadata = vec![
 //!     Metadata::Description("My awesome group".to_string()),
-//!     Metadata::Generic("category".to_string(), "work".to_string()),
+//!     Metadata::Generic { key: "category".to_string(), value: "work".to_string() },
 //! ];
 //!
 //! // Create group info for the creation event
@@ -369,16 +369,16 @@ mod tests {
 
         let endpoint = RelayEndpoint::new(address, public_key)
             .with_name("Test Relay".to_string())
-            .with_metadata(Metadata::Generic(
-                "region".to_string(),
-                "us-west".to_string(),
-            ));
+            .with_metadata(Metadata::Generic {
+                key: "region".to_string(),
+                value: "us-west".to_string(),
+            });
 
         assert_eq!(endpoint.address, address);
         assert_eq!(endpoint.public_key, public_key);
         assert_eq!(endpoint.name, Some("Test Relay".to_string()));
         assert_eq!(endpoint.metadata.len(), 1);
-        if let Some(Metadata::Generic(key, value)) = endpoint.metadata.first() {
+        if let Some(Metadata::Generic { key, value }) = endpoint.metadata.first() {
             assert_eq!(key, "region");
             assert_eq!(value, "us-west");
         } else {
@@ -421,10 +421,10 @@ mod tests {
             key_info.clone(),
             vec![relay_endpoint.clone()],
         )
-        .with_invitation_metadata(Metadata::Generic(
-            "inviter".to_string(),
-            "alice".to_string(),
-        ));
+        .with_invitation_metadata(Metadata::Generic {
+            key: "inviter".to_string(),
+            value: "alice".to_string(),
+        });
 
         assert_eq!(join_info.channel_id, channel_id);
         assert_eq!(join_info.group_info, group_info);
@@ -432,7 +432,7 @@ mod tests {
         assert_eq!(join_info.key_info, key_info);
         assert_eq!(join_info.relay_endpoints, vec![relay_endpoint]);
         assert_eq!(join_info.invitation_metadata.len(), 1);
-        if let Some(Metadata::Generic(key, value)) = join_info.invitation_metadata.first() {
+        if let Some(Metadata::Generic { key, value }) = join_info.invitation_metadata.first() {
             assert_eq!(key, "inviter");
             assert_eq!(value, "alice");
         } else {

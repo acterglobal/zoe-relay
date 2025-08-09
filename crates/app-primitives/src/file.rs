@@ -72,7 +72,7 @@ impl FileRef {
 
     /// Add generic metadata to the stored file info
     pub fn with_metadata(mut self, key: String, value: String) -> Self {
-        self.metadata.push(Metadata::Generic(key, value));
+        self.metadata.push(Metadata::Generic { key, value });
         self
     }
 
@@ -91,7 +91,7 @@ impl FileRef {
         self.metadata
             .iter()
             .filter_map(|meta| match meta {
-                Metadata::Generic(key, value) => Some((key.clone(), value.clone())),
+                Metadata::Generic { key, value } => Some((key.clone(), value.clone())),
                 _ => None,
             })
             .collect()
@@ -366,10 +366,10 @@ mod tests {
     fn test_file_ref_metadata_operations() {
         use crate::Metadata;
 
-        let metadata = vec![Metadata::Generic(
-            "initial".to_string(),
-            "value".to_string(),
-        )];
+        let metadata = vec![Metadata::Generic {
+            key: "initial".to_string(),
+            value: "value".to_string(),
+        }];
 
         let file_ref = FileRef {
             blob_hash: "test".to_string(),

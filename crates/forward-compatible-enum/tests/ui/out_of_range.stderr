@@ -1,0 +1,12 @@
+error: discriminant 5 is outside allowed range 10..20
+ --> tests/ui/out_of_range.rs:6:5
+  |
+6 | /     #[discriminant(5)]  // Outside range!
+7 | |     Variant1,
+  | |____________^
+
+error[E0601]: `main` function not found in crate `$CRATE`
+  --> tests/ui/out_of_range.rs:11:2
+   |
+11 | }
+   |  ^ consider adding a `main` function to `$DIR/tests/ui/out_of_range.rs`

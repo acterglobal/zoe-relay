@@ -74,7 +74,7 @@ impl Image {
 
     /// Add generic metadata to the image
     pub fn with_metadata(mut self, key: String, value: String) -> Self {
-        self.metadata.push(Metadata::Generic(key, value));
+        self.metadata.push(Metadata::Generic { key, value });
         self
     }
 
@@ -93,7 +93,7 @@ impl Image {
         self.metadata
             .iter()
             .filter_map(|meta| match meta {
-                Metadata::Generic(key, value) => Some((key.clone(), value.clone())),
+                Metadata::Generic { key, value } => Some((key.clone(), value.clone())),
                 _ => None,
             })
             .collect()
@@ -302,9 +302,18 @@ mod tests {
         use crate::Metadata;
 
         let complex_metadata = vec![
-            Metadata::Generic("exif_date".to_string(), "2023-12-01T15:30:00Z".to_string()),
-            Metadata::Generic("location".to_string(), "37.7749,-122.4194".to_string()),
-            Metadata::Generic("device".to_string(), "iPhone 15 Pro".to_string()),
+            Metadata::Generic {
+                key: "exif_date".to_string(),
+                value: "2023-12-01T15:30:00Z".to_string(),
+            },
+            Metadata::Generic {
+                key: "location".to_string(),
+                value: "37.7749,-122.4194".to_string(),
+            },
+            Metadata::Generic {
+                key: "device".to_string(),
+                value: "iPhone 15 Pro".to_string(),
+            },
         ];
 
         let mut image = Image::new(create_test_file_ref());

@@ -1,0 +1,16 @@
+error: Enum must contain an Unknown variant named 'Unknown'
+  --> tests/ui/missing_unknown_variant.rs:4:1
+   |
+4  | / pub enum MissingUnknownVariant {
+5  | |     #[discriminant(1)]
+6  | |     Variant1,
+7  | |     #[discriminant(2)]
+...  |
+10 | | }
+   | |_^
+
+error[E0601]: `main` function not found in crate `$CRATE`
+  --> tests/ui/missing_unknown_variant.rs:10:2
+   |
+10 | }
+   |  ^ consider adding a `main` function to `$DIR/tests/ui/missing_unknown_variant.rs`

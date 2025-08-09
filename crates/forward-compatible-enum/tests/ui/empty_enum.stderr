@@ -1,0 +1,13 @@
+error: Enum must contain an Unknown variant named 'Unknown'
+ --> tests/ui/empty_enum.rs:4:1
+  |
+4 | / pub enum EmptyEnum {
+5 | |     // No variants!
+6 | | }
+  | |_^
+
+error[E0601]: `main` function not found in crate `$CRATE`
+ --> tests/ui/empty_enum.rs:6:2
+  |
+6 | }
+  |  ^ consider adding a `main` function to `$DIR/tests/ui/empty_enum.rs`

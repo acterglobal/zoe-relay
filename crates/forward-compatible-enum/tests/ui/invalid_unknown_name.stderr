@@ -1,0 +1,16 @@
+error: '123Invalid' is not a valid identifier
+ --> tests/ui/invalid_unknown_name.rs:4:1
+  |
+4 | / #[forward_compatible(unknown_variant = "123Invalid")]  // Invalid identifier!
+5 | | pub enum InvalidUnknownName {
+6 | |     #[discriminant(1)]
+7 | |     Variant1,
+8 | |     Unknown { discriminant: u32, data: Vec<u8> },
+9 | | }
+  | |_^
+
+error[E0601]: `main` function not found in crate `$CRATE`
+ --> tests/ui/invalid_unknown_name.rs:9:2
+  |
+9 | }
+  |  ^ consider adding a `main` function to `$DIR/tests/ui/invalid_unknown_name.rs`

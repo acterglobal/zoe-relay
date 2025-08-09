@@ -14,7 +14,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Alice creates a group
     let metadata = vec![
         zoe_app_primitives::Metadata::Description("A test group for the DGA protocol".to_string()),
-        zoe_app_primitives::Metadata::Generic("category".to_string(), "testing".to_string()),
+        zoe_app_primitives::Metadata::Generic {
+            key: "category".to_string(),
+            value: "testing".to_string(),
+        },
     ];
 
     let group_info = zoe_app_primitives::GroupInfo {

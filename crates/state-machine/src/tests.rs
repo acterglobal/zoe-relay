@@ -14,7 +14,10 @@ fn create_test_keys() -> (SigningKey, SigningKey) {
 fn create_test_group() -> zoe_app_primitives::CreateGroup {
     let metadata = vec![
         zoe_app_primitives::Metadata::Description("A test group for unit tests".to_string()),
-        zoe_app_primitives::Metadata::Generic("category".to_string(), "testing".to_string()),
+        zoe_app_primitives::Metadata::Generic {
+            key: "category".to_string(),
+            value: "testing".to_string(),
+        },
     ];
 
     let group_info = zoe_app_primitives::GroupInfo {
@@ -557,7 +560,10 @@ fn test_mnemonic_key_integration_with_group_creation() {
     // Create group with mnemonic-derived key
     let metadata = vec![
         zoe_app_primitives::Metadata::Description("Testing mnemonic key integration".to_string()),
-        zoe_app_primitives::Metadata::Generic("key_source".to_string(), "mnemonic".to_string()),
+        zoe_app_primitives::Metadata::Generic {
+            key: "key_source".to_string(),
+            value: "mnemonic".to_string(),
+        },
     ];
 
     let group_info = zoe_app_primitives::GroupInfo {

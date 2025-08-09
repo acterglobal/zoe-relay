@@ -1,3 +1,4 @@
+use forward_compatible_enum::ForwardCompatibleEnum;
 use serde::{Deserialize, Serialize};
 
 use super::roles::GroupRole;
@@ -48,15 +49,18 @@ pub enum GroupActivityEvent<T> {
     Activity(T),
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, ForwardCompatibleEnum)]
 pub enum GroupManagementEvent {
     /// Update group metadata (name, description, settings)
+    #[discriminant(1)]
     UpdateGroup(GroupInfo),
 
     /// Set identity information for the sending identity
+    #[discriminant(2)]
     SetIdentity(IdentityInfo),
 
     /// Announce departure from group
+    #[discriminant(3)]
     LeaveGroup {
         /// Optional goodbye message
         message: Option<String>,
@@ -65,6 +69,7 @@ pub enum GroupManagementEvent {
     /// Assign a role to an identity (key or key+alias)
     ///
     /// Requires appropriate permissions based on group settings.
+    #[discriminant(4)]
     AssignRole {
         /// The identity to assign a role to
         target: IdentityRef,
@@ -72,10 +77,14 @@ pub enum GroupManagementEvent {
         role: GroupRole,
     },
 
+    #[discriminant(5)]
     RemoveFromGroup {
         /// The identity to remove
         target: IdentityRef,
     },
+
+    /// Unknown management event for forward compatibility
+    Unknown { discriminant: u32, data: Vec<u8> },
 }
 
 impl CreateGroup {

@@ -21,6 +21,9 @@ thiserror = { workspace = true }
 # Hash types
 blake3 = { workspace = true }
 
+# Forward-compatible enum macros
+forward-compatible-enum = { path = "../forward-compatible-enum" }
+
 [dev-dependencies]
 # Testing utilities
 ed25519-dalek = { workspace = true }

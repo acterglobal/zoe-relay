@@ -1,0 +1,13 @@
+error: range must be in format 'min..max'
+ --> tests/ui/invalid_range.rs:3:10
+  |
+3 | #[derive(ForwardCompatibleEnum)]
+  |          ^^^^^^^^^^^^^^^^^^^^^
+  |
+  = note: this error originates in the derive macro `ForwardCompatibleEnum` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0601]: `main` function not found in crate `$CRATE`
+ --> tests/ui/invalid_range.rs:9:2
+  |
+9 | }
+  |  ^ consider adding a `main` function to `$DIR/tests/ui/invalid_range.rs`

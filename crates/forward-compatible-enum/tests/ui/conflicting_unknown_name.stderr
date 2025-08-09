@@ -1,0 +1,12 @@
+error: Unknown variant 'Variant1' must be a struct variant with 'discriminant: u32' and 'data: Vec<u8>' fields
+ --> tests/ui/conflicting_unknown_name.rs:6:5
+  |
+6 | /     #[discriminant(1)]
+7 | |     Variant1,
+  | |____________^
+
+error[E0601]: `main` function not found in crate `$CRATE`
+ --> tests/ui/conflicting_unknown_name.rs:9:2
+  |
+9 | }
+  |  ^ consider adding a `main` function to `$DIR/tests/ui/conflicting_unknown_name.rs`

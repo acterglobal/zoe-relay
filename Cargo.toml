@@ -6,6 +6,7 @@ members = [
     "crates/client", 
     "crates/client-storage",
     "crates/encrypted-storage",
+    "crates/forward-compatible-enum",
     "crates/message-store",
     "crates/relay",
     "crates/signal-bot",

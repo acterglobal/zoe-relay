@@ -39,14 +39,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         zoe_app_primitives::Metadata::Description(
             "A secure group using ChaCha20 and mnemonic phrases".to_string(),
         ),
-        zoe_app_primitives::Metadata::Generic(
-            "encryption".to_string(),
-            "chacha20-poly1305".to_string(),
-        ),
-        zoe_app_primitives::Metadata::Generic(
-            "key_derivation".to_string(),
-            "bip39+argon2".to_string(),
-        ),
+        zoe_app_primitives::Metadata::Generic {
+            key: "encryption".to_string(),
+            value: "chacha20-poly1305".to_string(),
+        },
+        zoe_app_primitives::Metadata::Generic {
+            key: "key_derivation".to_string(),
+            value: "bip39+argon2".to_string(),
+        },
     ];
 
     let group_info = zoe_app_primitives::GroupInfo {

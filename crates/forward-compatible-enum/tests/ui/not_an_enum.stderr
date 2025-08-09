@@ -1,0 +1,13 @@
+error: ForwardCompatibleEnum can only be applied to enums
+ --> tests/ui/not_an_enum.rs:4:1
+  |
+4 | / pub struct NotAnEnum {
+5 | |     field: u32,
+6 | | }
+  | |_^
+
+error[E0601]: `main` function not found in crate `$CRATE`
+ --> tests/ui/not_an_enum.rs:6:2
+  |
+6 | }
+  |  ^ consider adding a `main` function to `$DIR/tests/ui/not_an_enum.rs`

@@ -822,8 +822,14 @@ mod tests {
             zoe_app_primitives::Metadata::Description(
                 "A test group for end-to-end testing".to_string(),
             ),
-            zoe_app_primitives::Metadata::Generic("test_type".to_string(), "e2e".to_string()),
-            zoe_app_primitives::Metadata::Generic("created_by".to_string(), "client1".to_string()),
+            zoe_app_primitives::Metadata::Generic {
+                key: "test_type".to_string(),
+                value: "e2e".to_string(),
+            },
+            zoe_app_primitives::Metadata::Generic {
+                key: "created_by".to_string(),
+                value: "client1".to_string(),
+            },
         ];
 
         let group_info = zoe_app_primitives::GroupInfo {
