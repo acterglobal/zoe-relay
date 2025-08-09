@@ -8,6 +8,8 @@ use std::collections::BTreeMap;
 // Re-export encryption types from zoe-encrypted-storage for convenience
 pub use zoe_encrypted_storage::{CompressionConfig, ConvergentEncryptionInfo};
 
+use crate::Metadata;
+
 pub mod image;
 
 pub use image::Image;
@@ -46,10 +48,10 @@ pub struct FileRef {
 
     /// Additional metadata about the stored file
     ///
-    /// Arbitrary key-value metadata that applications can use to store
-    /// additional information about the file (e.g., original timestamps,
-    /// user tags, categories, etc.).
-    pub metadata: BTreeMap<String, String>,
+    /// Structured metadata that applications can use to store additional
+    /// information about the file (e.g., original timestamps, user tags,
+    /// categories, etc.) using typed metadata variants.
+    pub metadata: Vec<Metadata>,
 }
 
 impl FileRef {
@@ -64,14 +66,35 @@ impl FileRef {
             encryption_info,
             filename,
             content_type: None,
-            metadata: BTreeMap::new(),
+            metadata: vec![],
         }
     }
 
-    /// Add metadata to the stored file info
+    /// Add generic metadata to the stored file info
     pub fn with_metadata(mut self, key: String, value: String) -> Self {
-        self.metadata.insert(key, value);
+        self.metadata.push(Metadata::Generic(key, value));
         self
+    }
+
+    /// Add structured metadata to the stored file info
+    pub fn with_structured_metadata(mut self, metadata: Metadata) -> Self {
+        self.metadata.push(metadata);
+        self
+    }
+
+    /// Get all generic metadata as a key-value map for backward compatibility
+    ///
+    /// This method extracts only the `Metadata::Generic(key, value)` entries and returns them
+    /// as a `BTreeMap<String, String>` for backward compatibility with APIs that expect
+    /// key-value metadata.
+    pub fn generic_metadata(&self) -> BTreeMap<String, String> {
+        self.metadata
+            .iter()
+            .filter_map(|meta| match meta {
+                Metadata::Generic(key, value) => Some((key.clone(), value.clone())),
+                _ => None,
+            })
+            .collect()
     }
 
     /// Set the content type
@@ -104,7 +127,7 @@ impl FileRef {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::BTreeMap;
+
     use zoe_encrypted_storage::{CompressionConfig, ConvergentEncryptionInfo};
 
     fn create_test_encryption_info() -> ConvergentEncryptionInfo {
@@ -144,11 +167,9 @@ mod tests {
             .with_metadata("author".to_string(), "alice".to_string())
             .with_metadata("category".to_string(), "documents".to_string());
 
-        assert_eq!(file_ref.metadata.get("author"), Some(&"alice".to_string()));
-        assert_eq!(
-            file_ref.metadata.get("category"),
-            Some(&"documents".to_string())
-        );
+        let generic_meta = file_ref.generic_metadata();
+        assert_eq!(generic_meta.get("author"), Some(&"alice".to_string()));
+        assert_eq!(generic_meta.get("category"), Some(&"documents".to_string()));
         assert_eq!(file_ref.metadata.len(), 2);
     }
 
@@ -251,8 +272,9 @@ mod tests {
         .with_metadata("height".to_string(), "1080".to_string());
 
         assert_eq!(file_ref.content_type, Some("image/png".to_string()));
-        assert_eq!(file_ref.metadata.get("width"), Some(&"1920".to_string()));
-        assert_eq!(file_ref.metadata.get("height"), Some(&"1080".to_string()));
+        let generic_meta = file_ref.generic_metadata();
+        assert_eq!(generic_meta.get("width"), Some(&"1920".to_string()));
+        assert_eq!(generic_meta.get("height"), Some(&"1080".to_string()));
     }
 
     #[test]
@@ -342,8 +364,12 @@ mod tests {
 
     #[test]
     fn test_file_ref_metadata_operations() {
-        let mut metadata = BTreeMap::new();
-        metadata.insert("initial".to_string(), "value".to_string());
+        use crate::Metadata;
+
+        let metadata = vec![Metadata::Generic(
+            "initial".to_string(),
+            "value".to_string(),
+        )];
 
         let file_ref = FileRef {
             blob_hash: "test".to_string(),
@@ -354,18 +380,20 @@ mod tests {
         };
 
         // Test existing metadata
-        assert_eq!(file_ref.metadata.get("initial"), Some(&"value".to_string()));
+        let generic_meta = file_ref.generic_metadata();
+        assert_eq!(generic_meta.get("initial"), Some(&"value".to_string()));
 
         // Test adding more metadata via builder
         let updated_file_ref =
             file_ref.with_metadata("new_key".to_string(), "new_value".to_string());
 
+        let updated_generic_meta = updated_file_ref.generic_metadata();
         assert_eq!(
-            updated_file_ref.metadata.get("initial"),
+            updated_generic_meta.get("initial"),
             Some(&"value".to_string())
         );
         assert_eq!(
-            updated_file_ref.metadata.get("new_key"),
+            updated_generic_meta.get("new_key"),
             Some(&"new_value".to_string())
         );
     }

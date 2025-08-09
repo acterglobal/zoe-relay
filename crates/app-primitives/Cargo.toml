@@ -15,6 +15,12 @@ zoe-wire-protocol = { path = "../wire-protocol" }
 serde = { workspace = true }
 postcard = { workspace = true }
 
+# Error handling
+thiserror = { workspace = true }
+
+# Hash types
+blake3 = { workspace = true }
+
 [dev-dependencies]
 # Testing utilities
 ed25519-dalek = { workspace = true }

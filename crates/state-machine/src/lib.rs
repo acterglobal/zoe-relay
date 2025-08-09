@@ -12,7 +12,13 @@ mod tests;
 
 pub use error::*;
 pub use group::*;
-pub use state::*;
+// Re-export specific types from state module, excluding GroupState which is now in app-primitives
+pub use state::{GroupEncryptionState, GroupStateSnapshot};
+
+// Re-export unified group state types from app-primitives
+pub use zoe_app_primitives::{
+    GroupMember, GroupMembership, GroupState, GroupStateError, GroupStateResult,
+};
 
 // Re-export crypto functionality from wire-protocol
 pub use zoe_wire_protocol::{

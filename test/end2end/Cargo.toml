@@ -12,6 +12,7 @@ zoe-blob-store = { path = "../../crates/blob-store" }
 zoe-message-store = { path = "../../crates/message-store" }
 zoe-wire-protocol = { path = "../../crates/wire-protocol" }
 zoe-app-primitives = { path = "../../crates/app-primitives" }
+zoe-state-machine = { path = "../../crates/state-machine" }
 
 # Workspace dependencies  
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

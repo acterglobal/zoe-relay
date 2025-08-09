@@ -1,7 +1,7 @@
 use crate::*;
 use ed25519_dalek::SigningKey;
 use rand::thread_rng;
-use std::collections::BTreeMap;
+
 use zoe_wire_protocol::Tag;
 
 fn create_test_keys() -> (SigningKey, SigningKey) {
@@ -11,29 +11,39 @@ fn create_test_keys() -> (SigningKey, SigningKey) {
     (alice_key, bob_key)
 }
 
-fn create_test_group_config() -> CreateGroupConfig {
-    CreateGroupConfig {
+fn create_test_group() -> zoe_app_primitives::CreateGroup {
+    let metadata = vec![
+        zoe_app_primitives::Metadata::Description("A test group for unit tests".to_string()),
+        zoe_app_primitives::Metadata::Generic("category".to_string(), "testing".to_string()),
+    ];
+
+    let group_info = zoe_app_primitives::GroupInfo {
         name: "Test Group".to_string(),
-        description: Some("A test group for unit tests".to_string()),
-        metadata: {
-            let mut metadata = BTreeMap::new();
-            metadata.insert("category".to_string(), "testing".to_string());
-            metadata
-        },
         settings: GroupSettings::default(),
-        encryption_key: None, // Auto-generate
-    }
+        key_info: zoe_app_primitives::GroupKeyInfo::new_chacha20_poly1305(
+            vec![], // This will be filled in by create_group
+            zoe_wire_protocol::crypto::KeyDerivationInfo {
+                method: zoe_wire_protocol::crypto::KeyDerivationMethod::ChaCha20Poly1305Keygen,
+                salt: vec![],
+                argon2_params: zoe_wire_protocol::crypto::Argon2Params::default(),
+                context: "dga-group-key".to_string(),
+            },
+        ),
+        metadata,
+    };
+
+    zoe_app_primitives::CreateGroup::new(group_info)
 }
 
 #[test]
 fn test_create_encrypted_group() {
     let mut dga = DigitalGroupAssistant::new();
     let (alice_key, _bob_key) = create_test_keys();
-    let config = create_test_group_config();
+    let create_group = create_test_group();
     let timestamp = 1234567890;
 
     let result = dga
-        .create_group(config.clone(), &alice_key, timestamp)
+        .create_group(create_group, None, &alice_key, timestamp)
         .unwrap();
 
     // Verify group was created
@@ -44,8 +54,11 @@ fn test_create_encrypted_group() {
 
     // Verify group state
     let group_state = dga.get_group_state(&result.group_id).unwrap();
-    assert_eq!(group_state.name, config.name);
-    assert_eq!(group_state.description, config.description);
+    assert_eq!(group_state.name, "Test Group");
+    assert_eq!(
+        group_state.description(),
+        Some("A test group for unit tests".to_string())
+    );
     assert_eq!(group_state.members.len(), 1);
     assert!(group_state.is_member(&alice_key.verifying_key()));
     assert_eq!(
@@ -58,11 +71,13 @@ fn test_create_encrypted_group() {
 fn test_encrypt_decrypt_group_event() {
     let mut dga = DigitalGroupAssistant::new();
     let (alice_key, _bob_key) = create_test_keys();
-    let config = create_test_group_config();
+    let create_group = create_test_group();
     let timestamp = 1234567890;
 
     // Create group
-    let result = dga.create_group(config, &alice_key, timestamp).unwrap();
+    let result = dga
+        .create_group(create_group, None, &alice_key, timestamp)
+        .unwrap();
 
     // Create a test event
     let original_event = create_group_activity_event(());
@@ -88,12 +103,12 @@ fn test_encrypt_decrypt_group_event() {
 fn test_process_encrypted_create_group_event() {
     let mut dga = DigitalGroupAssistant::new();
     let (alice_key, _bob_key) = create_test_keys();
-    let config = create_test_group_config();
+    let create_group = create_test_group();
     let timestamp = 1234567890;
 
     // Create group and get the message
     let result = dga
-        .create_group(config.clone(), &alice_key, timestamp)
+        .create_group(create_group, None, &alice_key, timestamp)
         .unwrap();
 
     // Create a fresh DGA instance and add the encryption key
@@ -111,8 +126,11 @@ fn test_process_encrypted_create_group_event() {
 
     // Verify the group was created
     let group_state = fresh_dga.get_group_state(&result.group_id).unwrap();
-    assert_eq!(group_state.name, config.name);
-    assert_eq!(group_state.description, config.description);
+    assert_eq!(group_state.name, "Test Group");
+    assert_eq!(
+        group_state.description(),
+        Some("A test group for unit tests".to_string())
+    );
     assert_eq!(group_state.members.len(), 1);
     assert!(group_state.is_member(&alice_key.verifying_key()));
 }
@@ -121,11 +139,13 @@ fn test_process_encrypted_create_group_event() {
 fn test_encrypted_group_activity() {
     let mut dga = DigitalGroupAssistant::new();
     let (alice_key, _bob_key) = create_test_keys();
-    let config = create_test_group_config();
+    let create_group = create_test_group();
     let timestamp = 1234567890;
 
     // Create group
-    let result = dga.create_group(config, &alice_key, timestamp).unwrap();
+    let result = dga
+        .create_group(create_group, None, &alice_key, timestamp)
+        .unwrap();
 
     // Create and send an activity event
     let activity_event = create_group_activity_event(());
@@ -147,11 +167,13 @@ fn test_encrypted_group_activity() {
 fn test_new_member_via_activity() {
     let mut dga = DigitalGroupAssistant::new();
     let (alice_key, bob_key) = create_test_keys();
-    let config = create_test_group_config();
+    let create_group = create_test_group();
     let timestamp = 1234567890;
 
     // Alice creates group
-    let result = dga.create_group(config, &alice_key, timestamp).unwrap();
+    let result = dga
+        .create_group(create_group, None, &alice_key, timestamp)
+        .unwrap();
 
     // Simulate Bob getting the encryption key via inbox system
     // (In reality, this would happen through a separate secure channel)
@@ -196,11 +218,13 @@ fn test_new_member_via_activity() {
 fn test_role_update() {
     let mut dga = DigitalGroupAssistant::new();
     let (alice_key, bob_key) = create_test_keys();
-    let config = create_test_group_config();
+    let create_group = create_test_group();
     let timestamp = 1234567890;
 
     // Create group and add Bob as member
-    let result = dga.create_group(config, &alice_key, timestamp).unwrap();
+    let result = dga
+        .create_group(create_group, None, &alice_key, timestamp)
+        .unwrap();
 
     // Simulate Bob joining by sending an activity
     let encryption_key = dga
@@ -241,11 +265,13 @@ fn test_role_update() {
 fn test_leave_group_event() {
     let mut dga = DigitalGroupAssistant::new();
     let (alice_key, bob_key) = create_test_keys();
-    let config = create_test_group_config();
+    let create_group = create_test_group();
     let timestamp = 1234567890;
 
     // Create group and add Bob
-    let result = dga.create_group(config, &alice_key, timestamp).unwrap();
+    let result = dga
+        .create_group(create_group, None, &alice_key, timestamp)
+        .unwrap();
 
     // Add Bob as a member first
     let encryption_key = dga
@@ -291,11 +317,13 @@ fn test_leave_group_event() {
 fn test_missing_encryption_key_error() {
     let mut dga = DigitalGroupAssistant::new();
     let (alice_key, _bob_key) = create_test_keys();
-    let config = create_test_group_config();
+    let create_group = create_test_group();
     let timestamp = 1234567890;
 
     // Create group
-    let result = dga.create_group(config, &alice_key, timestamp).unwrap();
+    let result = dga
+        .create_group(create_group, None, &alice_key, timestamp)
+        .unwrap();
 
     // Remove the encryption key to simulate not having it
     dga.group_keys.remove(&result.group_id);
@@ -319,11 +347,13 @@ fn test_missing_encryption_key_error() {
 fn test_invalid_key_id_decryption_error() {
     let mut dga = DigitalGroupAssistant::new();
     let (alice_key, _bob_key) = create_test_keys();
-    let config = create_test_group_config();
+    let create_group = create_test_group();
     let timestamp = 1234567890;
 
     // Create group
-    let result = dga.create_group(config, &alice_key, timestamp).unwrap();
+    let result = dga
+        .create_group(create_group, None, &alice_key, timestamp)
+        .unwrap();
 
     // Create a fake encrypted payload with invalid ciphertext
     let fake_payload = ChaCha20Poly1305Content {
@@ -347,11 +377,13 @@ fn test_invalid_key_id_decryption_error() {
 fn test_permission_denied_for_role_update() {
     let mut dga = DigitalGroupAssistant::new();
     let (alice_key, bob_key) = create_test_keys();
-    let config = create_test_group_config();
+    let create_group = create_test_group();
     let timestamp = 1234567890;
 
     // Create group
-    let result = dga.create_group(config, &alice_key, timestamp).unwrap();
+    let result = dga
+        .create_group(create_group, None, &alice_key, timestamp)
+        .unwrap();
 
     // Add Bob as a regular member
     let encryption_key = dga
@@ -396,11 +428,13 @@ fn test_permission_denied_for_role_update() {
 fn test_subscription_filter_creation() {
     let mut dga = DigitalGroupAssistant::new();
     let (alice_key, _bob_key) = create_test_keys();
-    let config = create_test_group_config();
+    let create_group = create_test_group();
     let timestamp = 1234567890;
 
     // Create group
-    let result = dga.create_group(config, &alice_key, timestamp).unwrap();
+    let result = dga
+        .create_group(create_group, None, &alice_key, timestamp)
+        .unwrap();
 
     // Create subscription filter
     let filter = dga
@@ -503,7 +537,7 @@ fn test_recover_key_from_mnemonic() {
 
 #[test]
 fn test_mnemonic_key_integration_with_group_creation() {
-    use crate::{CreateGroupConfig, GroupSettings, MnemonicPhrase};
+    use crate::{GroupSettings, MnemonicPhrase};
     use ed25519_dalek::SigningKey;
 
     let mut dga = DigitalGroupAssistant::new();
@@ -521,19 +555,36 @@ fn test_mnemonic_key_integration_with_group_creation() {
     .unwrap();
 
     // Create group with mnemonic-derived key
-    let config = CreateGroupConfig {
+    let metadata = vec![
+        zoe_app_primitives::Metadata::Description("Testing mnemonic key integration".to_string()),
+        zoe_app_primitives::Metadata::Generic("key_source".to_string(), "mnemonic".to_string()),
+    ];
+
+    let group_info = zoe_app_primitives::GroupInfo {
         name: "Integration Test Group".to_string(),
-        description: Some("Testing mnemonic key integration".to_string()),
-        metadata: {
-            let mut metadata = BTreeMap::new();
-            metadata.insert("key_source".to_string(), "mnemonic".to_string());
-            metadata
-        },
         settings: GroupSettings::default(),
-        encryption_key: Some(encryption_key.clone()),
+        key_info: zoe_app_primitives::GroupKeyInfo::new_chacha20_poly1305(
+            vec![], // This will be filled in by create_group
+            zoe_wire_protocol::crypto::KeyDerivationInfo {
+                method: zoe_wire_protocol::crypto::KeyDerivationMethod::ChaCha20Poly1305Keygen,
+                salt: vec![],
+                argon2_params: zoe_wire_protocol::crypto::Argon2Params::default(),
+                context: "dga-group-key".to_string(),
+            },
+        ),
+        metadata,
     };
 
-    let result = dga.create_group(config, &alice_key, timestamp).unwrap();
+    let create_group = zoe_app_primitives::CreateGroup::new(group_info);
+
+    let result = dga
+        .create_group(
+            create_group,
+            Some(encryption_key.clone()),
+            &alice_key,
+            timestamp,
+        )
+        .unwrap();
 
     // Verify group was created successfully
     assert!(dga.groups.contains_key(&result.group_id));

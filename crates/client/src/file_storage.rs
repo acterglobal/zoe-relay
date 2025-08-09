@@ -317,7 +317,7 @@ impl FileStorage {
     /// #     },
     /// #     filename: Some("example.txt".to_string()),
     /// #     content_type: None,
-    /// #     metadata: std::collections::HashMap::new(),
+    /// #     metadata: vec![],
     /// # };
     ///
     /// let file_content = storage.retrieve_file(&stored_info).await?;
@@ -435,7 +435,7 @@ impl FileStorage {
     /// #     },
     /// #     filename: Some("example.txt".to_string()),
     /// #     content_type: None,
-    /// #     metadata: std::collections::HashMap::new(),
+    /// #     metadata: vec![],
     /// # };
     ///
     /// let output_path = Path::new("/tmp/retrieved_file.txt");

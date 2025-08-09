@@ -1,6 +1,6 @@
 use ed25519_dalek::SigningKey;
-use std::collections::BTreeMap;
-use zoe_state_machine::{CreateGroupConfig, DigitalGroupAssistant, GroupSettings, MnemonicPhrase};
+
+use zoe_state_machine::{DigitalGroupAssistant, GroupSettings, MnemonicPhrase};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("🔐 ChaCha20-Poly1305 + Mnemonic Keyphrase Example");
@@ -35,20 +35,43 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Key ID: {:?}", hex::encode(&encryption_key.key_id));
 
     // Alice creates a group with the mnemonic-derived key
-    let group_config = CreateGroupConfig {
+    let metadata = vec![
+        zoe_app_primitives::Metadata::Description(
+            "A secure group using ChaCha20 and mnemonic phrases".to_string(),
+        ),
+        zoe_app_primitives::Metadata::Generic(
+            "encryption".to_string(),
+            "chacha20-poly1305".to_string(),
+        ),
+        zoe_app_primitives::Metadata::Generic(
+            "key_derivation".to_string(),
+            "bip39+argon2".to_string(),
+        ),
+    ];
+
+    let group_info = zoe_app_primitives::GroupInfo {
         name: group_name.to_string(),
-        description: Some("A secure group using ChaCha20 and mnemonic phrases".to_string()),
-        metadata: {
-            let mut metadata = BTreeMap::new();
-            metadata.insert("encryption".to_string(), "chacha20-poly1305".to_string());
-            metadata.insert("key_derivation".to_string(), "bip39+argon2".to_string());
-            metadata
-        },
         settings: GroupSettings::default(),
-        encryption_key: Some(encryption_key.clone()),
+        key_info: zoe_app_primitives::GroupKeyInfo::new_chacha20_poly1305(
+            vec![], // This will be filled in by create_group
+            zoe_wire_protocol::crypto::KeyDerivationInfo {
+                method: zoe_wire_protocol::crypto::KeyDerivationMethod::ChaCha20Poly1305Keygen,
+                salt: vec![],
+                argon2_params: zoe_wire_protocol::crypto::Argon2Params::default(),
+                context: "dga-group-key".to_string(),
+            },
+        ),
+        metadata,
     };
 
-    let create_result = dga.create_group(group_config, &alice_key, timestamp)?;
+    let create_group = zoe_app_primitives::CreateGroup::new(group_info);
+
+    let create_result = dga.create_group(
+        create_group,
+        Some(encryption_key.clone()),
+        &alice_key,
+        timestamp,
+    )?;
 
     println!("✅ Created group: {}", create_result.group_id);
     println!("   Using ChaCha20-Poly1305 encryption");

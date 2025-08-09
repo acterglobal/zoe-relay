@@ -4,14 +4,16 @@ use ed25519_dalek::{SigningKey, VerifyingKey};
 use zoe_app_primitives::events::GroupManagementEvent;
 use zoe_app_primitives::{GroupInfo, IdentityRef};
 // Random number generation moved to wire-protocol crypto module
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 
 use zoe_wire_protocol::{Kind, Message, MessageFull, Tag};
 
 use crate::{
     DgaError, DgaResult, GroupActivityEvent, GroupEncryptionState, GroupKeyInfo, GroupRole,
-    GroupSettings, GroupState,
 };
+
+// Import the unified GroupState from app-primitives
+use zoe_app_primitives::{GroupState, GroupStateError};
 use zoe_wire_protocol::{ChaCha20Poly1305Content, Content, EncryptionKey, MnemonicPhrase};
 
 /// Digital Group Assistant - manages encrypted groups using the wire protocol
@@ -32,21 +34,6 @@ pub struct CreateGroupResult {
     pub group_id: Hash,
     /// The full message that was created
     pub message: MessageFull,
-}
-
-/// Configuration for creating a new encrypted group
-#[derive(Debug, Clone)]
-pub struct CreateGroupConfig {
-    /// Human-readable group name
-    pub name: String,
-    /// Optional description
-    pub description: Option<String>,
-    /// Group metadata
-    pub metadata: BTreeMap<String, String>,
-    /// Group settings
-    pub settings: GroupSettings,
-    /// Optional pre-generated encryption key (if None, a new key will be generated)
-    pub encryption_key: Option<EncryptionKey>,
 }
 
 impl DigitalGroupAssistant {
@@ -102,17 +89,19 @@ impl DigitalGroupAssistant {
     /// Create a new encrypted group, returning the root event message to be sent
     pub fn create_group(
         &mut self,
-        config: CreateGroupConfig,
+        create_group: zoe_app_primitives::CreateGroup,
+        encryption_key: Option<EncryptionKey>,
         creator: &SigningKey,
         timestamp: u64,
     ) -> DgaResult<CreateGroupResult> {
         // Generate or use provided encryption key
-        let encryption_key = config
-            .encryption_key
-            .unwrap_or_else(|| Self::generate_group_key(timestamp));
+        let encryption_key = encryption_key.unwrap_or_else(|| Self::generate_group_key(timestamp));
 
-        // Create key info (metadata about the key, not the key itself)
-        let key_info = GroupKeyInfo::ChaCha20Poly1305 {
+        // Get the group info from the CreateGroup object and update its key_info
+        let mut group_info = create_group.into_group_info();
+
+        // Update the key info with the actual encryption key metadata
+        group_info.key_info = GroupKeyInfo::ChaCha20Poly1305 {
             key_id: encryption_key.key_id.clone(),
             derivation_info: encryption_key.derivation_info.clone().unwrap_or_else(|| {
                 // Default derivation info if none provided
@@ -125,24 +114,9 @@ impl DigitalGroupAssistant {
             }),
         };
 
-        // Create the group creation event (no group_id needed since it will be the message hash)
-        let mut metadata = Vec::new();
-
-        // Store description in metadata if provided
-        if let Some(description) = &config.description {
-            metadata.push(zoe_app_primitives::Metadata::Description(
-                description.clone(),
-            ));
-        }
-
-        let group_info = GroupInfo {
-            name: config.name.clone(),
-            settings: config.settings.clone(),
-            key_info,
-            metadata,
-        };
-        let event =
-            GroupActivityEvent::Management(Box::new(GroupManagementEvent::UpdateGroup(group_info)));
+        let event = GroupActivityEvent::Management(Box::new(GroupManagementEvent::UpdateGroup(
+            group_info.clone(),
+        )));
 
         // Encrypt the event before creating the wire protocol message
         let encrypted_payload = self.encrypt_group_event(&event, &encryption_key)?;
@@ -167,13 +141,12 @@ impl DigitalGroupAssistant {
         };
         self.group_keys.insert(group_id, encryption_state);
 
-        // Create the initial group state
+        // Create the initial group state using the unified constructor
         let group_state = GroupState::new(
             group_id,
-            config.name,
-            config.description,
-            config.metadata,
-            config.settings,
+            group_info.name.clone(),
+            group_info.settings.clone(),
+            group_info.metadata.clone(),
             creator.verifying_key(),
             timestamp,
         );
@@ -292,33 +265,12 @@ impl DigitalGroupAssistant {
         if let GroupActivityEvent::Management(management_event) = &event
             && let GroupManagementEvent::UpdateGroup(group_info) = management_event.as_ref()
         {
-            // Extract description from metadata
-            let description = group_info.metadata.iter().find_map(|m| match m {
-                zoe_app_primitives::Metadata::Description(desc) => Some(desc.clone()),
-                _ => None,
-            });
-
-            // Convert metadata Vec to BTreeMap for group state
-            let mut metadata_map = BTreeMap::new();
-            for meta in &group_info.metadata {
-                match meta {
-                    zoe_app_primitives::Metadata::Generic(key, value) => {
-                        metadata_map.insert(key.clone(), value.clone());
-                    }
-                    // Other metadata types could be handled here if needed
-                    _ => {
-                        // Skip non-generic metadata for now since BTreeMap only stores key-value pairs
-                    }
-                }
-            }
-
-            // This is a root event - create the group state
+            // This is a root event - create the group state using the new constructor
             let group_state = GroupState::new(
                 group_id,
                 group_info.name.clone(),
-                description,
-                metadata_map,
                 group_info.settings.clone(),
+                group_info.metadata.clone(),
                 sender,
                 timestamp,
             );
@@ -333,8 +285,17 @@ impl DigitalGroupAssistant {
             .get_mut(&group_id)
             .ok_or_else(|| DgaError::GroupNotFound(format!("{group_id:?}")))?;
 
-        // Apply the event to the group state
-        group_state.apply_event(&event, message_full.id, sender, timestamp)?;
+        // Apply the event to the group state (convert GroupStateError to DgaError)
+        group_state
+            .apply_event(&event, message_full.id, sender, timestamp)
+            .map_err(|e| match e {
+                GroupStateError::PermissionDenied(msg) => DgaError::PermissionDenied(msg),
+                GroupStateError::MemberNotFound { member, group } => {
+                    DgaError::MemberNotFound { member, group }
+                }
+                GroupStateError::StateTransition(msg) => DgaError::StateTransition(msg),
+                GroupStateError::InvalidOperation(msg) => DgaError::InvalidOperation(msg),
+            })?;
 
         Ok(())
     }

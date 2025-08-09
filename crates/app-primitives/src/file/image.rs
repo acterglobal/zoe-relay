@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-use crate::FileRef;
+use crate::{FileRef, Metadata};
 
 /// Image reference with metadata
 ///
@@ -29,8 +29,8 @@ pub struct Image {
     /// This may differ from content_type in the FileRef as it's more specific to images
     pub format: Option<String>,
 
-    /// Additional image-specific metadata
-    pub metadata: BTreeMap<String, String>,
+    /// Additional image-specific metadata using structured types
+    pub metadata: Vec<Metadata>,
 }
 
 impl Image {
@@ -43,7 +43,7 @@ impl Image {
             alt_text: None,
             caption: None,
             format: None,
-            metadata: BTreeMap::new(),
+            metadata: vec![],
         }
     }
 
@@ -72,10 +72,31 @@ impl Image {
         self
     }
 
-    /// Add metadata to the image
+    /// Add generic metadata to the image
     pub fn with_metadata(mut self, key: String, value: String) -> Self {
-        self.metadata.insert(key, value);
+        self.metadata.push(Metadata::Generic(key, value));
         self
+    }
+
+    /// Add structured metadata to the image
+    pub fn with_structured_metadata(mut self, metadata: Metadata) -> Self {
+        self.metadata.push(metadata);
+        self
+    }
+
+    /// Get all generic metadata as a key-value map for backward compatibility
+    ///
+    /// This method extracts only the `Metadata::Generic(key, value)` entries and returns them
+    /// as a `BTreeMap<String, String>` for backward compatibility with APIs that expect
+    /// key-value metadata.
+    pub fn generic_metadata(&self) -> BTreeMap<String, String> {
+        self.metadata
+            .iter()
+            .filter_map(|meta| match meta {
+                Metadata::Generic(key, value) => Some((key.clone(), value.clone())),
+                _ => None,
+            })
+            .collect()
     }
 
     /// Get the aspect ratio (width/height) if dimensions are available
@@ -98,7 +119,7 @@ impl Image {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::BTreeMap;
+
     use zoe_encrypted_storage::ConvergentEncryptionInfo;
 
     fn create_test_file_ref() -> FileRef {
@@ -167,12 +188,13 @@ mod tests {
             .with_metadata("iso".to_string(), "200".to_string())
             .with_metadata("aperture".to_string(), "f/8".to_string());
 
+        let generic_meta = image.generic_metadata();
         assert_eq!(
-            image.metadata.get("camera"),
+            generic_meta.get("camera"),
             Some(&"Canon EOS R5".to_string())
         );
-        assert_eq!(image.metadata.get("iso"), Some(&"200".to_string()));
-        assert_eq!(image.metadata.get("aperture"), Some(&"f/8".to_string()));
+        assert_eq!(generic_meta.get("iso"), Some(&"200".to_string()));
+        assert_eq!(generic_meta.get("aperture"), Some(&"f/8".to_string()));
         assert_eq!(image.metadata.len(), 3);
     }
 
@@ -253,8 +275,9 @@ mod tests {
             Some("A test image for unit tests".to_string())
         );
         assert_eq!(image.format, Some("PNG".to_string()));
+        let generic_meta = image.generic_metadata();
         assert_eq!(
-            image.metadata.get("created_by"),
+            generic_meta.get("created_by"),
             Some(&"test_suite".to_string())
         );
     }
@@ -276,42 +299,42 @@ mod tests {
 
     #[test]
     fn test_image_with_complex_metadata() {
-        let mut complex_metadata = BTreeMap::new();
-        complex_metadata.insert("exif_date".to_string(), "2023-12-01T15:30:00Z".to_string());
-        complex_metadata.insert("location".to_string(), "37.7749,-122.4194".to_string());
-        complex_metadata.insert("device".to_string(), "iPhone 15 Pro".to_string());
+        use crate::Metadata;
+
+        let complex_metadata = vec![
+            Metadata::Generic("exif_date".to_string(), "2023-12-01T15:30:00Z".to_string()),
+            Metadata::Generic("location".to_string(), "37.7749,-122.4194".to_string()),
+            Metadata::Generic("device".to_string(), "iPhone 15 Pro".to_string()),
+        ];
 
         let mut image = Image::new(create_test_file_ref());
-        image.metadata = complex_metadata.clone();
+        image.metadata = complex_metadata;
 
         // Add more metadata using the builder
         let final_image = image
             .with_metadata("edited".to_string(), "true".to_string())
             .with_metadata("editor".to_string(), "Photoshop".to_string());
 
+        // Check metadata using generic_metadata() helper
+        let generic_meta = final_image.generic_metadata();
+
         // Check original metadata is preserved
         assert_eq!(
-            final_image.metadata.get("exif_date"),
+            generic_meta.get("exif_date"),
             Some(&"2023-12-01T15:30:00Z".to_string())
         );
         assert_eq!(
-            final_image.metadata.get("location"),
+            generic_meta.get("location"),
             Some(&"37.7749,-122.4194".to_string())
         );
         assert_eq!(
-            final_image.metadata.get("device"),
+            generic_meta.get("device"),
             Some(&"iPhone 15 Pro".to_string())
         );
 
         // Check new metadata is added
-        assert_eq!(
-            final_image.metadata.get("edited"),
-            Some(&"true".to_string())
-        );
-        assert_eq!(
-            final_image.metadata.get("editor"),
-            Some(&"Photoshop".to_string())
-        );
+        assert_eq!(generic_meta.get("edited"), Some(&"true".to_string()));
+        assert_eq!(generic_meta.get("editor"), Some(&"Photoshop".to_string()));
 
         assert_eq!(final_image.metadata.len(), 5);
     }
@@ -357,6 +380,7 @@ mod tests {
         assert_eq!(image.alt_text, Some("".to_string()));
         assert_eq!(image.caption, Some("".to_string()));
         assert_eq!(image.format, Some("".to_string()));
-        assert_eq!(image.metadata.get(""), Some(&"".to_string()));
+        let generic_meta = image.generic_metadata();
+        assert_eq!(generic_meta.get(""), Some(&"".to_string()));
     }
 }

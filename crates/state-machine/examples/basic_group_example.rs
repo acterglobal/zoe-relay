@@ -1,8 +1,6 @@
 use ed25519_dalek::SigningKey;
-use std::collections::BTreeMap;
-use zoe_state_machine::{
-    CreateGroupConfig, DigitalGroupAssistant, GroupSettings, create_group_activity_event,
-};
+
+use zoe_state_machine::{DigitalGroupAssistant, GroupSettings, create_group_activity_event};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Create a DGA instance
@@ -14,20 +12,31 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let _bob_key = SigningKey::generate(&mut rng); // Would be used if Bob had the encryption key
 
     // Alice creates a group
-    let group_config = CreateGroupConfig {
+    let metadata = vec![
+        zoe_app_primitives::Metadata::Description("A test group for the DGA protocol".to_string()),
+        zoe_app_primitives::Metadata::Generic("category".to_string(), "testing".to_string()),
+    ];
+
+    let group_info = zoe_app_primitives::GroupInfo {
         name: "My Test Group".to_string(),
-        description: Some("A test group for the DGA protocol".to_string()),
-        metadata: {
-            let mut metadata = BTreeMap::new();
-            metadata.insert("category".to_string(), "testing".to_string());
-            metadata
-        },
         settings: GroupSettings::default(),
-        encryption_key: None, // Generate a new key
+        key_info: zoe_app_primitives::GroupKeyInfo::new_chacha20_poly1305(
+            vec![], // This will be filled in by create_group
+            zoe_wire_protocol::crypto::KeyDerivationInfo {
+                method: zoe_wire_protocol::crypto::KeyDerivationMethod::ChaCha20Poly1305Keygen,
+                salt: vec![],
+                argon2_params: zoe_wire_protocol::crypto::Argon2Params::default(),
+                context: "dga-group-key".to_string(),
+            },
+        ),
+        metadata,
     };
 
+    let create_group = zoe_app_primitives::CreateGroup::new(group_info);
+
     let create_result = dga.create_group(
-        group_config,
+        create_group,
+        None, // Generate a new key
         &alice_key,
         chrono::Utc::now().timestamp() as u64,
     )?;

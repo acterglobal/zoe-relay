@@ -77,3 +77,20 @@ pub enum GroupManagementEvent {
         target: IdentityRef,
     },
 }
+
+impl CreateGroup {
+    /// Create a new CreateGroup event
+    pub fn new(group_info: GroupInfo) -> Self {
+        Self(group_info)
+    }
+
+    /// Get a reference to the inner GroupInfo
+    pub fn group_info(&self) -> &GroupInfo {
+        &self.0
+    }
+
+    /// Consume the CreateGroup and return the inner GroupInfo
+    pub fn into_group_info(self) -> GroupInfo {
+        self.0
+    }
+}

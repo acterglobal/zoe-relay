@@ -31,6 +31,9 @@ pub enum DgaError {
 
     #[error("Crypto error: {0}")]
     CryptoError(String),
+
+    #[error("Invalid operation: {0}")]
+    InvalidOperation(String),
 }
 
 pub type DgaResult<T> = Result<T, DgaError>;

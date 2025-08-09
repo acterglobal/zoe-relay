@@ -7769,10 +7769,12 @@ dependencies = [
 name = "zoe-app-primitives"
 version = "0.1.0"
 dependencies = [
+ "blake3",
  "ed25519-dalek",
  "postcard",
  "rand 0.8.5",
  "serde",
+ "thiserror 2.0.12",
  "zoe-encrypted-storage",
  "zoe-wire-protocol",
 ]
@@ -7885,6 +7887,7 @@ dependencies = [
  "zoe-client",
  "zoe-message-store",
  "zoe-relay",
+ "zoe-state-machine",
  "zoe-wire-protocol",
 ]
 
