@@ -126,11 +126,20 @@ impl DigitalGroupAssistant {
         };
 
         // Create the group creation event (no group_id needed since it will be the message hash)
+        let mut metadata = Vec::new();
+
+        // Store description in metadata if provided
+        if let Some(description) = &config.description {
+            metadata.push(zoe_app_primitives::Metadata::Description(
+                description.clone(),
+            ));
+        }
+
         let group_info = GroupInfo {
             name: config.name.clone(),
             settings: config.settings.clone(),
             key_info,
-            metadata: Vec::new(),
+            metadata,
         };
         let event =
             GroupActivityEvent::Management(Box::new(GroupManagementEvent::UpdateGroup(group_info)));
@@ -280,35 +289,52 @@ impl DigitalGroupAssistant {
         };
 
         // Handle the root event (group creation) specially
-        match &event {
-            GroupActivityEvent::Management(management_event) => {
-                if let GroupManagementEvent::UpdateGroup(group_info) = management_event.as_ref() {
-                    // This is a root event - create the group state
-                    let group_state = GroupState::new(
-                        group_id,
-                        group_info.name.clone(),
-                        None,            // description not available in simplified structure
-                        BTreeMap::new(), // metadata as BTreeMap
-                        group_info.settings.clone(),
-                        sender,
-                        timestamp,
-                    );
+        if let GroupActivityEvent::Management(management_event) = &event
+            && let GroupManagementEvent::UpdateGroup(group_info) = management_event.as_ref()
+        {
+            // Extract description from metadata
+            let description = group_info.metadata.iter().find_map(|m| match m {
+                zoe_app_primitives::Metadata::Description(desc) => Some(desc.clone()),
+                _ => None,
+            });
 
-                    self.groups.insert(group_id, group_state);
-                    return Ok(());
+            // Convert metadata Vec to BTreeMap for group state
+            let mut metadata_map = BTreeMap::new();
+            for meta in &group_info.metadata {
+                match meta {
+                    zoe_app_primitives::Metadata::Generic(key, value) => {
+                        metadata_map.insert(key.clone(), value.clone());
+                    }
+                    // Other metadata types could be handled here if needed
+                    _ => {
+                        // Skip non-generic metadata for now since BTreeMap only stores key-value pairs
+                    }
                 }
             }
-            _ => {
-                // This is a subsequent event - apply to existing group state
-                let group_state = self
-                    .groups
-                    .get_mut(&group_id)
-                    .ok_or_else(|| DgaError::GroupNotFound(format!("{group_id:?}")))?;
 
-                // Apply the event to the group state
-                group_state.apply_event(&event, message_full.id, sender, timestamp)?;
-            }
+            // This is a root event - create the group state
+            let group_state = GroupState::new(
+                group_id,
+                group_info.name.clone(),
+                description,
+                metadata_map,
+                group_info.settings.clone(),
+                sender,
+                timestamp,
+            );
+
+            self.groups.insert(group_id, group_state);
+            return Ok(());
         }
+
+        // This is a subsequent event - apply to existing group state
+        let group_state = self
+            .groups
+            .get_mut(&group_id)
+            .ok_or_else(|| DgaError::GroupNotFound(format!("{group_id:?}")))?;
+
+        // Apply the event to the group state
+        group_state.apply_event(&event, message_full.id, sender, timestamp)?;
 
         Ok(())
     }

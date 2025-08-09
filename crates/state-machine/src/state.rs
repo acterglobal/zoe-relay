@@ -244,6 +244,7 @@ impl GroupState {
         Ok(())
     }
 
+    #[allow(dead_code)]
     fn handle_update_group(
         &mut self,
         sender: VerifyingKey,
@@ -306,6 +307,7 @@ impl GroupState {
         Ok(())
     }
 
+    #[allow(dead_code)]
     fn handle_group_activity(
         &mut self,
         sender: VerifyingKey,
