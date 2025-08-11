@@ -3,7 +3,9 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use tempfile::TempDir;
 use tracing::info;
-use zoe_wire_protocol::{Ed25519EncryptedContent, MnemonicPhrase, generate_ed25519_from_mnemonic};
+use zoe_wire_protocol::{
+    Ed25519SelfEncryptedContent, MnemonicPhrase, generate_ed25519_from_mnemonic,
+};
 
 /// Test data structure matching the main example
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
@@ -41,7 +43,7 @@ async fn test_encryption_cycle() -> Result<()> {
     let plaintext = postcard::to_stdvec(&test_data)?;
     info!("📦 Serialized test data: {} bytes", plaintext.len());
 
-    let encrypted_content = Ed25519EncryptedContent::encrypt(&plaintext, &signing_key)?;
+    let encrypted_content = Ed25519SelfEncryptedContent::encrypt(&plaintext, &signing_key)?;
     info!(
         "🔒 Encrypted data with nonce: {:02x?}",
         encrypted_content.nonce
@@ -63,7 +65,7 @@ async fn test_encryption_cycle() -> Result<()> {
     assert_eq!(signing_key.to_bytes(), signing_key_2.to_bytes());
 
     // Test that same key produces different ciphertext (due to random nonces) but can decrypt both
-    let encrypted_again = Ed25519EncryptedContent::encrypt(&plaintext, &signing_key)?;
+    let encrypted_again = Ed25519SelfEncryptedContent::encrypt(&plaintext, &signing_key)?;
     let decrypted_again = encrypted_again.decrypt(&signing_key)?;
     let data_again: PersonalData = postcard::from_bytes(&decrypted_again)?;
 
@@ -82,7 +84,8 @@ async fn test_encryption_cycle() -> Result<()> {
     };
 
     let different_plaintext = postcard::to_stdvec(&different_data)?;
-    let different_encrypted = Ed25519EncryptedContent::encrypt(&different_plaintext, &signing_key)?;
+    let different_encrypted =
+        Ed25519SelfEncryptedContent::encrypt(&different_plaintext, &signing_key)?;
 
     // Nonces should be different (random)
     assert_ne!(encrypted_content.nonce, different_encrypted.nonce);
@@ -150,7 +153,7 @@ async fn test_mnemonic_persistence() -> Result<()> {
 
     // Test encryption/decryption with recovered key
     let plaintext = postcard::to_stdvec(&test_data)?;
-    let encrypted = Ed25519EncryptedContent::encrypt(&plaintext, &original_signing_key)?;
+    let encrypted = Ed25519SelfEncryptedContent::encrypt(&plaintext, &original_signing_key)?;
     let decrypted = encrypted.decrypt(&recovered_signing_key)?;
     let recovered_data: PersonalData = postcard::from_bytes(&decrypted)?;
 
@@ -198,8 +201,8 @@ async fn test_security_properties() -> Result<()> {
     let plaintext1 = postcard::to_stdvec(&data1)?;
     let plaintext2 = postcard::to_stdvec(&data2)?;
 
-    let encrypted1 = Ed25519EncryptedContent::encrypt(&plaintext1, &key1)?;
-    let encrypted2 = Ed25519EncryptedContent::encrypt(&plaintext2, &key2)?;
+    let encrypted1 = Ed25519SelfEncryptedContent::encrypt(&plaintext1, &key1)?;
+    let encrypted2 = Ed25519SelfEncryptedContent::encrypt(&plaintext2, &key2)?;
 
     // Should be able to decrypt with correct key
     let decrypted1 = encrypted1.decrypt(&key1)?;
@@ -212,7 +215,7 @@ async fn test_security_properties() -> Result<()> {
     info!("✅ Wrong key cannot decrypt data!");
 
     // Test nonce uniqueness
-    let encrypted1_again = Ed25519EncryptedContent::encrypt(&plaintext1, &key1)?;
+    let encrypted1_again = Ed25519SelfEncryptedContent::encrypt(&plaintext1, &key1)?;
     assert_ne!(encrypted1.nonce, encrypted1_again.nonce);
     assert_ne!(encrypted1.ciphertext, encrypted1_again.ciphertext);
     info!("✅ Nonce uniqueness ensures different ciphertext!");

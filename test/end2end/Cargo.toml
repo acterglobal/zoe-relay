@@ -27,6 +27,10 @@ tempfile = { workspace = true }
 serial_test = { workspace = true }
 pretty_assertions = { workspace = true }
 tarpc = { workspace = true }
+serde = { workspace = true }
+uuid = { workspace = true }
+futures = { workspace = true }
+postcard = { workspace = true }
 
 # Redis client for message store tests
 redis = { version = "0.24", features = ["tokio-comp"] }

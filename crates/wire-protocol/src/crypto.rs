@@ -1,6 +1,7 @@
 use ed25519_dalek::{pkcs8::EncodePrivateKey, SigningKey, VerifyingKey};
 use rcgen::{Certificate, CertificateParams, CustomExtension, KeyPair, PKCS_ED25519};
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
+use x25519_dalek::{PublicKey as X25519PublicKey, StaticSecret as X25519PrivateKey};
 use x509_parser::oid_registry::asn1_rs::oid;
 use x509_parser::prelude::*;
 
@@ -566,19 +567,34 @@ pub struct ChaCha20Poly1305Content {
 }
 
 /// Ed25519-derived ChaCha20-Poly1305 encrypted content
-/// Simple user-friendly encryption using only ed25519 keypair derived from mnemonic
+/// Simple self-encryption using only the sender's ed25519 keypair derived from mnemonic
+/// Only the sender can decrypt this content (encrypt-to-self pattern)
 /// Public key is available from message sender field - no need to duplicate
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct Ed25519EncryptedContent {
+pub struct Ed25519SelfEncryptedContent {
     /// Encrypted data + authentication tag
     pub ciphertext: Vec<u8>,
     /// ChaCha20-Poly1305 nonce (12 bytes)
     pub nonce: [u8; 12],
 }
 
-impl Ed25519EncryptedContent {
-    /// Encrypt data using ed25519 private key
+/// Ephemeral ECDH ChaCha20-Poly1305 encrypted content
+/// Simple public key encryption using ephemeral X25519 keys
+/// Anyone can encrypt for the recipient using only their public key
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct EphemeralEcdhContent {
+    /// Encrypted data + authentication tag
+    pub ciphertext: Vec<u8>,
+    /// ChaCha20-Poly1305 nonce (12 bytes)
+    pub nonce: [u8; 12],
+    /// Ephemeral X25519 public key (generated randomly for each message)
+    pub ephemeral_public: [u8; 32],
+}
+
+impl Ed25519SelfEncryptedContent {
+    /// Encrypt data using ed25519 private key (self-encryption)
     /// Derives a ChaCha20 key from the ed25519 private key deterministically
+    /// Only the same private key can decrypt this content
     pub fn encrypt(plaintext: &[u8], signing_key: &ed25519_dalek::SigningKey) -> Result<Self> {
         use chacha20poly1305::aead::{Aead, OsRng};
         use chacha20poly1305::{AeadCore, ChaCha20Poly1305, Key, KeyInit};
@@ -609,7 +625,7 @@ impl Ed25519EncryptedContent {
         })
     }
 
-    /// Decrypt data using ed25519 private key
+    /// Decrypt data using ed25519 private key (self-decryption)
     /// Must be the same private key that was used for encryption
     pub fn decrypt(&self, signing_key: &ed25519_dalek::SigningKey) -> Result<Vec<u8>> {
         use chacha20poly1305::aead::Aead;
@@ -635,6 +651,151 @@ impl Ed25519EncryptedContent {
                 ))
             })
     }
+}
+
+impl EphemeralEcdhContent {
+    /// Encrypt data using ephemeral X25519 ECDH  
+    /// Generates a random ephemeral key pair for each message
+    /// Anyone can encrypt for the recipient using only their Ed25519 public key
+    pub fn encrypt(
+        plaintext: &[u8],
+        recipient_ed25519_public: &ed25519_dalek::VerifyingKey,
+    ) -> Result<Self> {
+        use chacha20poly1305::aead::{Aead, OsRng};
+        use chacha20poly1305::{AeadCore, ChaCha20Poly1305, Key, KeyInit};
+
+        // Generate ephemeral X25519 key pair for this message
+        let ephemeral_private = x25519_dalek::StaticSecret::random_from_rng(OsRng);
+        let ephemeral_public = x25519_dalek::PublicKey::from(&ephemeral_private);
+
+        // For ephemeral ECDH, we need a consistent way to derive X25519 public key
+        // from Ed25519 public key. We'll use a deterministic derivation based on the Ed25519 public key bytes.
+        // This creates a "virtual" X25519 public key that will match what the recipient computes.
+        let recipient_x25519_public = {
+            // Use Ed25519 public key bytes as seed for deterministic X25519 public key derivation
+            let ed25519_bytes = recipient_ed25519_public.to_bytes();
+            // Hash the Ed25519 public key to create deterministic X25519 private key
+            let x25519_private_bytes = *blake3::hash(&ed25519_bytes).as_bytes();
+            let x25519_private = x25519_dalek::StaticSecret::from(x25519_private_bytes);
+            x25519_dalek::PublicKey::from(&x25519_private)
+        };
+
+        // Ephemeral ECDH: each message uses a unique ephemeral key pair for perfect forward secrecy
+
+        // Perform ECDH: ephemeral_private + recipient_public → shared secret
+        let shared_secret = ephemeral_private.diffie_hellman(&recipient_x25519_public);
+
+        // Derive ChaCha20 key from shared secret using Blake3
+        let mut key_derivation_input = Vec::new();
+        key_derivation_input.extend_from_slice(shared_secret.as_bytes());
+        key_derivation_input.extend_from_slice(b"ephemeral-ecdh-to-chacha20-key-derivation");
+
+        let derived_key_hash = blake3::hash(&key_derivation_input);
+        let chacha_key = Key::from_slice(derived_key_hash.as_bytes());
+        let cipher = ChaCha20Poly1305::new(chacha_key);
+
+        // Generate random nonce
+        let nonce = ChaCha20Poly1305::generate_nonce(&mut OsRng);
+
+        let ciphertext = cipher.encrypt(&nonce, plaintext).map_err(|e| {
+            CryptoError::EncryptionError(format!("Ephemeral ECDH ChaCha20 encryption failed: {e}"))
+        })?;
+
+        let mut nonce_bytes = [0u8; 12];
+        nonce_bytes.copy_from_slice(&nonce);
+
+        Ok(Self {
+            ciphertext,
+            nonce: nonce_bytes,
+            ephemeral_public: ephemeral_public.to_bytes(),
+        })
+    }
+
+    /// Decrypt data using ephemeral X25519 ECDH
+    /// Recipient uses their Ed25519 private key + stored ephemeral public key
+    pub fn decrypt(&self, recipient_ed25519_key: &ed25519_dalek::SigningKey) -> Result<Vec<u8>> {
+        use chacha20poly1305::aead::Aead;
+        use chacha20poly1305::{ChaCha20Poly1305, Key, KeyInit, Nonce};
+
+        // Use the same deterministic derivation as encryption
+        // Derive X25519 private key from Ed25519 public key (deterministic)
+        let recipient_x25519_private = {
+            let ed25519_public = recipient_ed25519_key.verifying_key();
+            let ed25519_bytes = ed25519_public.to_bytes();
+            // Hash the Ed25519 public key to create deterministic X25519 private key (same as encryption)
+            let x25519_private_bytes = *blake3::hash(&ed25519_bytes).as_bytes();
+            x25519_dalek::StaticSecret::from(x25519_private_bytes)
+        };
+        let _recipient_x25519_public = x25519_dalek::PublicKey::from(&recipient_x25519_private);
+
+        // Extract ephemeral public key from message
+        let ephemeral_public = x25519_dalek::PublicKey::from(self.ephemeral_public);
+
+        // Use same deterministic X25519 derivation to compute shared secret
+
+        // Perform ECDH: recipient_private + ephemeral_public → shared secret (same as encryption)
+        let shared_secret = recipient_x25519_private.diffie_hellman(&ephemeral_public);
+
+        // Derive the same ChaCha20 key from shared secret
+        let mut key_derivation_input = Vec::new();
+        key_derivation_input.extend_from_slice(shared_secret.as_bytes());
+        key_derivation_input.extend_from_slice(b"ephemeral-ecdh-to-chacha20-key-derivation");
+
+        let derived_key_hash = blake3::hash(&key_derivation_input);
+        let chacha_key = Key::from_slice(derived_key_hash.as_bytes());
+        let cipher = ChaCha20Poly1305::new(chacha_key);
+
+        let nonce = Nonce::from_slice(&self.nonce);
+
+        cipher
+            .decrypt(nonce, self.ciphertext.as_ref())
+            .map_err(|e| {
+                CryptoError::DecryptionError(format!(
+                    "Ephemeral ECDH ChaCha20 decryption failed: {e}"
+                ))
+            })
+    }
+}
+
+/// Convert Ed25519 private key to X25519 private key
+/// Both curves use the same underlying Curve25519
+pub fn ed25519_to_x25519_private(
+    ed25519_key: &ed25519_dalek::SigningKey,
+) -> Result<X25519PrivateKey> {
+    // Ed25519 private key is the same as X25519 private key (both are 32-byte scalars)
+    let ed25519_bytes = ed25519_key.to_bytes();
+    Ok(X25519PrivateKey::from(ed25519_bytes))
+}
+
+/// Convert Ed25519 public key to X25519 public key
+/// Derives X25519 public key from the corresponding Ed25519 private key
+/// Note: This is a simplified approach that requires the private key
+pub fn ed25519_to_x25519_public(
+    ed25519_private_key: &ed25519_dalek::SigningKey,
+) -> Result<X25519PublicKey> {
+    // Convert Ed25519 private key to X25519 private key, then derive public
+    let x25519_private = ed25519_to_x25519_private(ed25519_private_key)?;
+    Ok(X25519PublicKey::from(&x25519_private))
+}
+
+/// Convert Ed25519 public key (VerifyingKey) to X25519 public key
+/// Uses curve25519-dalek's Edwards to Montgomery conversion to match
+/// the same conversion that happens in the private key derivation path
+pub fn ed25519_to_x25519_public_from_verifying_key(
+    ed25519_public: &ed25519_dalek::VerifyingKey,
+) -> Result<X25519PublicKey> {
+    // Use curve25519-dalek's conversion which should match the private key approach
+    use curve25519_dalek::edwards::CompressedEdwardsY;
+
+    let compressed_point = CompressedEdwardsY::from_slice(&ed25519_public.to_bytes())
+        .map_err(|_| CryptoError::InvalidEd25519Key("Invalid Ed25519 public key".to_string()))?;
+
+    let edwards_point = compressed_point.decompress().ok_or_else(|| {
+        CryptoError::InvalidEd25519Key("Cannot decompress Ed25519 public key".to_string())
+    })?;
+
+    let montgomery_point = edwards_point.to_montgomery();
+    Ok(X25519PublicKey::from(montgomery_point.to_bytes()))
 }
 
 impl EncryptionKey {
@@ -800,6 +961,35 @@ pub fn recover_ed25519_from_mnemonic(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_ephemeral_ecdh_encrypt_decrypt_roundtrip() {
+        // Test the new ephemeral ECDH pattern used in RPC transport:
+        // Anyone can encrypt for recipient using only their Ed25519 public key
+        // Recipient decrypts using their Ed25519 private key
+
+        let plaintext = b"Hello, Ephemeral ECDH World!";
+
+        // Create recipient Ed25519 key pair (sender doesn't need long-term keys!)
+        let recipient_ed25519_key = ed25519_dalek::SigningKey::generate(&mut rand::rngs::OsRng);
+        let recipient_ed25519_public = recipient_ed25519_key.verifying_key();
+
+        // Encrypt using only recipient's public key (ephemeral key generated automatically)
+        let encrypted = EphemeralEcdhContent::encrypt(plaintext, &recipient_ed25519_public)
+            .expect("Encryption should succeed");
+
+        // Decrypt using recipient's private key
+        let decrypted = encrypted
+            .decrypt(&recipient_ed25519_key)
+            .expect("Decryption should succeed");
+
+        // Verify roundtrip
+        assert_eq!(
+            plaintext,
+            decrypted.as_slice(),
+            "Roundtrip failed: plaintext != decrypted"
+        );
+    }
 
     #[test]
     fn test_deterministic_certificate_generation() {

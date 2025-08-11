@@ -5,3 +5,6 @@ mod infra;
 
 #[cfg(test)]
 mod client_integration_tests;
+
+#[cfg(test)]
+mod tarpc_echo_test;

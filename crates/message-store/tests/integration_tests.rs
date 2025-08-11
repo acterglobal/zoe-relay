@@ -443,8 +443,8 @@ async fn test_expired_message_handling() -> Result<(), Box<dyn std::error::Error
     let mut message = create_test_message(channel_id, &keypair, "Expired message");
     // Manually set the message to be expired by setting when to past and timeout
     let Message::MessageV0(ref mut msg_v0) = message.message.as_mut();
-    msg_v0.when = expired_time;
-    msg_v0.kind = Kind::Emphemeral(Some(1)); // 1 second timeout, way past
+    msg_v0.header.when = expired_time;
+    msg_v0.header.kind = Kind::Emphemeral(Some(1)); // 1 second timeout, way past
 
     let publish_result = storage.store_message(&message).await?;
 

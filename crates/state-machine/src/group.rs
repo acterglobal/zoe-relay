@@ -221,9 +221,15 @@ impl DigitalGroupAssistant {
                     "Expected encrypted content but found raw content".to_string(),
                 ));
             }
-            Content::Ed25519Encrypted(_) => {
+            Content::Ed25519SelfEncrypted(_) => {
                 return Err(DgaError::InvalidEvent(
                     "Ed25519-encrypted content is not supported for group events".to_string(),
+                ));
+            }
+            Content::EphemeralEcdh(_) => {
+                return Err(DgaError::InvalidEvent(
+                    "Ephemeral ECDH-encrypted content is not supported for group events"
+                        .to_string(),
                 ));
             }
         };

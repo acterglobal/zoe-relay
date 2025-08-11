@@ -5,18 +5,22 @@ mod integration_tests {
     use ed25519_dalek::SigningKey;
     use rand::rngs::OsRng;
     use tempfile::TempDir;
-    use zoe_wire_protocol::{Content, Hash, Kind, Message, MessageFull, MessageV0, Tag};
+    use zoe_wire_protocol::{
+        Content, Hash, Kind, Message, MessageFull, MessageV0, MessageV0Header, Tag,
+    };
 
     // Helper function to create a test message
     fn create_test_message(content: &str, signing_key: &SigningKey) -> MessageFull {
         let message = Message::MessageV0(MessageV0 {
-            sender: signing_key.verifying_key(),
-            when: std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_secs(),
-            kind: Kind::Regular,
-            tags: vec![Tag::Protected],
+            header: MessageV0Header {
+                sender: signing_key.verifying_key(),
+                when: std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_secs(),
+                kind: Kind::Regular,
+                tags: vec![Tag::Protected],
+            },
             content: Content::raw(content.as_bytes().to_vec()),
         });
 
@@ -30,10 +34,12 @@ mod integration_tests {
         timestamp: u64,
     ) -> MessageFull {
         let message = Message::MessageV0(MessageV0 {
-            sender: signing_key.verifying_key(),
-            when: timestamp,
-            kind: Kind::Regular,
-            tags: vec![Tag::Protected],
+            header: MessageV0Header {
+                sender: signing_key.verifying_key(),
+                when: timestamp,
+                kind: Kind::Regular,
+                tags: vec![Tag::Protected],
+            },
             content: Content::raw(content.as_bytes().to_vec()),
         });
 
@@ -43,7 +49,7 @@ mod integration_tests {
     // Helper function to extract timestamp from a MessageFull
     fn get_message_timestamp(message: &MessageFull) -> u64 {
         match &*message.message {
-            Message::MessageV0(msg) => msg.when,
+            Message::MessageV0(msg) => msg.header.when,
         }
     }
 
@@ -93,10 +99,10 @@ mod integration_tests {
         assert_eq!(retrieved.id, message.id);
         // Both messages should have the same author
         let original_author = match &*message.message {
-            Message::MessageV0(msg) => msg.sender,
+            Message::MessageV0(msg) => msg.header.sender,
         };
         let retrieved_author = match &*retrieved.message {
-            Message::MessageV0(msg) => msg.sender,
+            Message::MessageV0(msg) => msg.header.sender,
         };
         assert_eq!(retrieved_author, original_author);
 
@@ -186,7 +192,7 @@ mod integration_tests {
         assert_eq!(author1_messages.len(), 2);
         for msg in &author1_messages {
             let author = match &*msg.message {
-                Message::MessageV0(m) => m.sender,
+                Message::MessageV0(m) => m.header.sender,
             };
             assert_eq!(author, signing_key1.verifying_key());
         }
@@ -199,7 +205,7 @@ mod integration_tests {
 
         assert_eq!(author2_messages.len(), 1);
         let author = match &*author2_messages[0].message {
-            Message::MessageV0(m) => m.sender,
+            Message::MessageV0(m) => m.header.sender,
         };
         assert_eq!(author, signing_key2.verifying_key());
     }

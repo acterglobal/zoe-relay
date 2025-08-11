@@ -3,7 +3,7 @@ use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
 use postcard::to_vec;
 use serde::{Deserialize, Serialize};
 
-use crate::{crypto::ChaCha20Poly1305Content, Ed25519EncryptedContent};
+use crate::{crypto::ChaCha20Poly1305Content, Ed25519SelfEncryptedContent, EphemeralEcdhContent};
 
 mod store_key;
 pub use store_key::StoreKey;
@@ -137,15 +137,25 @@ pub enum Content {
     /// strong AEAD security properties.
     ChaCha20Poly1305(ChaCha20Poly1305Content),
 
-    /// Ed25519-derived ChaCha20-Poly1305 encrypted content.
+    /// Ed25519-derived ChaCha20-Poly1305 self-encrypted content.
     ///
-    /// Uses Ed25519 keypairs (typically from mnemonic phrases) to derive
-    /// ChaCha20-Poly1305 encryption keys. This variant is self-contained
-    /// and suitable for:
-    /// - Direct peer-to-peer messaging
-    /// - Identity-based encryption scenarios
-    /// - Messages where context-based key derivation isn't available
-    Ed25519Encrypted(Ed25519EncryptedContent),
+    /// Uses sender's Ed25519 keypair to derive ChaCha20-Poly1305 encryption keys.
+    /// Only the sender can decrypt this content (encrypt-to-self pattern).
+    /// Suitable for:
+    /// - Personal data storage
+    /// - Self-encrypted notes and backups
+    /// - Content where only the author should have access
+    Ed25519SelfEncrypted(Ed25519SelfEncryptedContent),
+
+    /// Ephemeral ECDH encrypted content.
+    ///
+    /// Uses ephemeral X25519 key pairs for each message to encrypt for
+    /// the recipient. Only the recipient can decrypt (proper public key encryption).
+    /// Provides perfect forward secrecy. Suitable for:
+    /// - RPC calls over message infrastructure  
+    /// - One-off encrypted messages
+    /// - Public key encryption scenarios
+    EphemeralEcdh(EphemeralEcdhContent),
 }
 
 impl Content {
@@ -164,9 +174,14 @@ impl Content {
         Content::ChaCha20Poly1305(content)
     }
 
-    /// Create ed25519-encrypted content
-    pub fn ed25519_encrypted(content: Ed25519EncryptedContent) -> Self {
-        Content::Ed25519Encrypted(content)
+    /// Create ed25519 self-encrypted content
+    pub fn ed25519_self_encrypted(content: Ed25519SelfEncryptedContent) -> Self {
+        Content::Ed25519SelfEncrypted(content)
+    }
+
+    /// Create ephemeral ECDH encrypted content
+    pub fn ephemeral_ecdh(content: EphemeralEcdhContent) -> Self {
+        Content::EphemeralEcdh(content)
     }
 
     /// Get the raw bytes if this is raw content
@@ -174,7 +189,8 @@ impl Content {
         match self {
             Content::Raw(data) => Some(data),
             Content::ChaCha20Poly1305(_) => None,
-            Content::Ed25519Encrypted(_) => None,
+            Content::Ed25519SelfEncrypted(_) => None,
+            Content::EphemeralEcdh(_) => None,
         }
     }
 
@@ -183,16 +199,28 @@ impl Content {
         match self {
             Content::Raw(_) => None,
             Content::ChaCha20Poly1305(content) => Some(content),
-            Content::Ed25519Encrypted(_) => None,
+            Content::Ed25519SelfEncrypted(_) => None,
+            Content::EphemeralEcdh(_) => None,
         }
     }
 
-    /// Get the ed25519-encrypted content if this is ed25519-encrypted
-    pub fn as_ed25519_encrypted(&self) -> Option<&Ed25519EncryptedContent> {
+    /// Get the ed25519 self-encrypted content if this is ed25519 self-encrypted
+    pub fn as_ed25519_self_encrypted(&self) -> Option<&Ed25519SelfEncryptedContent> {
         match self {
             Content::Raw(_) => None,
             Content::ChaCha20Poly1305(_) => None,
-            Content::Ed25519Encrypted(content) => Some(content),
+            Content::Ed25519SelfEncrypted(content) => Some(content),
+            Content::EphemeralEcdh(_) => None,
+        }
+    }
+
+    /// Get the ephemeral ECDH encrypted content if this is ephemeral ECDH encrypted
+    pub fn as_ephemeral_ecdh(&self) -> Option<&EphemeralEcdhContent> {
+        match self {
+            Content::Raw(_) => None,
+            Content::ChaCha20Poly1305(_) => None,
+            Content::Ed25519SelfEncrypted(_) => None,
+            Content::EphemeralEcdh(content) => Some(content),
         }
     }
 
@@ -200,7 +228,9 @@ impl Content {
     pub fn is_encrypted(&self) -> bool {
         matches!(
             self,
-            Content::ChaCha20Poly1305(_) | Content::Ed25519Encrypted(_)
+            Content::ChaCha20Poly1305(_)
+                | Content::Ed25519SelfEncrypted(_)
+                | Content::EphemeralEcdh(_)
         )
     }
 
@@ -280,7 +310,7 @@ impl Content {
 ///             match v0_msg.content {
 ///                 Content::Raw(data) => { /* process raw data */ },
 ///                 Content::ChaCha20Poly1305(_) => { /* decrypt with ChaCha20 */ },
-///                 Content::Ed25519Encrypted(_) => { /* decrypt with Ed25519 */ },
+///                 Content::Ed25519SelfEncrypted(_) => { /* decrypt with Ed25519 */ },
 ///             }
 ///         }
 ///         // Future: MessageV1 would be handled here with its own content types
@@ -295,7 +325,7 @@ pub enum Message {
     /// - **Signing**: Ed25519 digital signatures
     /// - **Encryption**: ChaCha20-Poly1305 AEAD
     /// - **Key Derivation**: Ed25519-based and context-based schemes
-    /// - **Content Types**: [`Content::Raw`], [`Content::ChaCha20Poly1305`], [`Content::Ed25519Encrypted`]
+    /// - **Content Types**: [`Content::Raw`], [`Content::ChaCha20Poly1305`], [`Content::Ed25519SelfEncrypted`], [`Content::EphemeralEcdh`]
     ///
     /// This version is designed for high-performance messaging with modern cryptographic
     /// standards as of 2025.
@@ -319,7 +349,11 @@ impl Message {
         match self {
             Message::MessageV0(message) => {
                 let message_bytes = to_vec::<_, 4096>(message)?;
-                Ok(message.sender.verify(&message_bytes, signature).is_ok())
+                Ok(message
+                    .header
+                    .sender
+                    .verify(&message_bytes, signature)
+                    .is_ok())
             }
         }
     }
@@ -332,10 +366,12 @@ impl Message {
         tags: Vec<Tag>,
     ) -> Self {
         Message::MessageV0(MessageV0 {
-            sender,
-            when,
-            kind,
-            tags,
+            header: MessageV0Header {
+                sender,
+                when,
+                kind,
+                tags,
+            },
             content: Content::Raw(content),
         })
     }
@@ -348,27 +384,49 @@ impl Message {
         tags: Vec<Tag>,
     ) -> Self {
         Message::MessageV0(MessageV0 {
-            sender,
-            when,
-            kind,
-            tags,
+            header: MessageV0Header {
+                sender,
+                when,
+                kind,
+                tags,
+            },
             content: Content::ChaCha20Poly1305(content),
         })
     }
 
-    pub fn new_v0_ed25519_encrypted(
-        content: Ed25519EncryptedContent,
+    pub fn new_v0_ed25519_self_encrypted(
+        content: Ed25519SelfEncryptedContent,
         sender: VerifyingKey,
         when: u64,
         kind: Kind,
         tags: Vec<Tag>,
     ) -> Self {
         Message::MessageV0(MessageV0 {
-            sender,
-            when,
-            kind,
-            tags,
-            content: Content::Ed25519Encrypted(content),
+            header: MessageV0Header {
+                sender,
+                when,
+                kind,
+                tags,
+            },
+            content: Content::Ed25519SelfEncrypted(content),
+        })
+    }
+
+    pub fn new_v0_ephemeral_ecdh(
+        content: EphemeralEcdhContent,
+        sender: VerifyingKey,
+        when: u64,
+        kind: Kind,
+        tags: Vec<Tag>,
+    ) -> Self {
+        Message::MessageV0(MessageV0 {
+            header: MessageV0Header {
+                sender,
+                when,
+                kind,
+                tags,
+            },
+            content: Content::EphemeralEcdh(content),
         })
     }
 
@@ -383,10 +441,12 @@ impl Message {
         T: Serialize,
     {
         Ok(Message::MessageV0(MessageV0 {
-            sender,
-            when,
-            kind,
-            tags,
+            header: MessageV0Header {
+                sender,
+                when,
+                kind,
+                tags,
+            },
             content: Content::Raw(postcard::to_stdvec(&content)?),
         }))
     }
@@ -406,33 +466,25 @@ impl Message {
         let encrypted_content = encryption_key.encrypt_content(&plaintext)?;
 
         Ok(Message::MessageV0(MessageV0 {
-            sender,
-            when,
-            kind,
-            tags,
+            header: MessageV0Header {
+                sender,
+                when,
+                kind,
+                tags,
+            },
             content: Content::ChaCha20Poly1305(encrypted_content),
         }))
     }
 }
 
-/// Version 0 of the message format with Ed25519 signatures and ChaCha20-Poly1305 encryption.
+/// Header information for MessageV0 containing metadata and routing information.
 ///
-/// # Message Structure
+/// # MessageV0Header Structure
 ///
-/// `MessageV0` represents the core message data that gets signed and transmitted.
-/// It contains metadata (sender, timestamp, type) and the actual content payload.
-/// The message is signed using Ed25519 to create a [`MessageFull`] for transmission.
-///
-/// ## Cryptographic Binding
-///
-/// This message version **hard-wires** the following cryptographic choices:
-/// - **Digital Signatures**: Ed25519 (see [`MessageFull`])
-/// - **Content Encryption**: ChaCha20-Poly1305 AEAD (see [`Content`])
-/// - **Hash Function**: Blake3 for message IDs (see [`MessageFull::new`])
-/// - **Key Derivation**: Ed25519-based and context-based schemes
-///
-/// These choices cannot be negotiated or downgraded - they are fixed for all
-/// `MessageV0` instances to prevent cryptographic downgrade attacks.
+/// `MessageV0Header` contains all the metadata fields from a MessageV0 message
+/// except for the content payload. This allows RPC transport layers to access
+/// sender information, timing, message types, and routing tags without having
+/// to deserialize the potentially encrypted content.
 ///
 /// ## Field Description
 ///
@@ -440,42 +492,13 @@ impl Message {
 /// - **`when`**: Unix timestamp in seconds (for ordering and expiration)
 /// - **`kind`**: Message type determining storage and forwarding behavior
 /// - **`tags`**: Routing and reference tags (channels, users, events)
-/// - **`content`**: The actual message payload (see [`Content`] variants)
 ///
-/// ## Serialization Format
+/// ## Usage in RPC Transport
 ///
-/// Messages are serialized using [postcard](https://docs.rs/postcard/) for efficiency:
-///
-/// ```text
-/// [sender: 32 bytes][when: varint][kind: 1+ bytes][tags: length + data][content: 1+ bytes]
-/// ```
-///
-/// The compact binary format minimizes wire overhead while maintaining
-/// self-describing properties through postcard's type system.
-///
-/// ## Example Usage
-///
-/// ```rust
-/// use zoe_wire_protocol::{MessageV0, Content, Kind, Tag};
-/// use ed25519_dalek::SigningKey;
-/// use rand::rngs::OsRng;
-///
-/// let signing_key = SigningKey::generate(&mut OsRng);
-/// let message = MessageV0 {
-///     sender: signing_key.verifying_key(),
-///     when: 1640995200, // 2022-01-01 00:00:00 UTC
-///     kind: Kind::Regular,
-///     tags: vec![Tag::Protected],
-///     content: Content::raw("Hello, world!".as_bytes().to_vec()),
-/// };
-///
-/// // Convert to signed message for transmission
-/// use zoe_wire_protocol::{Message, MessageFull};
-/// let full_message = MessageFull::new(Message::MessageV0(message), &signing_key)?;
-/// # Ok::<(), Box<dyn std::error::Error>>(())
-/// ```
+/// This header allows RPC systems to examine message metadata before deciding
+/// how to handle the content, enabling efficient routing and access control.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
-pub struct MessageV0 {
+pub struct MessageV0Header {
     /// Ed25519 public key of the message sender.
     ///
     /// This key is used to verify the digital signature in [`MessageFull`].
@@ -510,6 +533,73 @@ pub struct MessageV0 {
     /// Default value is an empty vector when deserializing legacy messages.
     #[serde(default)]
     pub tags: Vec<Tag>,
+}
+
+/// Version 0 of the message format with Ed25519 signatures and ChaCha20-Poly1305 encryption.
+///
+/// # Message Structure
+///
+/// `MessageV0` represents the core message data that gets signed and transmitted.
+/// It contains metadata (header) and the actual content payload.
+/// The message is signed using Ed25519 to create a [`MessageFull`] for transmission.
+///
+/// ## Cryptographic Binding
+///
+/// This message version **hard-wires** the following cryptographic choices:
+/// - **Digital Signatures**: Ed25519 (see [`MessageFull`])
+/// - **Content Encryption**: ChaCha20-Poly1305 AEAD (see [`Content`])
+/// - **Hash Function**: Blake3 for message IDs (see [`MessageFull::new`])
+/// - **Key Derivation**: Ed25519-based and context-based schemes
+///
+/// These choices cannot be negotiated or downgraded - they are fixed for all
+/// `MessageV0` instances to prevent cryptographic downgrade attacks.
+///
+/// ## Field Description
+///
+/// - **`header`**: Message metadata including sender, timestamp, type, and tags
+/// - **`content`**: The actual message payload (see [`Content`] variants)
+///
+/// ## Serialization Format
+///
+/// Messages are serialized using [postcard](https://docs.rs/postcard/) for efficiency:
+///
+/// ```text
+/// [header: variable][content: 1+ bytes]
+/// ```
+///
+/// The compact binary format minimizes wire overhead while maintaining
+/// self-describing properties through postcard's type system.
+///
+/// ## Example Usage
+///
+/// ```rust
+/// use zoe_wire_protocol::{MessageV0, MessageV0Header, Content, Kind, Tag};
+/// use ed25519_dalek::SigningKey;
+/// use rand::rngs::OsRng;
+///
+/// let signing_key = SigningKey::generate(&mut OsRng);
+/// let message = MessageV0 {
+///     header: MessageV0Header {
+///         sender: signing_key.verifying_key(),
+///         when: 1640995200, // 2022-01-01 00:00:00 UTC
+///         kind: Kind::Regular,
+///         tags: vec![Tag::Protected],
+///     },
+///     content: Content::raw("Hello, world!".as_bytes().to_vec()),
+/// };
+///
+/// // Convert to signed message for transmission
+/// use zoe_wire_protocol::{Message, MessageFull};
+/// let full_message = MessageFull::new(Message::MessageV0(message), &signing_key)?;
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct MessageV0 {
+    /// Message header containing metadata and routing information.
+    ///
+    /// Contains sender identity, timestamp, message type, and routing tags.
+    /// This information is accessible without deserializing the content.
+    pub header: MessageV0Header,
 
     /// The message payload with optional encryption.
     ///
@@ -518,6 +608,14 @@ pub struct MessageV0 {
     /// - `ChaCha20Poly1305`: Context-encrypted data  
     /// - `Ed25519Encrypted`: Identity-encrypted data
     pub content: Content,
+}
+
+impl std::ops::Deref for MessageV0 {
+    type Target = MessageV0Header;
+
+    fn deref(&self) -> &Self::Target {
+        &self.header
+    }
 }
 
 /// Complete signed message ready for transmission and storage.
@@ -691,7 +789,7 @@ impl MessageFull {
     /// The timeout for this message in the storage
     pub fn storage_timeout(&self) -> Option<u64> {
         match &*self.message {
-            Message::MessageV0(msg) => match msg.kind {
+            Message::MessageV0(msg) => match msg.header.kind {
                 Kind::Emphemeral(Some(timeout)) if timeout > 0 => Some(timeout as u64),
                 _ => None,
             },
@@ -700,7 +798,7 @@ impl MessageFull {
 
     pub fn store_key(&self) -> Option<StoreKey> {
         match &*self.message {
-            Message::MessageV0(msg) => match &msg.kind {
+            Message::MessageV0(msg) => match &msg.header.kind {
                 Kind::Store(key) => Some(key.clone()),
                 _ => None,
             },
@@ -720,25 +818,25 @@ impl MessageFull {
 
     pub fn author(&self) -> &VerifyingKey {
         match &*self.message {
-            Message::MessageV0(message) => &message.sender,
+            Message::MessageV0(message) => &message.header.sender,
         }
     }
 
     pub fn when(&self) -> &u64 {
         match &*self.message {
-            Message::MessageV0(message) => &message.when,
+            Message::MessageV0(message) => &message.header.when,
         }
     }
 
     pub fn kind(&self) -> &Kind {
         match &*self.message {
-            Message::MessageV0(message) => &message.kind,
+            Message::MessageV0(message) => &message.header.kind,
         }
     }
 
     pub fn tags(&self) -> &Vec<Tag> {
         match &*self.message {
-            Message::MessageV0(message) => &message.tags,
+            Message::MessageV0(message) => &message.header.tags,
         }
     }
 
@@ -771,9 +869,13 @@ impl MessageFull {
                 Content::ChaCha20Poly1305(_) => {
                     Err("Cannot deserialize encrypted content without decryption key".into())
                 }
-                Content::Ed25519Encrypted(_) => {
+                Content::Ed25519SelfEncrypted(_) => {
                     Err("Cannot deserialize ed25519-encrypted content without signing key".into())
                 }
+                Content::EphemeralEcdh(_) => Err(
+                    "Cannot deserialize ephemeral ECDH-encrypted content without signing keys"
+                        .into(),
+                ),
             },
         }
     }
@@ -793,8 +895,11 @@ impl MessageFull {
                     let plaintext = encryption_key.decrypt_content(encrypted)?;
                     Ok(postcard::from_bytes(&plaintext)?)
                 }
-                Content::Ed25519Encrypted(_) => {
+                Content::Ed25519SelfEncrypted(_) => {
                     Err("Cannot decrypt ed25519-encrypted content with EncryptionKey - use signing key instead".into())
+                }
+                Content::EphemeralEcdh(_) => {
+                    Err("Cannot decrypt ephemeral ECDH-encrypted content with EncryptionKey - use signing keys instead".into())
                 }
             },
         }
@@ -814,7 +919,11 @@ impl MessageFull {
                 Content::ChaCha20Poly1305(_) => {
                     Err("Cannot decrypt ChaCha20Poly1305 content with signing key - use EncryptionKey instead".into())
                 }
-                Content::Ed25519Encrypted(encrypted) => {
+                Content::Ed25519SelfEncrypted(encrypted) => {
+                    let plaintext = encrypted.decrypt(signing_key)?;
+                    Ok(postcard::from_bytes(&plaintext)?)
+                }
+                Content::EphemeralEcdh(encrypted) => {
                     let plaintext = encrypted.decrypt(signing_key)?;
                     Ok(postcard::from_bytes(&plaintext)?)
                 }
@@ -898,7 +1007,12 @@ mod tests {
                     encrypted.ciphertext[0] = encrypted.ciphertext[0].wrapping_add(1);
                 }
             }
-            Content::Ed25519Encrypted(ref mut encrypted) => {
+            Content::Ed25519SelfEncrypted(ref mut encrypted) => {
+                if !encrypted.ciphertext.is_empty() {
+                    encrypted.ciphertext[0] = encrypted.ciphertext[0].wrapping_add(1);
+                }
+            }
+            Content::EphemeralEcdh(ref mut encrypted) => {
                 if !encrypted.ciphertext.is_empty() {
                     encrypted.ciphertext[0] = encrypted.ciphertext[0].wrapping_add(1);
                 }

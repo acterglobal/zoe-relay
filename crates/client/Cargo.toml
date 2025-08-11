@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [features]
-mls = ["dep:openmls", "dep:openmls_rust_crypto", "dep:openmls_basic_credential", "dep:openmls_memory_storage", "dep:postcard"]
+mls = ["dep:openmls", "dep:openmls_rust_crypto", "dep:openmls_basic_credential", "dep:openmls_memory_storage"]
 
 [dependencies]
 # Wire protocol for crypto utilities
@@ -30,6 +30,8 @@ rustls = { workspace = true }
 
 # Cryptographic dependencies
 ed25519-dalek = { workspace = true }
+chacha20poly1305 = "0.10"
+blake3 = { workspace = true }
 
 # Additional utilities
 hex = { workspace = true }
@@ -43,7 +45,8 @@ openmls_memory_storage = { version = "0.4", optional = true }
 
 serde = { workspace = true }
 tls_codec = { version = "0.4", optional = true }
-postcard = { workspace = true, optional = true }
+postcard = { workspace = true }
+uuid = { workspace = true }
 
 # Error types for documentation examples
 thiserror = { workspace = true }
@@ -72,6 +75,10 @@ path = "examples/encrypted_personal_data.rs"
 [[example]]
 name = "file_storage_example"
 path = "examples/file_storage_example.rs"
+
+[[example]]
+name = "simple_bot_service"
+path = "examples/simple_bot_service.rs"
 
 
 [dev-dependencies]
