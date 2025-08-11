@@ -2,3 +2,6 @@
 
 #[cfg(test)]
 mod infra;
+
+#[cfg(test)]
+mod client_integration_tests;
