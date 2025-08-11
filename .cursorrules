@@ -359,6 +359,59 @@ If you encounter existing serde_json usage:
 3. Update error handling to work with `postcard::Error`
 4. Ensure structs have `Serialize, Deserialize` derives (same as before)
 
+## Problem Handling and Escalation
+
+### CRITICAL: When to stop and escalate instead of compromising
+
+**When facing difficulties, particularly API evolution and type-based compilation problems:**
+
+- ❌ **DON'T**: Fallback to implementing "a simpler custom version" with reduced features
+- ❌ **DON'T**: Add TODO-commented code as placeholders for missing functionality
+- ❌ **DON'T**: Create workarounds that compromise the project's architecture or standards
+- ❌ **DON'T**: Implement incomplete solutions that would require significant rework later
+
+### When to escalate to the user
+
+**STOP and hand over to the user when encountering:**
+
+1. **API evolution conflicts**: When existing APIs have changed and cause type-based compilation errors that can't be resolved by updating imports or minor adjustments
+2. **Complex architectural decisions**: When the solution requires fundamental changes to project structure or design patterns
+3. **Missing dependencies or broken toolchain**: When the development environment has issues that prevent compilation
+4. **Ambiguous requirements**: When multiple valid approaches exist and user preference is needed
+5. **Breaking changes**: When the requested feature would require breaking existing functionality
+
+### How to escalate properly
+
+**When stopping, provide:**
+
+1. **Progress summary**: Clear description of what was accomplished
+2. **Specific problem**: Exact compilation errors, API conflicts, or technical blockers encountered
+3. **Attempted solutions**: What approaches were tried and why they didn't work
+4. **Next steps recommendation**: Suggested path forward or alternative approaches
+5. **Code state**: Ensure any partial work is in a clean, and either compilable state or provide the command to easily test the compilation error (revert if necessary) 
+
+### Escalation Example
+
+```
+I've implemented the message parsing logic and integrated it with the existing state machine, 
+but encountered a type compatibility issue with the updated MLS API in version X.Y.Z:
+
+Error: `MlsGroup::new()` now requires a `GroupConfig` parameter that wasn't present in the 
+previous version, and the existing codebase uses patterns that are no longer compatible.
+
+Attempted solutions:
+- Updated imports and checked for migration guides
+- Tried adapting existing GroupConfig usage from other parts of the codebase
+- Investigated if the functionality can be achieved with the new API
+
+The change appears to require architectural decisions about how GroupConfig should be 
+managed across the application. Rather than implementing a simplified version that 
+doesn't fully utilize the new API capabilities, I'm handing this back for guidance 
+on the preferred approach.
+
+Current code is compilable with the previous functionality intact.
+```
+
 ## Testing & Quality Assurance
 
 ### CRITICAL: Always verify your changes before completion
