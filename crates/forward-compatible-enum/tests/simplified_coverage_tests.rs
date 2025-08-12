@@ -125,8 +125,7 @@ mod field_type_coverage_tests {
         assert_eq!(discriminant, 0);
 
         // Unit variant should serialize to empty tuple
-        let unit_data: () = postcard::from_bytes(&data).unwrap();
-        assert_eq!(unit_data, ());
+        let _unit_data: () = postcard::from_bytes(&data).unwrap();
     }
 
     #[test]

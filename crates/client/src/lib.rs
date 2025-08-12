@@ -7,10 +7,7 @@ pub mod services;
 pub use client::RelayClient;
 pub use error::ClientError;
 pub use file_storage::FileStorage;
-pub use rpc_transport::{
-    RpcMessageListener, RpcRequestListener, RpcResponseListener, TarpcOverMessagesClient,
-    TarpcOverMessagesServer,
-};
+pub use rpc_transport::{RpcMessageListener, TarpcOverMessagesClient, TarpcOverMessagesServer};
 pub use services::{BlobService, MessagesService, MessagesStream};
 
 // Re-export FileRef and Image from app-primitives for convenience

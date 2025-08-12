@@ -16,9 +16,7 @@ use std::time::Duration;
 use tarpc::server::{BaseChannel, Channel};
 use tokio::time::timeout;
 use tracing::info;
-use zoe_client::{
-    RpcRequestListener, RpcResponseListener, TarpcOverMessagesClient, TarpcOverMessagesServer,
-};
+use zoe_client::{RpcMessageListener, TarpcOverMessagesClient, TarpcOverMessagesServer};
 use zoe_wire_protocol::{MessageFilters, SubscriptionConfig};
 
 /// Information about the echo service
@@ -155,8 +153,8 @@ async fn test_tarpc_echo_service_end_to_end() -> Result<()> {
     tokio::time::sleep(Duration::from_millis(200)).await;
 
     // Create RPC listeners for the service and client
-    let service_request_listener = RpcRequestListener::new(service_key.clone(), service_stream);
-    let client_response_listener = RpcResponseListener::new(rpc_key.clone(), client_stream);
+    let service_request_listener = RpcMessageListener::new(service_key.clone(), service_stream);
+    let client_response_listener = RpcMessageListener::new(rpc_key.clone(), client_stream);
 
     info!("🔧 Created RPC listeners");
 

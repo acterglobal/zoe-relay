@@ -29,12 +29,6 @@ pub struct RpcMessage<T> {
     pub content: T,
 }
 
-/// RPC message listener for tarpc ClientMessage requests  
-pub type RpcRequestListener<T> = RpcMessageListener<ClientMessage<T>>;
-
-/// RPC message listener for tarpc Response messages
-pub type RpcResponseListener<T> = RpcMessageListener<Response<T>>;
-
 /// Simple RPC message listener that detects and decrypts RPC messages
 /// Now specifically for tarpc wrapper types
 pub struct RpcMessageListener<TarpcMsg> {
@@ -196,24 +190,24 @@ where
 type ServiceMaker<Req, Resp> =
     fn(UnboundedChannel<ClientMessage<Req>, Response<Resp>>) -> JoinHandle<Result<()>>;
 
-pub struct TarpcOverMessagesServer<Req, Resp> {
+pub struct TarpcOverMessagesServer {
     // Bridge task handle
     handle: JoinHandle<Result<()>>,
     rpc_spawn: JoinHandle<Result<()>>,
-    _phantom: PhantomData<(Req, Resp)>,
 }
 
-impl<Req, Resp> TarpcOverMessagesServer<Req, Resp>
-where
-    Req: serde::de::DeserializeOwned + Unpin + Send + Sync + 'static,
-    Resp: serde::Serialize + Unpin + Send + Sync + 'static,
-{
-    pub fn new(
-        mut request_listener: RpcRequestListener<Req>,
+impl TarpcOverMessagesServer {
+    pub fn new<S, Req, Resp>(
+        mut request_listener: S,
         signing_key: SigningKey,
         messages_service: MessagesService,
         service_maker: ServiceMaker<Req, Resp>,
-    ) -> Self {
+    ) -> Self
+    where
+        Req: serde::de::DeserializeOwned + Unpin + Send + Sync + 'static,
+        Resp: serde::Serialize + Unpin + Send + Sync + 'static,
+        S: Stream<Item = RpcMessage<ClientMessage<Req>>> + Unpin + Send + Sync + 'static,
+    {
         // Create tarpc transport channel - just like messages.rs
         let (mut client_transport, server_transport) = tarpc::transport::channel::unbounded();
         let rpc_spawn = service_maker(server_transport);
@@ -285,11 +279,7 @@ where
             Ok(())
         });
 
-        Self {
-            handle,
-            rpc_spawn,
-            _phantom: PhantomData,
-        }
+        Self { handle, rpc_spawn }
     }
 
     /// Check if the bridge is still running
@@ -319,14 +309,15 @@ impl<C> Deref for TarpcOverMessagesClient<C> {
 }
 
 impl<C> TarpcOverMessagesClient<C> {
-    pub fn new<Req, Resp>(
-        mut request_listener: RpcResponseListener<Resp>,
+    pub fn new<S, Req, Resp>(
+        mut request_listener: S,
         signing_key: SigningKey,
         messages_service: MessagesService,
         target_public_key: VerifyingKey,
         client_maker: ClientMaker<C, Req, Resp>,
     ) -> Self
     where
+        S: Stream<Item = RpcMessage<Response<Resp>>> + Unpin + Send + Sync + 'static,
         Req: serde::Serialize + Unpin + Send + Sync + 'static,
         Resp: serde::de::DeserializeOwned + Unpin + Send + Sync + 'static,
     {
@@ -416,7 +407,7 @@ where
         header: zoe_wire_protocol::MessageV0Header {
             sender: signing_key.verifying_key(),
             when: timestamp,
-            kind: Kind::Emphemeral(Some(5)), // 5 second timeout for RPC
+            kind: Kind::Emphemeral(Some(60)), // 60 second timeout for RPC
             tags: vec![Tag::User {
                 id: target_public_key.to_bytes().to_vec(),
                 relays: vec![],
