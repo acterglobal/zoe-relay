@@ -1,8 +1,8 @@
-error: unknown attribute: unknown_attribute
+error: unknown attribute in forward_compatible
  --> tests/ui/unknown_attribute.rs:4:22
   |
 4 | #[forward_compatible(unknown_attribute = "value")]  // Unknown attribute!
-  |                      ^^^^^^^^^^^^^^^^^
+  |                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 error[E0601]: `main` function not found in crate `$CRATE`
  --> tests/ui/unknown_attribute.rs:9:2

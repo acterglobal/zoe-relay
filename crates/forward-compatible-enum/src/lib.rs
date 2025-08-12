@@ -18,7 +18,8 @@
 //! 1. **Serializes** enums as `(discriminant: u32, data: Vec<u8>)` tuples
 //! 2. **Preserves** unknown variants as raw bytes during deserialization
 //! 3. **Allows** explicit discriminant assignment for stable wire formats
-//! 4. **Maintains** full round-trip compatibility
+//! 4. **Supports** generic enums with custom serde trait bounds
+//! 5. **Maintains** full round-trip compatibility
 //!
 //! **Important:** Your enum must include an `Unknown` variant with `discriminant: u32` and `data: Vec<u8>` fields.
 //!
@@ -53,6 +54,37 @@
 //! let bytes = postcard::to_stdvec(&message).unwrap();
 //! let recovered: MessageType = postcard::from_bytes(&bytes).unwrap();
 //! assert_eq!(message, recovered);
+//! ```
+//!
+//! ## Generic Enums
+//!
+//! For enums with generic type parameters, specify custom serde bounds:
+//!
+//! ```rust
+//! use forward_compatible_enum::ForwardCompatibleEnum;
+//! use serde::{Serialize, de::DeserializeOwned};
+//!
+//! #[derive(Debug, Clone, PartialEq, Eq, ForwardCompatibleEnum)]
+//! #[forward_compatible(
+//!     serde_serialize = "T: Serialize",
+//!     serde_deserialize = "T: DeserializeOwned"
+//! )]
+//! pub enum Event<T> {
+//!     #[discriminant(1)]
+//!     Data(T),
+//!     
+//!     #[discriminant(2)]
+//!     Notification { content: T, id: u32 },
+//!     
+//!     /// Unknown variant for forward compatibility
+//!     Unknown { discriminant: u32, data: Vec<u8> },
+//! }
+//!
+//! // Works with any serializable type
+//! let event = Event::Data("Hello".to_string());
+//! let bytes = postcard::to_stdvec(&event).unwrap();
+//! let recovered: Event<String> = postcard::from_bytes(&bytes).unwrap();
+//! assert_eq!(event, recovered);
 //! ```
 //!
 //! ## Wire Format
@@ -185,6 +217,9 @@ mod unknown_variant;
 ///     
 ///     #[discriminant(2)]
 ///     Pending { reason: String },
+///     
+///     /// Unknown variant for forward compatibility
+///     Unknown { discriminant: u32, data: Vec<u8> },
 /// }
 /// ```
 ///
@@ -208,6 +243,9 @@ mod unknown_variant;
 ///     // Gaps are allowed - useful for future additions
 ///     #[discriminant(100)]
 ///     Critical,
+///     
+///     /// Unknown variant for forward compatibility
+///     Unknown { discriminant: u32, data: Vec<u8> },
 /// }
 /// ```
 ///
@@ -217,6 +255,8 @@ mod unknown_variant;
 ///
 /// - `unknown_variant = "Name"`: Customizes the name of the generated unknown variant
 /// - `range = "min..max"`: Validates that all discriminants fall within the specified range
+/// - `serde_serialize = "bounds"`: Custom trait bounds for the `Serialize` implementation
+/// - `serde_deserialize = "bounds"`: Custom trait bounds for the `Deserialize` implementation
 ///
 /// ```rust
 /// # use forward_compatible_enum::ForwardCompatibleEnum;
@@ -231,8 +271,117 @@ mod unknown_variant;
 ///     
 ///     #[discriminant(999)]
 ///     Extreme,
+///     
+///     /// Unknown variant for forward compatibility
+///     UnknownPriority { discriminant: u32, data: Vec<u8> },
 /// }
 /// ```
+///
+/// ## Generic Type Support with Custom Serde Bounds
+///
+/// For enums with generic type parameters, you may need to specify custom trait bounds
+/// for the `Serialize` and `Deserialize` implementations. Use the `serde_serialize` and
+/// `serde_deserialize` attributes to provide these bounds:
+///
+/// ```rust
+/// # use forward_compatible_enum::ForwardCompatibleEnum;
+/// # use serde::{Serialize, de::DeserializeOwned};
+/// #[derive(Debug, Clone, PartialEq, Eq, ForwardCompatibleEnum)]
+/// #[forward_compatible(
+///     serde_serialize = "T: Serialize",
+///     serde_deserialize = "T: DeserializeOwned"
+/// )]
+/// pub enum Message<T> {
+///     #[discriminant(1)]
+///     Data(T),
+///     
+///     #[discriminant(2)]
+///     Notification { content: T, priority: u8 },
+///     
+///     #[discriminant(3)]
+///     Bulk(Vec<T>),
+///     
+///     /// Unknown variant for forward compatibility
+///     Unknown { discriminant: u32, data: Vec<u8> },
+/// }
+/// ```
+///
+/// ### Multiple Generic Parameters
+///
+/// For enums with multiple generic parameters, specify bounds for all parameters:
+///
+/// ```rust
+/// # use forward_compatible_enum::ForwardCompatibleEnum;
+/// # use serde::{Serialize, de::DeserializeOwned};
+/// #[derive(Debug, Clone, PartialEq, Eq, ForwardCompatibleEnum)]
+/// #[forward_compatible(
+///     serde_serialize = "T: Serialize, U: Serialize",
+///     serde_deserialize = "T: DeserializeOwned, U: DeserializeOwned"
+/// )]
+/// pub enum Envelope<T, U> {
+///     #[discriminant(10)]
+///     Primary(T),
+///     
+///     #[discriminant(20)]
+///     Secondary(U),
+///     
+///     #[discriminant(30)]
+///     Combined { first: T, second: U },
+///     
+///     /// Unknown variant for forward compatibility
+///     Unknown { discriminant: u32, data: Vec<u8> },
+/// }
+/// ```
+///
+/// ### Complex Trait Bounds
+///
+/// You can specify complex trait bounds including multiple traits and where clauses:
+///
+/// ```rust
+/// # use forward_compatible_enum::ForwardCompatibleEnum;
+/// # use serde::{Serialize, de::DeserializeOwned};
+/// #[derive(Debug, Clone, PartialEq, Eq, ForwardCompatibleEnum)]
+/// #[forward_compatible(
+///     serde_serialize = "T: Serialize + Clone + Send",
+///     serde_deserialize = "T: DeserializeOwned + Clone + Send"
+/// )]
+/// pub enum Event<T> {
+///     #[discriminant(1)]
+///     Activity(T),
+///     
+///     /// Unknown variant for forward compatibility
+///     Unknown { discriminant: u32, data: Vec<u8> },
+/// }
+/// ```
+///
+/// ### Backward Compatibility
+///
+/// The serde bounds feature is fully backward compatible. Enums without generic parameters
+/// or custom bounds work exactly as before:
+///
+/// ```rust
+/// # use forward_compatible_enum::ForwardCompatibleEnum;
+/// // This works without any serde bounds - fully backward compatible
+/// #[derive(Debug, Clone, PartialEq, Eq, ForwardCompatibleEnum)]
+/// pub enum Status {
+///     #[discriminant(0)]
+///     Active,
+///     
+///     #[discriminant(1)]
+///     Inactive,
+///     
+///     /// Unknown variant for forward compatibility
+///     Unknown { discriminant: u32, data: Vec<u8> },
+/// }
+/// ```
+///
+/// ### Notes on Serde Bounds
+///
+/// - **Optional**: Only needed for generic enums where the default trait bounds are insufficient
+/// - **Syntax**: Use standard Rust where-clause syntax (e.g., `"T: Serialize + Clone"`)
+/// - **Separate**: Specify serialize and deserialize bounds independently if needed
+/// - **Multiple Parameters**: Comma-separate bounds for multiple type parameters
+/// - **Standard Traits**: Most commonly used with `Serialize` and `DeserializeOwned`
 ///
 /// # Generated Code
 ///

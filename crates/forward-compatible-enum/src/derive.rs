@@ -7,6 +7,14 @@ use syn::{
 };
 
 use crate::unknown_variant::UnknownVariant;
+/// Parsed `#[serde(bound(...))]` configuration found on the enum
+#[derive(Debug, Default, Clone)]
+struct SerdeBounds {
+    /// Optional additional bounds to apply to the Serialize impl
+    serialize: Option<syn::WhereClause>,
+    /// Optional additional bounds to apply to the Deserialize impl
+    deserialize: Option<syn::WhereClause>,
+}
 
 /// Configuration for the forward compatible enum macro
 #[derive(Debug, Default)]
@@ -60,6 +68,7 @@ pub fn expand_u32_discriminants(input: TokenStream) -> TokenStream {
 fn expand_attribute_impl(input: DeriveInput) -> Result<TokenStream2> {
     // Parse and validate the input
     let config = parse_container_attributes(&input.attrs)?;
+    let serde_bounds = parse_serde_bounds_attributes(&input.attrs)?;
     let variants = parse_enum_variants(&input)?;
 
     // Validate discriminants
@@ -90,11 +99,22 @@ fn expand_attribute_impl(input: DeriveInput) -> Result<TokenStream2> {
     )?;
 
     // Generate serialize implementation
-    let serialize_impl = generate_serialize_impl(enum_name, generics, &variants, &unknown_variant)?;
+    let serialize_impl = generate_serialize_impl(
+        enum_name,
+        generics,
+        &variants,
+        &unknown_variant,
+        serde_bounds.serialize.as_ref(),
+    )?;
 
     // Generate deserialize implementation
-    let deserialize_impl =
-        generate_deserialize_impl(enum_name, generics, &variants, &unknown_variant)?;
+    let deserialize_impl = generate_deserialize_impl(
+        enum_name,
+        generics,
+        &variants,
+        &unknown_variant,
+        serde_bounds.deserialize.as_ref(),
+    )?;
 
     Ok(quote! {
         #new_enum
@@ -106,6 +126,7 @@ fn expand_attribute_impl(input: DeriveInput) -> Result<TokenStream2> {
 fn expand_derive_impl(input: DeriveInput) -> Result<TokenStream2> {
     // Parse and validate the input
     let config = parse_container_attributes(&input.attrs)?;
+    let serde_bounds = parse_serde_bounds_attributes(&input.attrs)?;
     let (known_variants, _unknown_variant_info) = parse_enum_variants_for_derive(&input, &config)?;
 
     // Validate discriminants for known variants only
@@ -126,12 +147,22 @@ fn expand_derive_impl(input: DeriveInput) -> Result<TokenStream2> {
     )?;
 
     // Generate serialize implementation
-    let serialize_impl =
-        generate_serialize_impl(enum_name, generics, &known_variants, &unknown_variant)?;
+    let serialize_impl = generate_serialize_impl(
+        enum_name,
+        generics,
+        &known_variants,
+        &unknown_variant,
+        serde_bounds.serialize.as_ref(),
+    )?;
 
     // Generate deserialize implementation
-    let deserialize_impl =
-        generate_deserialize_impl(enum_name, generics, &known_variants, &unknown_variant)?;
+    let deserialize_impl = generate_deserialize_impl(
+        enum_name,
+        generics,
+        &known_variants,
+        &unknown_variant,
+        serde_bounds.deserialize.as_ref(),
+    )?;
 
     Ok(quote! {
         #serialize_impl
@@ -233,33 +264,119 @@ fn parse_container_attributes(attrs: &[Attribute]) -> Result<ForwardCompatibleCo
 
     for attr in attrs {
         if attr.path().is_ident("forward_compatible") {
-            attr.parse_nested_meta(|meta| {
-                if meta.path.is_ident("unknown_variant") {
-                    let value: Lit = meta.value()?.parse()?;
-                    if let Lit::Str(s) = value {
-                        config.unknown_variant = Some(s.value());
-                    } else {
-                        return Err(meta.error("unknown_variant must be a string literal"));
+            // Use parse_args to handle both "key = value" and "key(value)" syntax
+            let attr_content = attr.meta.clone();
+            match attr_content {
+                syn::Meta::List(list) => {
+                    for nested in list.parse_args_with(
+                        syn::punctuated::Punctuated::<syn::Meta, syn::Token![,]>::parse_terminated,
+                    )? {
+                        match nested {
+                            syn::Meta::NameValue(nv) if nv.path.is_ident("unknown_variant") => {
+                                if let syn::Expr::Lit(syn::ExprLit {
+                                    lit: syn::Lit::Str(s),
+                                    ..
+                                }) = nv.value
+                                {
+                                    config.unknown_variant = Some(s.value());
+                                }
+                            }
+                            syn::Meta::NameValue(nv) if nv.path.is_ident("range") => {
+                                if let syn::Expr::Lit(syn::ExprLit {
+                                    lit: syn::Lit::Str(s),
+                                    ..
+                                }) = nv.value
+                                {
+                                    config.range = Some(parse_range(&s.value())?);
+                                }
+                            }
+                            syn::Meta::NameValue(nv) if nv.path.is_ident("serde_serialize") => {
+                                if let syn::Expr::Lit(syn::ExprLit {
+                                    lit: syn::Lit::Str(_s),
+                                    ..
+                                }) = nv.value
+                                {
+                                    // Store the serialize bound - will be parsed separately
+                                }
+                            }
+                            syn::Meta::NameValue(nv) if nv.path.is_ident("serde_deserialize") => {
+                                if let syn::Expr::Lit(syn::ExprLit {
+                                    lit: syn::Lit::Str(_s),
+                                    ..
+                                }) = nv.value
+                                {
+                                    // Store the deserialize bound - will be parsed separately
+                                }
+                            }
+                            _ => {
+                                return Err(Error::new_spanned(
+                                    nested,
+                                    "unknown attribute in forward_compatible",
+                                ));
+                            }
+                        }
                     }
-                } else if meta.path.is_ident("range") {
-                    let value: Lit = meta.value()?.parse()?;
-                    if let Lit::Str(s) = value {
-                        config.range = Some(parse_range(&s.value())?);
-                    } else {
-                        return Err(meta.error("range must be a string literal"));
-                    }
-                } else {
-                    return Err(meta.error(format!(
-                        "unknown attribute: {}",
-                        meta.path.to_token_stream()
-                    )));
                 }
-                Ok(())
-            })?;
+                _ => {
+                    return Err(Error::new_spanned(
+                        attr,
+                        "forward_compatible must be a list of attributes",
+                    ));
+                }
+            }
         }
     }
 
     Ok(config)
+}
+
+/// Parse `#[forward_compatible(serde_serialize = "...", serde_deserialize = "...")]` attributes into optional where-clauses for
+/// serialize/deserialize impls.
+fn parse_serde_bounds_attributes(attrs: &[Attribute]) -> Result<SerdeBounds> {
+    let mut bounds = SerdeBounds::default();
+
+    for attr in attrs {
+        if attr.path().is_ident("forward_compatible") {
+            let attr_content = attr.meta.clone();
+            if let syn::Meta::List(list) = attr_content
+                && let Ok(nested_metas) = list.parse_args_with(
+                    syn::punctuated::Punctuated::<syn::Meta, syn::Token![,]>::parse_terminated,
+                )
+            {
+                for nested in nested_metas {
+                    match nested {
+                        syn::Meta::NameValue(nv) if nv.path.is_ident("serde_serialize") => {
+                            if let syn::Expr::Lit(syn::ExprLit {
+                                lit: syn::Lit::Str(s),
+                                ..
+                            }) = nv.value
+                            {
+                                let wc: syn::WhereClause =
+                                    syn::parse_str(&format!("where {}", s.value()))?;
+                                bounds.serialize = Some(wc);
+                            }
+                        }
+                        syn::Meta::NameValue(nv) if nv.path.is_ident("serde_deserialize") => {
+                            if let syn::Expr::Lit(syn::ExprLit {
+                                lit: syn::Lit::Str(s),
+                                ..
+                            }) = nv.value
+                            {
+                                let wc: syn::WhereClause =
+                                    syn::parse_str(&format!("where {}", s.value()))?;
+                                bounds.deserialize = Some(wc);
+                            }
+                        }
+                        _ => {
+                            // Ignore other attributes (like unknown_variant, range)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(bounds)
 }
 
 fn parse_range(range_str: &str) -> Result<(u32, u32)> {
@@ -374,7 +491,13 @@ fn generate_enum(
     unknown_variant: &UnknownVariant,
     original_attrs: &[Attribute],
 ) -> Result<TokenStream2> {
-    // For attribute macro, we keep all original derives and attributes
+    // For attribute macro, we keep original attributes except `#[serde(...)]`,
+    // which would cause an error without serde derives. We still parse serde
+    // bounds separately and apply them to impls.
+    let filtered_original_attrs: Vec<_> = original_attrs
+        .iter()
+        .filter(|attr| !attr.path().is_ident("serde"))
+        .collect();
     let variant_tokens: Vec<_> = variants
         .iter()
         .map(|v| {
@@ -399,7 +522,7 @@ fn generate_enum(
     let unknown_ident = &unknown_variant.ident;
 
     Ok(quote! {
-        #(#original_attrs)*
+        #(#filtered_original_attrs)*
         #vis enum #name #generics {
             #(#variant_tokens,)*
 
@@ -423,8 +546,17 @@ fn generate_serialize_impl(
     generics: &syn::Generics,
     variants: &[VariantInfo],
     unknown_variant: &UnknownVariant,
+    extra_where_serialize: Option<&syn::WhereClause>,
 ) -> Result<TokenStream2> {
     let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
+
+    // Use custom bounds if provided, otherwise use standard bounds
+    let combined_where_clause = if extra_where_serialize.is_some() {
+        combine_where_clauses(where_clause, extra_where_serialize)
+    } else {
+        // Default behavior: just use the original where clause
+        where_clause.to_token_stream()
+    };
 
     let match_arms: Vec<_> = variants
         .iter()
@@ -489,7 +621,7 @@ fn generate_serialize_impl(
     let unknown_ident = &unknown_variant.ident;
 
     Ok(quote! {
-        impl #impl_generics ::serde::Serialize for #name #ty_generics #where_clause {
+        impl #impl_generics ::serde::Serialize for #name #ty_generics #combined_where_clause {
             fn serialize<S>(&self, serializer: S) -> ::std::result::Result<S::Ok, S::Error>
             where
                 S: ::serde::Serializer,
@@ -510,8 +642,30 @@ fn generate_deserialize_impl(
     generics: &syn::Generics,
     variants: &[VariantInfo],
     unknown_variant: &UnknownVariant,
+    extra_where_deserialize: Option<&syn::WhereClause>,
 ) -> Result<TokenStream2> {
-    let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
+    let (_impl_generics, ty_generics, where_clause) = generics.split_for_impl();
+
+    // For deserialize, we need to add 'de lifetime to the impl generics
+    let mut impl_generics_with_lifetime = generics.clone();
+    // Add 'de lifetime parameter if not already present
+    if !impl_generics_with_lifetime
+        .lifetimes()
+        .any(|lt| lt.lifetime.ident == "de")
+    {
+        impl_generics_with_lifetime
+            .params
+            .insert(0, syn::parse_quote!('de));
+    }
+    let (impl_generics_with_de, _, _) = impl_generics_with_lifetime.split_for_impl();
+
+    // Use custom bounds if provided, otherwise use standard bounds
+    let combined_where_clause = if extra_where_deserialize.is_some() {
+        combine_where_clauses(where_clause, extra_where_deserialize)
+    } else {
+        // Default behavior: just use the original where clause
+        where_clause.to_token_stream()
+    };
 
     let match_arms: Vec<_> = variants
         .iter()
@@ -591,7 +745,7 @@ fn generate_deserialize_impl(
     let unknown_ident = &unknown_variant.ident;
 
     Ok(quote! {
-        impl<'de> #impl_generics ::serde::Deserialize<'de> for #name #ty_generics #where_clause {
+        impl #impl_generics_with_de ::serde::Deserialize<'de> for #name #ty_generics #combined_where_clause {
             fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
             where
                 D: ::serde::Deserializer<'de>,
@@ -611,6 +765,36 @@ fn generate_deserialize_impl(
             }
         }
     })
+}
+
+/// Merge an existing generics where-clause (from the enum) with an additional
+/// where-clause parsed from `#[serde(bound(...))]`.
+fn combine_where_clauses(
+    original: Option<&syn::WhereClause>,
+    extra: Option<&syn::WhereClause>,
+) -> TokenStream2 {
+    use syn::punctuated::Punctuated;
+    use syn::{Token, WherePredicate};
+
+    let mut predicates: Punctuated<WherePredicate, Token![,]> = Punctuated::new();
+
+    if let Some(orig) = original {
+        for p in orig.predicates.iter() {
+            predicates.push(p.clone());
+        }
+    }
+
+    if let Some(extra_wc) = extra {
+        for p in extra_wc.predicates.iter() {
+            predicates.push(p.clone());
+        }
+    }
+
+    if predicates.is_empty() {
+        quote! {}
+    } else {
+        quote! { where #predicates }
+    }
 }
 
 /// Configuration for the U32Discriminants enum macro
