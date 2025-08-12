@@ -4,8 +4,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 use super::events::roles::GroupRole;
-use super::events::{GroupManagementEvent, GroupSettings};
-use crate::{GroupActivityEvent, IdentityInfo, IdentityRef, IdentityType, Metadata, Permission};
+use super::events::{GroupActivityEvent, GroupSettings};
+use crate::{IdentityInfo, IdentityRef, IdentityType, Metadata, Permission};
 
 /// Advanced identity and membership management for distributed groups.
 ///
@@ -821,9 +821,9 @@ impl GroupState {
     /// - [`GroupState::last_event_timestamp`] is updated
     /// - [`GroupState::event_history`] includes the new event ID
     /// - Specific state changes depend on the event type
-    pub fn apply_event(
+    pub fn apply_event<T>(
         &mut self,
-        event: &GroupActivityEvent<()>,
+        event: &GroupActivityEvent<T>,
         event_id: Hash,
         sender: VerifyingKey,
         timestamp: u64,
@@ -838,44 +838,40 @@ impl GroupState {
 
         // Apply the specific event
         match event {
-            GroupActivityEvent::Management(management_event) => {
-                match management_event.as_ref() {
-                    GroupManagementEvent::LeaveGroup { message } => {
-                        self.handle_leave_group(sender, message.clone(), timestamp)?;
-                    }
+            GroupActivityEvent::LeaveGroup { message } => {
+                self.handle_leave_group(sender, message.clone(), timestamp)?;
+            }
 
-                    GroupManagementEvent::UpdateGroup(group_info) => {
-                        // Handle group updates
-                        self.name = group_info.name.clone();
-                        self.settings = group_info.settings.clone();
-                        self.metadata = group_info.metadata.clone();
-                    }
+            GroupActivityEvent::UpdateGroup(group_info) => {
+                // Handle group updates
+                self.name = group_info.name.clone();
+                self.settings = group_info.settings.clone();
+                self.metadata = group_info.metadata.clone();
+            }
 
-                    GroupManagementEvent::AssignRole { target, role } => {
-                        // Convert target to VerifyingKey for role update
-                        if let IdentityRef::Key(member_key) = target {
-                            self.handle_update_member_role(sender, *member_key, role.clone())?;
-                        }
-                    }
-
-                    GroupManagementEvent::SetIdentity(_) => {
-                        // Handle identity setting - for now just ensure sender is a member
-                        self.handle_member_announcement(sender, timestamp)?;
-                    }
-
-                    GroupManagementEvent::RemoveFromGroup { target } => {
-                        // Handle member removal
-                        if let IdentityRef::Key(member_key) = target {
-                            self.members.remove(member_key);
-                        }
-                    }
-
-                    GroupManagementEvent::Unknown { discriminant, .. } => {
-                        // Unknown management event - ignore for forward compatibility
-                        // Future implementations could log this with: discriminant value {discriminant}
-                        let _ = discriminant; // Acknowledge the discriminant without warning
-                    }
+            GroupActivityEvent::AssignRole { target, role } => {
+                // Convert target to VerifyingKey for role update
+                if let IdentityRef::Key(member_key) = target {
+                    self.handle_update_member_role(sender, *member_key, role.clone())?;
                 }
+            }
+
+            GroupActivityEvent::SetIdentity(_) => {
+                // Handle identity setting - for now just ensure sender is a member
+                self.handle_member_announcement(sender, timestamp)?;
+            }
+
+            GroupActivityEvent::RemoveFromGroup { target } => {
+                // Handle member removal
+                if let IdentityRef::Key(member_key) = target {
+                    self.members.remove(member_key);
+                }
+            }
+
+            GroupActivityEvent::Unknown { discriminant, .. } => {
+                // Unknown management event - ignore for forward compatibility
+                // Future implementations could log this with: discriminant value {discriminant}
+                let _ = discriminant; // Acknowledge the discriminant without warning
             }
 
             GroupActivityEvent::Activity(_activity_data) => {

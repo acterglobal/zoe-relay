@@ -1,5 +1,5 @@
 use forward_compatible_enum::ForwardCompatibleEnum;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
 use super::roles::GroupRole;
 use crate::{IdentityInfo, IdentityRef, IdentityType, Metadata};
@@ -36,21 +36,23 @@ pub struct GroupInfo {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(bound(deserialize = "T: DeserializeOwned", serialize = "T : Serialize"))]
 pub struct GroupEvent<T> {
     /// which identity are we sending this event as
     idenitity: IdentityType,
     /// the event we are sending
-    event: GroupActivityEvent<T>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub enum GroupActivityEvent<T> {
-    Management(Box<GroupManagementEvent>),
-    Activity(T),
+    event: Box<GroupActivityEvent<T>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, ForwardCompatibleEnum)]
-pub enum GroupManagementEvent {
+#[forward_compatible(
+    serde_serialize = "T: Serialize",
+    serde_deserialize = "T: DeserializeOwned"
+)]
+pub enum GroupActivityEvent<T> {
+    #[discriminant(0)]
+    Activity(T),
+
     /// Update group metadata (name, description, settings)
     #[discriminant(1)]
     UpdateGroup(GroupInfo),

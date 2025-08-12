@@ -1,7 +1,6 @@
 // ChaCha20-Poly1305 and AES-GCM functionality moved to crypto module
 use blake3::Hash;
 use ed25519_dalek::{SigningKey, VerifyingKey};
-use zoe_app_primitives::events::GroupManagementEvent;
 use zoe_app_primitives::{GroupInfo, IdentityRef};
 // Random number generation moved to wire-protocol crypto module
 use std::collections::HashMap;
@@ -114,9 +113,7 @@ impl DigitalGroupAssistant {
             }),
         };
 
-        let event = GroupActivityEvent::Management(Box::new(GroupManagementEvent::UpdateGroup(
-            group_info.clone(),
-        )));
+        let event = GroupActivityEvent::UpdateGroup(group_info.clone());
 
         // Encrypt the event before creating the wire protocol message
         let encrypted_payload = self.encrypt_group_event(&event, &encryption_key)?;
@@ -268,9 +265,7 @@ impl DigitalGroupAssistant {
         };
 
         // Handle the root event (group creation) specially
-        if let GroupActivityEvent::Management(management_event) = &event
-            && let GroupManagementEvent::UpdateGroup(group_info) = management_event.as_ref()
-        {
+        if let GroupActivityEvent::UpdateGroup(group_info) = &event {
             // This is a root event - create the group state using the new constructor
             let group_state = GroupState::new(
                 group_id,
@@ -410,15 +405,15 @@ impl Default for DigitalGroupAssistant {
 
 /// Create a leave group event
 pub fn create_leave_group_event(message: Option<String>) -> GroupActivityEvent<()> {
-    GroupActivityEvent::Management(Box::new(GroupManagementEvent::LeaveGroup { message }))
+    GroupActivityEvent::LeaveGroup { message }
 }
 
 /// Create a role update event
 pub fn create_role_update_event(member: VerifyingKey, role: GroupRole) -> GroupActivityEvent<()> {
-    GroupActivityEvent::Management(Box::new(GroupManagementEvent::AssignRole {
+    GroupActivityEvent::AssignRole {
         target: IdentityRef::Key(member),
         role,
-    }))
+    }
 }
 
 /// Create a custom group activity event
@@ -428,5 +423,5 @@ pub fn create_group_activity_event<T>(activity_data: T) -> GroupActivityEvent<T>
 
 /// Create a group update event
 pub fn create_group_update_event(group_info: GroupInfo) -> GroupActivityEvent<()> {
-    GroupActivityEvent::Management(Box::new(GroupManagementEvent::UpdateGroup(group_info)))
+    GroupActivityEvent::UpdateGroup(group_info)
 }

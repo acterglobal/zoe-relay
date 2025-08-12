@@ -178,9 +178,7 @@ mod tests {
     use super::events::permissions::{GroupAction, GroupPermissions, Permission};
     use super::events::roles::GroupRole;
     use super::events::settings::{EncryptionSettings, GroupSettings};
-    use super::events::{
-        GroupActivityEvent, GroupInfo, GroupJoinInfo, GroupKeyInfo, GroupManagementEvent,
-    };
+    use super::events::{GroupActivityEvent, GroupInfo, GroupJoinInfo, GroupKeyInfo};
     use crate::{Metadata, RelayEndpoint};
     use ed25519_dalek::{SigningKey, VerifyingKey};
     use std::net::{IpAddr, Ipv4Addr, SocketAddr};
@@ -535,14 +533,12 @@ mod tests {
 
     #[test]
     fn test_postcard_serialization_group_activity_event() {
-        let event = GroupActivityEvent::Management(Box::new(GroupManagementEvent::UpdateGroup(
-            GroupInfo {
-                name: "Test Group".to_string(),
-                settings: GroupSettings::default(),
-                key_info: create_test_group_key_info(vec![1, 2, 3]),
-                metadata: Vec::new(),
-            },
-        )));
+        let event = GroupActivityEvent::UpdateGroup(GroupInfo {
+            name: "Test Group".to_string(),
+            settings: GroupSettings::default(),
+            key_info: create_test_group_key_info(vec![1, 2, 3]),
+            metadata: Vec::new(),
+        });
 
         let serialized = postcard::to_stdvec(&event).expect("Failed to serialize");
         let deserialized: GroupActivityEvent<()> =
