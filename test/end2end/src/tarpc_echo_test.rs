@@ -15,8 +15,8 @@ use rand::rngs::OsRng;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 use tarpc::{
-    ClientMessage, Request,
-    server::{BaseChannel, Channel},
+    ClientMessage, Request, RequestName,
+    server::{BaseChannel, Channel, Serve, TrackedRequest},
 };
 use tokio::time::timeout;
 use tracing::info;
@@ -52,19 +52,31 @@ pub trait EchoServiceV1 {
     /// Echo a message back to the caller
     async fn echo(message: String) -> String;
 
+    /// hello world variant
+    async fn hello(name: String) -> String;
+
     /// Get service information
     async fn get_info() -> ServiceInfo;
 
     /// Perform a simple calculation
     async fn add_numbers(a: i32, b: i32) -> i32;
+}
 
-    // THis is the new feature. Important here: internally tarpc uses an enum and
-    // that is ordered. So for simple backwards comptabile chnages, we  *must* add
-    // the new features _at the end_ of the trait and keep all other signatures
-    // exactly how they were.
+impl<T> EchoServiceV0 for T
+where
+    T: EchoServiceV1,
+{
+    async fn echo(self, context: ::tarpc::context::Context, message: String) -> String {
+        EchoServiceV1::echo(self, context, message).await
+    }
 
-    /// hello world variant
-    async fn hello(name: String) -> String;
+    async fn get_info(self, context: ::tarpc::context::Context) -> ServiceInfo {
+        EchoServiceV1::get_info(self, context).await
+    }
+
+    async fn add_numbers(self, context: ::tarpc::context::Context, a: i32, b: i32) -> i32 {
+        EchoServiceV1::add_numbers(self, context, a, b).await
+    }
 }
 
 // tarpc generates request/response types automatically - no wrapper needed!
@@ -123,57 +135,73 @@ pub enum EchoServiceRequestInner {
     },
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-pub struct EchoServiceRequest(ClientMessage<EchoServiceRequestInner>);
-
-impl EchoServiceRequest {
-    pub fn unwrap_message(self) -> Option<ClientMessage<EchoServiceV1Request>> {
-        match self.0 {
-            ClientMessage::Cancel {
-                request_id,
-                trace_context,
-            } => Some(ClientMessage::Cancel {
-                request_id,
-                trace_context,
-            }),
-            ClientMessage::Request(Request {
-                message: EchoServiceRequestInner::V1(request),
-                context,
-                id,
-            }) => Some(ClientMessage::Request(Request {
-                message: request,
-                context,
-                id,
-            })),
-            ClientMessage::Request(Request {
-                message: EchoServiceRequestInner::V0(request),
-                context,
-                id,
-            }) => {
-                let new_message = match request {
-                    EchoServiceV0Request::Echo { message } => {
-                        EchoServiceV1Request::Echo { message }
-                    }
-                    EchoServiceV0Request::GetInfo {} => EchoServiceV1Request::GetInfo {},
-                    EchoServiceV0Request::AddNumbers { a, b } => EchoServiceV1Request::AddNumbers {
-                        a,
-                        b,
-                    },
-                }; // we rewrite that into the v1 request
-                Some(ClientMessage::Request(Request {
-                    message: new_message,
-                    context,
-                    id,
-                }))
-            }
-            _ => None, // we don't support anything else
+impl RequestName for EchoServiceRequestInner {
+    fn name(&self) -> &str {
+        match self {
+            EchoServiceRequestInner::V0(a) => a.name(),
+            EchoServiceRequestInner::V1(a) => a.name(),
+            EchoServiceRequestInner::Unknown { .. } => "unknown",
         }
     }
 }
 
+// just an internal wrapper for all the possible responses for us to
+// serialize them cleanly.
+enum EchoServiceResponse {
+    V0(EchoServiceV0Response),
+    V1(EchoServiceV1Response),
+}
+
+impl Serialize for EchoServiceResponse {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        match self {
+            EchoServiceResponse::V0(a) => a.serialize(serializer),
+            EchoServiceResponse::V1(a) => a.serialize(serializer),
+        }
+    }
+}
+
+#[derive(Clone)]
+struct MultiEchoServiceServe(EchoServiceImpl);
+
+impl Serve for MultiEchoServiceServe {
+    type Req = EchoServiceRequestInner;
+
+    type Resp = EchoServiceResponse;
+
+    async fn serve(
+        self,
+        ctx: tarpc::context::Context,
+        req: Self::Req,
+    ) -> std::result::Result<Self::Resp, tarpc::ServerError> {
+        match req {
+            EchoServiceRequestInner::V0(inn) => EchoServiceV0::serve(self.0)
+                .serve(ctx, inn)
+                .await
+                .map(EchoServiceResponse::V0),
+            EchoServiceRequestInner::V1(inn) => EchoServiceV1::serve(self.0)
+                .serve(ctx, inn)
+                .await
+                .map(EchoServiceResponse::V1),
+            EchoServiceRequestInner::Unknown { discriminant, data } => {
+                Err(tarpc::ServerError::new(
+                    std::io::ErrorKind::Unsupported,
+                    format!("Service type unknown {discriminant}"),
+                ))
+            }
+        }
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct EchoServiceRequest(ClientMessage<EchoServiceRequestInner>);
+
 /// Test tarpc echo service using TarpcOverMessages transport
 #[tokio::test]
-async fn test_tarpc_echo_service_end_to_end() -> Result<()> {
+async fn test_tarpc_echo_service_end_to_end_multi_versioned() -> Result<()> {
     let infra = TestInfrastructure::setup().await?;
 
     // Create two clients with different keys - one for service, one for client
@@ -277,20 +305,15 @@ async fn test_tarpc_echo_service_end_to_end() -> Result<()> {
     tokio::time::sleep(Duration::from_millis(200)).await;
 
     // Create RPC listeners for the service and client
-    let service_request_stream =
-        RpcMessageListener::<EchoServiceRequest>::new(service_key.clone(), service_stream);
-    let service_request_listener = Box::pin(service_request_stream.filter_map(|msg| async move {
-        let RpcMessage { content, header } = msg;
-        content
-            .unwrap_message()
-            .map(|c| RpcMessage { content: c, header })
-    }));
-
+    let service_request_stream = RpcMessageListener::<ClientMessage<EchoServiceRequestInner>>::new(
+        service_key.clone(),
+        service_stream,
+    );
     info!("🔧 Created RPC server listeners");
 
     // Create tarpc echo server using TarpcOverMessagesServer
     let echo_server = TarpcOverMessagesServer::new(
-        service_request_listener,
+        service_request_stream,
         service_key.clone(),
         service_messages,
         move |transport| {
@@ -299,7 +322,7 @@ async fn test_tarpc_echo_service_end_to_end() -> Result<()> {
 
             tokio::spawn(async move {
                 channel
-                    .execute(service.serve())
+                    .execute(MultiEchoServiceServe(service))
                     .for_each(|response| async move {
                         tokio::spawn(response);
                     })
