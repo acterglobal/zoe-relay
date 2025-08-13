@@ -310,7 +310,7 @@ impl<C> Deref for TarpcOverMessagesClient<C> {
 
 impl<C> TarpcOverMessagesClient<C> {
     pub fn new<S, Req, Resp>(
-        mut request_listener: S,
+        request_listener: S,
         signing_key: SigningKey,
         messages_service: MessagesService,
         target_public_key: VerifyingKey,
@@ -320,6 +320,31 @@ impl<C> TarpcOverMessagesClient<C> {
         S: Stream<Item = RpcMessage<Response<Resp>>> + Unpin + Send + Sync + 'static,
         Req: serde::Serialize + Unpin + Send + Sync + 'static,
         Resp: serde::de::DeserializeOwned + Unpin + Send + Sync + 'static,
+    {
+        Self::new_with_mapper(
+            request_listener,
+            signing_key,
+            messages_service,
+            target_public_key,
+            client_maker,
+            |rpc_message| rpc_message,
+        )
+    }
+
+    pub fn new_with_mapper<S, Req, Resp, M, T>(
+        mut request_listener: S,
+        signing_key: SigningKey,
+        messages_service: MessagesService,
+        target_public_key: VerifyingKey,
+        client_maker: ClientMaker<C, Req, Resp>,
+        mapper: M,
+    ) -> Self
+    where
+        S: Stream<Item = RpcMessage<Response<Resp>>> + Unpin + Send + Sync + 'static,
+        T: serde::Serialize + Unpin + Send + Sync + 'static,
+        Req: serde::Serialize + Unpin + Send + Sync + 'static,
+        Resp: serde::de::DeserializeOwned + Unpin + Send + Sync + 'static,
+        M: Fn(ClientMessage<Req>) -> T + Send + Sync + 'static,
     {
         let (client_transport, mut server_transport) = tarpc::transport::channel::unbounded();
         let client = client_maker(client_transport);
@@ -353,7 +378,7 @@ impl<C> TarpcOverMessagesClient<C> {
                         };
                         // Send RPC message directly since MessagesServiceRequestWrap is now just ClientMessage
 
-                        if let Err(e) = send_tarpc_message(&signing_key, target_public_key, &messages_service, &rpc_message).await {
+                        if let Err(e) = send_tarpc_message(&signing_key, target_public_key, &messages_service, &mapper(rpc_message)).await {
                             return Err(ClientError::Generic(format!("Send error: {e}")));
                         }
                     }
