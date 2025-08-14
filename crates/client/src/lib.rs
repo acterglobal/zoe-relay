@@ -1,10 +1,10 @@
-pub mod client;
+pub mod relay_client;
 pub mod error;
 pub mod file_storage;
 pub mod rpc_transport;
 pub mod services;
 
-pub use client::RelayClient;
+pub use relay_client::RelayClient;
 pub use error::ClientError;
 pub use file_storage::FileStorage;
 pub use rpc_transport::{RpcMessageListener, TarpcOverMessagesClient, TarpcOverMessagesServer};
