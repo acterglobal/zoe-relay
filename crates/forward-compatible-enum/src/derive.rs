@@ -337,12 +337,12 @@ fn parse_serde_bounds_attributes(attrs: &[Attribute]) -> Result<SerdeBounds> {
 
     for attr in attrs {
         if attr.path().is_ident("forward_compatible") {
-            let attr_content = attr.meta.clone();
-            if let syn::Meta::List(list) = attr_content
-                && let Ok(nested_metas) = list.parse_args_with(
-                    syn::punctuated::Punctuated::<syn::Meta, syn::Token![,]>::parse_terminated,
-                )
-            {
+            let syn::Meta::List(ref list) = attr.meta else {
+                continue;
+            };
+            if let Ok(nested_metas) = list.parse_args_with(
+                syn::punctuated::Punctuated::<syn::Meta, syn::Token![,]>::parse_terminated,
+            ) {
                 for nested in nested_metas {
                     match nested {
                         syn::Meta::NameValue(nv) if nv.path.is_ident("serde_serialize") => {
