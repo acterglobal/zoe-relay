@@ -72,9 +72,7 @@ required-features = ["mls"]
 name = "encrypted_personal_data"
 path = "examples/encrypted_personal_data.rs"
 
-[[example]]
-name = "file_storage_example"
-path = "examples/file_storage_example.rs"
+
 
 [[example]]
 name = "simple_bot_service"
@@ -85,6 +83,10 @@ path = "examples/simple_bot_service.rs"
 # Testing framework
 tokio-test = { workspace = true }
 tokio = { workspace = true, features = ["test-util", "macros", "rt-multi-thread"] }
+
+# End-to-end testing dependencies
+zoe-relay = { path = "../relay" }
+zoe-message-store = { path = "../message-store" }
 
 clap = { workspace = true }
 anyhow = { workspace = true }

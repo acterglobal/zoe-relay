@@ -8819,6 +8819,8 @@ dependencies = [
  "zoe-app-primitives",
  "zoe-blob-store",
  "zoe-encrypted-storage",
+ "zoe-message-store",
+ "zoe-relay",
  "zoe-wire-protocol",
 ]
 

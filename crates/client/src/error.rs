@@ -2,6 +2,8 @@
 pub enum ClientError {
     #[error("Generic error: {0}")]
     Generic(String),
+    #[error("Build error: {0}")]
+    BuildError(String),
     #[error("TLS error: {0}")]
     Tls(#[from] rustls::Error),
     #[error("Quinn connect error: {0}")]
