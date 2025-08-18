@@ -4,7 +4,13 @@ version = "0.1.0"
 edition = "2024"
 
 [features]
+default = ["frb-api"]
 mls = ["dep:openmls", "dep:openmls_rust_crypto", "dep:openmls_basic_credential", "dep:openmls_memory_storage"]
+frb-api = ["dep:flutter_rust_bridge"]
+
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(frb_expand)'] }
 
 [dependencies]
 # Wire protocol for crypto utilities
@@ -14,6 +20,9 @@ zoe-wire-protocol = { path = "../wire-protocol" }
 zoe-encrypted-storage = { path = "../encrypted-storage" }
 zoe-blob-store = { path = "../blob-store" }
 zoe-app-primitives = { path = "../app-primitives" }
+
+# Flutter Rust Bridge (optional)
+flutter_rust_bridge = { version = "=2.11.1", optional = true }
 
 # Async runtime
 tokio = { workspace = true, features = ["io-util"] }
@@ -54,6 +63,7 @@ thiserror = { workspace = true }
 # RPC and futures for relay service traits
 tarpc = { workspace = true }
 anyhow = { workspace = true }
+
 
 [[example]]
 name = "echo_message_client"

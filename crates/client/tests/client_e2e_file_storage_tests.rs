@@ -92,9 +92,8 @@ impl TestInfrastructure {
         );
 
         let mut builder = Client::builder();
-        builder
-            .media_storage_path(media_storage_path.to_string_lossy().to_string())
-            .server_info(self.server_public_key, self.server_addr);
+        builder.media_storage_path(media_storage_path.to_string_lossy().to_string());
+        builder.server_info(self.server_public_key, self.server_addr);
 
         let client = timeout(Duration::from_secs(10), builder.build())
             .await
@@ -196,7 +195,7 @@ async fn test_client_e2e_file_storage_with_relay() -> Result<()> {
     // Step 2: Verify Client 1 can retrieve its own file
     info!("🔍 Client 1 verifying local retrieval...");
     let client1_retrieved = client1
-        .retrieve_file(&stored_file_ref)
+        .retrieve_file_bytes(&stored_file_ref)
         .await
         .context("Client 1 failed to retrieve its own file")?;
 
@@ -225,7 +224,7 @@ async fn test_client_e2e_file_storage_with_relay() -> Result<()> {
     info!("   📋 Looking for blob hash: {}", stored_file_ref.blob_hash);
 
     let client2_retrieved = client2
-        .retrieve_file(&stored_file_ref)
+        .retrieve_file_bytes(&stored_file_ref)
         .await
         .context("Client 2 failed to retrieve file from relay server")?;
 
@@ -260,7 +259,7 @@ async fn test_client_e2e_file_storage_with_relay() -> Result<()> {
     // Step 8: Test retrieving again from Client 2 (should use local cache)
     info!("🔍 Client 2 testing local cache retrieval...");
     let client2_cached = client2
-        .retrieve_file(&stored_file_ref)
+        .retrieve_file_bytes(&stored_file_ref)
         .await
         .context("Client 2 failed to retrieve file from local cache")?;
 
@@ -291,7 +290,7 @@ async fn test_client_e2e_file_storage_with_relay() -> Result<()> {
     info!("💾 Testing file-to-disk operations...");
     let output_path = temp_dir2.path().join("retrieved_file.txt");
     client2
-        .retrieve_file_to_disk(&stored_file_ref, &output_path)
+        .retrieve_file(&stored_file_ref, output_path.clone())
         .await
         .context("Failed to retrieve file to disk")?;
 
@@ -353,7 +352,7 @@ async fn test_client_e2e_file_from_disk_with_relay() -> Result<()> {
     // Step 1: Client 1 stores the file from disk
     info!("📤 Client 1 storing file from disk...");
     let stored_file_ref = client1
-        .store_file(&input_file_path)
+        .store_file(input_file_path)
         .await
         .context("Client 1 failed to store file from disk")?;
 
@@ -372,7 +371,7 @@ async fn test_client_e2e_file_from_disk_with_relay() -> Result<()> {
     info!("📥 Client 2 retrieving file from relay and saving to disk...");
     let output_file_path = temp_dir2.path().join("output_test_file.txt");
     client2
-        .retrieve_file_to_disk(&stored_file_ref, &output_file_path)
+        .retrieve_file(&stored_file_ref, output_file_path.clone())
         .await
         .context("Client 2 failed to retrieve file from relay to disk")?;
 

@@ -4,11 +4,16 @@ use ed25519_dalek::{SigningKey, VerifyingKey};
 use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
 use std::path::PathBuf;
-use std::{path::Path, sync::Arc};
+use std::sync::Arc;
+use tokio::fs;
 use zoe_app_primitives::FileRef;
 use zoe_blob_store::BlobClient;
 
+#[cfg(feature = "frb-api")]
+use flutter_rust_bridge::frb;
+
 #[derive(Serialize, Deserialize)]
+#[cfg_attr(feature = "frb-api", frb(opaque))]
 pub struct ClientSecret {
     signing_key: SigningKey,
     server_public_key: VerifyingKey,
@@ -27,6 +32,20 @@ impl TryFrom<String> for ClientSecret {
 }
 
 impl ClientSecret {
+    // Add this constructor method
+    pub fn new(
+        signing_key: SigningKey,
+        server_public_key: VerifyingKey,
+        server_addr: SocketAddr,
+    ) -> Self {
+        Self {
+            signing_key,
+            server_public_key,
+            server_addr,
+        }
+    }
+
+    #[cfg_attr(feature = "frb-api", frb)]
     pub fn as_hex(&self) -> Result<String> {
         let serialized = postcard::to_stdvec(&self).map_err(|e| {
             ClientError::Generic(format!("Could not serialized client secret: {e})"))
@@ -34,6 +53,7 @@ impl ClientSecret {
         Ok(hex::encode(serialized))
     }
 
+    #[cfg_attr(feature = "frb-api", frb)]
     pub fn from_hex(value: String) -> Result<Self> {
         ClientSecret::try_from(value)
     }
@@ -46,6 +66,7 @@ pub struct ClientInner {
 }
 
 #[derive(Default)]
+#[cfg_attr(feature = "frb-api", frb(opaque))]
 pub struct ClientBuilder {
     media_storage_path: Option<PathBuf>,
     signing_key: Option<SigningKey>,
@@ -54,7 +75,8 @@ pub struct ClientBuilder {
 }
 
 impl ClientBuilder {
-    pub fn client_secret(&mut self, secret: ClientSecret) -> &mut Self {
+    #[cfg_attr(feature = "frb-api", frb)]
+    pub fn client_secret(&mut self, secret: ClientSecret) {
         let ClientSecret {
             signing_key,
             server_public_key,
@@ -63,29 +85,25 @@ impl ClientBuilder {
         self.server_addr = Some(server_addr);
         self.server_public_key = Some(server_public_key);
         self.signing_key = Some(signing_key);
-        self
     }
 
-    pub fn media_storage_path(&mut self, media_storage_path: String) -> &mut Self {
+    #[cfg_attr(feature = "frb-api", frb)]
+    pub fn media_storage_path(&mut self, media_storage_path: String) {
         self.media_storage_path = Some(PathBuf::from(media_storage_path));
-        self
     }
 
-    pub fn signing_key(&mut self, signing_key: SigningKey) -> &mut Self {
+    #[cfg_attr(feature = "frb-api", frb(ignore))]
+    pub fn signing_key(&mut self, signing_key: SigningKey) {
         self.signing_key = Some(signing_key);
-        self
     }
 
-    pub fn server_info(
-        &mut self,
-        server_public_key: VerifyingKey,
-        server_addr: SocketAddr,
-    ) -> &mut Self {
+    #[cfg_attr(feature = "frb-api", frb)]
+    pub fn server_info(&mut self, server_public_key: VerifyingKey, server_addr: SocketAddr) {
         self.server_public_key = Some(server_public_key);
         self.server_addr = Some(server_addr);
-        self
     }
 
+    #[cfg_attr(feature = "frb-api", frb)]
     pub async fn build(self) -> Result<Client> {
         let Some(media_storage_path) = self.media_storage_path else {
             return Err(ClientError::BuildError(
@@ -124,12 +142,14 @@ impl ClientBuilder {
 }
 
 #[derive(Clone)]
+#[cfg_attr(feature = "frb-api", frb(opaque))]
 pub struct Client {
     inner: Arc<ClientInner>,
 }
 
 impl Client {
     /// Create a new ClientBuilder for constructing a Client
+    #[cfg_attr(feature = "frb-api", frb)]
     pub fn builder() -> ClientBuilder {
         ClientBuilder::default()
     }
@@ -151,9 +171,16 @@ impl Client {
     ///
     /// # Returns
     ///
-    /// `FileRef` containing the blob hash, encryption info, and metadata
-    pub async fn store_file(&self, file_path: &Path) -> Result<FileRef> {
-        self.inner.fs.store_file(file_path).await
+    /// A `FileRef` containing the metadata needed to retrieve the file
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - The file cannot be read
+    /// - Encryption fails
+    /// - Blob storage operation fails
+    pub async fn store_file(&self, file_path: PathBuf) -> Result<FileRef> {
+        self.inner.fs.store_file(&file_path).await
     }
 
     /// Store raw data (not from a file) with encryption and blob storage
@@ -181,24 +208,6 @@ impl Client {
             .await
     }
 
-    /// Retrieve a file from storage and decrypt it
-    ///
-    /// This method:
-    /// 1. Retrieves the encrypted data from blob storage using the hash
-    /// 2. Decrypts the data using the provided encryption info
-    /// 3. Returns the original file content
-    ///
-    /// # Arguments
-    ///
-    /// * `stored_info` - Metadata from when the file was stored
-    ///
-    /// # Returns
-    ///
-    /// The original file content as bytes
-    pub async fn retrieve_file(&self, stored_info: &FileRef) -> Result<Vec<u8>> {
-        self.inner.fs.retrieve_file(stored_info).await
-    }
-
     /// Check if a file exists in storage
     ///
     /// # Arguments
@@ -212,26 +221,69 @@ impl Client {
         self.inner.fs.has_file(stored_info).await
     }
 
-    /// Save retrieved file content to disk
+    /// Retrieve a file from storage and save it to disk
     ///
-    /// This is a convenience method that combines `retrieve_file` with writing to disk.
+    /// This method:
+    /// 1. Retrieves the encrypted data from blob storage using the FileRef
+    /// 2. Decrypts the content
+    /// 3. Writes the decrypted content to the specified path
     ///
     /// # Arguments
     ///
-    /// * `stored_info` - Metadata from when the file was stored
-    /// * `output_path` - Path where to write the retrieved file
-    pub async fn retrieve_file_to_disk(
-        &self,
-        stored_info: &FileRef,
-        output_path: &Path,
-    ) -> Result<()> {
-        self.inner
-            .fs
-            .retrieve_file_to_disk(stored_info, output_path)
+    /// * `file_ref` - Metadata for the file to retrieve
+    /// * `output_path` - Path where the decrypted file should be saved
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - The file cannot be found in storage
+    /// - Decryption fails
+    /// - Writing to disk fails
+    pub async fn retrieve_file(&self, file_ref: &FileRef, output_path: PathBuf) -> Result<()> {
+        // Get the file content from storage
+        let content = self.inner.fs.retrieve_file(file_ref).await?;
+
+        // Write the content to the specified path
+        fs::write(&output_path, content)
             .await
+            .map_err(ClientError::Io)?;
+
+        Ok(())
     }
 
-    /// Get the underlying blob client for advanced operations
+    /// Retrieve a file from storage as bytes
+    ///
+    /// This method:
+    /// 1. Retrieves the encrypted data from blob storage using the FileRef
+    /// 2. Decrypts the content
+    /// 3. Returns the decrypted content as bytes
+    ///
+    /// # Arguments
+    ///
+    /// * `file_ref` - Metadata for the file to retrieve
+    ///
+    /// # Returns
+    ///
+    /// The decrypted file content as `Vec<u8>`
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - The file cannot be found in storage
+    /// - Decryption fails
+    pub async fn retrieve_file_bytes(&self, file_ref: &FileRef) -> Result<Vec<u8>> {
+        self.inner.fs.retrieve_file(file_ref).await
+    }
+
+    /// Get a reference to the blob client for advanced operations
+    ///
+    /// This provides direct access to the underlying blob storage client
+    /// for operations not covered by the high-level file storage API.
+    ///
+    /// # Returns
+    ///
+    /// A reference to the `BlobClient`
+    #[cfg_attr(feature = "frb-api", frb(ignore))]
     pub fn blob_client(&self) -> &BlobClient {
         self.inner.fs.blob_client()
     }

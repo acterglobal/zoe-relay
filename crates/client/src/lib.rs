@@ -1,9 +1,13 @@
 pub mod client;
 pub mod error;
 pub mod file_storage;
+#[cfg(feature = "frb-api")]
+pub mod frb_api;
 pub mod relay_client;
 pub mod rpc_transport;
 pub mod services;
+#[cfg(feature = "frb-api")]
+pub use frb_api::*;
 
 pub use client::{Client, ClientBuilder};
 pub use error::ClientError;
@@ -14,3 +18,4 @@ pub use services::{BlobService, MessagesService, MessagesStream};
 
 // Re-export FileRef and Image from app-primitives for convenience
 pub use zoe_app_primitives::{FileRef, Image};
+pub use zoe_wire_protocol::{SigningKey, VerifyingKey};
