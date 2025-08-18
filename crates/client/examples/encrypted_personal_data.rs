@@ -11,8 +11,8 @@ use tarpc::context;
 use tracing::{debug, info};
 use zoe_client::RelayClient;
 use zoe_wire_protocol::{
-    Content, Ed25519SelfEncryptedContent, Kind, Message, MessageFull, MnemonicPhrase, StoreKey,
-    Tag, generate_ed25519_from_mnemonic,
+    Content, Ed25519SelfEncryptedContent, Kind, Message, MessageFull, MessageV0, MnemonicPhrase,
+    StoreKey, Tag, generate_ed25519_from_mnemonic,
 };
 
 /// Personal data structure that we'll encrypt and store
@@ -143,21 +143,14 @@ impl EncryptedPersonalDataClient {
         info!("📨 Retrieved message from relay service");
 
         // Extract the ed25519-encrypted content
-        let encrypted_content = match &message_full.message.as_ref() {
-            Message::MessageV0(msg) => match &msg.content {
-                Content::Ed25519SelfEncrypted(content) => content,
-                Content::ChaCha20Poly1305(_) => {
-                    return Err(anyhow!(
-                        "Found legacy ChaCha20 content, expected Ed25519 self-encrypted"
-                    ));
-                }
-                Content::Raw(_) => return Err(anyhow!("Expected encrypted content, found raw")),
-                Content::EphemeralEcdh(_) => {
-                    return Err(anyhow!(
-                        "Expected Ed25519 self-encrypted content, found ephemeral ECDH encrypted"
-                    ));
-                }
-            },
+        let Message::MessageV0(MessageV0 {
+            content: Content::Ed25519SelfEncrypted(encrypted_content),
+            ..
+        }) = &message_full.message.as_ref()
+        else {
+            return Err(anyhow!(
+                "Expected Ed25519 self-encrypted content, found ephemeral ECDH encrypted"
+            ));
         };
 
         info!(

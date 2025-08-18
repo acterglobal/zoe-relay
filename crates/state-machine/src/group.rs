@@ -211,25 +211,10 @@ impl DigitalGroupAssistant {
         let Message::MessageV0(message) = message_full.message.as_ref();
 
         // Get the encrypted payload from the message content
-        let encrypted_payload = match &message.content {
-            Content::ChaCha20Poly1305(encrypted) => encrypted,
-            Content::Raw(_) => {
-                return Err(DgaError::InvalidEvent(
-                    "Expected encrypted content but found raw content".to_string(),
-                ));
-            }
-            Content::Ed25519SelfEncrypted(_) => {
-                return Err(DgaError::InvalidEvent(
-                    "Ed25519-encrypted content is not supported for group events".to_string(),
-                ));
-            }
-            Content::EphemeralEcdh(_) => {
-                return Err(DgaError::InvalidEvent(
-                    "Ephemeral ECDH-encrypted content is not supported for group events"
-                        .to_string(),
-                ));
-            }
+        let Content::ChaCha20Poly1305(encrypted_payload) = &message.content else {
+            return Err(DgaError::InvalidEvent("Message is not a ChaCha20Poly1305 encrypted message".to_string()));
         };
+
         let sender = message.sender;
         let timestamp = message.when;
 

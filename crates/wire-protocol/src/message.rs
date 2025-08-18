@@ -4,6 +4,7 @@ use postcard::to_vec;
 use serde::{Deserialize, Serialize};
 
 use crate::{crypto::ChaCha20Poly1305Content, Ed25519SelfEncryptedContent, EphemeralEcdhContent};
+use forward_compatible_enum::ForwardCompatibleEnum;
 
 mod store_key;
 pub use store_key::StoreKey;
@@ -115,7 +116,7 @@ pub enum Kind {
 /// let typed_content = Content::raw_typed(&MyData { value: 42 })?;
 /// # Ok::<(), postcard::Error>(())
 /// ```
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, ForwardCompatibleEnum)]
 pub enum Content {
     /// Raw byte content without encryption.
     ///
@@ -124,6 +125,7 @@ pub enum Content {
     /// - Content that is already encrypted at a higher layer
     /// - Metadata or routing information
     /// - Binary data that should be transmitted as-is
+    #[discriminant(0)]
     Raw(Vec<u8>),
 
     /// ChaCha20-Poly1305 encrypted content with context-derived keys.
@@ -135,6 +137,7 @@ pub enum Content {
     ///
     /// This variant provides minimal serialization overhead while maintaining
     /// strong AEAD security properties.
+    #[discriminant(20)]
     ChaCha20Poly1305(ChaCha20Poly1305Content),
 
     /// Ed25519-derived ChaCha20-Poly1305 self-encrypted content.
@@ -145,6 +148,7 @@ pub enum Content {
     /// - Personal data storage
     /// - Self-encrypted notes and backups
     /// - Content where only the author should have access
+    #[discriminant(40)]
     Ed25519SelfEncrypted(Ed25519SelfEncryptedContent),
 
     /// Ephemeral ECDH encrypted content.
@@ -155,7 +159,14 @@ pub enum Content {
     /// - RPC calls over message infrastructure  
     /// - One-off encrypted messages
     /// - Public key encryption scenarios
+    #[discriminant(80)]
     EphemeralEcdh(EphemeralEcdhContent),
+
+    /// Unknown content type.
+    ///
+    /// This variant is used when the content type is unknown or not supported.
+    /// It contains the discriminant and the raw data.
+    Unknown { discriminant: u32, data: Vec<u8> },
 }
 
 impl Content {
@@ -186,42 +197,34 @@ impl Content {
 
     /// Get the raw bytes if this is raw content
     pub fn as_raw(&self) -> Option<&Vec<u8>> {
-        match self {
-            Content::Raw(data) => Some(data),
-            Content::ChaCha20Poly1305(_) => None,
-            Content::Ed25519SelfEncrypted(_) => None,
-            Content::EphemeralEcdh(_) => None,
-        }
+        let Content::Raw(ref content) = self else {
+            return None;
+        };
+        Some(content)
     }
 
     /// Get the encrypted content if this is encrypted
     pub fn as_encrypted(&self) -> Option<&ChaCha20Poly1305Content> {
-        match self {
-            Content::Raw(_) => None,
-            Content::ChaCha20Poly1305(content) => Some(content),
-            Content::Ed25519SelfEncrypted(_) => None,
-            Content::EphemeralEcdh(_) => None,
-        }
+        let Content::ChaCha20Poly1305(ref content) = self else {
+            return None;
+        };
+        Some(content)
     }
 
     /// Get the ed25519 self-encrypted content if this is ed25519 self-encrypted
     pub fn as_ed25519_self_encrypted(&self) -> Option<&Ed25519SelfEncryptedContent> {
-        match self {
-            Content::Raw(_) => None,
-            Content::ChaCha20Poly1305(_) => None,
-            Content::Ed25519SelfEncrypted(content) => Some(content),
-            Content::EphemeralEcdh(_) => None,
-        }
+        let Content::Ed25519SelfEncrypted(ref content) = self else {
+            return None;
+        };
+        Some(content)
     }
 
     /// Get the ephemeral ECDH encrypted content if this is ephemeral ECDH encrypted
     pub fn as_ephemeral_ecdh(&self) -> Option<&EphemeralEcdhContent> {
-        match self {
-            Content::Raw(_) => None,
-            Content::ChaCha20Poly1305(_) => None,
-            Content::Ed25519SelfEncrypted(_) => None,
-            Content::EphemeralEcdh(content) => Some(content),
-        }
+        let Content::EphemeralEcdh(ref content) = self else {
+            return None;
+        };
+        Some(content)
     }
 
     /// Check if this content is encrypted
@@ -876,6 +879,9 @@ impl MessageFull {
                     "Cannot deserialize ephemeral ECDH-encrypted content without signing keys"
                         .into(),
                 ),
+                Content::Unknown { discriminant, .. } => {
+                    Err(format!("Unknown content type: {discriminant}").into())
+                }
             },
         }
     }
@@ -901,6 +907,7 @@ impl MessageFull {
                 Content::EphemeralEcdh(_) => {
                     Err("Cannot decrypt ephemeral ECDH-encrypted content with EncryptionKey - use signing keys instead".into())
                 }
+                Content::Unknown { discriminant,.. } => Err(format!("Unknown content type: {discriminant}").into()),
             },
         }
     }
@@ -927,6 +934,7 @@ impl MessageFull {
                     let plaintext = encrypted.decrypt(signing_key)?;
                     Ok(postcard::from_bytes(&plaintext)?)
                 }
+                Content::Unknown { discriminant,.. } => Err(format!("Unknown content type: {discriminant}").into()),
             },
         }
     }
@@ -1016,6 +1024,9 @@ mod tests {
                 if !encrypted.ciphertext.is_empty() {
                     encrypted.ciphertext[0] = encrypted.ciphertext[0].wrapping_add(1);
                 }
+            }
+            Content::Unknown { discriminant, .. } => {
+                panic!("Unknown content type: {discriminant}");
             }
         }
         assert!(!tampered.verify_all().unwrap());

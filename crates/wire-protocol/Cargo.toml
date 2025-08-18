@@ -24,6 +24,7 @@ bip39 = "2.0"
 argon2 = "0.5"
 zeroize = { version = "1.7", features = ["zeroize_derive"] }
 rand = { workspace = true }
+forward-compatible-enum = { path = "../forward-compatible-enum" }
 
 # Error handling
 anyhow = { workspace = true }
