@@ -15,7 +15,10 @@ use zoe_blob_store::BlobServiceImpl;
 use zoe_client::RelayClient;
 use zoe_message_store::RedisMessageStorage;
 use zoe_relay::{RelayServer, RelayServiceRouter};
-use zoe_wire_protocol::{KeyPair, Kind, Message, MessageFilters, MessageFull, Tag, TransportPrivateKey, TransportPublicKey, VerifyingKey, generate_keypair};
+use zoe_wire_protocol::{
+    KeyPair, Kind, Message, MessageFilters, MessageFull, Tag, TransportPrivateKey,
+    TransportPublicKey, VerifyingKey, generate_keypair,
+};
 
 /// Test infrastructure for managing relay server and clients
 pub struct TestInfrastructure {
@@ -416,7 +419,7 @@ mod tests {
         let message1_full = zoe_wire_protocol::MessageFull::new(message1, client1.keypair())
             .map_err(|e| anyhow::anyhow!("Failed to create MessageFull for client 1: {}", e))?;
 
-        let message1_id = message1_full.id;
+        let message1_id = message1_full.id();
         info!(
             "📝 Client 1 created message with ID: {}",
             hex::encode(message1_id.as_bytes())
@@ -435,7 +438,7 @@ mod tests {
         let message2_full = zoe_wire_protocol::MessageFull::new(message2, client2.keypair())
             .map_err(|e| anyhow::anyhow!("Failed to create MessageFull for client 2: {}", e))?;
 
-        let message2_id = message2_full.id;
+        let message2_id = message2_full.id();
         info!(
             "📝 Client 2 created message with ID: {}",
             hex::encode(message2_id.as_bytes())
@@ -876,7 +879,7 @@ mod tests {
         );
         info!(
             "📝 Group creation message ID: {}",
-            hex::encode(create_group_result.message.id.as_bytes())
+            hex::encode(create_group_result.message.id().as_bytes())
         );
 
         // Step 2: Client 1 publishes the group creation event to the relay
@@ -961,11 +964,11 @@ mod tests {
                         zoe_wire_protocol::StreamMessage::MessageReceived { message, .. } => {
                             info!(
                                 "📥 Client 2 received message: {}",
-                                hex::encode(message.id.as_bytes())
+                                hex::encode(message.id().as_bytes())
                             );
 
                             // Check if this is the group creation message
-                            if message.id == create_group_result.message.id {
+                            if message.id() == create_group_result.message.id() {
                                 info!("🎯 Found the group creation message!");
 
                                 // Try to decrypt and process the group event
@@ -1168,7 +1171,7 @@ mod tests {
             // Track expected message for validation
             expected_historical_messages.push(TestMessage {
                 content: message_content.clone(),
-                message_id: Some(message_full.id),
+                message_id: Some(message_full.id().clone()),
                 timestamp: message_timestamp,
             });
 
@@ -1260,7 +1263,7 @@ mod tests {
             // Track expected live message for validation
             expected_live_messages.push(TestMessage {
                 content: message_content.clone(),
-                message_id: Some(message_full.id),
+                message_id: Some(message_full.id().clone()),
                 timestamp: message_timestamp,
             });
 
@@ -1293,13 +1296,13 @@ mod tests {
                                 .iter()
                                 .filter_map(|m| m.message_id)
                                 .collect();
-                            if expected_ids.contains(&message.id) {
+                            if expected_ids.contains(message.id()) {
                                 let empty_vec = vec![];
                                 let raw_content = message.raw_content().unwrap_or(&empty_vec);
                                 let content = String::from_utf8_lossy(raw_content);
                                 received_live_messages.push(TestMessage {
                                     content: content.to_string(),
-                                    message_id: Some(message.id),
+                                    message_id: Some(message.id().clone()),
                                     timestamp: *message.when(),
                                 });
                                 info!("📥 Received live message: {}", content);

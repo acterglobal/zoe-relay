@@ -13,8 +13,8 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::time::timeout;
 use tracing::{debug, info, warn};
 use zoe_wire_protocol::{
-    Content, KeyPair, Kind, Message, MessageFilters, MessageFull, StreamMessage, SubscriptionConfig, Tag,
-    VerifyingKey, generate_keypair,
+    Content, KeyPair, Kind, Message, MessageFilters, MessageFull, StreamMessage,
+    SubscriptionConfig, Tag, VerifyingKey, generate_keypair,
 };
 
 /// Test message posting and retrieval functionality
@@ -215,7 +215,7 @@ async fn test_user_data_storage_and_lookup() -> Result<()> {
                         stream_height,
                     } => {
                         // Check if this is a user data message
-                        let Message::MessageV0(message_payload) = &*msg.message;
+                        let Message::MessageV0(message_payload) = &*msg.message();
                         let has_user_tag = message_payload
                             .tags
                             .iter()

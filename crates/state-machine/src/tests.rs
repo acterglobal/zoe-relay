@@ -153,12 +153,7 @@ fn test_encrypted_group_activity() {
     let activity_event = create_group_activity_event(());
 
     let activity_message = dga
-        .create_group_event_message(
-            result.group_id,
-            activity_event,
-            &alice_key,
-            timestamp + 1,
-        )
+        .create_group_event_message(result.group_id, activity_event, &alice_key, timestamp + 1)
         .unwrap();
 
     // Process the activity
@@ -204,12 +199,7 @@ fn test_new_member_via_activity() {
     let bob_activity = create_group_activity_event(());
 
     let bob_message = bob_dga
-        .create_group_event_message(
-            result.group_id,
-            bob_activity,
-            &bob_key,
-            timestamp + 10,
-        )
+        .create_group_event_message(result.group_id, bob_activity, &bob_key, timestamp + 10)
         .unwrap();
 
     // Alice processes Bob's message
@@ -252,12 +242,7 @@ fn test_role_update() {
 
     let bob_activity = create_group_activity_event(());
     let bob_message = bob_dga
-        .create_group_event_message(
-            result.group_id,
-            bob_activity,
-            &bob_key,
-            timestamp + 5,
-        )
+        .create_group_event_message(result.group_id, bob_activity, &bob_key, timestamp + 5)
         .unwrap();
     dga.process_group_event(&bob_message).unwrap();
 
@@ -265,12 +250,7 @@ fn test_role_update() {
     let role_update = create_role_update_event(bob_key.public_key(), GroupRole::Admin);
 
     let role_message = dga
-        .create_group_event_message(
-            result.group_id,
-            role_update,
-            &alice_key,
-            timestamp + 10,
-        )
+        .create_group_event_message(result.group_id, role_update, &alice_key, timestamp + 10)
         .unwrap();
 
     dga.process_group_event(&role_message).unwrap();
@@ -309,12 +289,7 @@ fn test_leave_group_event() {
 
     let bob_activity = create_group_activity_event(());
     let bob_message = bob_dga
-        .create_group_event_message(
-            result.group_id,
-            bob_activity,
-            &bob_key,
-            timestamp + 5,
-        )
+        .create_group_event_message(result.group_id, bob_activity, &bob_key, timestamp + 5)
         .unwrap();
     dga.process_group_event(&bob_message).unwrap();
 
@@ -328,12 +303,7 @@ fn test_leave_group_event() {
     let leave_event = create_leave_group_event(Some("Thanks for having me!".to_string()));
 
     let leave_message = bob_dga
-        .create_group_event_message(
-            result.group_id,
-            leave_event,
-            &bob_key,
-            timestamp + 10,
-        )
+        .create_group_event_message(result.group_id, leave_event, &bob_key, timestamp + 10)
         .unwrap();
 
     dga.process_group_event(&leave_message).unwrap();
@@ -363,12 +333,8 @@ fn test_missing_encryption_key_error() {
     // Try to create an event without the key
     let activity_event = create_group_activity_event(());
 
-    let result = dga.create_group_event_message(
-        result.group_id,
-        activity_event,
-        &alice_key,
-        timestamp + 1,
-    );
+    let result =
+        dga.create_group_event_message(result.group_id, activity_event, &alice_key, timestamp + 1);
 
     assert!(result.is_err());
     assert!(
@@ -435,12 +401,7 @@ fn test_permission_denied_for_role_update() {
 
     let bob_activity = create_group_activity_event(());
     let bob_message = bob_dga
-        .create_group_event_message(
-            result.group_id,
-            bob_activity,
-            &bob_key,
-            timestamp + 5,
-        )
+        .create_group_event_message(result.group_id, bob_activity, &bob_key, timestamp + 5)
         .unwrap();
     dga.process_group_event(&bob_message).unwrap();
 
@@ -451,12 +412,7 @@ fn test_permission_denied_for_role_update() {
     );
 
     let role_message = bob_dga
-        .create_group_event_message(
-            result.group_id,
-            role_update,
-            &bob_key,
-            timestamp + 10,
-        )
+        .create_group_event_message(result.group_id, role_update, &bob_key, timestamp + 10)
         .unwrap();
 
     // This should fail when processed

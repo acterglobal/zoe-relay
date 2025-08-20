@@ -231,7 +231,7 @@ impl RedisMessageStorage {
             .storage_value()
             .map_err(|e| MessageStoreError::Serialization(e.to_string()))?;
 
-        let msg_id_bytes = message.id.as_bytes();
+        let msg_id_bytes = message.id().as_bytes();
         let message_id = hex::encode(msg_id_bytes);
 
         // Prepare Redis keys
@@ -389,7 +389,7 @@ impl RedisMessageStorage {
                         break 'retry;
                     } else if prev_when == msg_when {
                         // timestamp was the same, we need to check the id
-                        if previous_message.id.as_bytes() < message.id.as_bytes() {
+                        if previous_message.id().as_bytes() < message.id().as_bytes() {
                             // our ID is greater, we won,
                             info!(redis_key = previous_id, "We are older, ignore");
                             break 'retry;

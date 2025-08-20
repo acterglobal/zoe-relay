@@ -1,8 +1,6 @@
 use crate::{KeyPair, Signature, VerifyingKey};
 use blake3::{Hash, Hasher};
-use postcard::to_vec;
 use serde::{Deserialize, Serialize};
-// use signature::Signer; // Not needed since we use KeyPair.sign() method
 
 use crate::{
     crypto::ChaCha20Poly1305Content, Ed25519SelfEncryptedContent, EphemeralEcdhContent,
@@ -112,7 +110,7 @@ pub enum Kind {
 /// use zoe_wire_protocol::Content;
 ///
 /// // Raw content for public data
-/// let public_msg = Content::raw("Hello, world!".as_bytes().to_vec());
+/// let public_msg = Content::raw("Hello, world!".as_bytes().to_stdvec());
 ///
 /// // Typed content (serialized with postcard)
 /// #[derive(serde::Serialize)]
@@ -366,28 +364,13 @@ pub enum Message {
 }
 
 impl Message {
-    pub fn to_bytes(&self) -> Result<Vec<u8>, postcard::Error> {
-        match self {
-            Message::MessageV0(message) => {
-                let v = to_vec::<_, 4096>(message)?;
-                Ok(v.to_vec())
-            }
-        }
-    }
-
-    pub fn verify_signature(
+    pub fn verify_sender_signature(
         &self,
+        message_bytes: &[u8],
         signature: &Signature,
     ) -> Result<bool, Box<dyn std::error::Error>> {
         match self {
-            Message::MessageV0(message) => {
-                let message_bytes = to_vec::<_, 4096>(message)?;
-                Ok(message
-                    .header
-                    .sender
-                    .verify(&message_bytes, signature)
-                    .is_ok())
-            }
+            Message::MessageV0(ref inner) => inner.header.sender.verify(&message_bytes, signature),
         }
     }
 
@@ -637,7 +620,7 @@ pub struct MessageV0Header {
 ///         kind: Kind::Regular,
 ///         tags: vec![Tag::Protected],
 ///     },
-///     content: Content::raw("Hello, world!".as_bytes().to_vec()),
+///     content: Content::raw("Hello, world!".as_bytes().to_stdvec()),
 /// };
 ///
 /// // Convert to signed message for transmission
@@ -740,13 +723,13 @@ impl std::ops::Deref for MessageV0 {
 ///     when: 1640995200,
 ///     kind: Kind::Regular,
 ///     tags: vec![],
-///     content: Content::raw("Hello!".as_bytes().to_vec()),
+///     content: Content::raw("Hello!".as_bytes().to_stdvec()),
 /// });
 ///
 /// let full_message = MessageFull::new(message, &signing_key)?;
 ///
 /// // Verify the signature and ID
-/// assert!(full_message.verify_all()?);
+/// assert!(full_message.verify()?);
 ///
 /// // The ID is deterministic for the same signed content
 /// let id = full_message.id;
@@ -760,18 +743,21 @@ impl std::ops::Deref for MessageV0 {
 /// - **Indexed fields**: `sender` and `when` extracted from embedded message for queries
 /// - **Tag tables**: Separate tables for efficient tag-based filtering
 /// - **Blob storage**: Entire `MessageFull` serialized as atomic unit
+///
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(try_from = "MessageFullWire")]
 pub struct MessageFull {
     /// Blake3 hash serving as the unique message identifier.
     ///
-    /// Computed as: `Blake3(postcard::serialize(message) || signature.encode())`
+    /// Computed as: `Blake3(signature.encode())`
     ///
     /// This ID is:
     /// - **Unique**: Cryptographically improbable to collide
     /// - **Deterministic**: Same signed message always produces same ID
     /// - **Tamper-evident**: Changes to message or signature change the ID
     /// - **Content-addressed**: Can be used to retrieve the message
-    pub id: Hash,
+    #[serde(skip_serializing)]
+    id: Hash,
 
     /// ML-DSA digital signature over the serialized message.
     ///
@@ -780,62 +766,76 @@ pub struct MessageFull {
     ///
     /// **Security note**: The signature covers the *entire* serialized message,
     /// including all metadata, tags, and content. This prevents partial modification attacks.
-    pub signature: Signature,
+    signature: Signature,
 
     /// The original message content and metadata.
     ///
     /// Boxed to minimize stack usage since messages can be large.
     /// Contains version-specific message data (e.g., [`MessageV0`]).
-    pub message: Box<Message>,
+    message: Box<Message>,
+}
+
+/// The Wire protocol variant just signature and message as bytes
+/// the signature is redundent and the message is raw bytes
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MessageFullWire {
+    signature: Signature,
+    message: Box<Message>,
+}
+
+impl Into<MessageFullWire> for MessageFull {
+    fn into(self) -> MessageFullWire {
+        MessageFullWire {
+            signature: self.signature,
+            message: self.message,
+        }
+    }
+}
+
+impl TryFrom<MessageFullWire> for MessageFull {
+    type Error = Box<dyn std::error::Error>;
+    fn try_from(value: MessageFullWire) -> Result<Self, Self::Error> {
+        let message_bytes = postcard::to_stdvec(&value.message)?;
+        Self::with_signature(value.signature, value.message, &message_bytes)
+    }
 }
 
 impl MessageFull {
     /// Create a new MessageFull with proper signature and ID
     pub fn new(message: Message, signer: &KeyPair) -> Result<Self, Box<dyn std::error::Error>> {
-        let message_bytes = message.to_bytes()?;
+        let message_bytes = postcard::to_stdvec(&message)?;
         let signature = signer.sign(&message_bytes);
+        Self::with_signature(signature, Box::new(message), &message_bytes)
+    }
 
-        // Compute ID as Blake3 of serialized core message + signature
-        let mut id_input = message_bytes.clone();
-        id_input.extend_from_slice(&signature.encode());
+    fn with_signature(
+        signature: Signature,
+        message: Box<Message>,
+        message_bytes: &[u8],
+    ) -> Result<Self, Box<dyn std::error::Error>> {
+        if !message.verify_sender_signature(&message_bytes, &signature)? {
+            return Err("Signature does not match sender message".into());
+        }
         let mut hasher = Hasher::new();
-        hasher.update(&id_input);
-        let id = hasher.finalize();
-
-        Ok(MessageFull {
-            id,
-            message: Box::new(message),
+        hasher.update(&signature.encode());
+        Ok(Self {
+            id: hasher.finalize(),
+            message,
             signature,
         })
     }
 
-    /// Verify that this MessageFull has a valid signature
-    pub fn verify(&self) -> Result<bool, Box<dyn std::error::Error>> {
-        self.message.verify_signature(&self.signature)
+    pub fn id(&self) -> &Hash {
+        &self.id
     }
 
-    /// Verify that the ID matches the expected Blake3 hash
-    pub fn verify_id(&self) -> Result<bool, Box<dyn std::error::Error>> {
-        let message_bytes = self.message.to_bytes()?;
-        let mut id_input = message_bytes;
-        id_input.extend_from_slice(&self.signature.encode());
-        let mut hasher = Hasher::new();
-        hasher.update(&id_input);
-        let id = hasher.finalize();
-
-        Ok(self.id == id)
-    }
-
-    /// Verify both signature and ID
-    pub fn verify_all(&self) -> Result<bool, Box<dyn std::error::Error>> {
-        let signature_valid = self.verify()?;
-        let id_valid = self.verify_id()?;
-        Ok(signature_valid && id_valid)
+    pub fn message(&self) -> &Message {
+        &*self.message
     }
 
     /// The value this message is stored under in the storage
-    pub fn storage_value(&self) -> Result<heapless::Vec<u8, 4096>, Box<dyn std::error::Error>> {
-        Ok(postcard::to_vec(&self)?)
+    pub fn storage_value(&self) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+        Ok(postcard::to_stdvec(&self)?)
     }
 
     /// The timeout for this message in the storage
@@ -1118,47 +1118,14 @@ mod tests {
         )
         .unwrap();
         let msg_full = MessageFull::new(core.clone(), &sk).unwrap();
-        // Signature should verify
-        assert!(msg_full.verify().unwrap());
-        // ID should verify
-        assert!(msg_full.verify_id().unwrap());
-        // Both should verify
-        assert!(msg_full.verify_all().unwrap());
-        // Tampering with content should fail
-        let mut tampered = msg_full.clone();
-        let Message::MessageV0(ref mut msg) = *tampered.message;
-        // Safely tamper with the content based on its type
-        match &mut msg.content {
-            Content::Raw(ref mut data) => {
-                if !data.is_empty() {
-                    data[0] = data[0].wrapping_add(1);
-                }
-            }
-            Content::ChaCha20Poly1305(ref mut encrypted) => {
-                if !encrypted.ciphertext.is_empty() {
-                    encrypted.ciphertext[0] = encrypted.ciphertext[0].wrapping_add(1);
-                }
-            }
-            Content::Ed25519SelfEncrypted(ref mut encrypted) => {
-                if !encrypted.ciphertext.is_empty() {
-                    encrypted.ciphertext[0] = encrypted.ciphertext[0].wrapping_add(1);
-                }
-            }
-            Content::MlDsaSelfEncrypted(ref mut encrypted) => {
-                if !encrypted.ciphertext.is_empty() {
-                    encrypted.ciphertext[0] = encrypted.ciphertext[0].wrapping_add(1);
-                }
-            }
-            Content::EphemeralEcdh(ref mut encrypted) => {
-                if !encrypted.ciphertext.is_empty() {
-                    encrypted.ciphertext[0] = encrypted.ciphertext[0].wrapping_add(1);
-                }
-            }
-            Content::Unknown { discriminant, .. } => {
-                panic!("Unknown content type: {discriminant}");
+        let mut tampered: MessageFullWire = msg_full.clone().into();
+        // Tamper with the message by modifying the content
+        match &mut *tampered.message {
+            Message::MessageV0(ref mut msg_v0) => {
+                msg_v0.header.when += 1; // Change timestamp to invalidate signature
             }
         }
-        assert!(!tampered.verify_all().unwrap());
+        assert!(MessageFull::try_from(tampered).is_err());
     }
 
     #[test]
@@ -1174,11 +1141,13 @@ mod tests {
             vec![Tag::Protected],
         )
         .unwrap();
-        let mut msg_full = MessageFull::new(core, &sk1).unwrap();
+        let msg_full = MessageFull::new(core, &sk1).unwrap();
+        let mut tampered: MessageFullWire = msg_full.clone().into();
         // Replace signature with one from a different key
-        let fake_sig = sk2.sign(&msg_full.message.to_bytes().unwrap());
-        msg_full.signature = fake_sig;
-        assert!(!msg_full.verify().unwrap());
+        let message_bytes = postcard::to_stdvec(&tampered.message).unwrap();
+        let fake_sig = sk2.sign(&message_bytes);
+        tampered.signature = fake_sig;
+        assert!(MessageFull::try_from(tampered).is_err());
     }
 
     #[test]
@@ -1192,8 +1161,8 @@ mod tests {
             vec![Tag::Protected],
         )
         .unwrap();
-        let msg_full = MessageFull::new(core, &sk).unwrap();
-        assert!(msg_full.verify_all().unwrap());
+        let _msg_full = MessageFull::new(core, &sk).unwrap();
+        // MessageFull only exists in verified state, so creation success implies verification
     }
 
     #[test]
@@ -1219,8 +1188,8 @@ mod tests {
         )
         .unwrap();
 
-        let msg_full = MessageFull::new(core, &sk).unwrap();
-        assert!(msg_full.verify_all().unwrap());
+        let _msg_full = MessageFull::new(core, &sk).unwrap();
+        // MessageFull only exists in verified state, so creation success implies verification
     }
 
     #[test]
@@ -1244,7 +1213,7 @@ mod tests {
         .unwrap();
 
         let msg_full = MessageFull::new(core, &sk).unwrap();
-        assert!(msg_full.verify_all().unwrap());
+        // MessageFull only exists in verified state, so creation success implies verification
         // Serialize and deserialize
         let serialized = msg_full.storage_value().unwrap();
         let deserialized = MessageFull::from_storage_value(&serialized).unwrap();
@@ -1253,7 +1222,7 @@ mod tests {
 
         assert_eq!(msg_full, deserialized);
         assert_eq!(complex_content, de_content);
-        assert!(deserialized.verify_all().unwrap());
+        // Deserialized MessageFull is also verified by construction
     }
 
     #[test]
@@ -1281,7 +1250,7 @@ mod tests {
         // Serialize and deserialize
         let serialized = msg_full.storage_value().unwrap();
         let deserialized = MessageFull::from_storage_value(&serialized).unwrap();
-        assert!(deserialized.verify_all().unwrap());
+        // Deserialized MessageFull is also verified by construction
 
         let deserialize_u8 = MessageFull::from_storage_value(&serialized).unwrap();
         let de_content: ComplexContent = deserialize_u8.try_deserialize_content().unwrap();
@@ -1308,7 +1277,7 @@ mod tests {
         .unwrap();
 
         let msg_full = MessageFull::new(core, &sk).unwrap();
-        assert!(msg_full.verify_all().unwrap());
+        // MessageFull only exists in verified state, so creation success implies verification
         // Serialize and deserialize
         let serialized = msg_full.storage_value().unwrap();
         let deserialized = MessageFull::from_storage_value(&serialized).unwrap();
@@ -1317,7 +1286,7 @@ mod tests {
 
         assert_eq!(msg_full, deserialized);
         assert_eq!(complex_content, de_content);
-        assert!(deserialized.verify_all().unwrap());
+        // Deserialized MessageFull is also verified by construction
     }
 
     #[test]
@@ -1352,7 +1321,7 @@ mod tests {
             .unwrap();
 
             let msg_full = MessageFull::new(core, &sk).unwrap();
-            assert!(msg_full.verify_all().unwrap(), "Failed for tag: {tag:?}");
+            // MessageFull only exists in verified state, so creation success implies verification
             // Serialize and deserialize
             let serialized = msg_full.storage_value().unwrap();
             let deserialized = MessageFull::from_storage_value(&serialized).unwrap();
@@ -1360,7 +1329,7 @@ mod tests {
 
             assert_eq!(msg_full, deserialized);
             assert_eq!(content, de_content);
-            assert!(deserialized.verify_all().unwrap());
+            // Deserialized MessageFull is also verified by construction
         }
     }
     #[test]
@@ -1381,7 +1350,7 @@ mod tests {
         .unwrap();
 
         let msg_full = MessageFull::new(core, &sk).unwrap();
-        assert!(msg_full.verify_all().unwrap());
+        // MessageFull only exists in verified state, so creation success implies verification
         // Serialize and deserialize
         let serialized = msg_full.storage_value().unwrap();
         let deserialized = MessageFull::from_storage_value(&serialized).unwrap();
@@ -1391,7 +1360,7 @@ mod tests {
         assert_eq!(complex_content, de_content);
 
         assert_eq!(msg_full, deserialized);
-        assert!(deserialized.verify_all().unwrap());
+        // Deserialized MessageFull is also verified by construction
     }
 
     #[test]
@@ -1432,7 +1401,7 @@ mod tests {
             .unwrap();
 
             let msg_full = MessageFull::new(message, &signing_key).unwrap();
-            assert!(msg_full.verify_all().unwrap());
+            // MessageFull only exists in verified state, so creation success implies verification
             // Serialize and deserialize
             let serialized = msg_full.storage_value().unwrap();
             let deserialized = MessageFull::from_storage_value(&serialized).unwrap();
@@ -1440,7 +1409,7 @@ mod tests {
 
             assert_eq!(msg_full, deserialized);
             assert_eq!(content, de_content);
-            assert!(deserialized.verify_all().unwrap());
+            // Deserialized MessageFull is also verified by construction
         }
     }
 
@@ -1462,7 +1431,7 @@ mod tests {
         .unwrap();
 
         let msg_full = MessageFull::new(core, &sk).unwrap();
-        assert!(msg_full.verify_all().unwrap());
+        // MessageFull only exists in verified state, so creation success implies verification
         // Serialize and deserialize
         let serialized = msg_full.storage_value().unwrap();
         let deserialized = MessageFull::from_storage_value(&serialized).unwrap();
@@ -1470,11 +1439,11 @@ mod tests {
 
         assert_eq!(msg_full, deserialized);
         assert_eq!(complex_content, de_content);
-        assert!(deserialized.verify_all().unwrap());
+        // Deserialized MessageFull is also verified by construction
     }
 
     #[test]
-    fn test_id_tampering() {
+    fn test_wire_format_roundtrip() {
         let (sk, pk) = make_keys();
         let content = DummyContent { value: 42 };
         let core = Message::new_typed(
@@ -1485,38 +1454,45 @@ mod tests {
             vec![Tag::Protected],
         )
         .unwrap();
-        let mut msg_full = MessageFull::new(core, &sk).unwrap();
+        let msg_full = MessageFull::new(core, &sk).unwrap();
+        let original_id = *msg_full.id();
 
-        // Tamper with ID
-        msg_full.id = make_hash();
-        assert!(!msg_full.verify_id().unwrap());
-        assert!(!msg_full.verify_all().unwrap());
-        // Signature should still be valid
-        assert!(msg_full.verify().unwrap());
+        // Convert to wire format and back
+        let wire: MessageFullWire = msg_full.clone().into();
+        let reconstructed = MessageFull::try_from(wire).unwrap();
+
+        // Should be identical after roundtrip
+        assert_eq!(msg_full, reconstructed);
+        assert_eq!(original_id, *reconstructed.id());
     }
 
     #[test]
-    fn test_empty_signature() {
+    fn test_invalid_signature_wire() {
         let (sk, pk) = make_keys();
-        let content = DummyContent { value: 42 };
-        let core = Message::new_typed(
-            content.clone(),
-            pk,
-            1714857600,
-            Kind::Regular,
-            vec![Tag::Protected],
-        )
-        .unwrap();
-        let mut msg_full = MessageFull::new(core, &sk).unwrap();
-        // Create an invalid signature by using wrong key
         let (wrong_sk, _) = make_keys();
-        let wrong_sig = wrong_sk.sign(&msg_full.message.to_bytes().unwrap());
-        msg_full.signature = wrong_sig;
-        assert!(!msg_full.verify().unwrap());
+        let content = DummyContent { value: 42 };
+        let core = Message::new_typed(
+            content.clone(),
+            pk,
+            1714857600,
+            Kind::Regular,
+            vec![Tag::Protected],
+        )
+        .unwrap();
+        let msg_full = MessageFull::new(core.clone(), &sk).unwrap();
+        let mut tampered_wire: MessageFullWire = msg_full.into();
+
+        // Replace signature with one from a different key
+        let message_bytes = postcard::to_stdvec(&tampered_wire.message).unwrap();
+        let wrong_sig = wrong_sk.sign(&message_bytes);
+        tampered_wire.signature = wrong_sig;
+
+        // Attempting to convert back to MessageFull should fail
+        assert!(MessageFull::try_from(tampered_wire).is_err());
     }
 
     #[test]
-    fn test_invalid_signature_length() {
+    fn test_message_tampering_wire() {
         let (sk, pk) = make_keys();
         let content = DummyContent { value: 42 };
         let core = Message::new_typed(
@@ -1527,43 +1503,44 @@ mod tests {
             vec![Tag::Protected],
         )
         .unwrap();
-        let mut msg_full = MessageFull::new(core, &sk).unwrap();
-        // Create an invalid signature by using wrong key
-        let (wrong_sk, _) = make_keys();
-        let wrong_sig = wrong_sk.sign(&msg_full.message.to_bytes().unwrap());
-        msg_full.signature = wrong_sig;
-        assert!(!msg_full.verify().unwrap());
-    }
+        let msg_full = MessageFull::new(core.clone(), &sk).unwrap();
+        let mut tampered_wire: MessageFullWire = msg_full.into();
 
-    #[test]
-    fn test_signature_tampering() {
-        let (sk, pk) = make_keys();
-        let content = DummyContent { value: 42 };
-        let core = Message::new_typed(
-            content.clone(),
-            pk,
-            1714857600,
-            Kind::Regular,
-            vec![Tag::Protected],
-        )
-        .unwrap();
-        let mut msg_full = MessageFull::new(core, &sk).unwrap();
-        // Create an invalid signature by using wrong key
-        let (wrong_sk, _) = make_keys();
-        let wrong_sig = wrong_sk.sign(&msg_full.message.to_bytes().unwrap());
-        msg_full.signature = wrong_sig;
-        let verify_result = msg_full.verify();
-        match verify_result {
-            Ok(false) | Err(_) => {}
-            _ => panic!("Expected Ok(false) or Err(_) for tampered signature"),
+        // Tamper with the message content by modifying the sender
+        let (_, different_pk) = make_keys();
+        match &mut *tampered_wire.message {
+            Message::MessageV0(ref mut msg_v0) => {
+                msg_v0.header.sender = different_pk;
+            }
         }
-        let verify_all_result = msg_full.verify_all();
-        match verify_all_result {
-            Ok(false) | Err(_) => {}
-            _ => panic!("Expected Ok(false) or Err(_) for tampered signature in verify_all"),
-        }
-        // ID should now be invalid
-        assert!(!msg_full.verify_id().unwrap_or(false));
+
+        // Attempting to convert back to MessageFull should fail due to signature mismatch
+        assert!(MessageFull::try_from(tampered_wire).is_err());
+    }
+
+    #[test]
+    fn test_signature_tampering_wire() {
+        let (sk, pk) = make_keys();
+        let content = DummyContent { value: 42 };
+        let core = Message::new_typed(
+            content.clone(),
+            pk,
+            1714857600,
+            Kind::Regular,
+            vec![Tag::Protected],
+        )
+        .unwrap();
+        let msg_full = MessageFull::new(core.clone(), &sk).unwrap();
+        let mut tampered_wire: MessageFullWire = msg_full.into();
+
+        // Create a completely different signature using a different key
+        let (wrong_sk, _) = make_keys();
+        let message_bytes = postcard::to_stdvec(&tampered_wire.message).unwrap();
+        let wrong_signature = wrong_sk.sign(&message_bytes);
+        tampered_wire.signature = wrong_signature;
+
+        // Attempting to convert back to MessageFull should fail due to invalid signature
+        assert!(MessageFull::try_from(tampered_wire).is_err());
     }
 
     #[test]
@@ -1598,27 +1575,7 @@ mod tests {
 
         assert_eq!(msg_full, deserialized);
         assert_eq!(content, de_content);
-        assert!(deserialized.verify_all().unwrap());
-    }
-
-    #[test]
-    fn test_core_message_serialization() {
-        let (sk, pk) = make_keys();
-        let content = DummyContent { value: 42 };
-        let core = Message::new_typed(
-            content.clone(),
-            pk,
-            1714857600,
-            Kind::Regular,
-            vec![Tag::Protected],
-        )
-        .unwrap();
-        let serialized = core.to_bytes().unwrap();
-        assert!(!serialized.is_empty());
-
-        // Verify signature works with serialized bytes
-        let signature = sk.sign(&serialized);
-        assert!(core.verify_signature(&signature).unwrap());
+        // Deserialized MessageFull is also verified by construction
     }
 
     #[test]
@@ -1643,8 +1600,8 @@ mod tests {
             ],
         )
         .unwrap();
-        let msg_full = MessageFull::new(core, &sk).unwrap();
-        assert!(msg_full.verify_all().unwrap());
+        let _msg_full = MessageFull::new(core, &sk).unwrap();
+        // MessageFull only exists in verified state, so creation success implies verification
     }
 
     #[test]
@@ -1666,8 +1623,8 @@ mod tests {
             }],
         )
         .unwrap();
-        let msg_full = MessageFull::new(core, &sk).unwrap();
-        assert!(msg_full.verify_all().unwrap());
+        let _msg_full = MessageFull::new(core, &sk).unwrap();
+        // MessageFull only exists in verified state, so creation success implies verification
     }
 
     #[test]

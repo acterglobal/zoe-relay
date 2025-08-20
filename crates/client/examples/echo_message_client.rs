@@ -24,7 +24,8 @@ use tokio::time::timeout;
 use tracing::{error, info, warn};
 use zoe_client::{ClientError, MessagesService, MessagesStream, RelayClient};
 use zoe_wire_protocol::{
-    Content, Hash, KeyPair, Kind, Message, MessageFilters, MessageFull, StreamMessage, SubscriptionConfig, Tag, VerifyingKey, generate_keypair,
+    Content, Hash, KeyPair, Kind, Message, MessageFilters, MessageFull, StreamMessage,
+    SubscriptionConfig, Tag, VerifyingKey, generate_keypair,
 };
 
 /// Run the complete message echo test
@@ -64,14 +65,14 @@ async fn run_echo_test(
         vec![], // no tags
     );
 
-            let message_full = MessageFull::new(message, client_keypair)
+    let message_full = MessageFull::new(message, client_keypair)
         .map_err(|e| ClientError::Generic(format!("Failed to create MessageFull: {e}")))?;
     info!(
         "📝 Created message with ID: {}",
-        hex::encode(message_full.id.as_bytes())
+        hex::encode(message_full.id().as_bytes())
     );
 
-    let message_id = *message_full.id.as_bytes();
+    let message_id = *message_full.id().as_bytes();
 
     if let Err(e) = messages_service
         .publish(context::current(), message_full)
@@ -107,7 +108,7 @@ async fn run_echo_test(
                     } => {
                         info!("🎉 Received message via stream!");
                         info!("   Stream height: {}", stream_height);
-                        info!("   Message ID: {}", hex::encode(message.id.as_bytes()));
+                        info!("   Message ID: {}", hex::encode(message.id().as_bytes()));
                         info!("   Author: {}", hex::encode(message.author().encode()));
                         info!(
                             "   Content: {:?}",
@@ -117,7 +118,7 @@ async fn run_echo_test(
                         );
 
                         // Verify it's our message
-                        if message.id.as_bytes() == &message_id {
+                        if message.id() == &message_id {
                             info!("✅ SUCCESS: Received our own echo message!");
                             info!(
                                 "   Original content: {:?}",

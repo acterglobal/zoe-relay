@@ -24,8 +24,8 @@ use zoe_relay::challenge::{
 use zoe_wire_protocol::MlDsaMultiKeyResult;
 use zoe_wire_protocol::{
     generate_deterministic_cert_from_ml_dsa_44_for_tls, generate_ml_dsa_44_keypair_for_tls,
-    AcceptSpecificServerCertVerifier, MlDsaKeyProof, MlDsaMultiKeyChallenge, MlDsaMultiKeyResponse,
-    ZoeChallenge, ZoeChallengeRejection, ZoeChallengeResult,
+    AcceptSpecificServerCertVerifier, KeyPair, MlDsaKeyProof, MlDsaMultiKeyChallenge,
+    MlDsaMultiKeyResponse, ZoeChallenge, ZoeChallengeRejection, ZoeChallengeResult,
 };
 
 /// Test certificate verifier that accepts any certificate (for testing only)
@@ -174,7 +174,7 @@ mod tests {
         // Generate test keys
         let server_keypair = generate_ml_dsa_44_keypair_for_tls();
         let server_public_key = server_keypair.verifying_key().clone();
-        let client_keypair = MlDsa65::key_gen(&mut rand::thread_rng());
+        let client_keypair = KeyPair::MlDsa65(MlDsa65::key_gen(&mut rand::thread_rng()));
 
         // Generate challenge
         let challenge = generate_ml_dsa_challenge(&server_public_key)?;
@@ -206,9 +206,9 @@ mod tests {
         let server_keypair = generate_ml_dsa_44_keypair_for_tls();
         let server_public_key = server_keypair.verifying_key().clone();
 
-        let client_keypair1 = MlDsa65::key_gen(&mut rand::thread_rng());
-        let client_keypair2 = MlDsa65::key_gen(&mut rand::thread_rng());
-        let client_keypair3 = MlDsa65::key_gen(&mut rand::thread_rng());
+        let client_keypair1 = KeyPair::MlDsa65(MlDsa65::key_gen(&mut rand::thread_rng()));
+        let client_keypair2 = KeyPair::MlDsa65(MlDsa65::key_gen(&mut rand::thread_rng()));
+        let client_keypair3 = KeyPair::MlDsa65(MlDsa65::key_gen(&mut rand::thread_rng()));
 
         // Generate challenge
         let challenge = generate_ml_dsa_challenge(&server_public_key)?;
@@ -244,16 +244,16 @@ mod tests {
         let server_keypair = generate_ml_dsa_44_keypair_for_tls();
         let server_public_key = server_keypair.verifying_key().clone();
 
-        let client_keypair1 = MlDsa65::key_gen(&mut rand::thread_rng());
-        let client_keypair2 = MlDsa65::key_gen(&mut rand::thread_rng());
+        let client_keypair1 = KeyPair::MlDsa65(MlDsa65::key_gen(&mut rand::thread_rng()));
+        let client_keypair2 = KeyPair::MlDsa65(MlDsa65::key_gen(&mut rand::thread_rng()));
 
         // Generate challenge
         let challenge = generate_ml_dsa_challenge(&server_public_key)?;
 
         // Create one valid and one invalid response
         let signature_data = [&challenge.nonce[..], &challenge.signature[..]].concat();
-        let valid_signature = client_keypair1.signing_key().sign(&signature_data);
-        let invalid_signature = client_keypair2.signing_key().sign(b"wrong data");
+        let valid_signature = client_keypair1.sign(&signature_data);
+        let invalid_signature = client_keypair2.sign(b"wrong data");
 
         let response = MlDsaMultiKeyResponse {
             key_proofs: vec![
@@ -295,15 +295,15 @@ mod tests {
         let server_keypair = generate_ml_dsa_44_keypair_for_tls();
         let server_public_key = server_keypair.verifying_key().clone();
 
-        let client_keypair1 = MlDsa65::key_gen(&mut rand::thread_rng());
-        let client_keypair2 = MlDsa65::key_gen(&mut rand::thread_rng());
+        let client_keypair1 = KeyPair::MlDsa65(MlDsa65::key_gen(&mut rand::thread_rng()));
+        let client_keypair2 = KeyPair::MlDsa65(MlDsa65::key_gen(&mut rand::thread_rng()));
 
         // Generate challenge
         let challenge = generate_ml_dsa_challenge(&server_public_key)?;
 
         // Create invalid responses (wrong signature data)
-        let invalid_signature1 = client_keypair1.signing_key().sign(b"wrong data 1");
-        let invalid_signature2 = client_keypair2.signing_key().sign(b"wrong data 2");
+        let invalid_signature1 = client_keypair1.sign(b"wrong data 1");
+        let invalid_signature2 = client_keypair2.sign(b"wrong data 2");
 
         let response = MlDsaMultiKeyResponse {
             key_proofs: vec![
@@ -339,7 +339,7 @@ mod tests {
         // Generate test keys
         let server_keypair = generate_ml_dsa_44_keypair_for_tls();
         let server_public_key = server_keypair.verifying_key().clone();
-        let client_keypair = MlDsa65::key_gen(&mut rand::thread_rng());
+        let client_keypair = KeyPair::MlDsa65(MlDsa65::key_gen(&mut rand::thread_rng()));
 
         // Create expired challenge
         let expired_challenge = MlDsaMultiKeyChallenge {
@@ -402,8 +402,8 @@ mod tests {
     #[tokio::test]
 
     async fn test_response_serialization_roundtrip() -> Result<()> {
-        let client_keypair = MlDsa65::key_gen(&mut rand::thread_rng());
-        let signature = client_keypair.signing_key().sign(b"test data");
+        let client_keypair = KeyPair::MlDsa65(MlDsa65::key_gen(&mut rand::thread_rng()));
+        let signature = client_keypair.sign(b"test data");
 
         // Create response
         let original_response = MlDsaMultiKeyResponse {
@@ -478,7 +478,7 @@ mod tests {
         // Generate test data
         let server_keypair = generate_ml_dsa_44_keypair_for_tls();
         let server_public_key = server_keypair.verifying_key().clone();
-        let client_keypair = MlDsa65::key_gen(&mut rand::thread_rng());
+        let client_keypair = KeyPair::MlDsa65(MlDsa65::key_gen(&mut rand::thread_rng()));
 
         // Test challenge sending and receiving
         let server_task = tokio::spawn(async move {

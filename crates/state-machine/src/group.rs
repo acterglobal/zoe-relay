@@ -134,18 +134,18 @@ impl DigitalGroupAssistant {
 
         // Sign the message and create MessageFull
         let message_full = MessageFull::new(message, creator)?;
-        let group_id = message_full.id; // The group ID is the Blake3 hash of this message
+        let group_id = message_full.id(); // The group ID is the Blake3 hash of this message
 
         // Store the encryption key
         let encryption_state = GroupEncryptionState {
             current_key: encryption_key,
             previous_keys: Vec::new(),
         };
-        self.group_keys.insert(group_id, encryption_state);
+        self.group_keys.insert(group_id.clone(), encryption_state);
 
         // Create the initial group state using the unified constructor
         let group_state = GroupState::new(
-            group_id,
+            group_id.clone(),
             group_info.name.clone(),
             group_info.settings.clone(),
             group_info.metadata.clone(),
@@ -154,10 +154,10 @@ impl DigitalGroupAssistant {
         );
 
         // Store the group state
-        self.groups.insert(group_id, group_state);
+        self.groups.insert(group_id.clone(), group_state);
 
         Ok(CreateGroupResult {
-            group_id,
+            group_id: group_id.clone(),
             message: message_full,
         })
     }
@@ -205,15 +205,8 @@ impl DigitalGroupAssistant {
 
     /// Process an incoming group event message
     pub fn process_group_event(&mut self, message_full: &MessageFull) -> DgaResult<()> {
-        // Verify the message
-        if !message_full.verify_all()? {
-            return Err(DgaError::InvalidEvent(
-                "Message verification failed".to_string(),
-            ));
-        }
-
         // Extract the encrypted payload from the message
-        let Message::MessageV0(message) = message_full.message.as_ref();
+        let Message::MessageV0(message) = message_full.message();
 
         // Get the encrypted payload from the message content
         let Content::ChaCha20Poly1305(encrypted_payload) = &message.content else {
@@ -228,7 +221,7 @@ impl DigitalGroupAssistant {
         // Determine the group ID and decrypt the event
         let (group_id, event) = if message.tags.is_empty() {
             // This is a root event (CreateGroup) - the group ID is the message ID itself
-            let group_id = message_full.id;
+            let group_id = message_full.id();
 
             // Get the encryption key for this group (must have been added via inbox system)
             let encryption_state = self.group_keys.get(&group_id).ok_or_else(|| {
@@ -239,7 +232,7 @@ impl DigitalGroupAssistant {
 
             let event =
                 self.decrypt_group_event(encrypted_payload, &encryption_state.current_key)?;
-            (group_id, event)
+            (group_id.clone(), event)
         } else {
             // This is a subsequent event - find the group by channel tag
             let group_id = self.find_group_by_event_tag(&message.tags)?;
@@ -280,7 +273,7 @@ impl DigitalGroupAssistant {
 
         // Apply the event to the group state (convert GroupStateError to DgaError)
         group_state
-            .apply_event(&event, message_full.id, sender.clone(), timestamp)
+            .apply_event(&event, message_full.id().clone(), sender.clone(), timestamp)
             .map_err(|e| match e {
                 GroupStateError::PermissionDenied(msg) => DgaError::PermissionDenied(msg),
                 GroupStateError::MemberNotFound { member, group } => {

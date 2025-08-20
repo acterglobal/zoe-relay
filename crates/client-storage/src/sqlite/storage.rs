@@ -143,13 +143,6 @@ impl SqliteMessageStorage {
         Ok(())
     }
 
-    /// Extract tags from MessageFull
-    fn extract_tags(message: &MessageFull) -> Result<&Vec<Tag>> {
-        match &*message.message {
-            zoe_wire_protocol::Message::MessageV0(msg) => Ok(&msg.tags),
-        }
-    }
-
     /// Build complete SQL query and parameters for message queries using tag tables
     fn build_query_sql(
         query: &MessageQuery,
@@ -247,13 +240,13 @@ impl MessageStorage for SqliteMessageStorage {
             .lock()
             .map_err(|e| StorageError::Internal(format!("Failed to acquire database lock: {e}")))?;
 
-        let id = message.id.as_bytes();
+        let id = message.id().as_bytes();
 
         // Serialize the entire message for key-value storage
         let data = postcard::to_stdvec(message)?;
 
         // Extract fields for indexing
-        let (author, timestamp, tags) = match &*message.message {
+        let (author, timestamp, tags) = match &*message.message() {
             zoe_wire_protocol::Message::MessageV0(msg) => {
                 let author = msg.sender.encode().as_slice().to_vec();
                 let timestamp = msg.when as i64;
@@ -363,8 +356,7 @@ impl MessageStorage for SqliteMessageStorage {
             if let Some(target_tag) = &query.tag
                 && matches!(target_tag, Tag::Protected)
             {
-                let tags = Self::extract_tags(&message)?;
-                if !tags.contains(target_tag) {
+                if !message.tags().contains(target_tag) {
                     continue;
                 }
             }

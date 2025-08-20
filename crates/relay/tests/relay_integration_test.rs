@@ -10,9 +10,7 @@ use tokio::sync::Notify;
 use tokio::time::{timeout, Duration};
 use zoe_relay::Service;
 use zoe_relay::{ConnectionInfo, RelayServer, ServiceRouter};
-use zoe_wire_protocol::{
-    AcceptSpecificEd25519ServerCertVerifier, StreamPair,
-};
+use zoe_wire_protocol::{AcceptSpecificEd25519ServerCertVerifier, StreamPair};
 
 #[derive(Debug, thiserror::Error)]
 enum TestError {

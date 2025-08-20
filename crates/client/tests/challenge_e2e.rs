@@ -249,18 +249,18 @@ async fn test_signature_verification() -> Result<()> {
 
     // Decode the public key and signature
     // The public_key is now a postcard-serialized VerifyingKey enum, not raw bytes
-    let verifying_key_enum: zoe_wire_protocol::VerifyingKey = postcard::from_bytes(&key_proof.public_key)
-        .expect("Invalid VerifyingKey encoding");
-    
+    let verifying_key_enum: zoe_wire_protocol::VerifyingKey =
+        postcard::from_bytes(&key_proof.public_key).expect("Invalid VerifyingKey encoding");
+
     let verifying_key = match verifying_key_enum {
         zoe_wire_protocol::VerifyingKey::MlDsa65(key) => key,
         _ => panic!("Expected MlDsa65 key"),
     };
 
     // The signature is now a postcard-serialized Signature enum, not raw bytes
-    let signature_enum: zoe_wire_protocol::Signature = postcard::from_bytes(&key_proof.signature)
-        .expect("Invalid Signature encoding");
-    
+    let signature_enum: zoe_wire_protocol::Signature =
+        postcard::from_bytes(&key_proof.signature).expect("Invalid Signature encoding");
+
     let signature = match signature_enum {
         zoe_wire_protocol::Signature::MlDsa65(sig) => sig,
         _ => panic!("Expected MlDsa65 signature"),

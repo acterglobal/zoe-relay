@@ -29,11 +29,7 @@ mod integration_tests {
     }
 
     // Helper function to create a test message with specific timestamp
-    fn create_message_with_time(
-        content: &str,
-        keypair: &KeyPair,
-        timestamp: u64,
-    ) -> MessageFull {
+    fn create_message_with_time(content: &str, keypair: &KeyPair, timestamp: u64) -> MessageFull {
         let message = Message::MessageV0(MessageV0 {
             header: MessageV0Header {
                 sender: keypair.public_key(),
@@ -49,7 +45,7 @@ mod integration_tests {
 
     // Helper function to extract timestamp from a MessageFull
     fn get_message_timestamp(message: &MessageFull) -> u64 {
-        match &*message.message {
+        match &*message.message() {
             Message::MessageV0(msg) => msg.header.when,
         }
     }
@@ -87,7 +83,7 @@ mod integration_tests {
             .await
             .unwrap();
         let message = create_test_message("Hello, world!", &keypair);
-        let message_id = message.id;
+        let message_id = message.id();
 
         // Store the message
         storage.store_message(&message).await.unwrap();
@@ -97,21 +93,21 @@ mod integration_tests {
         assert!(retrieved.is_some());
 
         let retrieved = retrieved.unwrap();
-        assert_eq!(retrieved.id, message.id);
+        assert_eq!(retrieved.id(), message.id());
         // Both messages should have the same author
-        let original_author = match &*message.message {
+        let original_author = match &*message.message() {
             Message::MessageV0(msg) => msg.header.sender.clone(),
         };
-        let retrieved_author = match &*retrieved.message {
+        let retrieved_author = match &*retrieved.message() {
             Message::MessageV0(msg) => msg.header.sender.clone(),
         };
         assert_eq!(retrieved_author, original_author);
 
         // Compare message content
-        let original_content = match &*message.message {
+        let original_content = match &*message.message() {
             Message::MessageV0(msg) => &msg.content,
         };
-        let retrieved_content = match &*retrieved.message {
+        let retrieved_content = match &*retrieved.message() {
             Message::MessageV0(msg) => &msg.content,
         };
         assert_eq!(original_content, retrieved_content);
@@ -142,7 +138,7 @@ mod integration_tests {
             .await
             .unwrap();
         let message = create_test_message("To be deleted", &keypair);
-        let message_id = message.id;
+        let message_id = message.id();
 
         // Store the message
         storage.store_message(&message).await.unwrap();
@@ -192,7 +188,7 @@ mod integration_tests {
 
         assert_eq!(author1_messages.len(), 2);
         for msg in &author1_messages {
-            let author = match &*msg.message {
+            let author = match &*msg.message() {
                 Message::MessageV0(m) => m.header.sender.clone(),
             };
             assert_eq!(author, keypair1.public_key());
@@ -205,7 +201,7 @@ mod integration_tests {
             .unwrap();
 
         assert_eq!(author2_messages.len(), 1);
-        let author = match &*author2_messages[0].message {
+        let author = match &*author2_messages[0].message() {
             Message::MessageV0(m) => m.header.sender.clone(),
         };
         assert_eq!(author, keypair2.public_key());
@@ -353,7 +349,7 @@ mod integration_tests {
         let storage2 = SqliteMessageStorage::new(config, &encryption_key1)
             .await
             .unwrap();
-        let retrieved = storage2.get_message(&message.id).await.unwrap();
+        let retrieved = storage2.get_message(message.id()).await.unwrap();
         assert!(retrieved.is_some());
     }
 
@@ -379,7 +375,7 @@ mod integration_tests {
             let handle = tokio::spawn(async move {
                 let message = create_test_message(&format!("Concurrent message {i}"), &keypair);
                 storage.store_message(&message).await.unwrap();
-                message.id
+                message.id().clone()
             });
             handles.push(handle);
         }
@@ -437,7 +433,7 @@ mod integration_tests {
 
         // Mark message1 as synced to relay1
         storage
-            .mark_message_synced(&message1.id, &relay1_key, "100")
+            .mark_message_synced(&message1.id(), &relay1_key, "100")
             .await
             .unwrap();
 
@@ -452,12 +448,12 @@ mod integration_tests {
             .unwrap();
 
         assert_eq!(unsynced_relay1.len(), 1);
-        assert_eq!(unsynced_relay1[0].id, message2.id);
+        assert_eq!(unsynced_relay1[0].id(), message2.id());
         assert_eq!(unsynced_relay2.len(), 2); // Still has both messages
 
         // Mark message1 as synced to relay2 as well
         storage
-            .mark_message_synced(&message1.id, &relay2_key, "200")
+            .mark_message_synced(&message1.id(), &relay2_key, "200")
             .await
             .unwrap();
 
@@ -473,8 +469,8 @@ mod integration_tests {
 
         assert_eq!(unsynced_relay1.len(), 1);
         assert_eq!(unsynced_relay2.len(), 1);
-        assert_eq!(unsynced_relay1[0].id, message2.id);
-        assert_eq!(unsynced_relay2[0].id, message2.id);
+        assert_eq!(unsynced_relay1[0].id(), message2.id());
+        assert_eq!(unsynced_relay2[0].id(), message2.id());
     }
 
     #[tokio::test]
@@ -495,21 +491,21 @@ mod integration_tests {
         let relay2_key = generate_keypair(&mut OsRng).public_key();
 
         // Initially, no sync status
-        let sync_status = storage.get_message_sync_status(&message.id).await.unwrap();
+        let sync_status = storage.get_message_sync_status(message.id()).await.unwrap();
         assert_eq!(sync_status.len(), 0);
 
         // Mark as synced to relay1 and relay2
         storage
-            .mark_message_synced(&message.id, &relay1_key, "100")
+            .mark_message_synced(&message.id(), &relay1_key, "100")
             .await
             .unwrap();
         storage
-            .mark_message_synced(&message.id, &relay2_key, "200")
+            .mark_message_synced(&message.id(), &relay2_key, "200")
             .await
             .unwrap();
 
         // Check sync status
-        let mut sync_status = storage.get_message_sync_status(&message.id).await.unwrap();
+        let mut sync_status = storage.get_message_sync_status(message.id()).await.unwrap();
         sync_status.sort_by(|a, b| a.global_stream_id.cmp(&b.global_stream_id)); // Sort for predictable testing
 
         assert_eq!(sync_status.len(), 2);
@@ -541,25 +537,40 @@ mod integration_tests {
         let relay_key = generate_keypair(&mut OsRng).public_key();
 
         // Initially, no messages have sync status
-        let message1_status = storage.get_message_sync_status(&message1.id).await.unwrap();
-        let message2_status = storage.get_message_sync_status(&message2.id).await.unwrap();
+        let message1_status = storage
+            .get_message_sync_status(&message1.id())
+            .await
+            .unwrap();
+        let message2_status = storage
+            .get_message_sync_status(&message2.id())
+            .await
+            .unwrap();
         assert_eq!(message1_status.len(), 0);
         assert_eq!(message2_status.len(), 0);
 
         // Mark message1 and message2 as synced (but not message3)
         storage
-            .mark_message_synced(&message1.id, &relay_key, "100")
+            .mark_message_synced(&message1.id(), &relay_key, "100")
             .await
             .unwrap();
         storage
-            .mark_message_synced(&message2.id, &relay_key, "200")
+            .mark_message_synced(&message2.id(), &relay_key, "200")
             .await
             .unwrap();
 
         // Verify sync status for individual messages
-        let message1_status = storage.get_message_sync_status(&message1.id).await.unwrap();
-        let message2_status = storage.get_message_sync_status(&message2.id).await.unwrap();
-        let message3_status = storage.get_message_sync_status(&message3.id).await.unwrap();
+        let message1_status = storage
+            .get_message_sync_status(&message1.id())
+            .await
+            .unwrap();
+        let message2_status = storage
+            .get_message_sync_status(&message2.id())
+            .await
+            .unwrap();
+        let message3_status = storage
+            .get_message_sync_status(&message3.id())
+            .await
+            .unwrap();
 
         assert_eq!(message1_status.len(), 1);
         assert_eq!(message1_status[0].global_stream_id, "100");
@@ -586,21 +597,21 @@ mod integration_tests {
 
         // Mark as synced with initial stream ID
         storage
-            .mark_message_synced(&message.id, &relay_key, "100")
+            .mark_message_synced(&message.id(), &relay_key, "100")
             .await
             .unwrap();
 
-        let sync_status = storage.get_message_sync_status(&message.id).await.unwrap();
+        let sync_status = storage.get_message_sync_status(message.id()).await.unwrap();
         assert_eq!(sync_status.len(), 1);
         assert_eq!(sync_status[0].global_stream_id, "100");
 
         // Update with new stream ID (should replace, not add)
         storage
-            .mark_message_synced(&message.id, &relay_key, "150")
+            .mark_message_synced(&message.id(), &relay_key, "150")
             .await
             .unwrap();
 
-        let sync_status = storage.get_message_sync_status(&message.id).await.unwrap();
+        let sync_status = storage.get_message_sync_status(message.id()).await.unwrap();
         assert_eq!(sync_status.len(), 1);
         assert_eq!(sync_status[0].global_stream_id, "150");
     }
@@ -633,11 +644,11 @@ mod integration_tests {
 
         // Mark 2 messages as synced
         storage
-            .mark_message_synced(&messages[0].id, &relay_key, "100")
+            .mark_message_synced(&messages[0].id(), &relay_key, "100")
             .await
             .unwrap();
         storage
-            .mark_message_synced(&messages[1].id, &relay_key, "101")
+            .mark_message_synced(&messages[1].id(), &relay_key, "101")
             .await
             .unwrap();
 
@@ -650,11 +661,11 @@ mod integration_tests {
 
         // Verify sync status of marked messages
         let msg0_status = storage
-            .get_message_sync_status(&messages[0].id)
+            .get_message_sync_status(&messages[0].id())
             .await
             .unwrap();
         let msg1_status = storage
-            .get_message_sync_status(&messages[1].id)
+            .get_message_sync_status(&messages[1].id())
             .await
             .unwrap();
 

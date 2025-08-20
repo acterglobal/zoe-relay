@@ -43,7 +43,7 @@ let message = Message::new_v0(
 let message_full = MessageFull::new(message, &signing_key)?;
 
 // Verify the message
-assert!(message_full.verify_all()?);
+assert!(message_full.verify()?);
 ```
 
 ## tarpc Service Interfaces
