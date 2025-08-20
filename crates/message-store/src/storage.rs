@@ -239,9 +239,9 @@ impl RedisMessageStorage {
 
         // Collect all script arguments upfront
         let mut script_args = vec![
-            storage_value.to_vec(),               // ARGV[1] - message data
-            msg_id_bytes.to_vec(),                // ARGV[2] - message ID bytes
-            message.author().to_bytes().to_vec(), // ARGV[3] - author bytes
+            storage_value.to_vec(),                        // ARGV[1] - message data
+            msg_id_bytes.to_vec(),                         // ARGV[2] - message ID bytes
+            message.author().encode().as_slice().to_vec(), // ARGV[3] - author bytes
         ];
         script_args.push(
             ex_time
@@ -320,7 +320,7 @@ impl RedisMessageStorage {
         // These operations are not critical for correctness, so we handle them separately
         Self::add_to_index_stream(
             &mut conn,
-            &format!("author:{}:stream", hex::encode(message.author().as_bytes())),
+            &format!("author:{}:stream", hex::encode(message.author().encode())),
             msg_id_bytes,
             global_stream_id,
             ex_time,
@@ -354,7 +354,7 @@ impl RedisMessageStorage {
 
         // Handle storage key updates (user data storage)
         if let Some(storage_key) = message.store_key() {
-            let author_id = hex::encode(message.author().as_bytes());
+            let author_id = hex::encode(message.author().encode());
             let storage_key_enc: u32 = storage_key.into();
             let storage_id = format!("{author_id}:{storage_key_enc}");
 

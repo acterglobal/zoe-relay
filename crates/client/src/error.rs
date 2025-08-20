@@ -22,6 +22,8 @@ pub enum ClientError {
     Encryption(#[from] zoe_encrypted_storage::ConvergentEncryptionError),
     #[error("Blob store error: {0}")]
     BlobStore(#[from] zoe_blob_store::BlobStoreError),
+    #[error("Challenge error: {0}")]
+    Challenge(#[from] anyhow::Error),
 }
 
 pub type Result<T> = std::result::Result<T, ClientError>;

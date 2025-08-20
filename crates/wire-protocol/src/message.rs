@@ -1,9 +1,13 @@
 use blake3::{Hash, Hasher};
-use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
+use ml_dsa::{MlDsa65, Signature as MlDsaSignature, SigningKey, VerifyingKey};
 use postcard::to_vec;
 use serde::{Deserialize, Serialize};
+use signature::{Signer, Verifier};
 
-use crate::{crypto::ChaCha20Poly1305Content, Ed25519SelfEncryptedContent, EphemeralEcdhContent};
+use crate::{
+    crypto::ChaCha20Poly1305Content, Ed25519SelfEncryptedContent, EphemeralEcdhContent,
+    MlDsaSelfEncryptedContent,
+};
 use forward_compatible_enum::ForwardCompatibleEnum;
 
 mod store_key;
@@ -151,6 +155,18 @@ pub enum Content {
     #[discriminant(40)]
     Ed25519SelfEncrypted(Ed25519SelfEncryptedContent),
 
+    /// ML-DSA-derived ChaCha20-Poly1305 self-encrypted content.
+    ///
+    /// Uses sender's ML-DSA keypair to derive ChaCha20-Poly1305 encryption keys.
+    /// Only the sender can decrypt this content (encrypt-to-self pattern).
+    /// Post-quantum secure version of Ed25519SelfEncrypted.
+    /// Suitable for:
+    /// - Personal data storage (post-quantum secure)
+    /// - Self-encrypted notes and backups
+    /// - Content where only the author should have access
+    #[discriminant(41)]
+    MlDsaSelfEncrypted(MlDsaSelfEncryptedContent),
+
     /// Ephemeral ECDH encrypted content.
     ///
     /// Uses ephemeral X25519 key pairs for each message to encrypt for
@@ -190,6 +206,11 @@ impl Content {
         Content::Ed25519SelfEncrypted(content)
     }
 
+    /// Create ML-DSA self-encrypted content
+    pub fn ml_dsa_self_encrypted(content: MlDsaSelfEncryptedContent) -> Self {
+        Content::MlDsaSelfEncrypted(content)
+    }
+
     /// Create ephemeral ECDH encrypted content
     pub fn ephemeral_ecdh(content: EphemeralEcdhContent) -> Self {
         Content::EphemeralEcdh(content)
@@ -219,6 +240,14 @@ impl Content {
         Some(content)
     }
 
+    /// Get the ML-DSA self-encrypted content if this is ML-DSA self-encrypted
+    pub fn as_ml_dsa_self_encrypted(&self) -> Option<&MlDsaSelfEncryptedContent> {
+        let Content::MlDsaSelfEncrypted(ref content) = self else {
+            return None;
+        };
+        Some(content)
+    }
+
     /// Get the ephemeral ECDH encrypted content if this is ephemeral ECDH encrypted
     pub fn as_ephemeral_ecdh(&self) -> Option<&EphemeralEcdhContent> {
         let Content::EphemeralEcdh(ref content) = self else {
@@ -233,6 +262,7 @@ impl Content {
             self,
             Content::ChaCha20Poly1305(_)
                 | Content::Ed25519SelfEncrypted(_)
+                | Content::MlDsaSelfEncrypted(_)
                 | Content::EphemeralEcdh(_)
         )
     }
@@ -347,7 +377,7 @@ impl Message {
 
     pub fn verify_signature(
         &self,
-        signature: &Signature,
+        signature: &MlDsaSignature<MlDsa65>,
     ) -> Result<bool, Box<dyn std::error::Error>> {
         match self {
             Message::MessageV0(message) => {
@@ -363,7 +393,7 @@ impl Message {
 
     pub fn new_v0(
         content: Vec<u8>,
-        sender: VerifyingKey,
+        sender: VerifyingKey<MlDsa65>,
         when: u64,
         kind: Kind,
         tags: Vec<Tag>,
@@ -381,7 +411,7 @@ impl Message {
 
     pub fn new_v0_encrypted(
         content: ChaCha20Poly1305Content,
-        sender: VerifyingKey,
+        sender: VerifyingKey<MlDsa65>,
         when: u64,
         kind: Kind,
         tags: Vec<Tag>,
@@ -399,7 +429,7 @@ impl Message {
 
     pub fn new_v0_ed25519_self_encrypted(
         content: Ed25519SelfEncryptedContent,
-        sender: VerifyingKey,
+        sender: VerifyingKey<MlDsa65>,
         when: u64,
         kind: Kind,
         tags: Vec<Tag>,
@@ -415,9 +445,27 @@ impl Message {
         })
     }
 
+    pub fn new_v0_ml_dsa_self_encrypted(
+        content: MlDsaSelfEncryptedContent,
+        sender: VerifyingKey<MlDsa65>,
+        when: u64,
+        kind: Kind,
+        tags: Vec<Tag>,
+    ) -> Self {
+        Message::MessageV0(MessageV0 {
+            header: MessageV0Header {
+                sender,
+                when,
+                kind,
+                tags,
+            },
+            content: Content::MlDsaSelfEncrypted(content),
+        })
+    }
+
     pub fn new_v0_ephemeral_ecdh(
         content: EphemeralEcdhContent,
-        sender: VerifyingKey,
+        sender: VerifyingKey<MlDsa65>,
         when: u64,
         kind: Kind,
         tags: Vec<Tag>,
@@ -435,7 +483,7 @@ impl Message {
 
     pub fn new_typed<T>(
         content: T,
-        sender: VerifyingKey,
+        sender: VerifyingKey<MlDsa65>,
         when: u64,
         kind: Kind,
         tags: Vec<Tag>,
@@ -457,7 +505,7 @@ impl Message {
     pub fn new_typed_encrypted<T>(
         content: T,
         encryption_key: &crate::crypto::EncryptionKey,
-        sender: VerifyingKey,
+        sender: VerifyingKey<MlDsa65>,
         when: u64,
         kind: Kind,
         tags: Vec<Tag>,
@@ -500,13 +548,18 @@ impl Message {
 ///
 /// This header allows RPC systems to examine message metadata before deciding
 /// how to handle the content, enabling efficient routing and access control.
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct MessageV0Header {
-    /// Ed25519 public key of the message sender.
+    /// ML-DSA public key of the message sender (serialized as bytes).
     ///
     /// This key is used to verify the digital signature in [`MessageFull`].
     /// The sender must possess the corresponding private key to create valid signatures.
-    pub sender: VerifyingKey,
+    /// Stored as encoded bytes for serialization compatibility.
+    #[serde(
+        serialize_with = "serialize_ml_dsa_verifying_key",
+        deserialize_with = "deserialize_ml_dsa_verifying_key"
+    )]
+    pub sender: VerifyingKey<MlDsa65>,
 
     /// Unix timestamp in seconds when the message was created.
     ///
@@ -711,11 +764,11 @@ impl std::ops::Deref for MessageV0 {
 /// - **Indexed fields**: `sender` and `when` extracted from embedded message for queries
 /// - **Tag tables**: Separate tables for efficient tag-based filtering
 /// - **Blob storage**: Entire `MessageFull` serialized as atomic unit
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MessageFull {
     /// Blake3 hash serving as the unique message identifier.
     ///
-    /// Computed as: `Blake3(postcard::serialize(message) || signature.to_bytes())`
+    /// Computed as: `Blake3(postcard::serialize(message) || signature.encode())`
     ///
     /// This ID is:
     /// - **Unique**: Cryptographically unlikely to collide
@@ -730,25 +783,32 @@ pub struct MessageFull {
     /// Contains version-specific message data (e.g., [`MessageV0`]).
     pub message: Box<Message>,
 
-    /// Ed25519 digital signature over the serialized message.
+    /// ML-DSA digital signature over the serialized message.
     ///
     /// Created by signing `postcard::serialize(message)` with the sender's private key.
     /// Recipients verify this signature using the public key in `message.sender`.
     ///
     /// **Security note**: The signature covers the *entire* serialized message,
     /// including all metadata, tags, and content. This prevents partial modification attacks.
-    pub signature: Signature,
+    #[serde(
+        serialize_with = "serialize_ml_dsa_signature",
+        deserialize_with = "deserialize_ml_dsa_signature"
+    )]
+    pub signature: MlDsaSignature<MlDsa65>,
 }
 
 impl MessageFull {
     /// Create a new MessageFull with proper signature and ID
-    pub fn new(message: Message, signer: &SigningKey) -> Result<Self, Box<dyn std::error::Error>> {
+    pub fn new(
+        message: Message,
+        signer: &SigningKey<MlDsa65>,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
         let message_bytes = message.to_bytes()?;
         let signature = signer.sign(&message_bytes);
 
         // Compute ID as Blake3 of serialized core message + signature
         let mut id_input = message_bytes.clone();
-        id_input.extend_from_slice(&signature.to_bytes());
+        id_input.extend_from_slice(&signature.encode());
         let mut hasher = Hasher::new();
         hasher.update(&id_input);
         let id = hasher.finalize();
@@ -769,7 +829,7 @@ impl MessageFull {
     pub fn verify_id(&self) -> Result<bool, Box<dyn std::error::Error>> {
         let message_bytes = self.message.to_bytes()?;
         let mut id_input = message_bytes;
-        id_input.extend_from_slice(&self.signature.to_bytes());
+        id_input.extend_from_slice(&self.signature.encode());
         let mut hasher = Hasher::new();
         hasher.update(&id_input);
         let id = hasher.finalize();
@@ -819,7 +879,7 @@ impl MessageFull {
         Ok(message)
     }
 
-    pub fn author(&self) -> &VerifyingKey {
+    pub fn author(&self) -> &VerifyingKey<MlDsa65> {
         match &*self.message {
             Message::MessageV0(message) => &message.header.sender,
         }
@@ -875,6 +935,9 @@ impl MessageFull {
                 Content::Ed25519SelfEncrypted(_) => {
                     Err("Cannot deserialize ed25519-encrypted content without signing key".into())
                 }
+                Content::MlDsaSelfEncrypted(_) => {
+                    Err("Cannot deserialize ML-DSA-encrypted content without signing key".into())
+                }
                 Content::EphemeralEcdh(_) => Err(
                     "Cannot deserialize ephemeral ECDH-encrypted content without signing keys"
                         .into(),
@@ -904,6 +967,9 @@ impl MessageFull {
                 Content::Ed25519SelfEncrypted(_) => {
                     Err("Cannot decrypt ed25519-encrypted content with EncryptionKey - use signing key instead".into())
                 }
+                Content::MlDsaSelfEncrypted(_) => {
+                    Err("Cannot decrypt ML-DSA-encrypted content with EncryptionKey - use ML-DSA signing key instead".into())
+                }
                 Content::EphemeralEcdh(_) => {
                     Err("Cannot decrypt ephemeral ECDH-encrypted content with EncryptionKey - use signing keys instead".into())
                 }
@@ -930,6 +996,9 @@ impl MessageFull {
                     let plaintext = encrypted.decrypt(signing_key)?;
                     Ok(postcard::from_bytes(&plaintext)?)
                 }
+                Content::MlDsaSelfEncrypted(_) => {
+                    Err("Cannot decrypt ML-DSA content with Ed25519 key - use ML-DSA signing key instead".into())
+                }
                 Content::EphemeralEcdh(encrypted) => {
                     let plaintext = encrypted.decrypt(signing_key)?;
                     Ok(postcard::from_bytes(&plaintext)?)
@@ -938,14 +1007,131 @@ impl MessageFull {
             },
         }
     }
+
+    /// Try to deserialize ML-DSA-encrypted content by decrypting it first
+    pub fn try_deserialize_ml_dsa_encrypted_content<C>(
+        &self,
+        signing_key: &SigningKey<MlDsa65>,
+    ) -> Result<C, Box<dyn std::error::Error>>
+    where
+        C: for<'a> Deserialize<'a>,
+    {
+        match &*self.message {
+            Message::MessageV0(message) => match &message.content {
+                Content::Raw(_) => Err("Content is not encrypted".into()),
+                Content::ChaCha20Poly1305(_) => {
+                    Err("Cannot decrypt ChaCha20Poly1305 content with signing key - use EncryptionKey instead".into())
+                }
+                Content::Ed25519SelfEncrypted(_) => {
+                    Err("Cannot decrypt Ed25519 content with ML-DSA key - use Ed25519 signing key instead".into())
+                }
+                Content::MlDsaSelfEncrypted(encrypted) => {
+                    let plaintext = encrypted.decrypt(signing_key)?;
+                    Ok(postcard::from_bytes(&plaintext)?)
+                }
+                Content::EphemeralEcdh(_) => {
+                    Err("Cannot decrypt ephemeral ECDH content with ML-DSA key - use Ed25519 signing key instead".into())
+                }
+                Content::Unknown { discriminant,.. } => Err(format!("Unknown content type: {discriminant}").into()),
+            },
+        }
+    }
 }
+
+/// Custom serialization for ML-DSA verifying key
+fn serialize_ml_dsa_verifying_key<S>(
+    key: &VerifyingKey<MlDsa65>,
+    serializer: S,
+) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    let encoded = key.encode();
+    serializer.serialize_bytes(&encoded)
+}
+
+/// Custom deserialization for ML-DSA verifying key
+fn deserialize_ml_dsa_verifying_key<'de, D>(
+    deserializer: D,
+) -> Result<VerifyingKey<MlDsa65>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let bytes: Vec<u8> = serde::Deserialize::deserialize(deserializer)?;
+    let encoded_key: &ml_dsa::EncodedVerifyingKey<MlDsa65> = bytes
+        .as_slice()
+        .try_into()
+        .map_err(|_| serde::de::Error::custom("Invalid ML-DSA verifying key length"))?;
+    Ok(VerifyingKey::<MlDsa65>::decode(encoded_key))
+}
+
+/// Manual PartialEq implementation for MessageV0Header
+impl PartialEq for MessageV0Header {
+    fn eq(&self, other: &Self) -> bool {
+        // Compare ML-DSA keys by their encoded bytes
+        let self_encoded = self.sender.encode();
+        let other_encoded = other.sender.encode();
+
+        self_encoded == other_encoded
+            && self.when == other.when
+            && self.kind == other.kind
+            && self.tags == other.tags
+    }
+}
+
+/// Manual Eq implementation for MessageV0Header
+impl Eq for MessageV0Header {}
+
+/// Custom serialization for ML-DSA signature
+fn serialize_ml_dsa_signature<S>(
+    signature: &MlDsaSignature<MlDsa65>,
+    serializer: S,
+) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    let encoded = signature.encode();
+    serializer.serialize_bytes(&encoded)
+}
+
+/// Custom deserialization for ML-DSA signature
+fn deserialize_ml_dsa_signature<'de, D>(
+    deserializer: D,
+) -> Result<MlDsaSignature<MlDsa65>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let bytes: Vec<u8> = serde::Deserialize::deserialize(deserializer)?;
+    let encoded_sig: &ml_dsa::EncodedSignature<MlDsa65> = bytes
+        .as_slice()
+        .try_into()
+        .map_err(|_| serde::de::Error::custom("Invalid ML-DSA signature length"))?;
+    MlDsaSignature::<MlDsa65>::decode(encoded_sig)
+        .ok_or_else(|| serde::de::Error::custom("Failed to decode ML-DSA signature"))
+}
+
+/// Manual PartialEq implementation for MessageFull
+impl PartialEq for MessageFull {
+    fn eq(&self, other: &Self) -> bool {
+        // Compare signatures by their encoded bytes
+        let self_sig_encoded = self.signature.encode();
+        let other_sig_encoded = other.signature.encode();
+
+        self.id == other.id
+            && self.message == other.message
+            && self_sig_encoded == other_sig_encoded
+    }
+}
+
+/// Manual Eq implementation for MessageFull
+impl Eq for MessageFull {}
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ed25519_dalek::{Signer, SigningKey, VerifyingKey};
+    use ml_dsa::{KeyGen, MlDsa65, SigningKey, VerifyingKey};
     use rand::rngs::OsRng;
-    use rand::RngCore;
+    use signature::Signer;
 
     fn make_hash() -> Hash {
         let mut hasher = Hasher::new();
@@ -972,13 +1158,13 @@ mod tests {
         value: u32,
     }
 
-    fn make_keys() -> (SigningKey, VerifyingKey) {
+    fn make_keys() -> (SigningKey<MlDsa65>, VerifyingKey<MlDsa65>) {
         let mut csprng = OsRng;
-        let mut secret_bytes = [0u8; 32];
-        csprng.fill_bytes(&mut secret_bytes);
-        let sk = SigningKey::from_bytes(&secret_bytes);
-        let pk = sk.verifying_key();
-        (sk, pk)
+        let keypair = MlDsa65::key_gen(&mut csprng);
+        (
+            keypair.signing_key().clone(),
+            keypair.verifying_key().clone(),
+        )
     }
 
     #[test]
@@ -1016,6 +1202,11 @@ mod tests {
                 }
             }
             Content::Ed25519SelfEncrypted(ref mut encrypted) => {
+                if !encrypted.ciphertext.is_empty() {
+                    encrypted.ciphertext[0] = encrypted.ciphertext[0].wrapping_add(1);
+                }
+            }
+            Content::MlDsaSelfEncrypted(ref mut encrypted) => {
                 if !encrypted.ciphertext.is_empty() {
                     encrypted.ciphertext[0] = encrypted.ciphertext[0].wrapping_add(1);
                 }
@@ -1215,7 +1406,7 @@ mod tests {
         for tag in tags {
             let core = Message::new_typed(
                 content.clone(),
-                pk,
+                pk.clone(),
                 1714857600,
                 Kind::Regular,
                 vec![tag.clone()],
@@ -1269,11 +1460,9 @@ mod tests {
     fn test_complex_content_clear_store_kind_serialization() {
         // Create a signing key for testing
         let mut rng = rand::rngs::OsRng;
-        let mut secret_bytes = [0u8; 32];
-        use rand::RngCore;
-        rng.fill_bytes(&mut secret_bytes);
-        let signing_key = SigningKey::from_bytes(&secret_bytes);
-        let verifying_key = signing_key.verifying_key();
+        let keypair = MlDsa65::key_gen(&mut rng);
+        let signing_key = keypair.signing_key().clone();
+        let verifying_key = keypair.verifying_key().clone();
 
         for i in 0..10 {
             let content = TestContent {
@@ -1297,7 +1486,7 @@ mod tests {
 
             let message = Message::new_typed(
                 content.clone(),
-                verifying_key,
+                verifying_key.clone(),
                 std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .unwrap()
@@ -1554,7 +1743,7 @@ mod tests {
 
         let core1 = Message::new_typed(
             content1.clone(),
-            pk,
+            pk.clone(),
             1714857600,
             Kind::Regular,
             vec![Tag::Protected],
@@ -1562,7 +1751,7 @@ mod tests {
         .unwrap();
         let core2 = Message::new_typed(
             content2.clone(),
-            pk,
+            pk.clone(),
             1714857600,
             Kind::Regular,
             vec![Tag::Protected],
@@ -1583,7 +1772,7 @@ mod tests {
 
         let core1 = Message::new_typed(
             content.clone(),
-            pk,
+            pk.clone(),
             1714857600,
             Kind::Regular,
             vec![Tag::Protected],
@@ -1591,7 +1780,7 @@ mod tests {
         .unwrap();
         let core2 = Message::new_typed(
             content.clone(),
-            pk,
+            pk.clone(),
             1714857600,
             Kind::Regular,
             vec![Tag::Protected],

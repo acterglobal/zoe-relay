@@ -1,5 +1,5 @@
-use ed25519_dalek::SigningKey;
 use futures_util::StreamExt;
+use ml_dsa::{KeyGen, MlDsa65};
 use rand::rngs::OsRng;
 use std::{sync::Arc, time::SystemTime};
 use zoe_message_store::RedisMessageStorage;
@@ -34,7 +34,7 @@ async fn setup_test_storage() -> RedisMessageStorage {
 
 fn create_test_message(
     channel_id: &[u8],
-    author_keypair: &SigningKey,
+    author_keypair: &ml_dsa::KeyPair<MlDsa65>,
     content: &str,
 ) -> MessageFull {
     let now = SystemTime::now()
@@ -49,13 +49,13 @@ fn create_test_message(
 
     let message = Message::new_v0(
         content.as_bytes().to_vec(),
-        author_keypair.verifying_key(),
+        author_keypair.verifying_key().clone(),
         now,
         Kind::Regular,
         tags,
     );
 
-    MessageFull::new(message, author_keypair).expect("Failed to create MessageFull")
+    MessageFull::new(message, author_keypair.signing_key()).expect("Failed to create MessageFull")
 }
 
 #[tokio::test]
@@ -148,7 +148,7 @@ async fn test_atomic_multi_field_operations() {
 #[tokio::test]
 async fn test_channel_streams_storage_and_retrieval() {
     let storage = setup_test_storage().await;
-    let keypair = SigningKey::generate(&mut OsRng);
+    let keypair = MlDsa65::key_gen(&mut OsRng);
 
     let channel_a = b"channel-a";
     let channel_b = b"channel-b";
@@ -310,7 +310,7 @@ async fn test_duplicate_prevention() {
 #[tokio::test]
 async fn test_comprehensive_scenario() {
     let storage = setup_test_storage().await;
-    let keypair = SigningKey::generate(&mut OsRng);
+    let keypair = MlDsa65::key_gen(&mut OsRng);
 
     // Simulate a complex real-world scenario
     let general_channel = b"general";
@@ -431,7 +431,7 @@ async fn test_comprehensive_scenario() {
 #[tokio::test]
 async fn test_expired_message_handling() -> Result<(), Box<dyn std::error::Error>> {
     let storage = setup_test_storage().await;
-    let keypair = SigningKey::generate(&mut OsRng);
+    let keypair = MlDsa65::key_gen(&mut OsRng);
     let channel_id = b"test-channel";
 
     // Create an expired message (expired 1 hour ago)
@@ -460,7 +460,7 @@ async fn test_expired_message_handling() -> Result<(), Box<dyn std::error::Error
 #[tokio::test]
 async fn test_check_messages_bulk_sync() -> Result<(), Box<dyn std::error::Error>> {
     let storage = setup_test_storage().await;
-    let keypair = SigningKey::generate(&mut OsRng);
+    let keypair = MlDsa65::key_gen(&mut OsRng);
     let channel_id = b"test-channel";
 
     // Create some test messages

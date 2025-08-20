@@ -2,7 +2,7 @@
 name = "zoe-relay"
 version = "0.1.0"
 edition = "2021"
-description = "Zoe relay server providing QUIC transport with ed25519 authentication"
+description = "Zoe relay server providing QUIC transport with ML-DSA-44-based authentication"
 license = "MIT OR Apache-2.0"
 
 [[bin]]
@@ -39,7 +39,10 @@ quinn = { workspace = true }
 rustls = { workspace = true }
 
 # Cryptographic dependencies
+ml-dsa = { workspace = true }
 ed25519-dalek = { workspace = true }
+signature = { workspace = true }
+postcard = { workspace = true }
 
 # Additional utilities
 hex = { workspace = true }
@@ -50,7 +53,13 @@ async-trait = { workspace = true }
 tokio-test = { workspace = true }
 tokio = { workspace = true, features = ["test-util", "macros", "rt-multi-thread"] }
 
+# Client for e2e tests
+zoe-client = { path = "../client" }
+
 # Additional utilities for testing  
 tempfile = { workspace = true }
 redis = { version = "0.32.4", features = ["tokio-comp", "connection-manager"] }
 tracing-subscriber = { workspace = true }
+
+# Certificate generation for tests
+rcgen = "0.13"

@@ -180,12 +180,19 @@ mod tests {
     use super::events::settings::{EncryptionSettings, GroupSettings};
     use super::events::{GroupActivityEvent, GroupInfo, GroupJoinInfo, GroupKeyInfo};
     use crate::{Metadata, RelayEndpoint};
-    use ed25519_dalek::{SigningKey, VerifyingKey};
     use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+    use zoe_wire_protocol::{Ed25519VerifyingKey, VerifyingKey, generate_ed25519_relay_keypair};
 
     fn create_test_verifying_key() -> VerifyingKey {
-        let mut csprng = rand::rngs::OsRng;
-        let signing_key: SigningKey = SigningKey::generate(&mut csprng);
+        use rand::rngs::OsRng;
+        use zoe_wire_protocol::generate_keypair;
+        let keypair = generate_keypair(&mut OsRng);
+        keypair.verifying_key().clone()
+    }
+
+    fn create_test_ed25519_verifying_key() -> Ed25519VerifyingKey {
+        use rand::rngs::OsRng;
+        let signing_key = generate_ed25519_relay_keypair(&mut OsRng);
         signing_key.verifying_key()
     }
 
@@ -363,9 +370,9 @@ mod tests {
     #[test]
     fn test_relay_endpoint() {
         let address = create_test_socket_addr();
-        let public_key = create_test_verifying_key();
+        let _public_key = create_test_verifying_key();
 
-        let endpoint = RelayEndpoint::new(address, public_key)
+        let endpoint = RelayEndpoint::new(address, create_test_ed25519_verifying_key())
             .with_name("Test Relay".to_string())
             .with_metadata(Metadata::Generic {
                 key: "region".to_string(),
@@ -373,7 +380,7 @@ mod tests {
             });
 
         assert_eq!(endpoint.address, address);
-        assert_eq!(endpoint.public_key, public_key);
+        // Note: endpoint uses Ed25519 key, not ML-DSA key
         assert_eq!(endpoint.name, Some("Test Relay".to_string()));
         assert_eq!(endpoint.metadata.len(), 1);
         if let Some(Metadata::Generic { key, value }) = endpoint.metadata.first() {
@@ -387,10 +394,10 @@ mod tests {
     #[test]
     fn test_relay_endpoint_display_name() {
         let address = create_test_socket_addr();
-        let public_key = create_test_verifying_key();
+        let _public_key = create_test_verifying_key();
 
         // Without name, should use address
-        let endpoint_no_name = RelayEndpoint::new(address, public_key);
+        let endpoint_no_name = RelayEndpoint::new(address, create_test_ed25519_verifying_key());
         assert_eq!(endpoint_no_name.display_name(), address.to_string());
 
         // With name, should use name
@@ -409,8 +416,10 @@ mod tests {
         };
         let encryption_key = [42u8; 32];
         let key_info = create_test_group_key_info(vec![1, 2, 3]);
-        let relay_endpoint =
-            RelayEndpoint::new(create_test_socket_addr(), create_test_verifying_key());
+        let relay_endpoint = RelayEndpoint::new(
+            create_test_socket_addr(),
+            create_test_ed25519_verifying_key(),
+        );
 
         let join_info = GroupJoinInfo::new(
             channel_id.clone(),
@@ -440,11 +449,14 @@ mod tests {
 
     #[test]
     fn test_group_join_info_relay_methods() {
-        let relay1 = RelayEndpoint::new(create_test_socket_addr(), create_test_verifying_key())
-            .with_name("Primary".to_string());
+        let relay1 = RelayEndpoint::new(
+            create_test_socket_addr(),
+            create_test_ed25519_verifying_key(),
+        )
+        .with_name("Primary".to_string());
         let relay2 = RelayEndpoint::new(
             SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 8081),
-            create_test_verifying_key(),
+            create_test_ed25519_verifying_key(),
         )
         .with_name("Secondary".to_string());
 
@@ -591,7 +603,7 @@ mod tests {
             create_test_group_key_info(vec![1, 2, 3]),
             vec![RelayEndpoint::new(
                 create_test_socket_addr(),
-                create_test_verifying_key(),
+                create_test_ed25519_verifying_key(),
             )],
         );
 

@@ -4,7 +4,6 @@
 //! operations across multiple clients connected to a real relay server.
 
 use anyhow::{Context, Result};
-use ed25519_dalek::SigningKey;
 use rand::{Rng, thread_rng};
 use std::net::SocketAddr;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -15,12 +14,13 @@ use zoe_blob_store::BlobServiceImpl;
 use zoe_client::Client;
 use zoe_message_store::RedisMessageStorage;
 use zoe_relay::{RelayServer, RelayServiceRouter};
+use zoe_wire_protocol::{generate_ml_dsa_44_keypair_for_tls, prelude::*};
 
 /// Test infrastructure for managing relay server and clients
 struct TestInfrastructure {
     server_handle: tokio::task::JoinHandle<Result<(), anyhow::Error>>,
     server_addr: SocketAddr,
-    server_public_key: ed25519_dalek::VerifyingKey,
+    server_public_key: ml_dsa::VerifyingKey<ml_dsa::MlDsa44>,
     temp_dirs: Vec<TempDir>,
 }
 
@@ -31,12 +31,12 @@ impl TestInfrastructure {
         let server_addr = find_free_port().await?;
 
         // Generate server key
-        let server_key = SigningKey::generate(&mut thread_rng());
-        let server_public_key = server_key.verifying_key();
+        let server_keypair = generate_ml_dsa_44_keypair_for_tls();
+        let server_public_key = server_keypair.verifying_key().clone();
 
         info!(
             "🔑 Server public key: {}",
-            hex::encode(server_public_key.to_bytes())
+            hex::encode(server_public_key.encode())
         );
 
         // Create temporary directory for blob storage
@@ -64,7 +64,7 @@ impl TestInfrastructure {
         let router = RelayServiceRouter::new(blob_service, message_service);
 
         // Create relay server
-        let relay_server = RelayServer::new(server_addr, server_key, router)
+        let relay_server = RelayServer::new(server_addr, server_keypair, router)
             .context("Failed to create relay server")?;
 
         // Spawn server in background
@@ -93,7 +93,7 @@ impl TestInfrastructure {
 
         let mut builder = Client::builder();
         builder.media_storage_path(media_storage_path.to_string_lossy().to_string());
-        builder.server_info(self.server_public_key, self.server_addr);
+        builder.server_info(self.server_public_key.clone(), self.server_addr);
 
         let client = timeout(Duration::from_secs(10), builder.build())
             .await

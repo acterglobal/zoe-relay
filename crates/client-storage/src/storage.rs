@@ -116,7 +116,7 @@ pub trait MessageStorage: Send + Sync {
         limit: Option<usize>,
     ) -> Result<Vec<MessageFull>, Self::Error> {
         let query = MessageQuery {
-            author: Some(*author),
+            author: Some(author.clone()),
             limit,
             ..Default::default()
         };

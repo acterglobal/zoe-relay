@@ -7,12 +7,12 @@
 
 use crate::infra::TestInfrastructure;
 use anyhow::{Context, Result};
-use ed25519_dalek::SigningKey;
 use rand::{Rng, RngCore};
 use std::collections::BTreeMap;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::time::timeout;
 use tracing::{debug, info, warn};
+use zoe_wire_protocol::prelude::*;
 use zoe_wire_protocol::{
     Content, Kind, Message, MessageFilters, MessageFull, StreamMessage, SubscriptionConfig, Tag,
     VerifyingKey,
@@ -147,7 +147,7 @@ async fn test_user_data_storage_and_lookup() -> Result<()> {
             authors: None,
             channels: None,
             events: None,
-            users: Some(vec![client.public_key().to_bytes().to_vec()]),
+            users: Some(vec![client.public_key().encode().to_vec()]),
         },
         since: None,
         limit: None,
@@ -174,7 +174,7 @@ async fn test_user_data_storage_and_lookup() -> Result<()> {
 
     // Create a user tag to make this a user data message
     let user_tag = Tag::User {
-        id: client.public_key().to_bytes().to_vec(),
+        id: client.public_key().encode().to_vec(),
         relays: vec![],
     };
 

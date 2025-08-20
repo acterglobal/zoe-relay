@@ -6,7 +6,7 @@ use tracing::{debug, error, info};
 use zoe_wire_protocol::{
     CatchUpRequest, CatchUpResponse, FilterUpdateRequest, Hash, MessageError, MessageFilters,
     MessageFull, MessageService as MessageServiceRpc, MessageServiceResponseWrap, PublishResult,
-    StoreKey, StreamMessage, SubscriptionConfig, VerifyingKey,
+    SerializableVerifyingKey, StoreKey, StreamMessage, SubscriptionConfig,
 };
 
 /// Subscription state for tracking active subscriptions
@@ -68,7 +68,7 @@ async fn subscription_task(
     while let Some(result) = stream.next().await {
         let to_client = match result {
             Ok((Some(message), height)) => StreamMessage::MessageReceived {
-                message,
+                message: Box::new(message),
                 stream_height: height,
             },
             Ok((None, height)) => {
@@ -199,11 +199,11 @@ impl MessageServiceRpc for MessagesRpcService {
     async fn user_data(
         self,
         _context: ::tarpc::context::Context,
-        author: VerifyingKey,
+        author: SerializableVerifyingKey,
         storage_key: StoreKey,
     ) -> Result<Option<MessageFull>, MessageError> {
         self.store
-            .get_user_data(author.as_bytes(), storage_key)
+            .get_user_data(&author.key_bytes, storage_key)
             .await
             .map_err(MessageError::from)
     }

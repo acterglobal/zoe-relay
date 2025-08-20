@@ -5,7 +5,7 @@ edition = "2024"
 
 [dependencies]
 # Cryptographic types
-ed25519-dalek = { workspace = true }
+ml-dsa = { workspace = true }
 
 # Storage and encryption
 zoe-encrypted-storage = { path = "../encrypted-storage" }
@@ -26,7 +26,7 @@ forward-compatible-enum = { path = "../forward-compatible-enum" }
 
 [dev-dependencies]
 # Testing utilities
-ed25519-dalek = { workspace = true }
+ml-dsa = { workspace = true }
 rand = { workspace = true }
 
 

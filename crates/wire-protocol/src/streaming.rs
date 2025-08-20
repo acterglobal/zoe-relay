@@ -1,9 +1,36 @@
 use blake3::Hash;
-use ed25519_dalek::VerifyingKey;
+use ml_dsa::{MlDsa65, VerifyingKey};
 use serde::{Deserialize, Serialize};
 use tarpc::{ClientMessage, Response};
 
 use crate::{MessageFull, StoreKey};
+
+/// Serializable wrapper for ML-DSA verifying key
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SerializableVerifyingKey {
+    pub key_bytes: Vec<u8>,
+}
+
+impl From<VerifyingKey<MlDsa65>> for SerializableVerifyingKey {
+    fn from(key: VerifyingKey<MlDsa65>) -> Self {
+        Self {
+            key_bytes: key.encode().as_slice().to_vec(),
+        }
+    }
+}
+
+impl TryFrom<SerializableVerifyingKey> for VerifyingKey<MlDsa65> {
+    type Error = String;
+
+    fn try_from(wrapper: SerializableVerifyingKey) -> Result<Self, Self::Error> {
+        let encoded_key: &ml_dsa::EncodedVerifyingKey<MlDsa65> = wrapper
+            .key_bytes
+            .as_slice()
+            .try_into()
+            .map_err(|_| "Invalid ML-DSA verifying key length".to_string())?;
+        Ok(VerifyingKey::<MlDsa65>::decode(encoded_key))
+    }
+}
 
 /// Message filtering criteria for querying stored messages
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -256,7 +283,7 @@ pub enum StreamMessage {
     /// A new message received that matches our filter
     MessageReceived {
         /// Blake3 hash of the message
-        message: MessageFull,
+        message: Box<MessageFull>,
         /// Redis stream position
         stream_height: String,
     },
@@ -281,7 +308,7 @@ pub trait MessageService {
     async fn publish(message: MessageFull) -> Result<PublishResult, MessageError>;
     async fn message(id: Hash) -> Result<Option<MessageFull>, MessageError>;
     async fn user_data(
-        author: VerifyingKey,
+        author: SerializableVerifyingKey,
         storage_key: StoreKey,
     ) -> Result<Option<MessageFull>, MessageError>;
 
@@ -460,7 +487,7 @@ pub enum MessageServiceResponseWrap {
     CatchUpResponse(CatchUpResponse),
 
     /// RPC response (includes subscription/filter update acknowledgments)
-    RpcResponse(Response<MessageServiceResponse>),
+    RpcResponse(Box<Response<MessageServiceResponse>>),
 }
 
 #[cfg(test)]

@@ -5,7 +5,6 @@
 //! to test the complete system integration.
 
 use anyhow::{Context, Result};
-use ed25519_dalek::SigningKey;
 use rand::{Rng, thread_rng};
 use std::net::SocketAddr;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -16,13 +15,14 @@ use zoe_blob_store::BlobServiceImpl;
 use zoe_client::RelayClient;
 use zoe_message_store::RedisMessageStorage;
 use zoe_relay::{RelayServer, RelayServiceRouter};
+use zoe_wire_protocol::{generate_ml_dsa_44_keypair_for_tls, prelude::*};
 
 /// Test infrastructure for managing relay server and clients
 pub struct TestInfrastructure {
     pub server_handle: tokio::task::JoinHandle<Result<(), anyhow::Error>>,
     pub server_addr: SocketAddr,
-    pub server_public_key: ed25519_dalek::VerifyingKey,
-    pub client_key: SigningKey,
+    pub server_public_key: ml_dsa::VerifyingKey<ml_dsa::MlDsa44>,
+    pub client_keypair: KeyPair,
     pub temp_dirs: Vec<TempDir>,
     pub redis_url: String,
 }
@@ -45,13 +45,13 @@ impl TestInfrastructure {
         let blob_temp_dir = TempDir::new().context("Failed to create blob temp directory")?;
         let blob_dir = blob_temp_dir.path().to_path_buf();
 
-        // Generate server keys
-        let server_key = SigningKey::generate(&mut thread_rng());
-        let server_public_key = server_key.verifying_key();
+        // Generate server keys (ML-DSA-44 for TLS)
+        let server_keypair = generate_ml_dsa_44_keypair_for_tls();
+        let server_public_key = server_keypair.verifying_key().clone();
 
         info!(
             "🔑 Server public key: {}",
-            hex::encode(server_public_key.to_bytes())
+            hex::encode(server_public_key.encode())
         );
 
         // Create blob service
@@ -83,7 +83,7 @@ impl TestInfrastructure {
         let router = RelayServiceRouter::new(blob_service, message_service);
 
         // Create relay server
-        let relay_server = RelayServer::new(server_addr, server_key, router)
+        let relay_server = RelayServer::new(server_addr, server_keypair, router)
             .context("Failed to create relay server")?;
 
         // Spawn server in background
@@ -94,7 +94,7 @@ impl TestInfrastructure {
         tokio::time::sleep(Duration::from_millis(100)).await;
 
         // Generate client key
-        let client_key = SigningKey::generate(&mut thread_rng());
+        let client_keypair = generate_keypair(&mut thread_rng());
 
         info!("✅ Test infrastructure setup complete");
 
@@ -102,7 +102,7 @@ impl TestInfrastructure {
             server_handle,
             server_addr,
             server_public_key,
-            client_key,
+            client_keypair,
             temp_dirs: vec![blob_temp_dir],
             redis_url,
         })
@@ -115,8 +115,8 @@ impl TestInfrastructure {
         let client = timeout(
             Duration::from_secs(5),
             RelayClient::new(
-                self.client_key.clone(),
-                self.server_public_key,
+                generate_keypair(&mut rand::thread_rng()),
+                self.server_public_key.clone(),
                 self.server_addr,
             ),
         )
@@ -329,10 +329,14 @@ mod tests {
         // Create two different clients
         let client1 = infra.create_client().await?;
         let client2 = {
-            let client2_key = SigningKey::generate(&mut thread_rng());
+            let client2_key = generate_keypair(&mut thread_rng()).signing_key().clone();
             timeout(
                 Duration::from_secs(5),
-                RelayClient::new(client2_key, infra.server_public_key, infra.server_addr),
+                RelayClient::new(
+                    generate_keypair(&mut rand::thread_rng()),
+                    infra.server_public_key.clone(),
+                    infra.server_addr,
+                ),
             )
             .await??
         };
@@ -340,11 +344,11 @@ mod tests {
         info!("👥 Created two clients for message communication test");
         info!(
             "🔑 Client 1 public key: {}",
-            hex::encode(client1.public_key().to_bytes())
+            hex::encode(client1.public_key().encode())
         );
         info!(
             "🔑 Client 2 public key: {}",
-            hex::encode(client2.public_key().to_bytes())
+            hex::encode(client2.public_key().encode())
         );
 
         // Connect both clients to message service
@@ -527,10 +531,14 @@ mod tests {
         // Create two different clients
         let client1 = infra.create_client().await?;
         let client2 = {
-            let client2_key = SigningKey::generate(&mut thread_rng());
+            let client2_key = generate_keypair(&mut thread_rng()).signing_key().clone();
             timeout(
                 Duration::from_secs(5),
-                RelayClient::new(client2_key, infra.server_public_key, infra.server_addr),
+                RelayClient::new(
+                    generate_keypair(&mut rand::thread_rng()),
+                    infra.server_public_key.clone(),
+                    infra.server_addr,
+                ),
             )
             .await??
         };
@@ -538,11 +546,11 @@ mod tests {
         info!("👥 Created two clients for file storage test");
         info!(
             "🔑 Client 1 public key: {}",
-            hex::encode(client1.public_key().to_bytes())
+            hex::encode(client1.public_key().encode())
         );
         info!(
             "🔑 Client 2 public key: {}",
-            hex::encode(client2.public_key().to_bytes())
+            hex::encode(client2.public_key().encode())
         );
 
         // Connect both clients to blob service for FileStorage
@@ -586,8 +594,8 @@ mod tests {
              🌟 Local storage + Remote blob service + File retrieval = ✨ Magic! ✨\n\
              🎯 Testing hybrid storage architecture with convergent encryption.\n",
             SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(),
-            hex::encode(client1.public_key().to_bytes()),
-            hex::encode(client2.public_key().to_bytes())
+            hex::encode(client1.public_key().encode()),
+            hex::encode(client2.public_key().encode())
         );
         let test_bytes = test_content.as_bytes();
 
@@ -719,10 +727,14 @@ mod tests {
 
         // Create a third client to test fresh remote retrieval
         let client3 = {
-            let client3_key = SigningKey::generate(&mut thread_rng());
+            let client3_key = generate_keypair(&mut thread_rng()).signing_key().clone();
             timeout(
                 Duration::from_secs(5),
-                RelayClient::new(client3_key, infra.server_public_key, infra.server_addr),
+                RelayClient::new(
+                    generate_keypair(&mut rand::thread_rng()),
+                    infra.server_public_key.clone(),
+                    infra.server_addr,
+                ),
             )
             .await??
         };
@@ -779,10 +791,14 @@ mod tests {
         // Create two different clients with different keys
         let client1 = infra.create_client().await?;
         let client2 = {
-            let client2_key = SigningKey::generate(&mut thread_rng());
+            let client2_key = generate_keypair(&mut thread_rng()).signing_key().clone();
             timeout(
                 Duration::from_secs(5),
-                RelayClient::new(client2_key, infra.server_public_key, infra.server_addr),
+                RelayClient::new(
+                    generate_keypair(&mut rand::thread_rng()),
+                    infra.server_public_key.clone(),
+                    infra.server_addr,
+                ),
             )
             .await??
         };
@@ -790,11 +806,11 @@ mod tests {
         info!("👥 Created two clients for group creation and sharing test");
         info!(
             "🔑 Client 1 public key: {}",
-            hex::encode(client1.public_key().to_bytes())
+            hex::encode(client1.public_key().encode())
         );
         info!(
             "🔑 Client 2 public key: {}",
-            hex::encode(client2.public_key().to_bytes())
+            hex::encode(client2.public_key().encode())
         );
 
         // Connect both clients to message service
@@ -913,7 +929,7 @@ mod tests {
         // so we need to subscribe to the author instead
         let subscription_config = zoe_wire_protocol::SubscriptionConfig {
             filters: zoe_wire_protocol::MessageFilters {
-                authors: Some(vec![client1.public_key().to_bytes().to_vec()]), // Subscribe to messages from client 1
+                authors: Some(vec![client1.public_key().encode().to_vec()]), // Subscribe to messages from client 1
                 channels: None,
                 events: None,
                 users: None,
@@ -1062,10 +1078,14 @@ mod tests {
         // Create two different clients with different keys
         let client1 = infra.create_client().await?;
         let client2 = {
-            let client2_key = SigningKey::generate(&mut thread_rng());
+            let client2_key = generate_keypair(&mut thread_rng()).signing_key().clone();
             timeout(
                 Duration::from_secs(5),
-                RelayClient::new(client2_key, infra.server_public_key, infra.server_addr),
+                RelayClient::new(
+                    generate_keypair(&mut rand::thread_rng()),
+                    infra.server_public_key.clone(),
+                    infra.server_addr,
+                ),
             )
             .await??
         };
@@ -1073,11 +1093,11 @@ mod tests {
         info!("👥 Created two clients for catch-up and subscription test");
         info!(
             "🔑 Client 1 public key: {}",
-            hex::encode(client1.public_key().to_bytes())
+            hex::encode(client1.public_key().encode())
         );
         info!(
             "🔑 Client 2 public key: {}",
-            hex::encode(client2.public_key().to_bytes())
+            hex::encode(client2.public_key().encode())
         );
 
         // Connect both clients to message service

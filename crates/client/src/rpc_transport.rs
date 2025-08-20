@@ -12,7 +12,7 @@ use std::marker::PhantomData;
 use std::ops::Deref;
 use std::pin::Pin;
 use std::task::{Context, Poll};
-use std::time::{SystemTime, UNIX_EPOCH};
+// use std::time::{SystemTime, UNIX_EPOCH}; // Temporarily disabled
 use tarpc::transport::channel::UnboundedChannel;
 use tarpc::{ClientMessage, Response};
 use tokio::select;
@@ -88,8 +88,8 @@ impl<TarpcMsg> RpcMessageListener<TarpcMsg> {
 
         // Decrypt using our private key (ephemeral X25519 public key is stored in the content)
         tracing::debug!(
-            "Sender Ed25519 public key: {}",
-            hex::encode(message.author().to_bytes())
+            "Sender ML-DSA public key: {}",
+            hex::encode(message.author().encode())
         );
         let decrypted_data = match ecdh_content.decrypt(&self.signing_key) {
             Ok(data) => {
@@ -139,7 +139,7 @@ where
                         StreamMessage::MessageReceived { message, .. } => {
                             tracing::debug!(
                                 "RpcMessageListener received message from {}, kind: {:?}, tags: {:?}",
-                                hex::encode(message.author().to_bytes()),
+                                hex::encode(message.author().encode()),
                                 message.kind(),
                                 message.tags()
                             );
@@ -199,8 +199,8 @@ pub struct TarpcOverMessagesServer {
 impl TarpcOverMessagesServer {
     pub fn new<S, Req, Resp>(
         mut request_listener: S,
-        signing_key: SigningKey,
-        messages_service: MessagesService,
+        _signing_key: SigningKey,
+        _messages_service: MessagesService,
         service_maker: ServiceMaker<Req, Resp>,
     ) -> Self
     where
@@ -223,7 +223,7 @@ impl TarpcOverMessagesServer {
                         match rpc_request {
                             Some(RpcMessage { header, content }) => {
                                 debug!("📨 Bridge forwarding request to tarpc server from {}",
-                                       hex::encode(header.sender.to_bytes()));
+                                       hex::encode(header.sender.encode()));
                                 match &content {
                                     ClientMessage::Request(request) => {
                                         target_public_keys.insert(request.id, header.sender);
@@ -253,15 +253,14 @@ impl TarpcOverMessagesServer {
                         match tarpc_response {
                             Some(Ok(response)) => {
                                 debug!("📤 Bridge sending tarpc response via RPC message");
-                                let Some(target_public_key) = target_public_keys.remove(&response.request_id) else {
+                                let Some(_target_public_key) = target_public_keys.remove(&response.request_id) else {
                                     // This should never happen, but just in case
                                     error!("Target public key not found for response ID: {}", response.request_id);
                                     continue;
                                 };
-                                if let Err(e) = send_tarpc_message(&signing_key, target_public_key, &messages_service, &response).await {
-                                    error!("Failed to send RPC response: {e}");
-                                    break;
-                                }
+                                // TODO: Temporarily disabled due to Ed25519/ML-DSA key type mismatch
+                                error!("RPC-over-messages temporarily disabled during ML-DSA migration");
+                                break;
                             }
                             Some(Err(e)) => {
                                 error!("tarpc transport error: {e}");
@@ -357,7 +356,7 @@ impl<C> TarpcOverMessagesClient<C> {
                         match rpc_request {
                             Some(RpcMessage { header, content }) => {
                                 debug!("📨 Bridge forwarding request to tarpc server from {}",
-                                    hex::encode(header.sender.to_bytes()));
+                                    hex::encode(header.sender.encode()));
 
                                 if let Err(e) = server_transport.send(content).await {
                                     error!("Failed to forward request to tarpc server: {e}");
@@ -403,53 +402,18 @@ impl<C> TarpcOverMessagesClient<C> {
 /// Internal helper function to send tarpc messages  
 /// Serializes the message using postcard before encryption
 async fn send_tarpc_message<TarpcMsg>(
-    signing_key: &SigningKey,
-    target_public_key: VerifyingKey,
-    messages_service: &MessagesService,
-    message: &TarpcMsg,
+    _signing_key: &SigningKey,
+    _target_public_key: VerifyingKey,
+    _messages_service: &MessagesService,
+    _message: &TarpcMsg,
 ) -> Result<()>
 where
     TarpcMsg: serde::Serialize,
 {
-    let timestamp = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_err(|e| ClientError::Generic(format!("Time error: {e}")))?
-        .as_secs();
-
-    // Serialize the message using postcard
-    let rpc_payload = postcard::to_stdvec(message)
-        .map_err(|e| ClientError::Generic(format!("Message serialization failed: {e}")))?;
-
-    // Encrypt the RPC data for the target using ephemeral ECDH (much simpler!)
-    let encrypted_content =
-        zoe_wire_protocol::EphemeralEcdhContent::encrypt(&rpc_payload, &target_public_key)
-            .map_err(|e| {
-                ClientError::Generic(format!("Ephemeral ECDH RPC encryption failed: {e}"))
-            })?;
-
-    // Create ephemeral message targeting the specific user
-    let message = Message::MessageV0(zoe_wire_protocol::MessageV0 {
-        header: zoe_wire_protocol::MessageV0Header {
-            sender: signing_key.verifying_key(),
-            when: timestamp,
-            kind: Kind::Emphemeral(Some(60)), // 60 second timeout for RPC
-            tags: vec![Tag::User {
-                id: target_public_key.to_bytes().to_vec(),
-                relays: vec![],
-            }],
-        },
-        content: zoe_wire_protocol::Content::ephemeral_ecdh(encrypted_content),
-    });
-
-    let message_full = MessageFull::new(message, signing_key)
-        .map_err(|e| ClientError::Generic(format!("Message creation failed: {e}")))?;
-
-    // Publish the message
-    messages_service
-        .publish(tarpc::context::current(), message_full)
-        .await
-        .map_err(|e| ClientError::Generic(format!("Message publish failed: {e}")))?
-        .map_err(|e| ClientError::Generic(format!("Message publish error: {e}")))?;
-
-    Ok(())
+    // TODO: Temporarily disabled due to Ed25519/ML-DSA key type mismatch
+    // The message system now uses ML-DSA keys but RPC transport uses Ed25519 keys
+    // This needs to be redesigned to work with the hybrid architecture
+    Err(ClientError::Generic(
+        "RPC-over-messages temporarily disabled during ML-DSA migration".to_string(),
+    ))
 }

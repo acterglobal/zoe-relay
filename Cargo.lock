@@ -1318,6 +1318,7 @@ checksum = "e7c1832837b905bbfb5101e07cc24c8deddf52f93225eee6ead5f4d63d53ddcb"
 dependencies = [
  "const-oid",
  "der_derive",
+ "flagset",
  "pem-rfc7468",
  "zeroize",
 ]
@@ -1774,6 +1775,12 @@ name = "fixedbitset"
 version = "0.5.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1d674e81391d1e1ab681a28d99df07927c6d4aa5b027d7da16ba32d1d21ecd99"
+
+[[package]]
+name = "flagset"
+version = "0.4.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b7ac824320a75a52197e8f2d787f6a38b6718bb6897a35142d749af3c0e8f4fe"
 
 [[package]]
 name = "flutter_rust_bridge"
@@ -2581,6 +2588,24 @@ name = "humantime"
 version = "2.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9b112acc8b3adf4b107a8ec20977da0273a8c386765a3ec0229bd500a1443f9f"
+
+[[package]]
+name = "hybrid-array"
+version = "0.2.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f2d35805454dc9f8662a98d6d61886ffe26bd465f5960e0e55345c70d5c0d2a9"
+dependencies = [
+ "typenum",
+]
+
+[[package]]
+name = "hybrid-array"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "891d15931895091dea5c47afa5b3c9a01ba634b311919fd4d41388fa0e3d76af"
+dependencies = [
+ "typenum",
+]
 
 [[package]]
 name = "hyper"
@@ -3412,6 +3437,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "keccak"
+version = "0.1.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ecc2af9a1119c51f12a14607e783cb977bde58bc069ff0c3da1095e635d70654"
+dependencies = [
+ "cpufeatures",
+]
+
+[[package]]
+name = "kem"
+version = "0.3.0-pre.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2b8645470337db67b01a7f966decf7d0bafedbae74147d33e641c67a91df239f"
+dependencies = [
+ "rand_core 0.6.4",
+ "zeroize",
+]
+
+[[package]]
 name = "lazy_static"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4003,6 +4047,33 @@ dependencies = [
  "libc",
  "wasi 0.11.1+wasi-snapshot-preview1",
  "windows-sys 0.59.0",
+]
+
+[[package]]
+name = "ml-dsa"
+version = "0.0.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ac4a46643af2001eafebcc37031fc459eb72d45057aac5d7a15b00046a2ad6db"
+dependencies = [
+ "const-oid",
+ "hybrid-array 0.3.1",
+ "num-traits",
+ "pkcs8",
+ "rand_core 0.6.4",
+ "sha3",
+ "signature",
+]
+
+[[package]]
+name = "ml-kem"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "97befee0c869cb56f3118f49d0f9bb68c9e3f380dec23c1100aedc4ec3ba239a"
+dependencies = [
+ "hybrid-array 0.2.3",
+ "kem",
+ "rand_core 0.6.4",
+ "sha3",
 ]
 
 [[package]]
@@ -6216,9 +6287,9 @@ dependencies = [
 
 [[package]]
 name = "rustls"
-version = "0.23.28"
+version = "0.23.31"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7160e3e10bf4535308537f3c4e1641468cd0e485175d6163087c0393c7d46643"
+checksum = "c0ebcbd2f03de0fc1122ad9bb24b127a5a6cd51d72604a3f3c50ac459762b6cc"
 dependencies = [
  "log",
  "once_cell",
@@ -6298,9 +6369,9 @@ checksum = "f87165f0995f63a9fbeea62b64d10b4d9d8e78ec6d7d51fb2125fda7bb36788f"
 
 [[package]]
 name = "rustls-webpki"
-version = "0.103.3"
+version = "0.103.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e4a72fe2bcf7a6ac6fd7d0b9e5cb68aeb7d4c0a0271730218b3e92d43b4eb435"
+checksum = "0a17884ae0c1b773f1ccd2bd4a8c72f16da897310a98b0e84bf349ad5ead92fc"
 dependencies = [
  "ring",
  "rustls-pki-types",
@@ -6680,6 +6751,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b845214d6175804686b2bd482bcffe96651bb2d1200742b712003504a2dac1ab"
 dependencies = [
  "cc",
+]
+
+[[package]]
+name = "sha3"
+version = "0.10.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "75872d278a8f37ef87fa0ddbda7802605cb18344497949862c0d4dcb291eba60"
+dependencies = [
+ "digest",
+ "keccak",
 ]
 
 [[package]]
@@ -8682,6 +8763,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "x509-cert"
+version = "0.2.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1301e935010a701ae5f8655edc0ad17c44bad3ac5ce8c39185f75453b720ae94"
+dependencies = [
+ "const-oid",
+ "der",
+ "spki",
+ "tls_codec",
+]
+
+[[package]]
 name = "x509-parser"
 version = "0.16.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8914,8 +9007,8 @@ name = "zoe-app-primitives"
 version = "0.1.0"
 dependencies = [
  "blake3",
- "ed25519-dalek",
  "forward-compatible-enum",
+ "ml-dsa",
  "postcard",
  "rand 0.8.5",
  "serde",
@@ -8962,6 +9055,7 @@ dependencies = [
  "flutter_rust_bridge",
  "futures",
  "hex",
+ "ml-dsa",
  "openmls",
  "openmls_basic_credential",
  "openmls_memory_storage",
@@ -8972,6 +9066,7 @@ dependencies = [
  "rustls",
  "serde",
  "serde_json",
+ "signature",
  "tarpc",
  "tempfile",
  "thiserror 2.0.12",
@@ -8997,9 +9092,9 @@ dependencies = [
  "anyhow",
  "async-trait",
  "blake3",
- "ed25519-dalek",
  "futures",
  "hex",
+ "ml-dsa",
  "postcard",
  "rand 0.8.5",
  "refinery",
@@ -9021,10 +9116,10 @@ name = "zoe-e2e-tests"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "ed25519-dalek",
  "forward-compatible-enum",
  "futures",
  "hex",
+ "ml-dsa",
  "postcard",
  "pretty_assertions",
  "rand 0.8.5",
@@ -9068,11 +9163,11 @@ dependencies = [
  "async-trait",
  "blake3",
  "chrono",
- "ed25519-dalek",
  "env_logger 0.11.8",
  "futures",
  "futures-util",
  "hex",
+ "ml-dsa",
  "postcard",
  "r2d2",
  "rand 0.8.5",
@@ -9104,11 +9199,15 @@ dependencies = [
  "futures",
  "futures-util",
  "hex",
+ "ml-dsa",
+ "postcard",
  "quinn",
  "rand 0.8.5",
+ "rcgen 0.13.2",
  "redis 0.32.4",
  "rustls",
  "serde",
+ "signature",
  "tarpc",
  "tempfile",
  "thiserror 2.0.12",
@@ -9119,6 +9218,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "zoe-blob-store",
+ "zoe-client",
  "zoe-message-store",
  "zoe-wire-protocol",
 ]
@@ -9139,8 +9239,10 @@ dependencies = [
  "chrono",
  "ed25519-dalek",
  "hex",
+ "ml-dsa",
  "postcard",
  "rand 0.8.5",
+ "rand_chacha 0.3.1",
  "serde",
  "thiserror 1.0.69",
  "zoe-app-primitives",
@@ -9164,13 +9266,17 @@ dependencies = [
  "blake3",
  "chacha20poly1305",
  "chrono",
+ "const-oid",
  "criterion",
  "curve25519-dalek",
+ "der",
  "ed25519-dalek",
  "forward-compatible-enum",
  "heapless",
  "hex",
  "hex-literal",
+ "ml-dsa",
+ "ml-kem",
  "mockall",
  "postcard",
  "pretty_assertions",
@@ -9178,10 +9284,12 @@ dependencies = [
  "quickcheck",
  "quinn",
  "rand 0.8.5",
+ "rand_chacha 0.3.1",
  "rcgen 0.12.1",
  "rustls",
  "serde",
  "serial_test",
+ "signature",
  "socket2 0.5.10",
  "tarpc",
  "tempfile",
@@ -9193,6 +9301,7 @@ dependencies = [
  "tracing",
  "uuid",
  "x25519-dalek",
+ "x509-cert",
  "x509-parser",
  "zeroize",
 ]

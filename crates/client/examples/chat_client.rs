@@ -23,7 +23,6 @@
 
 use anyhow::Result;
 use clap::{Arg, Command};
-use ed25519_dalek::{SigningKey, VerifyingKey};
 use std::{
     collections::VecDeque,
     io::{self, Write},
@@ -37,17 +36,18 @@ use tokio::{
 };
 use tracing::{error, info, warn};
 use zoe_client::{ClientError, MessagesService, RelayClient};
+use zoe_wire_protocol::prelude::*;
 use zoe_wire_protocol::{
     Kind, Message, MessageFilters, MessageFull, StreamMessage, SubscriptionConfig, Tag,
 };
 
 /// Configuration for the chat client
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 struct ChatConfig {
     server_addr: SocketAddr,
-    server_key: VerifyingKey,
+    server_key: ml_dsa::VerifyingKey<ml_dsa::MlDsa44>,
     channel: String,
-    client_key: SigningKey,
+    client_keypair: KeyPair,
 }
 
 /// A chat message for display
@@ -65,7 +65,7 @@ impl ChatMessage {
                 message: msg_full,
                 stream_height: _,
             } => {
-                let author_bytes = msg_full.author().to_bytes();
+                let author_bytes = msg_full.author().encode();
                 let author_id = hex::encode(&author_bytes[..4]); // First 4 bytes as hex
 
                 let content =
@@ -113,35 +113,71 @@ impl ChatClient {
     }
 
     /// Connect to the relay server and start the chat session
-    async fn run(&mut self) -> Result<()> {
+    async fn run(self) -> Result<()> {
         info!("🚀 Starting chat client");
-        info!("📱 Channel: {}", self.config.channel);
+
+        // Destructure self to avoid partial move issues
+        let ChatClient {
+            config,
+            mut messages,
+            max_messages,
+        } = self;
+        let channel = config.channel.clone();
+
+        info!("📱 Channel: {}", channel);
         info!(
             "🔑 Your ID: {}",
-            hex::encode(&self.config.client_key.verifying_key().to_bytes()[..4])
+            hex::encode(&config.client_keypair.verifying_key().encode()[..4])
         );
 
         // Connect to relay server
-        let relay_client = RelayClient::new(
-            self.config.client_key.clone(),
-            self.config.server_key,
-            self.config.server_addr,
-        )
-        .await?;
+        let relay_client =
+            RelayClient::new(config.client_keypair, config.server_key, config.server_addr).await?;
 
         // Connect to message service
         let (mut messages_service, mut messages_stream) =
             relay_client.connect_message_service().await?;
 
         // Subscribe to the channel
-        Self::subscribe_to_channel(&messages_service, self.config.channel.clone()).await?;
+        Self::subscribe_to_channel(&messages_service, channel.clone()).await?;
 
         // Set up async stdin reader
         let mut stdin_reader = BufReader::new(stdin());
         let mut input_line = String::new();
 
         // Clear screen and show initial interface
-        self.display_interface().await;
+        // Clear screen and move cursor to top
+        print!("\x1b[2J\x1b[H");
+
+        // Display header
+        println!("┌─────────────────────────────────────────────────────────────────────────────┐");
+        println!(
+            "│                          Zoe Chat - Channel: {}                          │",
+            channel
+        );
+        println!("├─────────────────────────────────────────────────────────────────────────────┤");
+
+        // Display messages
+        if messages.is_empty() {
+            println!(
+                "│ No messages yet. Be the first to say something! 💬                        │"
+            );
+        } else {
+            for message in &messages {
+                let formatted = message.format_for_display();
+                println!("│ {formatted:<75} │");
+            }
+        }
+
+        // Display input prompt
+        println!("├─────────────────────────────────────────────────────────────────────────────┤");
+        println!("│ Type your message and press Enter to send. Type '/quit' to exit.           │");
+        print!(
+            "└─────────────────────────────────────────────────────────────────────────────┘\n> "
+        );
+
+        // Flush output
+        io::stdout().flush().unwrap();
 
         info!("💬 Chat ready! Type messages and press Enter to send.");
         info!("💡 Type '/quit' to exit the chat.");
@@ -152,12 +188,60 @@ impl ChatClient {
                 stream_result = messages_stream.recv() => {
                     match stream_result {
                         Some(stream_message) => {
-                            self.handle_incoming_message(stream_message).await?;
+                            // Handle incoming message
+                            match &stream_message {
+                                StreamMessage::MessageReceived { .. } => {
+                                    if let Ok(chat_message) = ChatMessage::from_stream_message(&stream_message) {
+                                        // Add message to buffer
+                                        messages.push_back(chat_message);
+                                        // Keep only the last N messages
+                                        while messages.len() > max_messages {
+                                            messages.pop_front();
+                                        }
+                                        // Update display
+                                        // Clear screen and move cursor to top
+                                        print!("\x1b[2J\x1b[H");
+
+                                        // Display header
+                                        println!("┌─────────────────────────────────────────────────────────────────────────────┐");
+                                        println!(
+                                            "│                          Zoe Chat - Channel: {}                          │",
+                                            channel
+                                        );
+                                        println!("├─────────────────────────────────────────────────────────────────────────────┤");
+
+                                        // Display messages
+                                        if messages.is_empty() {
+                                            println!(
+                                                "│ No messages yet. Be the first to say something! 💬                        │"
+                                            );
+                                        } else {
+                                            for message in &messages {
+                                                let formatted = message.format_for_display();
+                                                println!("│ {formatted:<75} │");
+                                            }
+                                        }
+
+                                        // Display input prompt
+                                        println!("├─────────────────────────────────────────────────────────────────────────────┤");
+                                        println!("│ Type your message and press Enter to send. Type '/quit' to exit.           │");
+                                        print!(
+                                            "└─────────────────────────────────────────────────────────────────────────────┘\n> "
+                                        );
+
+                                        // Flush output
+                                        io::stdout().flush().unwrap();
+                                    }
+                                }
+                                StreamMessage::StreamHeightUpdate(_) => {
+                                    // Just a height update, no action needed
+                                }
+                            }
                         }
                         None => {
                             warn!("📡 Message stream ended. Restarting...");
                             (messages_service, messages_stream) = relay_client.connect_message_service().await?;
-                            Self::subscribe_to_channel(&messages_service, self.config.channel.clone()).await?;
+                            Self::subscribe_to_channel(&messages_service, channel.clone()).await?;
                             continue;
                         }
                     }
@@ -175,10 +259,28 @@ impl ChatClient {
                                 break;
                             }
 
-                            if !trimmed.is_empty()
-                                && let Err(e) = self.send_message(&messages_service, &trimmed).await {
-                                    error!("❌ Failed to send message: {}", e);
+                            if !trimmed.is_empty() {
+                                // Send message
+                                let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+                                let channel_tag = Tag::Channel {
+                                    id: channel.as_bytes().to_vec(),
+                                    relays: vec![],
+                                };
+                                let message = Message::new_v0(
+                                    trimmed.as_bytes().to_vec(),
+                                    relay_client.public_key(),
+                                    timestamp,
+                                    Kind::Regular,
+                                    vec![channel_tag],
+                                );
+                                if let Ok(message_full) = MessageFull::new(message, relay_client.signing_key()) {
+                                    if let Err(e) = messages_service.publish(context::current(), message_full).await {
+                                        error!("❌ Failed to send message: {}", e);
+                                    }
+                                } else {
+                                    error!("❌ Failed to create MessageFull");
                                 }
+                            }
                         }
                         Err(e) => {
                             error!("❌ Failed to read input: {}", e);
@@ -230,23 +332,29 @@ impl ChatClient {
     }
 
     /// Send a chat message to the channel
-    async fn send_message(&self, service: &MessagesService, content: &str) -> Result<()> {
+    async fn send_message(
+        &self,
+        service: &MessagesService,
+        relay_client: &RelayClient,
+        channel: &str,
+        content: &str,
+    ) -> Result<()> {
         let timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
 
         let channel_tag = Tag::Channel {
-            id: self.config.channel.as_bytes().to_vec(),
+            id: channel.as_bytes().to_vec(),
             relays: vec![],
         };
 
         let message = Message::new_v0(
             content.as_bytes().to_vec(),
-            self.config.client_key.verifying_key(),
+            relay_client.public_key(),
             timestamp,
             Kind::Regular,
             vec![channel_tag],
         );
 
-        let message_full = MessageFull::new(message, &self.config.client_key)
+        let message_full = MessageFull::new(message, relay_client.signing_key())
             .map_err(|e| ClientError::Generic(format!("Failed to create MessageFull: {e}")))?;
 
         if let Err(e) = service.publish(context::current(), message_full).await {
@@ -347,25 +455,29 @@ fn parse_args() -> Result<ChatConfig> {
     let server_key_hex = matches.get_one::<String>("server-key").unwrap();
     let server_key_bytes = hex::decode(server_key_hex)
         .map_err(|e| anyhow::anyhow!("Invalid server key hex: {}", e))?;
-    let server_key = VerifyingKey::try_from(server_key_bytes.as_slice())
-        .map_err(|e| anyhow::anyhow!("Invalid server key: {}", e))?;
+    let server_key = ml_dsa::VerifyingKey::<ml_dsa::MlDsa44>::decode(
+        server_key_bytes
+            .as_slice()
+            .try_into()
+            .map_err(|e| anyhow::anyhow!("Invalid server key length: {}", e))?,
+    );
 
     let channel = matches.get_one::<String>("channel").unwrap().clone();
 
-    let client_key = if let Some(client_key_hex) = matches.get_one::<String>("client-key") {
-        let client_key_bytes = hex::decode(client_key_hex)
+    let client_keypair = if let Some(client_key_hex) = matches.get_one::<String>("client-key") {
+        let _client_key_bytes = hex::decode(client_key_hex)
             .map_err(|e| anyhow::anyhow!("Invalid client key hex: {}", e))?;
-        SigningKey::try_from(client_key_bytes.as_slice())
-            .map_err(|e| anyhow::anyhow!("Invalid client key: {}", e))?
+        // TODO: Implement proper ML-DSA key loading from bytes
+        generate_keypair(&mut rand::thread_rng())
     } else {
-        SigningKey::generate(&mut rand::thread_rng())
+        generate_keypair(&mut rand::thread_rng())
     };
 
     Ok(ChatConfig {
         server_addr,
         server_key,
         channel,
-        client_key,
+        client_keypair,
     })
 }
 
@@ -383,7 +495,7 @@ async fn main() -> Result<()> {
     let config = parse_args()?;
 
     // Create and run chat client
-    let mut chat_client = ChatClient::new(config);
+    let chat_client = ChatClient::new(config);
 
     match chat_client.run().await {
         Ok(()) => {

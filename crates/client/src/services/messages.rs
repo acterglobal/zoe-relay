@@ -68,8 +68,8 @@ impl MessagesService {
                                     return Err(ClientError::Generic(format!("Send error: {e}")));
                                 }
                             }
-                            Ok(MessageServiceResponseWrap::RpcResponse(response)) => {
-                                if let Err(e) = server_transport.send(response).await {
+                                        Ok(MessageServiceResponseWrap::RpcResponse(response)) => {
+                if let Err(e) = server_transport.send(*response).await {
                                     return Err(ClientError::Generic(format!("Send error: {e}")));
                                 }
                             }

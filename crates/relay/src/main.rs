@@ -1,11 +1,11 @@
 use anyhow::Result;
 use clap::{Arg, Command};
-use ed25519_dalek::SigningKey;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use tracing::info;
 use zoe_blob_store::BlobServiceImpl;
 use zoe_message_store::RedisMessageStorage;
+use zoe_wire_protocol::generate_ml_dsa_44_keypair_for_tls;
 
 use zoe_relay::{RelayConfig, RelayServer, RelayServiceRouter};
 
@@ -63,8 +63,8 @@ async fn main() -> Result<()> {
 
     // Handle key generation
     if matches.get_flag("generate-key") {
-        let server_key = SigningKey::generate(&mut rand::thread_rng());
-        let hex_key = hex::encode(server_key.to_bytes());
+        let server_keypair = generate_ml_dsa_44_keypair_for_tls();
+        let hex_key = hex::encode(server_keypair.signing_key().encode());
         println!("Generated server key: {hex_key}");
         println!(
             "You can use this key in your configuration file or set it via environment variable."
@@ -92,8 +92,10 @@ async fn main() -> Result<()> {
         }
 
         if let Some(private_key) = matches.get_one::<String>("private-key") {
-            let private_key_bytes: [u8; 32] = hex::decode(private_key).unwrap().try_into().unwrap();
-            config.server_key = SigningKey::from(private_key_bytes);
+            let _private_key_bytes: [u8; 32] =
+                hex::decode(private_key).unwrap().try_into().unwrap();
+            // TODO: Implement proper ML-DSA key loading from bytes
+            config.server_keypair = generate_ml_dsa_44_keypair_for_tls();
         }
 
         config
@@ -103,7 +105,7 @@ async fn main() -> Result<()> {
     info!("Server address: {}", address);
     info!(
         "Server public key: {}",
-        hex::encode(config.server_key.verifying_key().to_bytes())
+        hex::encode(config.server_keypair.verifying_key().encode())
     );
     info!("Blob storage directory: {:?}", config.blob_config.data_dir);
 
@@ -119,7 +121,7 @@ async fn main() -> Result<()> {
     let router = RelayServiceRouter::new(blob_service, message_service);
 
     // Create and start relay server
-    let server = RelayServer::new(address, config.server_key, router)?;
+    let server = RelayServer::new(address, config.server_keypair, router)?;
 
     info!("🚀 Zoe Relay Server running on {}", address);
     info!("Press Ctrl+C to stop the server");
@@ -165,9 +167,8 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let config_path = temp_dir.path().join("test_config.toml");
 
-        let server_key = SigningKey::generate(&mut rand::thread_rng());
         let test_config = RelayConfig {
-            server_key,
+            server_keypair: generate_ml_dsa_44_keypair_for_tls(),
             blob_config: zoe_relay::BlobConfig {
                 data_dir: PathBuf::from("/test/path"),
             },

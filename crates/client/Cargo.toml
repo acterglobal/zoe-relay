@@ -38,7 +38,9 @@ quinn = { workspace = true }
 rustls = { workspace = true }
 
 # Cryptographic dependencies
+ml-dsa = { workspace = true }
 ed25519-dalek = { workspace = true }
+signature = { workspace = true }
 chacha20poly1305 = "0.10"
 blake3 = { workspace = true }
 
@@ -77,10 +79,6 @@ path = "examples/blob_client.rs"
 name = "mls_chat_client"
 path = "examples/mls_chat_client.rs"
 required-features = ["mls"]
-
-[[example]]
-name = "encrypted_personal_data"
-path = "examples/encrypted_personal_data.rs"
 
 
 

@@ -56,7 +56,7 @@ testcontainers = { version = "0.24", features = ["blocking"] }
 testcontainers-modules = { version = "0.12", features = ["redis"] }
 
 # Crypto and utilities for tests
-ed25519-dalek = { workspace = true }
+ml-dsa = { workspace = true }
 rand = { workspace = true }
 blake3 = { workspace = true } 
 env_logger = "0.11"

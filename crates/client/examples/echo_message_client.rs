@@ -15,7 +15,6 @@
 
 use anyhow::Result;
 use clap::{Arg, Command};
-use ed25519_dalek::{SigningKey, VerifyingKey};
 use std::{
     net::SocketAddr,
     time::{Duration, SystemTime, UNIX_EPOCH},
@@ -24,20 +23,22 @@ use tarpc::context;
 use tokio::time::timeout;
 use tracing::{error, info, warn};
 use zoe_client::{ClientError, MessagesService, MessagesStream, RelayClient};
+use zoe_wire_protocol::prelude::*;
 use zoe_wire_protocol::{
     Kind, Message, MessageFilters, MessageFull, StreamMessage, SubscriptionConfig,
 };
 
 /// Run the complete message echo test
 async fn run_echo_test(
-    client_key: &SigningKey,
+    client_public_key: VerifyingKey,
+    client_signing_key: &SigningKey,
     messages_service: MessagesService,
     mut messages_stream: MessagesStream,
 ) -> Result<()> {
     // Step 1: Subscribe to messages from our own key
     let subscription_config = SubscriptionConfig {
         filters: MessageFilters {
-            authors: Some(vec![client_key.verifying_key().to_bytes().to_vec()]),
+            authors: Some(vec![client_public_key.encode().to_vec()]),
             channels: None,
             events: None,
             users: None,
@@ -58,13 +59,13 @@ async fn run_echo_test(
 
     let message = Message::new_v0(
         echo_content.clone(),
-        client_key.verifying_key(),
+        client_public_key.clone(),
         timestamp,
         Kind::Regular,
         vec![], // no tags
     );
 
-    let message_full = MessageFull::new(message, client_key)
+    let message_full = MessageFull::new(message, client_signing_key)
         .map_err(|e| ClientError::Generic(format!("Failed to create MessageFull: {e}")))?;
     info!(
         "📝 Created message with ID: {}",
@@ -108,7 +109,7 @@ async fn run_echo_test(
                         info!("🎉 Received message via stream!");
                         info!("   Stream height: {}", stream_height);
                         info!("   Message ID: {}", hex::encode(message.id.as_bytes()));
-                        info!("   Author: {}", hex::encode(message.author().to_bytes()));
+                        info!("   Author: {}", hex::encode(message.author().encode()));
                         info!(
                             "   Content: {:?}",
                             String::from_utf8_lossy(
@@ -213,35 +214,38 @@ async fn main() -> Result<()> {
         .parse()
         .map_err(|e| anyhow::anyhow!("Invalid address: {}", e))?;
 
-    // Parse server public key
+    // Parse server public key (ML-DSA-44 for TLS)
     let server_key_hex = matches.get_one::<String>("server-key").unwrap();
     let server_key_bytes = hex::decode(server_key_hex)
         .map_err(|e| anyhow::anyhow!("Invalid server key hex: {}", e))?;
 
-    if server_key_bytes.len() != 32 {
-        anyhow::bail!("Server key must be 32 bytes (64 hex characters)");
-    }
-
-    let server_public_key = VerifyingKey::from_bytes(&server_key_bytes.try_into().unwrap())
-        .map_err(|e| anyhow::anyhow!("Invalid ed25519 public key: {}", e))?;
+    let server_public_key = ml_dsa::VerifyingKey::<ml_dsa::MlDsa44>::decode(
+        server_key_bytes
+            .as_slice()
+            .try_into()
+            .map_err(|_| anyhow::anyhow!("Invalid ML-DSA-44 public key length"))?,
+    );
 
     // Create client (with optional private key)
     let client = if let Some(client_key_hex) = matches.get_one::<String>("client-key") {
-        let client_key_bytes = hex::decode(client_key_hex)
+        let _client_key_bytes = hex::decode(client_key_hex)
             .map_err(|e| anyhow::anyhow!("Invalid client key hex: {}", e))?;
 
-        if client_key_bytes.len() != 32 {
-            anyhow::bail!("Client key must be 32 bytes (64 hex characters)");
-        }
-
-        let client_key = SigningKey::from_bytes(&client_key_bytes.try_into().unwrap());
-        RelayClient::new(client_key, server_public_key, address).await?
+        let client_keypair = generate_keypair(&mut rand::thread_rng()); // TODO: Implement proper key loading
+        RelayClient::new(client_keypair, server_public_key, address).await?
     } else {
         RelayClient::new_with_random_key(server_public_key, address).await?
     };
 
     // Run the echo test
     let (messages_service, messages_stream) = client.connect_message_service().await?;
-    let client_key = client.signing_key();
-    run_echo_test(client_key, messages_service, messages_stream).await
+    let client_public_key = client.public_key();
+    let client_signing_key = client.signing_key();
+    run_echo_test(
+        client_public_key,
+        client_signing_key,
+        messages_service,
+        messages_stream,
+    )
+    .await
 }

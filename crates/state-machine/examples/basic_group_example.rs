@@ -1,4 +1,4 @@
-use ed25519_dalek::SigningKey;
+use zoe_wire_protocol::prelude::*;
 
 use zoe_state_machine::{DigitalGroupAssistant, GroupSettings, create_group_activity_event};
 
@@ -8,8 +8,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Create signing keys for users
     let mut rng = rand::thread_rng();
-    let alice_key = SigningKey::generate(&mut rng);
-    let _bob_key = SigningKey::generate(&mut rng); // Would be used if Bob had the encryption key
+    let alice_keypair = generate_keypair(&mut rng);
+    let alice_key = alice_keypair.signing_key();
+    let _bob_keypair = generate_keypair(&mut rng); // Would be used if Bob had the encryption key
 
     // Alice creates a group
     let metadata = vec![
@@ -40,7 +41,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let create_result = dga.create_group(
         create_group,
         None, // Generate a new key
-        &alice_key,
+        alice_key,
         chrono::Utc::now().timestamp() as u64,
     )?;
 
@@ -68,7 +69,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let activity_message = dga.create_group_event_message(
         create_result.group_id,
         activity_event,
-        &alice_key,
+        alice_key,
         chrono::Utc::now().timestamp() as u64,
     )?;
 

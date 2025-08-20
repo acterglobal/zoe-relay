@@ -32,7 +32,7 @@ tracing = { workspace = true }
 
 # Utilities
 hex = { workspace = true }
-ed25519-dalek = { workspace = true }
+ml-dsa = { workspace = true }
 
 [dev-dependencies]
 # Testing framework
@@ -42,7 +42,7 @@ test-case = { workspace = true }
 serial_test = { workspace = true }
 
 # Crypto and utilities for tests
-ed25519-dalek = { workspace = true }
+ml-dsa = { workspace = true }
 rand = { workspace = true }
 blake3 = { workspace = true }
 tracing-subscriber = { workspace = true }

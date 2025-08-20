@@ -1,7 +1,8 @@
 use anyhow::Result;
-use ed25519_dalek::SigningKey;
+
 use futures::future::join;
 
+use ml_dsa::{KeyPair, MlDsa44, SigningKey, VerifyingKey};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -10,7 +11,8 @@ use tokio::time::{timeout, Duration};
 use zoe_relay::Service;
 use zoe_relay::{ConnectionInfo, RelayServer, ServiceRouter};
 use zoe_wire_protocol::{
-    generate_deterministic_cert_from_ed25519, AcceptSpecificServerCertVerifier, StreamPair,
+    generate_deterministic_cert_from_ml_dsa_44_for_tls, generate_ml_dsa_44_keypair_for_tls,
+    AcceptSpecificServerCertVerifier, StreamPair,
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -94,7 +96,7 @@ impl Service for EchoService {
         } = self;
         println!(
             "🔗 Echo service handling connection from client: {}",
-            hex::encode(connection_info.client_public_key.to_bytes()),
+            hex::encode(connection_info.client_public_key.encode()),
         );
 
         // Echo everything back
@@ -145,20 +147,27 @@ impl Service for EchoService {
 
 /// A simple QUIC client for testing
 struct TestClient {
-    client_key: SigningKey,
+    client_keypair: KeyPair<MlDsa44>,
 }
 
 impl TestClient {
     fn new() -> Self {
-        Self {
-            client_key: SigningKey::generate(&mut rand::thread_rng()),
-        }
+        let client_keypair = generate_ml_dsa_44_keypair_for_tls();
+        Self { client_keypair }
+    }
+
+    fn client_key(&self) -> &SigningKey<MlDsa44> {
+        self.client_keypair.signing_key()
+    }
+
+    fn client_verifying_key(&self) -> &VerifyingKey<MlDsa44> {
+        self.client_keypair.verifying_key()
     }
 
     async fn connect_and_test(
         &self,
         server_addr: SocketAddr,
-        server_public_key: &SigningKey,
+        server_public_key: &VerifyingKey<MlDsa44>,
     ) -> Result<()> {
         // Create client endpoint
         let client_endpoint = self.create_client_endpoint(server_public_key)?;
@@ -194,23 +203,37 @@ impl TestClient {
         Ok(())
     }
 
-    fn create_client_endpoint(&self, server_public_key: &SigningKey) -> Result<quinn::Endpoint> {
+    fn create_client_endpoint(
+        &self,
+        server_public_key: &VerifyingKey<MlDsa44>,
+    ) -> Result<quinn::Endpoint> {
         use quinn::{crypto::rustls::QuicClientConfig, ClientConfig, Endpoint};
         use rustls::ClientConfig as RustlsClientConfig;
         use std::sync::Arc;
 
         // Generate client certificate for mutual TLS
-        let (client_certs, client_key) =
-            generate_deterministic_cert_from_ed25519(&self.client_key, "client")?;
+        let client_certs =
+            generate_deterministic_cert_from_ml_dsa_44_for_tls(&self.client_keypair, "client")?;
 
         // Create custom certificate verifier that accepts our server
-        let verifier = AcceptSpecificServerCertVerifier::new(server_public_key.verifying_key());
+        let verifier = AcceptSpecificServerCertVerifier::new(server_public_key.clone());
 
         // Create client config with client certificate for mutual TLS
+        // For now, let's use the simple approach with a temporary Ed25519 key for rustls compatibility
+        use ed25519_dalek::pkcs8::EncodePrivateKey;
+        let temp_ed25519_key = ed25519_dalek::SigningKey::generate(&mut rand::thread_rng());
+        let private_key_der = rustls::pki_types::PrivateKeyDer::Pkcs8(
+            temp_ed25519_key
+                .to_pkcs8_der()
+                .unwrap()
+                .as_bytes()
+                .to_vec()
+                .into(),
+        );
         let crypto = RustlsClientConfig::builder()
             .dangerous()
             .with_custom_certificate_verifier(Arc::new(verifier))
-            .with_client_auth_cert(client_certs, client_key)?;
+            .with_client_auth_cert(client_certs, private_key_der)?;
 
         let client_config = ClientConfig::new(Arc::new(QuicClientConfig::try_from(crypto)?));
 
@@ -227,10 +250,11 @@ async fn test_echo_service_integration() -> Result<()> {
     let _ = tracing_subscriber::fmt::try_init();
 
     // Generate server key
-    let server_key = SigningKey::generate(&mut rand::thread_rng());
+    let server_keypair = generate_ml_dsa_44_keypair_for_tls();
+    let server_verifying_key = server_keypair.verifying_key().clone();
     println!(
         "🔑 Server key: {}",
-        hex::encode(server_key.verifying_key().to_bytes())
+        hex::encode(server_verifying_key.encode())
     );
 
     // Create echo service
@@ -239,7 +263,7 @@ async fn test_echo_service_integration() -> Result<()> {
 
     // Start server on random port
     let server_addr: SocketAddr = "127.0.0.1:0".parse()?;
-    let server = RelayServer::new(server_addr, server_key.clone(), echo_service)?;
+    let server = RelayServer::new(server_addr, server_keypair, echo_service)?;
 
     // Get the actual bound address
     let actual_addr = server.endpoint.local_addr()?;
@@ -249,7 +273,7 @@ async fn test_echo_service_integration() -> Result<()> {
     let client = TestClient::new();
     println!(
         "🔑 Client key: {}",
-        hex::encode(client.client_key.verifying_key().to_bytes())
+        hex::encode(client.client_verifying_key().encode())
     );
 
     // Spawn server in background
@@ -260,7 +284,9 @@ async fn test_echo_service_integration() -> Result<()> {
 
     // Run client test
     let client_task = timeout(Duration::from_secs(10), async {
-        client.connect_and_test(actual_addr, &server_key).await
+        client
+            .connect_and_test(actual_addr, &server_verifying_key)
+            .await
     });
 
     let connection_wait_task = timeout(Duration::from_secs(10), async {
@@ -360,11 +386,12 @@ async fn test_service_id_routing() -> Result<()> {
         }
     }
 
-    let server_key = SigningKey::generate(&mut rand::thread_rng());
+    let server_keypair = generate_ml_dsa_44_keypair_for_tls();
+    let server_verifying_key = server_keypair.verifying_key().clone();
     let router = SingleServiceRouter::new();
 
     let server_addr: SocketAddr = "127.0.0.1:0".parse()?;
-    let server = RelayServer::new(server_addr, server_key.clone(), router)?;
+    let server = RelayServer::new(server_addr, server_keypair, router)?;
     let actual_addr = server.endpoint.local_addr()?;
 
     let client = TestClient::new();
@@ -378,7 +405,7 @@ async fn test_service_id_routing() -> Result<()> {
 
     // Run client test with timeout
     let client_result = timeout(Duration::from_secs(5), async {
-        let client_endpoint = client.create_client_endpoint(&server_key)?;
+        let client_endpoint = client.create_client_endpoint(&server_verifying_key)?;
         let connection = client_endpoint.connect(actual_addr, "localhost")?.await?;
         let (mut send, mut recv) = connection.open_bi().await?;
 

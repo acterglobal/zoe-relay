@@ -35,7 +35,7 @@ pub struct GroupInfo {
     pub metadata: Vec<Metadata>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(bound(deserialize = "T: DeserializeOwned", serialize = "T : Serialize"))]
 pub struct GroupEvent<T> {
     /// which identity are we sending this event as
@@ -44,7 +44,7 @@ pub struct GroupEvent<T> {
     event: Box<GroupActivityEvent<T>>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, ForwardCompatibleEnum)]
+#[derive(Debug, Clone, PartialEq, ForwardCompatibleEnum)]
 #[forward_compatible(
     serde_serialize = "T: Serialize",
     serde_deserialize = "T: DeserializeOwned"

@@ -187,7 +187,7 @@ impl SqliteMessageStorage {
         // Handle author filtering
         if let Some(author) = &query.author {
             conditions.push("m.author = ?".to_string());
-            params.push(Box::new(author.as_bytes().to_vec()));
+            params.push(Box::new(zoe_wire_protocol::verifying_key_to_bytes(author)));
         }
 
         // Handle timestamp filtering
@@ -255,7 +255,7 @@ impl MessageStorage for SqliteMessageStorage {
         // Extract fields for indexing
         let (author, timestamp, tags) = match &*message.message {
             zoe_wire_protocol::Message::MessageV0(msg) => {
-                let author = msg.sender.as_bytes();
+                let author = msg.sender.encode().as_slice().to_vec();
                 let timestamp = msg.when as i64;
                 (author, timestamp, &msg.tags)
             }
@@ -482,7 +482,7 @@ impl MessageStorage for SqliteMessageStorage {
             .map_err(|e| StorageError::Internal(format!("Failed to acquire database lock: {e}")))?;
 
         let message_id_bytes = message_id.as_bytes();
-        let relay_pubkey_bytes = relay_pubkey.to_bytes();
+        let relay_pubkey_bytes = zoe_wire_protocol::verifying_key_to_bytes(relay_pubkey);
 
         conn.execute(
             "INSERT OR REPLACE INTO relay_sync_status (message_id, relay_pubkey, global_stream_id) VALUES (?1, ?2, ?3)",
@@ -509,7 +509,7 @@ impl MessageStorage for SqliteMessageStorage {
             .lock()
             .map_err(|e| StorageError::Internal(format!("Failed to acquire database lock: {e}")))?;
 
-        let relay_pubkey_bytes = relay_pubkey.to_bytes();
+        let relay_pubkey_bytes = zoe_wire_protocol::verifying_key_to_bytes(relay_pubkey);
         let limit_clause = if let Some(l) = limit {
             format!(" LIMIT {l}")
         } else if let Some(default_limit) = self.config.max_query_limit {
@@ -581,7 +581,7 @@ impl MessageStorage for SqliteMessageStorage {
 
             let mut key_array = [0u8; 32];
             key_array.copy_from_slice(&relay_pubkey_bytes);
-            let relay_pubkey = zoe_wire_protocol::VerifyingKey::from_bytes(&key_array)
+            let relay_pubkey = zoe_wire_protocol::verifying_key_from_bytes(&key_array)
                 .map_err(|e| StorageError::Internal(format!("Invalid relay public key: {e}")))?;
 
             sync_statuses.push(RelaySyncStatus {

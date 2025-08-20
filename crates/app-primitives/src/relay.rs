@@ -1,7 +1,7 @@
 use std::net::SocketAddr;
 
-use ed25519_dalek::VerifyingKey;
 use serde::{Deserialize, Serialize};
+use zoe_wire_protocol::Ed25519VerifyingKey;
 
 use crate::Metadata;
 
@@ -23,7 +23,7 @@ pub struct RelayEndpoint {
     /// Used to verify the relay server's identity during the QUIC TLS handshake.
     /// This prevents man-in-the-middle attacks and ensures the client is
     /// connecting to the correct relay server.
-    pub public_key: VerifyingKey,
+    pub public_key: Ed25519VerifyingKey,
 
     /// Optional human-readable name for the relay
     ///
@@ -40,7 +40,7 @@ pub struct RelayEndpoint {
 
 impl RelayEndpoint {
     /// Create a new relay endpoint with minimal required fields
-    pub fn new(address: SocketAddr, public_key: VerifyingKey) -> Self {
+    pub fn new(address: SocketAddr, public_key: Ed25519VerifyingKey) -> Self {
         Self {
             address,
             public_key,

@@ -1,3 +1,4 @@
+pub mod challenge;
 pub mod client;
 pub mod error;
 pub mod file_storage;

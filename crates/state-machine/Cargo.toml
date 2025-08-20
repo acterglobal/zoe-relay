@@ -9,7 +9,9 @@ zoe-app-primitives = { path = "../app-primitives" }
 zoe-wire-protocol = { path = "../wire-protocol" }
 serde = { version = "1.0", features = ["derive"] }
 blake3 = "1.5"
-ed25519-dalek = "2.1"
+ml-dsa = { workspace = true }
+ed25519-dalek = { workspace = true }
+rand_chacha = "0.3"
 postcard = "1.0"
 # AES-GCM removed - only using ChaCha20-Poly1305 from wire-protocol
 rand = "0.8"

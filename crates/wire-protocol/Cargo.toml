@@ -16,7 +16,10 @@ postcard = { workspace = true }
 heapless = "0.7.2"
 
 # Cryptography
-ed25519-dalek = { workspace = true, features = ["serde", "pkcs8"] }
+ml-dsa = { workspace = true }
+ml-kem = "0.2.1"
+ed25519-dalek = { workspace = true }  # Still needed for TLS certificate compatibility
+signature = { workspace = true }
 x25519-dalek = { version = "2.0", features = ["static_secrets"] }
 curve25519-dalek = "4.0"
 chacha20poly1305 = "0.10"
@@ -24,6 +27,7 @@ bip39 = "2.0"
 argon2 = "0.5"
 zeroize = { version = "1.7", features = ["zeroize_derive"] }
 rand = { workspace = true }
+rand_chacha = "0.3"
 forward-compatible-enum = { path = "../forward-compatible-enum" }
 
 # Error handling
@@ -41,8 +45,11 @@ rcgen = "0.12"
 # Networking utilities
 socket2 = "0.5"
 
-# Certificate parsing
+# Certificate parsing and generation
 x509-parser = "0.16"
+x509-cert = "0.2"
+der = "0.7"
+const-oid = "0.9"
 hex = { workspace = true }
 uuid = { workspace = true }
 

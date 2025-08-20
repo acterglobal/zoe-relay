@@ -124,7 +124,7 @@ impl Service for MessagesService {
                     match rpc_message {
                         Some(Ok(message)) => {
                             // Forward message to client
-                            if let Err(e) = sink.send(MessageServiceResponseWrap::RpcResponse(message)).await {
+                            if let Err(e) = sink.send(MessageServiceResponseWrap::RpcResponse(Box::new(message))).await {
                                 error!("Failed to send response to client: {}", e);
                                 break;
                             }
