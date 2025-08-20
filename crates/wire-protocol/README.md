@@ -1,12 +1,12 @@
 # Zoe Wire Protocol
 
-The wire protocol crate provides core message definitions, cryptographic utilities, tarpc service interfaces, and authentication types for the Zoe messaging system.
+The wire protocol crate provides core message definitions, post-quantum cryptographic utilities, tarpc service interfaces, and authentication types for the Zoe messaging system.
 
 ## Features
 
 - **Message Protocol**: Serializable message types with support for generic content
 - **tarpc Service Interfaces**: RelayService and BlobService definitions for RPC communication
-- **Cryptographic Utilities**: Ed25519 key management and deterministic TLS certificate generation
+- **Cryptographic Utilities**: ML-DSA key management and deterministic TLS certificate generation
 - **Authentication System**: Dynamic challenge-response authentication with session management
 - **Protocol Types**: Core protocol definitions for relay communication
 
@@ -15,11 +15,12 @@ The wire protocol crate provides core message definitions, cryptographic utiliti
 ```rust
 use zoe_wire_protocol::{
     MessageFull, Message, MessageContent, Kind, Tag,
-    generate_ed25519_keypair, generate_deterministic_cert_from_ed25519
+    generate_keypair, generate_deterministic_cert_from_ml_dsa_44_for_tls
 };
+use rand::rngs::OsRng;
 
-// Create a signing key
-let signing_key = generate_ed25519_keypair();
+// Create a signing key (ML-DSA-65 for messages)
+let signing_key = generate_keypair(&mut OsRng);
 
 // Create message content
 let content = MessageContent::Text { 
@@ -102,9 +103,30 @@ Messages in Zoe follow this structure:
 pub struct MessageFull<T> {
     pub id: Hash,           // Blake3 hash of message + signature
     pub message: Message<T>, // The actual message content
-    pub signature: Signature, // Ed25519 signature
+    pub signature: Signature, // ML-DSA-65 signature (~3309 bytes)
 }
 ```
+
+### Cryptographic Specifications
+
+**ML-DSA Algorithm Details:**
+- **ML-DSA-65**: Used for message signatures (security level 3, ~192-bit security)
+  - Public key size: 1952 bytes
+  - Signature size: ~3309 bytes
+  - Algorithm OID: `2.16.840.1.101.3.4.3.18`
+- **ML-DSA-44**: Used for TLS certificates (security level 2, ~128-bit security)
+  - Public key size: 1312 bytes  
+  - Signature size: ~2420 bytes
+  - Algorithm OID: `2.16.840.1.101.3.4.3.17`
+
+**Post-Quantum Security:**
+ML-DSA (Module Lattice-based Digital Signature Algorithm) is standardized in FIPS 204 and provides security against both classical and quantum computer attacks.
+
+**Ed25519 Compatibility:**
+Ed25519 is still used in specific contexts for compatibility:
+- Legacy relay operations and some internal systems
+- Compatibility with existing Ed25519-based identity systems
+- The codebase is in transition from Ed25519 to ML-DSA
 
 ### Content Types for T
 
@@ -129,51 +151,56 @@ store it
 
 ## Cryptographic Features
 
-### Ed25519 Key Management
+### ML-DSA Key Management
 
 ```rust
 use zoe_wire_protocol::{
-    generate_ed25519_keypair,
-    load_ed25519_key_from_hex,
-    save_ed25519_key_to_hex,
-    load_ed25519_public_key_from_hex,
-    save_ed25519_public_key_to_hex,
+    generate_keypair, generate_ml_dsa_44_keypair_for_tls,
+    load_ml_dsa_public_key_from_hex,
+    save_ml_dsa_public_key_to_hex,
+    load_ml_dsa_44_key_from_hex_for_tls,
+    save_ml_dsa_44_key_to_hex_for_tls,
 };
+use rand::rngs::OsRng;
 
-// Generate new keypair
-let key = generate_ed25519_keypair();
+// Generate new keypair (ML-DSA-65 for messages)
+let key = generate_keypair(&mut OsRng);
 let public_key = key.verifying_key();
 
+// Generate TLS keypair (ML-DSA-44 for certificates)
+let tls_key = generate_ml_dsa_44_keypair_for_tls();
+
 // Serialize keys to hex
-let hex_private_key = save_ed25519_key_to_hex(&key);
-let hex_public_key = save_ed25519_public_key_to_hex(&public_key);
+let hex_tls_private_key = save_ml_dsa_44_key_to_hex_for_tls(&tls_key.signing_key());
+let hex_public_key = save_ml_dsa_public_key_to_hex(&public_key);
 
 // Load keys from hex
-let loaded_private_key = load_ed25519_key_from_hex(&hex_private_key)?;
-let loaded_public_key = load_ed25519_public_key_from_hex(&hex_public_key)?;
+let loaded_tls_private_key = load_ml_dsa_44_key_from_hex_for_tls(&hex_tls_private_key)?;
+let loaded_public_key = load_ml_dsa_public_key_from_hex(&hex_public_key)?;
 ```
 
 ### Deterministic TLS Certificates
 
-Generate TLS certificates that embed ed25519 public keys:
+Generate TLS certificates that embed ML-DSA-44 public keys:
 
 ```rust
 use zoe_wire_protocol::{
-    generate_deterministic_cert_from_ed25519,
-    extract_ed25519_from_cert,
+    generate_deterministic_cert_from_ml_dsa_44_for_tls,
+    extract_public_key_from_cert,
+    generate_ml_dsa_44_keypair_for_tls,
 };
 
-let ed25519_key = generate_ed25519_keypair();
+let ml_dsa_key = generate_ml_dsa_44_keypair_for_tls();
 
-// Generate TLS certificate embedding the ed25519 key
-let (certs, private_key) = generate_deterministic_cert_from_ed25519(
-    &ed25519_key, 
+// Generate TLS certificate embedding the ML-DSA-44 key
+let certs = generate_deterministic_cert_from_ml_dsa_44_for_tls(
+    &ml_dsa_key, 
     "example.com"
 )?;
 
-// Extract ed25519 key from certificate
-let extracted_key = extract_ed25519_from_cert(&certs[0])?;
-assert_eq!(extracted_key.to_bytes(), ed25519_key.verifying_key().to_bytes());
+// Extract ML-DSA-44 key from certificate
+let extracted_key = extract_public_key_from_cert(&certs[0])?;
+assert_eq!(extracted_key.encode(), ml_dsa_key.verifying_key().encode());
 ```
 
 ## Authentication System
@@ -183,13 +210,15 @@ assert_eq!(extracted_key.to_bytes(), ed25519_key.verifying_key().to_bytes());
 The protocol supports dynamic challenge-response authentication:
 
 ```rust
-use zoe_wire_protocol::{DynamicSession, SessionManager};
+use zoe_wire_protocol::{DynamicSession, SessionManager, generate_keypair};
+use rand::rngs::OsRng;
+use signature::Signer;
 
-let client_key = generate_ed25519_keypair();
+let client_key = generate_keypair(&mut OsRng);
 let session_manager = SessionManager::new();
 
 // Create session
-session_manager.create_session("session_id".to_string(), client_key.verifying_key())?;
+session_manager.create_session("session_id".to_string(), client_key.verifying_key().clone())?;
 
 // Issue challenge
 let challenge = session_manager.with_session("session_id", |session| {
@@ -197,7 +226,7 @@ let challenge = session_manager.with_session("session_id", |session| {
 })?;
 
 // Verify response (in real use, client would sign the challenge)
-let signature = client_key.sign(format!("auth:{}:{}", challenge.nonce, challenge.timestamp).as_bytes());
+let signature = client_key.signing_key().sign(format!("auth:{}:{}", challenge.nonce, challenge.timestamp).as_bytes());
 
 let is_valid = session_manager.with_session("session_id", |session| {
     session.verify_challenge_response(
@@ -258,7 +287,8 @@ cargo test -p zoe-wire-protocol tests::unit_protocol
 ## Dependencies
 
 Key dependencies include:
-- `ed25519-dalek` - Ed25519 cryptography
+- `ml-dsa` - ML-DSA post-quantum cryptography
+- `ed25519-dalek` - Ed25519 cryptography (compatibility)
 - `blake3` - Fast cryptographic hashing
 - `serde` - Serialization framework
 - `postcard` - Compact binary serialization
@@ -267,11 +297,12 @@ Key dependencies include:
 
 ## Security Considerations
 
-- All messages are cryptographically signed with Ed25519
+- All messages are cryptographically signed with ML-DSA-65 (post-quantum secure)
 - Message IDs are Blake3 hashes preventing tampering
-- TLS certificates embed ed25519 keys for identity verification
+- TLS certificates embed ML-DSA-44 keys for identity verification
 - Challenge-response authentication prevents replay attacks
 - Sessions have configurable timeout and freshness requirements
+- Post-quantum cryptography provides protection against quantum computer attacks
 
 ## License
 

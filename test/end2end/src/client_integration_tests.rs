@@ -12,10 +12,9 @@ use std::collections::BTreeMap;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::time::timeout;
 use tracing::{debug, info, warn};
-use zoe_wire_protocol::prelude::*;
 use zoe_wire_protocol::{
-    Content, Kind, Message, MessageFilters, MessageFull, StreamMessage, SubscriptionConfig, Tag,
-    VerifyingKey,
+    Content, KeyPair, Kind, Message, MessageFilters, MessageFull, StreamMessage, SubscriptionConfig, Tag,
+    VerifyingKey, generate_keypair,
 };
 
 /// Test message posting and retrieval functionality
@@ -75,7 +74,7 @@ async fn test_message_posting_and_retrieval() -> Result<()> {
         vec![channel_tag],
     );
 
-    let message_full = MessageFull::new(message, client.signing_key())
+    let message_full = MessageFull::new(message, client.keypair())
         .map_err(|e| anyhow::anyhow!("Failed to create MessageFull: {}", e))?;
 
     // Publish the message
@@ -186,7 +185,7 @@ async fn test_user_data_storage_and_lookup() -> Result<()> {
         vec![user_tag],
     );
 
-    let message_full = MessageFull::new(message, client.signing_key())
+    let message_full = MessageFull::new(message, client.keypair())
         .map_err(|e| anyhow::anyhow!("Failed to create MessageFull for user data: {}", e))?;
 
     let publish_result = messages_service
@@ -307,7 +306,7 @@ async fn test_subscription_unsubscription_functionality() -> Result<()> {
         vec![channel_tag],
     );
 
-    let subscribed_message_full = MessageFull::new(subscribed_message, client.signing_key())
+    let subscribed_message_full = MessageFull::new(subscribed_message, client.keypair())
         .map_err(|e| anyhow::anyhow!("Failed to create subscribed message: {}", e))?;
 
     let publish_result = messages_service

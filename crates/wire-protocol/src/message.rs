@@ -1,8 +1,8 @@
+use crate::{KeyPair, Signature, VerifyingKey};
 use blake3::{Hash, Hasher};
-use ml_dsa::{MlDsa65, Signature as MlDsaSignature, SigningKey, VerifyingKey};
 use postcard::to_vec;
 use serde::{Deserialize, Serialize};
-use signature::{Signer, Verifier};
+// use signature::Signer; // Not needed since we use KeyPair.sign() method
 
 use crate::{
     crypto::ChaCha20Poly1305Content, Ed25519SelfEncryptedContent, EphemeralEcdhContent,
@@ -377,7 +377,7 @@ impl Message {
 
     pub fn verify_signature(
         &self,
-        signature: &MlDsaSignature<MlDsa65>,
+        signature: &Signature,
     ) -> Result<bool, Box<dyn std::error::Error>> {
         match self {
             Message::MessageV0(message) => {
@@ -393,7 +393,7 @@ impl Message {
 
     pub fn new_v0(
         content: Vec<u8>,
-        sender: VerifyingKey<MlDsa65>,
+        sender: VerifyingKey,
         when: u64,
         kind: Kind,
         tags: Vec<Tag>,
@@ -411,7 +411,7 @@ impl Message {
 
     pub fn new_v0_encrypted(
         content: ChaCha20Poly1305Content,
-        sender: VerifyingKey<MlDsa65>,
+        sender: VerifyingKey,
         when: u64,
         kind: Kind,
         tags: Vec<Tag>,
@@ -429,7 +429,7 @@ impl Message {
 
     pub fn new_v0_ed25519_self_encrypted(
         content: Ed25519SelfEncryptedContent,
-        sender: VerifyingKey<MlDsa65>,
+        sender: VerifyingKey,
         when: u64,
         kind: Kind,
         tags: Vec<Tag>,
@@ -447,7 +447,7 @@ impl Message {
 
     pub fn new_v0_ml_dsa_self_encrypted(
         content: MlDsaSelfEncryptedContent,
-        sender: VerifyingKey<MlDsa65>,
+        sender: VerifyingKey,
         when: u64,
         kind: Kind,
         tags: Vec<Tag>,
@@ -465,7 +465,7 @@ impl Message {
 
     pub fn new_v0_ephemeral_ecdh(
         content: EphemeralEcdhContent,
-        sender: VerifyingKey<MlDsa65>,
+        sender: VerifyingKey,
         when: u64,
         kind: Kind,
         tags: Vec<Tag>,
@@ -483,7 +483,7 @@ impl Message {
 
     pub fn new_typed<T>(
         content: T,
-        sender: VerifyingKey<MlDsa65>,
+        sender: VerifyingKey,
         when: u64,
         kind: Kind,
         tags: Vec<Tag>,
@@ -505,7 +505,7 @@ impl Message {
     pub fn new_typed_encrypted<T>(
         content: T,
         encryption_key: &crate::crypto::EncryptionKey,
-        sender: VerifyingKey<MlDsa65>,
+        sender: VerifyingKey,
         when: u64,
         kind: Kind,
         tags: Vec<Tag>,
@@ -555,11 +555,7 @@ pub struct MessageV0Header {
     /// This key is used to verify the digital signature in [`MessageFull`].
     /// The sender must possess the corresponding private key to create valid signatures.
     /// Stored as encoded bytes for serialization compatibility.
-    #[serde(
-        serialize_with = "serialize_ml_dsa_verifying_key",
-        deserialize_with = "deserialize_ml_dsa_verifying_key"
-    )]
-    pub sender: VerifyingKey<MlDsa65>,
+    pub sender: VerifyingKey,
 
     /// Unix timestamp in seconds when the message was created.
     ///
@@ -771,17 +767,11 @@ pub struct MessageFull {
     /// Computed as: `Blake3(postcard::serialize(message) || signature.encode())`
     ///
     /// This ID is:
-    /// - **Unique**: Cryptographically unlikely to collide
+    /// - **Unique**: Cryptographically improbable to collide
     /// - **Deterministic**: Same signed message always produces same ID
     /// - **Tamper-evident**: Changes to message or signature change the ID
     /// - **Content-addressed**: Can be used to retrieve the message
     pub id: Hash,
-
-    /// The original message content and metadata.
-    ///
-    /// Boxed to minimize stack usage since messages can be large.
-    /// Contains version-specific message data (e.g., [`MessageV0`]).
-    pub message: Box<Message>,
 
     /// ML-DSA digital signature over the serialized message.
     ///
@@ -790,19 +780,18 @@ pub struct MessageFull {
     ///
     /// **Security note**: The signature covers the *entire* serialized message,
     /// including all metadata, tags, and content. This prevents partial modification attacks.
-    #[serde(
-        serialize_with = "serialize_ml_dsa_signature",
-        deserialize_with = "deserialize_ml_dsa_signature"
-    )]
-    pub signature: MlDsaSignature<MlDsa65>,
+    pub signature: Signature,
+
+    /// The original message content and metadata.
+    ///
+    /// Boxed to minimize stack usage since messages can be large.
+    /// Contains version-specific message data (e.g., [`MessageV0`]).
+    pub message: Box<Message>,
 }
 
 impl MessageFull {
     /// Create a new MessageFull with proper signature and ID
-    pub fn new(
-        message: Message,
-        signer: &SigningKey<MlDsa65>,
-    ) -> Result<Self, Box<dyn std::error::Error>> {
+    pub fn new(message: Message, signer: &KeyPair) -> Result<Self, Box<dyn std::error::Error>> {
         let message_bytes = message.to_bytes()?;
         let signature = signer.sign(&message_bytes);
 
@@ -879,7 +868,7 @@ impl MessageFull {
         Ok(message)
     }
 
-    pub fn author(&self) -> &VerifyingKey<MlDsa65> {
+    pub fn author(&self) -> &VerifyingKey {
         match &*self.message {
             Message::MessageV0(message) => &message.header.sender,
         }
@@ -1011,7 +1000,7 @@ impl MessageFull {
     /// Try to deserialize ML-DSA-encrypted content by decrypting it first
     pub fn try_deserialize_ml_dsa_encrypted_content<C>(
         &self,
-        signing_key: &SigningKey<MlDsa65>,
+        signing_key: &KeyPair,
     ) -> Result<C, Box<dyn std::error::Error>>
     where
         C: for<'a> Deserialize<'a>,
@@ -1026,8 +1015,13 @@ impl MessageFull {
                     Err("Cannot decrypt Ed25519 content with ML-DSA key - use Ed25519 signing key instead".into())
                 }
                 Content::MlDsaSelfEncrypted(encrypted) => {
-                    let plaintext = encrypted.decrypt(signing_key)?;
-                    Ok(postcard::from_bytes(&plaintext)?)
+                    match signing_key {
+                        KeyPair::MlDsa65(key) => {
+                            let plaintext = encrypted.decrypt(key.signing_key())?;
+                            Ok(postcard::from_bytes(&plaintext)?)
+                        }
+                        _ => Err("ML-DSA self-encrypted content requires MlDsa65 signing key".into()),
+                    }
                 }
                 Content::EphemeralEcdh(_) => {
                     Err("Cannot decrypt ephemeral ECDH content with ML-DSA key - use Ed25519 signing key instead".into())
@@ -1036,33 +1030,6 @@ impl MessageFull {
             },
         }
     }
-}
-
-/// Custom serialization for ML-DSA verifying key
-fn serialize_ml_dsa_verifying_key<S>(
-    key: &VerifyingKey<MlDsa65>,
-    serializer: S,
-) -> Result<S::Ok, S::Error>
-where
-    S: serde::Serializer,
-{
-    let encoded = key.encode();
-    serializer.serialize_bytes(&encoded)
-}
-
-/// Custom deserialization for ML-DSA verifying key
-fn deserialize_ml_dsa_verifying_key<'de, D>(
-    deserializer: D,
-) -> Result<VerifyingKey<MlDsa65>, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    let bytes: Vec<u8> = serde::Deserialize::deserialize(deserializer)?;
-    let encoded_key: &ml_dsa::EncodedVerifyingKey<MlDsa65> = bytes
-        .as_slice()
-        .try_into()
-        .map_err(|_| serde::de::Error::custom("Invalid ML-DSA verifying key length"))?;
-    Ok(VerifyingKey::<MlDsa65>::decode(encoded_key))
 }
 
 /// Manual PartialEq implementation for MessageV0Header
@@ -1081,34 +1048,6 @@ impl PartialEq for MessageV0Header {
 
 /// Manual Eq implementation for MessageV0Header
 impl Eq for MessageV0Header {}
-
-/// Custom serialization for ML-DSA signature
-fn serialize_ml_dsa_signature<S>(
-    signature: &MlDsaSignature<MlDsa65>,
-    serializer: S,
-) -> Result<S::Ok, S::Error>
-where
-    S: serde::Serializer,
-{
-    let encoded = signature.encode();
-    serializer.serialize_bytes(&encoded)
-}
-
-/// Custom deserialization for ML-DSA signature
-fn deserialize_ml_dsa_signature<'de, D>(
-    deserializer: D,
-) -> Result<MlDsaSignature<MlDsa65>, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    let bytes: Vec<u8> = serde::Deserialize::deserialize(deserializer)?;
-    let encoded_sig: &ml_dsa::EncodedSignature<MlDsa65> = bytes
-        .as_slice()
-        .try_into()
-        .map_err(|_| serde::de::Error::custom("Invalid ML-DSA signature length"))?;
-    MlDsaSignature::<MlDsa65>::decode(encoded_sig)
-        .ok_or_else(|| serde::de::Error::custom("Failed to decode ML-DSA signature"))
-}
 
 /// Manual PartialEq implementation for MessageFull
 impl PartialEq for MessageFull {
@@ -1129,9 +1068,10 @@ impl Eq for MessageFull {}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ml_dsa::{KeyGen, MlDsa65, SigningKey, VerifyingKey};
+    use crate::keys::{KeyPair, VerifyingKey};
+    use ml_dsa::{KeyGen, MlDsa65};
     use rand::rngs::OsRng;
-    use signature::Signer;
+    // use signature::Signer; // Not needed since we use KeyPair.sign() method
 
     fn make_hash() -> Hash {
         let mut hasher = Hasher::new();
@@ -1158,13 +1098,11 @@ mod tests {
         value: u32,
     }
 
-    fn make_keys() -> (SigningKey<MlDsa65>, VerifyingKey<MlDsa65>) {
+    fn make_keys() -> (KeyPair, VerifyingKey) {
         let mut csprng = OsRng;
-        let keypair = MlDsa65::key_gen(&mut csprng);
-        (
-            keypair.signing_key().clone(),
-            keypair.verifying_key().clone(),
-        )
+        let keypair = KeyPair::MlDsa65(MlDsa65::key_gen(&mut csprng));
+        let public_key = keypair.public_key();
+        (keypair, public_key)
     }
 
     #[test]
@@ -1459,10 +1397,7 @@ mod tests {
     #[test]
     fn test_complex_content_clear_store_kind_serialization() {
         // Create a signing key for testing
-        let mut rng = rand::rngs::OsRng;
-        let keypair = MlDsa65::key_gen(&mut rng);
-        let signing_key = keypair.signing_key().clone();
-        let verifying_key = keypair.verifying_key().clone();
+        let (signing_key, verifying_key) = make_keys();
 
         for i in 0..10 {
             let content = TestContent {

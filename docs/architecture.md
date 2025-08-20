@@ -2,7 +2,7 @@
 
 ## 🏗️ System Architecture
 
-Zoe is a secure messaging relay system built with a modular, multi-crate architecture. The system provides dual-layer security with QUIC transport and ed25519 cryptography.
+Zoe is a secure messaging relay system built with a modular, multi-crate architecture. The system provides dual-layer security with QUIC transport and ML-DSA post-quantum cryptography.
 
 ### Core Components
 
@@ -19,7 +19,7 @@ Zoe is a secure messaging relay system built with a modular, multi-crate archite
 │                                 │                                │
 │  ┌─────────────────────────────────────────────────────────────┐  │
 │  │              QUIC/TLS Transport Layer                       │  │
-│  │         (Quinn + Ed25519 Identity Verification)            │  │
+│  │         (Quinn + ML-DSA Identity Verification)             │  │
 │  └─────────────────────────────────────────────────────────────┘  │
 │                                 │                                │
 │  ┌─────────────────────────────────────────────────────────────┐  │
@@ -48,7 +48,7 @@ Zoe is a secure messaging relay system built with a modular, multi-crate archite
 **Key Components**:
 - `ProtocolMessage<T>` - Generic protocol message envelope
 - `MessageFull<T>` - Signed wire protocol messages
-- Ed25519 cryptography and certificate generation
+- ML-DSA post-quantum cryptography and certificate generation
 - JSON/PostCard serialization support
 
 **Key Types**:
@@ -64,7 +64,7 @@ pub enum ProtocolMessage<T> {
 pub struct MessageFull<T> {
     pub id: Blake3Hash,
     pub message: Message<T>,
-    pub signature: Ed25519Signature,
+    pub signature: MlDsaSignature,
 }
 ```
 
@@ -72,7 +72,7 @@ pub struct MessageFull<T> {
 **Purpose**: Redis-backed message relay service
 
 **Key Components**:
-- QUIC connection utilities with ed25519 identity verification
+- QUIC connection utilities with ML-DSA identity verification
 - Redis storage backend with streaming support
 - Message filtering and routing
 - Working examples (server, send client, listen client)
@@ -109,12 +109,12 @@ pub struct MessageFull<T> {
 
 **Layer 1: Transport Security**
 - QUIC/TLS 1.3 transport encryption
-- Ed25519-derived TLS certificates
+- ML-DSA-44-derived TLS certificates
 - Server identity verification via certificate inspection
 - Connection migration and 0-RTT support
 
 **Layer 2: Message Security**
-- Ed25519 message signing by clients
+- ML-DSA-65 message signing by clients
 - Blake3 message IDs for integrity
 - Optional challenge-response authentication
 - Message replay protection
@@ -122,13 +122,14 @@ pub struct MessageFull<T> {
 ### Key Management
 
 ```rust
-// Ed25519 key generation
-let signing_key = generate_ed25519_keypair();
+// ML-DSA key generation
+let signing_key = generate_keypair(&mut rng); // ML-DSA-65 for messages
 let verifying_key = signing_key.verifying_key();
 
-// TLS certificate generation from ed25519 key
-let (cert_chain, private_key) = generate_deterministic_cert_from_ed25519(
-    &signing_key, 
+// TLS certificate generation from ML-DSA-44 key
+let tls_keypair = generate_ml_dsa_44_keypair_for_tls(); // ML-DSA-44 for TLS
+let cert_chain = generate_deterministic_cert_from_ml_dsa_44_for_tls(
+    &tls_keypair, 
     "localhost"
 )?;
 
@@ -248,9 +249,11 @@ Redis Stream → Listen Client → Message Filtering → Message Display
 - **Persistence**: AOF for durability
 
 ### Crypto Performance
-- **Ed25519**: Fast signature generation/verification
+- **ML-DSA-65**: Secure message signatures (post-quantum resistant)
+- **ML-DSA-44**: TLS certificate signatures (optimized for transport)
 - **Blake3**: High-performance message hashing
 - **Deterministic certificates**: Predictable key derivation
+- **Ed25519 compatibility**: Legacy support for existing systems during transition
 
 ## 🎯 Design Principles
 
@@ -260,10 +263,10 @@ Redis Stream → Listen Client → Message Filtering → Message Display
 - Pluggable components (storage, transport, crypto)
 
 ### Security-First
-- Cryptographic identity verification
-- Message integrity guarantees
+- Post-quantum cryptographic identity verification
+- Message integrity guarantees with ML-DSA signatures
 - Transport encryption by default
-- Defense against replay attacks
+- Defense against replay attacks and quantum attacks
 
 ### Performance-Oriented
 - Efficient serialization formats

@@ -5,20 +5,32 @@ use ml_dsa::{KeyGen, MlDsa65};
 use std::time::{SystemTime, UNIX_EPOCH};
 use zoe_client::challenge::create_ml_dsa_key_proofs;
 use zoe_wire_protocol::{
-    MlDsaMultiKeyChallenge, MlDsaMultiKeyResponse, ZoeChallenge, ZoeChallengeResult,
+    KeyPair, MlDsaMultiKeyChallenge, MlDsaMultiKeyResponse, ZoeChallenge, ZoeChallengeResult,
 };
+
+/// Helper function to create a test signature for MlDsaMultiKeyChallenge
+fn create_test_signature(keypair: &KeyPair) -> zoe_wire_protocol::Signature {
+    use signature::Signer;
+    match keypair {
+        KeyPair::MlDsa65(kp) => {
+            let signature = kp.sign(&[1, 2, 3, 4]);
+            zoe_wire_protocol::Signature::MlDsa65(signature)
+        }
+        _ => panic!("Expected MlDsa65 keypair"),
+    }
+}
 
 #[tokio::test]
 async fn test_create_single_key_proof() -> Result<()> {
     // Generate test keys
     let server_key = ed25519_dalek::SigningKey::generate(&mut rand::thread_rng());
     let server_public_key = server_key.verifying_key();
-    let client_keypair = MlDsa65::key_gen(&mut rand::thread_rng());
+    let client_keypair = KeyPair::MlDsa65(MlDsa65::key_gen(&mut rand::thread_rng()));
 
     // Create challenge
     let challenge = MlDsaMultiKeyChallenge {
         nonce: [42u8; 32],
-        server_public_key: server_public_key.to_bytes().to_vec(),
+        signature: create_test_signature(&client_keypair),
         expires_at: SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs() + 30,
     };
 
@@ -31,7 +43,7 @@ async fn test_create_single_key_proof() -> Result<()> {
     assert!(!response.key_proofs[0].signature.is_empty());
 
     // Verify the public key matches
-    let expected_public_key = client_keypair.verifying_key().encode().as_slice().to_vec();
+    let expected_public_key = client_keypair.public_key().encode();
     assert_eq!(response.key_proofs[0].public_key, expected_public_key);
 
     Ok(())
@@ -43,14 +55,14 @@ async fn test_create_multiple_key_proofs() -> Result<()> {
     let server_key = ed25519_dalek::SigningKey::generate(&mut rand::thread_rng());
     let server_public_key = server_key.verifying_key();
 
-    let client_keypair1 = MlDsa65::key_gen(&mut rand::thread_rng());
-    let client_keypair2 = MlDsa65::key_gen(&mut rand::thread_rng());
-    let client_keypair3 = MlDsa65::key_gen(&mut rand::thread_rng());
+    let client_keypair1 = KeyPair::MlDsa65(MlDsa65::key_gen(&mut rand::thread_rng()));
+    let client_keypair2 = KeyPair::MlDsa65(MlDsa65::key_gen(&mut rand::thread_rng()));
+    let client_keypair3 = KeyPair::MlDsa65(MlDsa65::key_gen(&mut rand::thread_rng()));
 
     // Create challenge
     let challenge = MlDsaMultiKeyChallenge {
         nonce: [123u8; 32],
-        server_public_key: server_public_key.to_bytes().to_vec(),
+        signature: create_test_signature(&client_keypair1),
         expires_at: SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs() + 30,
     };
 
@@ -75,7 +87,7 @@ async fn test_create_multiple_key_proofs() -> Result<()> {
         );
 
         // Verify the public key matches the expected keypair
-        let expected_public_key = keypairs[i].verifying_key().encode().as_slice().to_vec();
+        let expected_public_key = keypairs[i].public_key().encode();
         assert_eq!(proof.public_key, expected_public_key);
     }
 
@@ -87,12 +99,12 @@ async fn test_key_proof_signature_verification() -> Result<()> {
     // Generate test keys
     let server_key = ed25519_dalek::SigningKey::generate(&mut rand::thread_rng());
     let server_public_key = server_key.verifying_key();
-    let client_keypair = MlDsa65::key_gen(&mut rand::thread_rng());
+    let client_keypair = KeyPair::MlDsa65(MlDsa65::key_gen(&mut rand::thread_rng()));
 
     // Create challenge
     let challenge = MlDsaMultiKeyChallenge {
         nonce: [99u8; 32],
-        server_public_key: server_public_key.to_bytes().to_vec(),
+        signature: create_test_signature(&client_keypair),
         expires_at: SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs() + 30,
     };
 
@@ -104,18 +116,27 @@ async fn test_key_proof_signature_verification() -> Result<()> {
     use signature::Verifier;
 
     // Reconstruct signature data
-    let signature_data = [&challenge.nonce[..], &challenge.server_public_key[..]].concat();
+    // Reconstruct signature data (using nonce only since server_public_key is no longer in the struct)
+    let signature_data = challenge.nonce.to_vec();
 
     // Decode the public key and signature
-    let encoded_key: &ml_dsa::EncodedVerifyingKey<MlDsa65> = key_proof
-        .public_key
-        .as_slice()
-        .try_into()
-        .expect("Invalid public key length");
-    let verifying_key = ml_dsa::VerifyingKey::<MlDsa65>::decode(encoded_key);
+    // The public_key is now a postcard-serialized VerifyingKey enum, not raw bytes
+    let verifying_key_enum: zoe_wire_protocol::VerifyingKey = postcard::from_bytes(&key_proof.public_key)
+        .expect("Invalid VerifyingKey encoding");
+    
+    let verifying_key = match verifying_key_enum {
+        zoe_wire_protocol::VerifyingKey::MlDsa65(key) => key,
+        _ => panic!("Expected MlDsa65 key"),
+    };
 
-    let signature = ml_dsa::Signature::<MlDsa65>::try_from(key_proof.signature.as_slice())
-        .expect("Invalid signature");
+    // The signature is now a postcard-serialized Signature enum, not raw bytes
+    let signature_enum: zoe_wire_protocol::Signature = postcard::from_bytes(&key_proof.signature)
+        .expect("Invalid Signature encoding");
+    
+    let signature = match signature_enum {
+        zoe_wire_protocol::Signature::MlDsa65(sig) => sig,
+        _ => panic!("Expected MlDsa65 signature"),
+    };
 
     // Verify signature
     verifying_key
@@ -130,12 +151,12 @@ async fn test_response_serialization_roundtrip() -> Result<()> {
     // Generate test keys
     let server_key = ed25519_dalek::SigningKey::generate(&mut rand::thread_rng());
     let server_public_key = server_key.verifying_key();
-    let client_keypair = MlDsa65::key_gen(&mut rand::thread_rng());
+    let client_keypair = KeyPair::MlDsa65(MlDsa65::key_gen(&mut rand::thread_rng()));
 
     // Create challenge and response
     let challenge = MlDsaMultiKeyChallenge {
         nonce: [77u8; 32],
-        server_public_key: server_public_key.to_bytes().to_vec(),
+        signature: create_test_signature(&client_keypair),
         expires_at: SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs() + 30,
     };
 
@@ -195,10 +216,11 @@ async fn test_empty_key_list_error() -> Result<()> {
     // Test that empty key list returns an error
     let server_key = ed25519_dalek::SigningKey::generate(&mut rand::thread_rng());
     let server_public_key = server_key.verifying_key();
+    let client_keypair = KeyPair::MlDsa65(MlDsa65::key_gen(&mut rand::thread_rng()));
 
     let challenge = MlDsaMultiKeyChallenge {
         nonce: [1u8; 32],
-        server_public_key: server_public_key.to_bytes().to_vec(),
+        signature: create_test_signature(&client_keypair),
         expires_at: SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs() + 30,
     };
 
@@ -218,11 +240,12 @@ async fn test_challenge_type_matching() -> Result<()> {
     // Test that the client correctly handles different challenge types
     let server_key = ed25519_dalek::SigningKey::generate(&mut rand::thread_rng());
     let server_public_key = server_key.verifying_key();
+    let client_keypair = KeyPair::MlDsa65(MlDsa65::key_gen(&mut rand::thread_rng()));
 
     // Test ML-DSA challenge
     let ml_dsa_challenge = ZoeChallenge::MlDsaMultiKey(MlDsaMultiKeyChallenge {
         nonce: [55u8; 32],
-        server_public_key: server_public_key.to_bytes().to_vec(),
+        signature: create_test_signature(&client_keypair),
         expires_at: SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs() + 30,
     });
 
@@ -233,10 +256,14 @@ async fn test_challenge_type_matching() -> Result<()> {
     match deserialized {
         ZoeChallenge::MlDsaMultiKey(challenge_data) => {
             assert_eq!(challenge_data.nonce, [55u8; 32]);
-            assert_eq!(
-                challenge_data.server_public_key,
-                server_public_key.to_bytes().to_vec()
-            );
+            // Note: server_public_key field no longer exists, checking signature field instead
+            // The signature field should be present (we can't easily compare signatures without PartialEq)
+            match &challenge_data.signature {
+                zoe_wire_protocol::Signature::MlDsa65(_) => {
+                    // Expected signature type
+                }
+                _ => panic!("Expected MlDsa65 signature"),
+            }
         }
         _ => panic!("Expected MlDsaMultiKey challenge"),
     }

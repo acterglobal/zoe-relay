@@ -23,15 +23,14 @@ use tarpc::context;
 use tokio::time::timeout;
 use tracing::{error, info, warn};
 use zoe_client::{ClientError, MessagesService, MessagesStream, RelayClient};
-use zoe_wire_protocol::prelude::*;
 use zoe_wire_protocol::{
-    Kind, Message, MessageFilters, MessageFull, StreamMessage, SubscriptionConfig,
+    Content, Hash, KeyPair, Kind, Message, MessageFilters, MessageFull, StreamMessage, SubscriptionConfig, Tag, VerifyingKey, generate_keypair,
 };
 
 /// Run the complete message echo test
 async fn run_echo_test(
     client_public_key: VerifyingKey,
-    client_signing_key: &SigningKey,
+    client_keypair: &KeyPair,
     messages_service: MessagesService,
     mut messages_stream: MessagesStream,
 ) -> Result<()> {
@@ -65,7 +64,7 @@ async fn run_echo_test(
         vec![], // no tags
     );
 
-    let message_full = MessageFull::new(message, client_signing_key)
+            let message_full = MessageFull::new(message, client_keypair)
         .map_err(|e| ClientError::Generic(format!("Failed to create MessageFull: {e}")))?;
     info!(
         "📝 Created message with ID: {}",
@@ -219,12 +218,27 @@ async fn main() -> Result<()> {
     let server_key_bytes = hex::decode(server_key_hex)
         .map_err(|e| anyhow::anyhow!("Invalid server key hex: {}", e))?;
 
-    let server_public_key = ml_dsa::VerifyingKey::<ml_dsa::MlDsa44>::decode(
-        server_key_bytes
-            .as_slice()
-            .try_into()
-            .map_err(|_| anyhow::anyhow!("Invalid ML-DSA-44 public key length"))?,
-    );
+    // Try to decode as Ed25519 first (default), then ML-DSA-44
+    let server_public_key = if server_key_bytes.len() == 32 {
+        // Ed25519 public key (32 bytes)
+        let ed25519_key = ed25519_dalek::VerifyingKey::from_bytes(
+            server_key_bytes
+                .as_slice()
+                .try_into()
+                .map_err(|_| anyhow::anyhow!("Invalid Ed25519 public key length"))?,
+        )
+        .map_err(|e| anyhow::anyhow!("Invalid Ed25519 public key: {}", e))?;
+        zoe_wire_protocol::TransportPublicKey::from_ed25519(ed25519_key)
+    } else {
+        // ML-DSA-44 public key (1312 bytes)
+        let ml_dsa_key = ml_dsa::VerifyingKey::<ml_dsa::MlDsa44>::decode(
+            server_key_bytes
+                .as_slice()
+                .try_into()
+                .map_err(|_| anyhow::anyhow!("Invalid ML-DSA-44 public key length"))?,
+        );
+        zoe_wire_protocol::TransportPublicKey::from_ml_dsa_44(&ml_dsa_key)
+    };
 
     // Create client (with optional private key)
     let client = if let Some(client_key_hex) = matches.get_one::<String>("client-key") {
@@ -240,10 +254,10 @@ async fn main() -> Result<()> {
     // Run the echo test
     let (messages_service, messages_stream) = client.connect_message_service().await?;
     let client_public_key = client.public_key();
-    let client_signing_key = client.signing_key();
+    let client_keypair = client.keypair();
     run_echo_test(
         client_public_key,
-        client_signing_key,
+        client_keypair,
         messages_service,
         messages_stream,
     )

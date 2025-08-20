@@ -251,7 +251,7 @@ mod tests {
         let challenge = generate_ml_dsa_challenge(&server_public_key)?;
 
         // Create one valid and one invalid response
-        let signature_data = [&challenge.nonce[..], &challenge.server_public_key[..]].concat();
+        let signature_data = [&challenge.nonce[..], &challenge.signature[..]].concat();
         let valid_signature = client_keypair1.signing_key().sign(&signature_data);
         let invalid_signature = client_keypair2.signing_key().sign(b"wrong data");
 
@@ -344,7 +344,7 @@ mod tests {
         // Create expired challenge
         let expired_challenge = MlDsaMultiKeyChallenge {
             nonce: [42u8; 32],
-            server_public_key: server_public_key.encode().to_vec(),
+            signature: server_keypair.sign([42u8; 32]),
             expires_at: 1000000000, // Way in the past
         };
 

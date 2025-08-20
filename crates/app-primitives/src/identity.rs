@@ -9,11 +9,10 @@ use crate::Metadata;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum IdentityRef {
     /// Raw verifying key identity (always valid, no declaration needed)
-    Key(#[serde(with = "zoe_wire_protocol::serde::VerifyingKeyDef")] VerifyingKey),
+    Key(VerifyingKey),
     /// Alias identity controlled by a specific key
     Alias {
         /// The controlling verifying key
-        #[serde(with = "zoe_wire_protocol::serde::VerifyingKeyDef")]
         key: VerifyingKey,
         /// The alias name
         alias: String,

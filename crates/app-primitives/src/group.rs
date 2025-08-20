@@ -187,13 +187,16 @@ mod tests {
         use rand::rngs::OsRng;
         use zoe_wire_protocol::generate_keypair;
         let keypair = generate_keypair(&mut OsRng);
-        keypair.verifying_key().clone()
+        keypair.public_key()
     }
 
     fn create_test_ed25519_verifying_key() -> Ed25519VerifyingKey {
         use rand::rngs::OsRng;
         let signing_key = generate_ed25519_relay_keypair(&mut OsRng);
-        signing_key.verifying_key()
+        match signing_key.public_key() {
+            VerifyingKey::Ed25519(key) => key,
+            _ => panic!("Expected Ed25519 key from generate_ed25519_relay_keypair"),
+        }
     }
 
     fn create_test_socket_addr() -> SocketAddr {

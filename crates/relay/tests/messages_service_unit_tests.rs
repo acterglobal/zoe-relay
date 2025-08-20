@@ -5,12 +5,10 @@ use rand::rngs::OsRng;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tokio::time::{timeout, Duration};
-use zoe_wire_protocol::prelude::*;
-
 use zoe_message_store::RedisMessageStorage;
 use zoe_wire_protocol::{
-    CatchUpRequest, FilterField, FilterOperation, FilterUpdateRequest, Kind, Message,
-    MessageFilters, MessageFull, Tag,
+    CatchUpRequest, FilterField, FilterOperation, FilterUpdateRequest, KeyPair, Kind, Message,
+    MessageFilters, MessageFull, Tag, VerifyingKey, generate_keypair,
 };
 
 // Test helper to set up tracing

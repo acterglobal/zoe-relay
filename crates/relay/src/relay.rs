@@ -98,8 +98,6 @@
 //! - **Service-agnostic**: Authentication happens once, all services trust the identity
 
 use anyhow::Result;
-use ed25519_dalek::pkcs8::EncodePrivateKey;
-use ml_dsa::{KeyPair, MlDsa44, VerifyingKey};
 use quinn::{Connection, Endpoint};
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -107,17 +105,30 @@ use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tracing::{error, info};
 use zoe_wire_protocol::{
-    extract_public_key_from_cert, generate_deterministic_cert_from_ml_dsa_44_for_tls,
-    generate_ml_dsa_44_keypair_for_tls, CryptoError, StreamPair, ZoeClientCertVerifier,
+    create_ed25519_server_config, extract_ed25519_public_key_from_cert, CryptoError, StreamPair,
+    TransportPrivateKey, TransportPublicKey,
 };
 
+// ML-DSA imports for message layer authentication (always available)
+use ml_dsa::KeyGen;
+
+// ML-DSA-44 imports (only available with tls-ml-dsa-44 feature)
+#[cfg(feature = "tls-ml-dsa-44")]
+use ml_dsa::VerifyingKey;
+
+#[cfg(feature = "tls-ml-dsa-44")]
+use zoe_wire_protocol::{create_ml_dsa_44_server_config, extract_ml_dsa_44_public_key_from_cert};
+
 use crate::{Service, ServiceError, ServiceRouter};
+
+// Type alias for client transport keys (now unified with server keys)
+pub type ClientTransportKey = TransportPublicKey;
 
 /// Information about an authenticated connection
 #[derive(Debug, Clone)]
 pub struct ConnectionInfo {
-    /// The ML-DSA-44 public key of the connected client (transport authentication)
-    pub client_public_key: ml_dsa::VerifyingKey<ml_dsa::MlDsa44>,
+    /// The public key of the connected client (transport authentication)
+    pub client_public_key: ClientTransportKey,
     /// Set of ML-DSA public keys verified during challenge handshake (message authentication)
     pub verified_ml_dsa_keys: std::collections::BTreeSet<Vec<u8>>,
     /// The remote address of the client
@@ -138,10 +149,10 @@ impl ConnectionInfo {
     }
 }
 
-/// Main relay server that accepts QUIC connections with ML-DSA-44 authentication
+/// Main relay server that accepts QUIC connections with transport authentication
 pub struct RelayServer<R: ServiceRouter> {
     pub endpoint: Endpoint,
-    server_keypair: ml_dsa::KeyPair<ml_dsa::MlDsa44>,
+    server_keypair: TransportPrivateKey,
     router: Arc<R>,
 }
 
@@ -150,13 +161,9 @@ impl<R: ServiceRouter + 'static> RelayServer<R> {
     ///
     /// # Arguments
     /// * `addr` - The address to bind the server to
-    /// * `server_keypair` - The ML-DSA-44 keypair for server identity and TLS
+    /// * `server_keypair` - The server keypair for transport security (Ed25519 or ML-DSA-44)
     /// * `router` - The service router implementation
-    pub fn new(
-        addr: SocketAddr,
-        server_keypair: ml_dsa::KeyPair<ml_dsa::MlDsa44>,
-        router: R,
-    ) -> Result<Self> {
+    pub fn new(addr: SocketAddr, server_keypair: TransportPrivateKey, router: R) -> Result<Self> {
         let endpoint = create_server_endpoint(addr, &server_keypair)?;
 
         Ok(Self {
@@ -166,27 +173,33 @@ impl<R: ServiceRouter + 'static> RelayServer<R> {
         })
     }
 
+    pub fn local_addr(&self) -> Result<SocketAddr> {
+        Ok(self.endpoint.local_addr()?)
+    }
+
     /// Run the relay server, accepting and handling connections
     pub async fn run(self) -> Result<()> {
         info!(
             "🚀 Relay server starting on {}",
             self.endpoint.local_addr()?
         );
+        let server_identity = self.server_keypair.public_key();
         info!(
-            "🔑 Server public key: {}",
-            hex::encode(self.server_keypair.verifying_key().encode())
+            "🔑 Server identity: {} ({})",
+            server_identity,
+            server_identity.algorithm()
         );
 
         while let Some(conn) = self.endpoint.accept().await {
             let router = Arc::clone(&self.router);
-            // TODO: Fix this - we need the verifying key for the handshake
-            // For now, create a placeholder
+            let server_keypair = self.server_keypair.clone();
 
             tokio::spawn(async move {
                 match conn.await {
                     Ok(connection) => {
-                        // TODO: Pass the correct server public key
-                        if let Err(e) = Self::handle_connection(connection, router).await {
+                        if let Err(e) =
+                            Self::handle_connection(connection, router, server_keypair).await
+                        {
                             error!("Connection handling failed: {}", e);
                         }
                     }
@@ -201,50 +214,74 @@ impl<R: ServiceRouter + 'static> RelayServer<R> {
     }
 
     /// Handle a single QUIC connection
-    async fn handle_connection(connection: Connection, router: Arc<R>) -> Result<()> {
+    async fn handle_connection(
+        connection: Connection,
+        router: Arc<R>,
+        server_keypair: TransportPrivateKey,
+    ) -> Result<()> {
         let remote_addr = connection.remote_address();
         info!("🔗 New connection from {}", remote_addr);
 
-        // Extract client's ML-DSA-44 key from the connection certificate
-        let client_public_key = match extract_client_ml_dsa_44_key(&connection) {
+        // Extract client's public key from the connection certificate
+        let client_public_key = match extract_client_transport_key(&connection) {
             Ok(key) => key,
             Err(error) => {
                 error!(?error, "Failed to extract client public key");
-                connection.close(0u32.into(), b"Missing ML-DSA-44 key in client certificate");
+                connection.close(0u32.into(), b"Missing transport key in client certificate");
                 return Ok(());
             }
         };
 
         info!(
-            "🔑 Client public key: {}",
-            hex::encode(client_public_key.encode())
+            "🔑 Client transport key: {} ({})",
+            client_public_key,
+            client_public_key.algorithm()
         );
 
         // Perform ML-DSA challenge-response handshake
-        let verified_ml_dsa_keys = match connection.accept_bi().await {
-            Ok((_send, _recv)) => {
-                // TODO: Fix handshake to use correct key type (ML-DSA-65 for inner protocol)
-                // For now, skip handshake to get compilation working
-                match Ok::<std::collections::BTreeSet<Vec<u8>>, anyhow::Error>(
-                    std::collections::BTreeSet::new(),
-                ) {
-                    Ok(keys) => {
-                        info!(
-                            "✅ ML-DSA handshake successful, verified {} keys",
-                            keys.len()
-                        );
-                        keys
-                    }
-                    Err(e) => {
-                        error!("❌ ML-DSA handshake failed: {}", e);
-                        connection.close(0u32.into(), b"ML-DSA handshake failed");
-                        return Ok(());
-                    }
-                }
-            }
+        let (send, recv) = match connection.accept_bi().await {
+            Ok((send, recv)) => (send, recv),
             Err(e) => {
                 error!("Failed to accept handshake stream: {}", e);
                 connection.close(0u32.into(), b"Failed to accept handshake stream");
+                return Ok(());
+            }
+        };
+
+        // Get the server's keypair for the handshake (message layer authentication)
+        // Note: This is different from transport security - we always use ML-DSA-44 for message authentication
+        let server_challenge_keypair = match &server_keypair {
+            TransportPrivateKey::Ed25519 { .. } => {
+                // For Ed25519 transport, we need to generate or load an ML-DSA-44 key for message authentication
+                // For now, we'll use a default/generated key - this should be configurable in the future
+                let mut rng = rand::thread_rng();
+                zoe_wire_protocol::KeyPair::MlDsa44(ml_dsa::MlDsa44::key_gen(&mut rng))
+            }
+            #[cfg(feature = "tls-ml-dsa-44")]
+            TransportPrivateKey::MlDsa44 { keypair } => {
+                // Use the same ML-DSA-44 key for both transport and message authentication
+                zoe_wire_protocol::KeyPair::MlDsa44(keypair.clone())
+            }
+        };
+
+        // Perform the actual challenge handshake
+        let verified_ml_dsa_keys = match crate::challenge::perform_multi_challenge_handshake(
+            send,
+            recv,
+            &server_challenge_keypair, // Use the server's keypair for challenge
+        )
+        .await
+        {
+            Ok(keys) => {
+                info!(
+                    "✅ ML-DSA handshake successful, verified {} keys",
+                    keys.len()
+                );
+                keys
+            }
+            Err(e) => {
+                error!("❌ ML-DSA handshake failed: {}", e);
+                connection.close(0u32.into(), b"ML-DSA handshake failed");
                 return Ok(());
             }
         };
@@ -307,6 +344,7 @@ impl<R: ServiceRouter + 'static> RelayServer<R> {
 }
 
 /// Extract the client's ML-DSA-44 public key from the QUIC connection
+#[cfg(feature = "tls-ml-dsa-44")]
 fn extract_client_ml_dsa_44_key(
     connection: &Connection,
 ) -> Result<VerifyingKey<MlDsa44>, CryptoError> {
@@ -315,7 +353,7 @@ fn extract_client_ml_dsa_44_key(
         if let Ok(cert_chain) = identity.downcast::<Vec<rustls::pki_types::CertificateDer>>() {
             if !cert_chain.is_empty() {
                 // Extract ML-DSA-44 key from the first certificate if available
-                return extract_public_key_from_cert(&cert_chain[0]);
+                return extract_ml_dsa_44_public_key_from_cert(&cert_chain[0]);
             }
         }
     }
@@ -325,35 +363,71 @@ fn extract_client_ml_dsa_44_key(
     ))
 }
 
-/// Create a QUIC server endpoint with ML-DSA-44-derived TLS certificate
+/// Extract the client's transport public key from the QUIC connection
+///
+/// This function tries to extract either Ed25519 or ML-DSA-44 keys from the client certificate
+/// and returns the appropriate TransportPublicKey enum variant.
+fn extract_client_transport_key(
+    connection: &Connection,
+) -> Result<TransportPublicKey, CryptoError> {
+    // Try to get peer certificate from the connection
+    if let Some(identity) = connection.peer_identity() {
+        if let Some(cert_chain) = identity.downcast_ref::<Vec<rustls::pki_types::CertificateDer>>()
+        {
+            if let Some(cert) = cert_chain.first() {
+                // Try Ed25519 first (default)
+                if let Ok(ed25519_key) = extract_ed25519_public_key_from_cert(cert) {
+                    return Ok(TransportPublicKey::from_ed25519(ed25519_key));
+                }
+
+                // Try ML-DSA-44 if tls-ml-dsa-44 feature is enabled
+                #[cfg(feature = "tls-ml-dsa-44")]
+                if let Ok(ml_dsa_key) = extract_ml_dsa_44_public_key_from_cert(cert) {
+                    return Ok(TransportPublicKey::from_ml_dsa_44(&ml_dsa_key));
+                }
+            }
+        }
+    }
+
+    Err(CryptoError::ParseError(
+        "No supported transport key found in client certificate".to_string(),
+    ))
+}
+
+/// Create a QUIC server endpoint with TLS certificate (Ed25519 or ML-DSA-44)
 fn create_server_endpoint(
     addr: SocketAddr,
-    server_keypair: &ml_dsa::KeyPair<ml_dsa::MlDsa44>,
+    server_keypair: &TransportPrivateKey,
 ) -> Result<Endpoint> {
     use quinn::ServerConfig;
     use std::sync::Arc;
 
     info!("🚀 Creating relay server endpoint on {}", addr);
-    info!(
-        "🔑 Server public key: {}",
-        hex::encode(server_keypair.verifying_key().encode())
-    );
 
-    // Generate TLS certificate from ML-DSA-44 key using wire protocol utility
-    let certs = generate_deterministic_cert_from_ml_dsa_44_for_tls(server_keypair, "localhost")
-        .map_err(|e| anyhow::anyhow!("Failed to generate certificate: {}", e))?;
+    let rustls_config = match server_keypair {
+        TransportPrivateKey::Ed25519 { signing_key } => {
+            info!(
+                "🔑 Server Ed25519 public key: {}",
+                hex::encode(signing_key.verifying_key().to_bytes())
+            );
 
-    // Create a temporary ed25519 key for TLS since rustls doesn't support ML-DSA-44 private keys yet
-    let temp_ed25519_key = zoe_wire_protocol::Ed25519SigningKey::generate(&mut rand::thread_rng());
-    let private_key =
-        rustls::pki_types::PrivateKeyDer::Pkcs8(rustls::pki_types::PrivatePkcs8KeyDer::from(
-            temp_ed25519_key.to_pkcs8_der().unwrap().as_bytes().to_vec(),
-        ));
+            // Create Ed25519 server configuration
+            create_ed25519_server_config(signing_key, "localhost")
+                .map_err(|e| anyhow::anyhow!("Failed to create Ed25519 server config: {}", e))?
+        }
 
-    // Create QUIC server config with client certificate verification required
-    let rustls_config = rustls::ServerConfig::builder()
-        .with_client_cert_verifier(Arc::new(ZoeClientCertVerifier::new()))
-        .with_single_cert(certs, private_key)?;
+        #[cfg(feature = "tls-ml-dsa-44")]
+        TransportPrivateKey::MlDsa44 { keypair } => {
+            info!(
+                "🔑 Server ML-DSA-44 public key: {}",
+                hex::encode(keypair.verifying_key().encode())
+            );
+
+            // Create ML-DSA-44 server configuration using the wire protocol wrapper
+            create_ml_dsa_44_server_config(keypair, "localhost")
+                .map_err(|e| anyhow::anyhow!("Failed to create ML-DSA-44 server config: {}", e))?
+        }
+    };
 
     let server_config = ServerConfig::with_crypto(Arc::new(
         quinn::crypto::rustls::QuicServerConfig::try_from(rustls_config)?,
@@ -429,14 +503,16 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "tls-ml-dsa-44")]
     fn test_connection_info_creation() {
         let keypair = generate_ml_dsa_44_keypair_for_tls();
         let public_key = keypair.verifying_key().clone();
         let addr = "127.0.0.1:8080".parse().unwrap();
         let now = std::time::SystemTime::now();
 
+        let transport_key = TransportPublicKey::from_ml_dsa_44(&public_key);
         let info = ConnectionInfo {
-            client_public_key: public_key.clone(),
+            client_public_key: transport_key.clone(),
             verified_ml_dsa_keys: std::collections::BTreeSet::new(),
             remote_address: addr,
             connected_at: now,
@@ -448,12 +524,16 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg(feature = "tls-ml-dsa-44")]
     async fn test_relay_server_creation() {
         let addr = "127.0.0.1:0".parse().unwrap();
         let server_keypair = generate_ml_dsa_44_keypair_for_tls();
         let router = TestRouter::new(1);
 
-        let server = RelayServer::new(addr, server_keypair, router);
+        let transport_keypair = TransportPrivateKey::MlDsa44 {
+            keypair: server_keypair,
+        };
+        let server = RelayServer::new(addr, transport_keypair, router);
         if let Err(e) = &server {
             println!("Server creation failed: {e}");
         }
@@ -464,15 +544,19 @@ mod tests {
 
     use anyhow::Result;
     use futures::future::join;
-    use ml_dsa::{MlDsa44, SigningKey};
+    use ml_dsa::{MlDsa44, SigningKey, VerifyingKey};
 
     use crate::Service;
     use crate::{ConnectionInfo, RelayServer, ServiceRouter};
+    use ml_dsa::KeyPair;
     use std::net::SocketAddr;
     use std::sync::Arc;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::sync::Notify;
     use tokio::time::{timeout, Duration};
+
+    // ML-DSA-44 imports (only available with tls-ml-dsa-44 feature)
+    #[cfg(feature = "tls-ml-dsa-44")]
     use zoe_wire_protocol::{
         generate_deterministic_cert_from_ml_dsa_44_for_tls, generate_ml_dsa_44_keypair_for_tls,
         AcceptSpecificServerCertVerifier,
@@ -680,10 +764,12 @@ mod tests {
     }
 
     /// A simple QUIC client for testing
+    #[cfg(feature = "tls-ml-dsa-44")]
     struct TestClient {
         client_keypair: KeyPair<MlDsa44>,
     }
 
+    #[cfg(feature = "tls-ml-dsa-44")]
     impl TestClient {
         fn new() -> Self {
             Self {
@@ -772,6 +858,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg(feature = "tls-ml-dsa-44")]
     async fn test_echo_service_integration() -> Result<()> {
         // Initialize tracing for better debugging
         let _ = tracing_subscriber::fmt::try_init();
@@ -791,7 +878,10 @@ mod tests {
 
         // Start server on random port
         let server_addr: SocketAddr = "127.0.0.1:0".parse()?;
-        let server = RelayServer::new(server_addr, server_keypair, echo_service)?;
+        let transport_keypair = TransportPrivateKey::MlDsa44 {
+            keypair: server_keypair,
+        };
+        let server = RelayServer::new(server_addr, transport_keypair, echo_service)?;
 
         // Get the actual bound address
         let actual_addr = server.endpoint.local_addr()?;
@@ -841,6 +931,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg(feature = "tls-ml-dsa-44")]
     async fn test_service_id_routing() -> Result<()> {
         // Test that a specific service ID is properly routed
         use std::sync::atomic::{AtomicU8, Ordering};
@@ -923,7 +1014,10 @@ mod tests {
         let router = SingleServiceRouter::new();
 
         let server_addr: SocketAddr = "127.0.0.1:0".parse()?;
-        let server = RelayServer::new(server_addr, server_keypair, router)?;
+        let transport_keypair = TransportPrivateKey::MlDsa44 {
+            keypair: server_keypair,
+        };
+        let server = RelayServer::new(server_addr, transport_keypair, router)?;
         let actual_addr = server.endpoint.local_addr()?;
 
         let client = TestClient::new();

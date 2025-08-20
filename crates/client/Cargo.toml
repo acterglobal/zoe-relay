@@ -7,6 +7,7 @@ edition = "2024"
 default = ["frb-api"]
 mls = ["dep:openmls", "dep:openmls_rust_crypto", "dep:openmls_basic_credential", "dep:openmls_memory_storage"]
 frb-api = ["dep:flutter_rust_bridge"]
+tls-ml-dsa-44 = ["zoe-wire-protocol/tls-ml-dsa-44"]  # Enable ML-DSA-44 transport security
 
 
 [lints.rust]

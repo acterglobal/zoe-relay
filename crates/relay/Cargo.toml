@@ -37,12 +37,14 @@ tracing-subscriber = { workspace = true }
 # QUIC and TLS support
 quinn = { workspace = true }
 rustls = { workspace = true }
+rustls-post-quantum = { workspace = true, features = ["aws-lc-rs-unstable"]  }
 
 # Cryptographic dependencies
 ml-dsa = { workspace = true }
 ed25519-dalek = { workspace = true }
 signature = { workspace = true }
 postcard = { workspace = true }
+pkcs8 = { workspace = true }
 
 # Additional utilities
 hex = { workspace = true }
@@ -63,3 +65,7 @@ tracing-subscriber = { workspace = true }
 
 # Certificate generation for tests
 rcgen = "0.13"
+
+[features]
+default = []
+tls-ml-dsa-44 = ["zoe-wire-protocol/tls-ml-dsa-44"]  # Enable ML-DSA-44 transport security

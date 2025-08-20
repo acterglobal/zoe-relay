@@ -36,16 +36,14 @@ use tokio::{
 };
 use tracing::{error, info, warn};
 use zoe_client::{ClientError, MessagesService, RelayClient};
-use zoe_wire_protocol::prelude::*;
 use zoe_wire_protocol::{
-    Kind, Message, MessageFilters, MessageFull, StreamMessage, SubscriptionConfig, Tag,
+    Content, Hash, KeyPair, Kind, Message, MessageFilters, MessageFull, StreamMessage, SubscriptionConfig, Tag, VerifyingKey, generate_keypair,
 };
 
 /// Configuration for the chat client
-#[derive(Debug)]
 struct ChatConfig {
     server_addr: SocketAddr,
-    server_key: ml_dsa::VerifyingKey<ml_dsa::MlDsa44>,
+    server_key: zoe_wire_protocol::TransportPublicKey,
     channel: String,
     client_keypair: KeyPair,
 }
@@ -127,7 +125,7 @@ impl ChatClient {
         info!("📱 Channel: {}", channel);
         info!(
             "🔑 Your ID: {}",
-            hex::encode(&config.client_keypair.verifying_key().encode()[..4])
+            hex::encode(&config.client_keypair.public_key().encode()[..4])
         );
 
         // Connect to relay server
@@ -273,7 +271,7 @@ impl ChatClient {
                                     Kind::Regular,
                                     vec![channel_tag],
                                 );
-                                if let Ok(message_full) = MessageFull::new(message, relay_client.signing_key()) {
+                                if let Ok(message_full) = MessageFull::new(message, relay_client.keypair()) {
                                     if let Err(e) = messages_service.publish(context::current(), message_full).await {
                                         error!("❌ Failed to send message: {}", e);
                                     }
@@ -354,7 +352,7 @@ impl ChatClient {
             vec![channel_tag],
         );
 
-        let message_full = MessageFull::new(message, relay_client.signing_key())
+        let message_full = MessageFull::new(message, relay_client.keypair())
             .map_err(|e| ClientError::Generic(format!("Failed to create MessageFull: {e}")))?;
 
         if let Err(e) = service.publish(context::current(), message_full).await {
@@ -455,12 +453,30 @@ fn parse_args() -> Result<ChatConfig> {
     let server_key_hex = matches.get_one::<String>("server-key").unwrap();
     let server_key_bytes = hex::decode(server_key_hex)
         .map_err(|e| anyhow::anyhow!("Invalid server key hex: {}", e))?;
-    let server_key = ml_dsa::VerifyingKey::<ml_dsa::MlDsa44>::decode(
-        server_key_bytes
-            .as_slice()
-            .try_into()
-            .map_err(|e| anyhow::anyhow!("Invalid server key length: {}", e))?,
-    );
+
+    // Try to decode as Ed25519 first (default), then ML-DSA-44
+    let server_key = if server_key_bytes.len() == 32 {
+        // Ed25519 public key (32 bytes)
+        let ed25519_key = ed25519_dalek::VerifyingKey::from_bytes(
+            server_key_bytes
+                .as_slice()
+                .try_into()
+                .map_err(|_| anyhow::anyhow!("Invalid Ed25519 public key length"))?,
+        )
+        .map_err(|e| anyhow::anyhow!("Invalid Ed25519 public key: {}", e))?;
+        zoe_wire_protocol::TransportPublicKey::from_ed25519(ed25519_key)
+    } else if server_key_bytes.len() == 1312 {
+        // ML-DSA-44 public key (1312 bytes)
+        let ml_dsa_key = ml_dsa::VerifyingKey::<ml_dsa::MlDsa44>::decode(
+            server_key_bytes
+                .as_slice()
+                .try_into()
+                .map_err(|e| anyhow::anyhow!("Invalid ML-DSA-44 public key length: {}", e))?,
+        );
+        zoe_wire_protocol::TransportPublicKey::from_ml_dsa_44(&ml_dsa_key)
+    } else {
+        anyhow::bail!("Server key must be either 32 bytes (Ed25519) or 1312 bytes (ML-DSA-44)");
+    };
 
     let channel = matches.get_one::<String>("channel").unwrap().clone();
 

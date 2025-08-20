@@ -24,7 +24,7 @@ use clap::{Arg, Command};
 use std::{fs, net::SocketAddr, path::Path};
 use tracing::{error, info};
 use zoe_client::{BlobService, RelayClient};
-use zoe_wire_protocol::prelude::*;
+use zoe_wire_protocol::{Hash, KeyPair, VerifyingKey, generate_keypair};
 
 /// Upload a file to the blob store
 async fn upload_file(blob_service: &BlobService, file_path: &Path) -> Result<String> {
@@ -224,17 +224,29 @@ async fn main() -> Result<()> {
     let server_key_bytes = hex::decode(server_key_hex)
         .map_err(|e| anyhow::anyhow!("Invalid server key hex: {}", e))?;
 
-    // ML-DSA-44 public keys are 1312 bytes
-    if server_key_bytes.len() != 1312 {
-        anyhow::bail!("Server key must be 1312 bytes (2624 hex characters) for ML-DSA-44");
-    }
-
-    let server_public_key = ml_dsa::VerifyingKey::<ml_dsa::MlDsa44>::decode(
-        server_key_bytes
-            .as_slice()
-            .try_into()
-            .map_err(|e| anyhow::anyhow!("Invalid ML-DSA-44 public key length: {}", e))?,
-    );
+    // Try to decode as Ed25519 first (default), then ML-DSA-44
+    let server_public_key = if server_key_bytes.len() == 32 {
+        // Ed25519 public key (32 bytes)
+        let ed25519_key = ed25519_dalek::VerifyingKey::from_bytes(
+            server_key_bytes
+                .as_slice()
+                .try_into()
+                .map_err(|_| anyhow::anyhow!("Invalid Ed25519 public key length"))?,
+        )
+        .map_err(|e| anyhow::anyhow!("Invalid Ed25519 public key: {}", e))?;
+        zoe_wire_protocol::TransportPublicKey::from_ed25519(ed25519_key)
+    } else if server_key_bytes.len() == 1312 {
+        // ML-DSA-44 public key (1312 bytes)
+        let ml_dsa_key = ml_dsa::VerifyingKey::<ml_dsa::MlDsa44>::decode(
+            server_key_bytes
+                .as_slice()
+                .try_into()
+                .map_err(|e| anyhow::anyhow!("Invalid ML-DSA-44 public key length: {}", e))?,
+        );
+        zoe_wire_protocol::TransportPublicKey::from_ml_dsa_44(&ml_dsa_key)
+    } else {
+        anyhow::bail!("Server key must be either 32 bytes (Ed25519) or 1312 bytes (ML-DSA-44)");
+    };
 
     // Parse subcommand
     let command = match matches.subcommand() {

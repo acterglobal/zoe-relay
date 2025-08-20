@@ -186,7 +186,7 @@ pub struct MlDsaMultiKeyChallenge {
     /// Including the server's public key in the signature data prevents
     /// signature replay attacks across different servers. This should be
     /// the same ML-DSA-44 key used in the server's TLS certificate.
-    pub server_public_key: Vec<u8>,
+    pub signature: crate::Signature,
 
     /// Unix timestamp when this challenge expires
     ///

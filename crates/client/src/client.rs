@@ -1,6 +1,6 @@
 use crate::error::Result;
 use crate::{ClientError, FileStorage, RelayClient};
-use zoe_wire_protocol::prelude::*;
+use zoe_wire_protocol::{TransportPublicKey, keys::*};
 // Note: serde imports removed since ML-DSA types don't support serde
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -15,8 +15,8 @@ use flutter_rust_bridge::frb;
 // Note: ML-DSA types don't have simple serde serialization, so we'll handle this differently
 #[cfg_attr(feature = "frb-api", frb(opaque))]
 pub struct ClientSecret {
-    inner_keypair: KeyPair, // ML-DSA-65 for inner protocol
-    server_public_key: ml_dsa::VerifyingKey<ml_dsa::MlDsa44>, // TLS server key
+    inner_keypair: KeyPair,                // ML-DSA-65 for inner protocol
+    server_public_key: TransportPublicKey, // TLS server key (Ed25519 or ML-DSA-44)
     server_addr: SocketAddr,
 }
 
@@ -27,7 +27,7 @@ impl ClientSecret {
     // Add this constructor method
     pub fn new(
         inner_keypair: KeyPair,
-        server_public_key: ml_dsa::VerifyingKey<ml_dsa::MlDsa44>,
+        server_public_key: TransportPublicKey,
         server_addr: SocketAddr,
     ) -> Self {
         Self {
@@ -42,8 +42,8 @@ impl ClientSecret {
         &self.inner_keypair
     }
 
-    /// Get the server public key (ML-DSA-44)
-    pub fn server_public_key(&self) -> &ml_dsa::VerifyingKey<ml_dsa::MlDsa44> {
+    /// Get the server public key (Ed25519 or ML-DSA-44)
+    pub fn server_public_key(&self) -> &TransportPublicKey {
         &self.server_public_key
     }
 
@@ -65,7 +65,7 @@ pub struct ClientInner {
 pub struct ClientBuilder {
     media_storage_path: Option<PathBuf>,
     inner_keypair: Option<KeyPair>,
-    server_public_key: Option<ml_dsa::VerifyingKey<ml_dsa::MlDsa44>>,
+    server_public_key: Option<TransportPublicKey>,
     server_addr: Option<SocketAddr>,
 }
 
@@ -88,11 +88,7 @@ impl ClientBuilder {
     }
 
     #[cfg_attr(feature = "frb-api", frb)]
-    pub fn server_info(
-        &mut self,
-        server_public_key: ml_dsa::VerifyingKey<ml_dsa::MlDsa44>,
-        server_addr: SocketAddr,
-    ) {
+    pub fn server_info(&mut self, server_public_key: TransportPublicKey, server_addr: SocketAddr) {
         self.server_public_key = Some(server_public_key);
         self.server_addr = Some(server_addr);
     }
@@ -117,17 +113,34 @@ impl ClientBuilder {
             ));
         };
 
-        let relay_client = if let Some(inner_keypair) = self.inner_keypair {
-            RelayClient::new(inner_keypair, server_public_key, server_addr).await?
-        } else {
-            RelayClient::new_with_random_key(server_public_key, server_addr).await?
-        };
+        // Strategy: Use tokio::task::spawn to run on separate stack
+        // This completely avoids stack overflow by using a new task with fresh stack
 
-        // Create blob service for remote blob operations
+        // Run all operations on separate tasks to avoid stack buildup
+        let fs_path = media_storage_path.to_path_buf();
+
+        let relay_client_task = tokio::task::spawn(async move {
+            if let Some(inner_keypair) = self.inner_keypair {
+                RelayClient::new(inner_keypair, server_public_key, server_addr).await
+            } else {
+                RelayClient::new_with_random_key(server_public_key, server_addr).await
+            }
+        });
+
+        let fs_task = tokio::task::spawn(async move { FileStorage::new(&fs_path).await });
+
+        // Wait for both to complete
+        let relay_client = relay_client_task
+            .await
+            .map_err(|e| ClientError::Generic(e.to_string()))??;
+        let mut fs = fs_task
+            .await
+            .map_err(|e| ClientError::Generic(e.to_string()))??;
+
+        // Connect blob service (keep on same task to avoid move issues)
         let blob_service = relay_client.connect_blob_service().await?;
 
-        // Create file storage with remote blob service support
-        let fs = FileStorage::new_with_remote(media_storage_path.as_path(), blob_service).await?;
+        fs.set_remote_blob_service(blob_service);
 
         Ok(Client {
             inner: Arc::new(ClientInner { fs, relay_client }),

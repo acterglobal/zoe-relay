@@ -1,4 +1,4 @@
-use zoe_wire_protocol::prelude::*;
+use zoe_wire_protocol::generate_keypair;
 
 use zoe_state_machine::{DigitalGroupAssistant, GroupSettings, MnemonicPhrase};
 
@@ -12,7 +12,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Create signing keys for users
     let mut rng = rand::thread_rng();
     let alice_keypair = generate_keypair(&mut rng);
-    let alice_key = alice_keypair.signing_key();
 
     // Generate a mnemonic phrase for the group encryption key
     let mnemonic = MnemonicPhrase::generate()?;
@@ -70,7 +69,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let create_result = dga.create_group(
         create_group,
         Some(encryption_key.clone()),
-        alice_key,
+        &alice_keypair,
         timestamp,
     )?;
 

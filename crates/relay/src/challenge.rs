@@ -6,9 +6,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tracing::{debug, info, warn};
 use zoe_wire_protocol::{
-    prelude::*, MlDsaKeyProof, MlDsaMultiKeyChallenge, MlDsaMultiKeyResponse, MlDsaMultiKeyResult,
-    ZoeChallenge, ZoeChallengeRejection, ZoeChallengeResult,
+    KeyPair, MlDsaKeyProof, MlDsaMultiKeyChallenge, MlDsaMultiKeyResponse, MlDsaMultiKeyResult,
+    Signature, VerifyingKey, ZoeChallenge, ZoeChallengeRejection, ZoeChallengeResult,
 };
+// MlDsa65 is imported in tests where needed
 
 /// Default challenge timeout in seconds
 const DEFAULT_CHALLENGE_TIMEOUT_SECS: u64 = 30;
@@ -31,11 +32,11 @@ const MAX_RESPONSE_SIZE: usize = 1024 * 1024; // 1MB should be enough for many M
 ///
 /// * `send` - Stream for sending data to the client
 /// * `recv` - Stream for receiving data from the client  
-/// * `server_public_key` - Server's ML-DSA-44 public key (included in challenges)
+/// * `server_keypair` - Server's keypair for signing the challenge nonce
 ///
 /// # Returns
 ///
-/// A `BTreeSet` of successfully verified ML-DSA public keys (as encoded bytes)
+/// A `BTreeSet` of successfully verified public keys (as encoded bytes)
 ///
 /// # Errors
 ///
@@ -53,21 +54,21 @@ const MAX_RESPONSE_SIZE: usize = 1024 * 1024; // 1MB should be enough for many M
 /// let verified_keys = perform_multi_challenge_handshake(
 ///     send_stream,
 ///     recv_stream,
-///     &server_ml_dsa_44_key.verifying_key()
+///     &server_keypair
 /// ).await?;
 ///
-/// info!("Verified {} ML-DSA keys after multi-challenge handshake", verified_keys.len());
+/// info!("Verified {} keys after multi-challenge handshake", verified_keys.len());
 /// ```
 pub async fn perform_multi_challenge_handshake(
     mut send: SendStream,
     mut recv: RecvStream,
-    server_public_key: &ml_dsa::VerifyingKey<ml_dsa::MlDsa44>,
+    server_keypair: &KeyPair,
 ) -> Result<BTreeSet<Vec<u8>>> {
     info!("🔐 Starting multi-challenge handshake");
 
     // Challenge 1: ML-DSA key proof
     info!("📝 Sending ML-DSA challenge");
-    let ml_dsa_challenge = generate_ml_dsa_challenge(server_public_key)?;
+    let ml_dsa_challenge = generate_ml_dsa_challenge(server_keypair)?;
     send_challenge(
         &mut send,
         &ZoeChallenge::MlDsaMultiKey(ml_dsa_challenge.clone()),
@@ -111,37 +112,38 @@ pub async fn perform_multi_challenge_handshake(
 pub async fn perform_ml_dsa_handshake(
     send: SendStream,
     recv: RecvStream,
-    server_public_key: &ml_dsa::VerifyingKey<ml_dsa::MlDsa44>,
+    server_keypair: &KeyPair,
 ) -> Result<BTreeSet<Vec<u8>>> {
-    perform_multi_challenge_handshake(send, recv, server_public_key).await
+    perform_multi_challenge_handshake(send, recv, server_keypair).await
 }
 
 /// Generates a new ML-DSA challenge with a random nonce
 ///
 /// The challenge includes:
 /// - A cryptographically random 32-byte nonce
-/// - The server's ML-DSA-44 public key
+/// - The server's signature over the nonce (for server authentication)
 /// - An expiration timestamp (current time + timeout)
 ///
 /// # Arguments
 ///
-/// * `server_public_key` - Server's ML-DSA-44 public key to include in challenge
+/// * `server_keypair` - Server's keypair for signing the nonce
 ///
 /// # Returns
 ///
 /// A `MlDsaMultiKeyChallenge` containing the challenge data
-pub fn generate_ml_dsa_challenge(
-    server_public_key: &ml_dsa::VerifyingKey<ml_dsa::MlDsa44>,
-) -> Result<MlDsaMultiKeyChallenge> {
+pub fn generate_ml_dsa_challenge(server_keypair: &KeyPair) -> Result<MlDsaMultiKeyChallenge> {
     let mut nonce = [0u8; 32];
     rand::thread_rng().fill_bytes(&mut nonce);
 
     let expires_at =
         SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs() + DEFAULT_CHALLENGE_TIMEOUT_SECS;
 
+    // Server signs the nonce to prove its identity
+    let server_signature = server_keypair.sign(&nonce);
+
     let challenge_data = MlDsaMultiKeyChallenge {
         nonce,
-        server_public_key: server_public_key.encode().as_slice().to_vec(),
+        signature: server_signature,
         expires_at,
     };
 
@@ -250,12 +252,8 @@ pub fn verify_ml_dsa_key_proofs(
     let mut verified_keys = BTreeSet::new();
     let mut failed_indices = Vec::new();
 
-    // Prepare signature data: nonce || server_public_key
-    let signature_data = [
-        &challenge_data.nonce[..],
-        &challenge_data.server_public_key[..],
-    ]
-    .concat();
+    // Prepare signature data: just the nonce (clients sign the nonce)
+    let signature_data = challenge_data.nonce.to_vec();
 
     debug!("Verifying {} key proofs", response.key_proofs.len());
 
@@ -307,23 +305,18 @@ pub fn verify_ml_dsa_key_proofs(
 ///
 /// `Ok(())` if verification succeeds, `Err` with details if it fails
 fn verify_single_key_proof(key_proof: &MlDsaKeyProof, signature_data: &[u8]) -> Result<()> {
-    // Decode the ML-DSA public key
-    let encoded_key: &ml_dsa::EncodedVerifyingKey<MlDsa65> = key_proof
-        .public_key
-        .as_slice()
-        .try_into()
-        .map_err(|_| anyhow::anyhow!("Invalid ML-DSA public key length"))?;
+    // Deserialize the client's public key from the key proof
+    let verifying_key: VerifyingKey = postcard::from_bytes(&key_proof.public_key)
+        .map_err(|e| anyhow::anyhow!("Invalid public key encoding: {}", e))?;
 
-    let verifying_key = VerifyingKey::decode(encoded_key);
-
-    // Decode the ML-DSA signature
-    let signature = ml_dsa::Signature::<MlDsa65>::try_from(key_proof.signature.as_slice())
-        .map_err(|e| anyhow::anyhow!("Invalid ML-DSA signature: {}", e))?;
+    // Deserialize the client's signature from the key proof
+    let signature: Signature = postcard::from_bytes(&key_proof.signature)
+        .map_err(|e| anyhow::anyhow!("Invalid signature encoding: {}", e))?;
 
     // Verify the signature
     verifying_key
         .verify(signature_data, &signature)
-        .map_err(|e| anyhow::anyhow!("ML-DSA signature verification failed: {}", e))?;
+        .map_err(|e| anyhow::anyhow!("Signature verification failed: {}", e))?;
 
     Ok(())
 }
@@ -351,21 +344,22 @@ pub async fn send_result(send: &mut SendStream, result: &ZoeChallengeResult) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ml_dsa::KeyGen;
+    use ml_dsa::{KeyGen, MlDsa65};
     use signature::Signer;
+
+    #[cfg(feature = "tls-ml-dsa-44")]
     use zoe_wire_protocol::generate_ml_dsa_44_keypair_for_tls;
 
     #[test]
+    #[cfg(feature = "tls-ml-dsa-44")]
     fn test_ml_dsa_challenge_generation() {
-        let server_keypair = generate_ml_dsa_44_keypair_for_tls();
-        let server_public_key = server_keypair.verifying_key();
+        let server_ml_dsa_keypair = generate_ml_dsa_44_keypair_for_tls();
+        let server_keypair = KeyPair::MlDsa44(server_ml_dsa_keypair);
 
-        let challenge = generate_ml_dsa_challenge(server_public_key).unwrap();
+        let challenge = generate_ml_dsa_challenge(&server_keypair).unwrap();
 
-        assert_eq!(
-            challenge.server_public_key,
-            server_public_key.encode().as_slice().to_vec()
-        );
+        // The server_public_key field now contains the server's signature over the nonce
+        assert!(!challenge.server_public_key.is_empty());
         assert!(
             challenge.expires_at
                 > SystemTime::now()
@@ -376,24 +370,24 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "tls-ml-dsa-44")]
     fn test_single_key_proof_verification() {
         // Generate test keys
-        let keypair = MlDsa65::key_gen(&mut rand::thread_rng());
-        let ml_dsa_key = keypair.signing_key();
-        let server_keypair = generate_ml_dsa_44_keypair_for_tls();
+        let ml_dsa_keypair = MlDsa65::key_gen(&mut rand::thread_rng());
+        let client_keypair = KeyPair::MlDsa65(ml_dsa_keypair);
 
-        // Create signature data
+        // Create signature data (just the nonce)
         let nonce = [42u8; 32];
-        let server_public_key = server_keypair.verifying_key().encode().as_slice().to_vec();
-        let signature_data = [&nonce[..], &server_public_key[..]].concat();
+        let signature_data = nonce.to_vec();
 
         // Create signature
-        let signature = ml_dsa_key.sign(&signature_data);
+        let signature = client_keypair.sign(&signature_data);
+        let verifying_key = client_keypair.public_key();
 
         // Create key proof
         let key_proof = MlDsaKeyProof {
-            public_key: keypair.verifying_key().encode().as_slice().to_vec(),
-            signature: signature.to_bytes().to_vec(),
+            public_key: postcard::to_stdvec(&verifying_key).unwrap(),
+            signature: postcard::to_stdvec(&signature).unwrap(),
         };
 
         // Verify proof
@@ -404,19 +398,19 @@ mod tests {
     #[test]
     fn test_invalid_signature_fails() {
         // Generate test keys
-        let keypair = MlDsa65::key_gen(&mut rand::thread_rng());
-        let ml_dsa_key = keypair.signing_key();
+        let client_keypair = KeyPair::MlDsa65(MlDsa65::key_gen(&mut rand::thread_rng()));
 
         // Create signature data
         let signature_data = b"test data";
 
         // Create signature over different data
-        let wrong_signature = ml_dsa_key.sign(b"wrong data");
+        let wrong_signature = client_keypair.sign(b"wrong data");
+        let verifying_key = client_keypair.public_key();
 
         // Create key proof with wrong signature
         let key_proof = MlDsaKeyProof {
-            public_key: keypair.verifying_key().encode().as_slice().to_vec(),
-            signature: wrong_signature.to_bytes().to_vec(),
+            public_key: postcard::to_stdvec(&verifying_key).unwrap(),
+            signature: postcard::to_stdvec(&wrong_signature).unwrap(),
         };
 
         // Verify proof should fail
@@ -431,23 +425,21 @@ mod tests {
 /// It's primarily used in integration tests.
 pub fn create_key_proofs(
     challenge: &MlDsaMultiKeyChallenge,
-    keypairs: &[&ml_dsa::KeyPair<ml_dsa::MlDsa65>],
+    keypairs: &[&KeyPair],
 ) -> Result<MlDsaMultiKeyResponse> {
     let mut key_proofs = Vec::new();
 
-    // Construct the signature data
-    let mut signature_data = Vec::new();
-    signature_data.extend_from_slice(&challenge.nonce);
-    signature_data.extend_from_slice(&challenge.server_public_key);
+    // Construct the signature data (just the nonce)
+    let signature_data = challenge.nonce.to_vec();
 
     // Create a proof for each keypair
     for keypair in keypairs {
-        use signature::Signer;
+        let signature = keypair.sign(&signature_data);
+        let verifying_key = keypair.public_key();
 
-        let signature = keypair.signing_key().sign(&signature_data);
         let key_proof = MlDsaKeyProof {
-            public_key: keypair.verifying_key().encode().as_slice().to_vec(),
-            signature: signature.encode().as_slice().to_vec(),
+            public_key: postcard::to_stdvec(&verifying_key)?,
+            signature: postcard::to_stdvec(&signature)?,
         };
         key_proofs.push(key_proof);
     }

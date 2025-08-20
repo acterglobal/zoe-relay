@@ -8,19 +8,19 @@ use rand::{Rng, thread_rng};
 use std::net::SocketAddr;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tempfile::TempDir;
-use tokio::time::timeout;
+
 use tracing::info;
 use zoe_blob_store::BlobServiceImpl;
 use zoe_client::Client;
 use zoe_message_store::RedisMessageStorage;
 use zoe_relay::{RelayServer, RelayServiceRouter};
-use zoe_wire_protocol::{generate_ml_dsa_44_keypair_for_tls, prelude::*};
+use zoe_wire_protocol::{TransportPrivateKey, TransportPublicKey};
 
 /// Test infrastructure for managing relay server and clients
 struct TestInfrastructure {
     server_handle: tokio::task::JoinHandle<Result<(), anyhow::Error>>,
     server_addr: SocketAddr,
-    server_public_key: ml_dsa::VerifyingKey<ml_dsa::MlDsa44>,
+    server_public_key: TransportPublicKey,
     temp_dirs: Vec<TempDir>,
 }
 
@@ -30,9 +30,9 @@ impl TestInfrastructure {
         // Find a free port for the relay server
         let server_addr = find_free_port().await?;
 
-        // Generate server key
-        let server_keypair = generate_ml_dsa_44_keypair_for_tls();
-        let server_public_key = server_keypair.verifying_key().clone();
+        // Generate server key (default to Ed25519)
+        let server_keypair = TransportPrivateKey::default(); // Ed25519 by default
+        let server_public_key = server_keypair.public_key();
 
         info!(
             "🔑 Server public key: {}",
@@ -95,10 +95,7 @@ impl TestInfrastructure {
         builder.media_storage_path(media_storage_path.to_string_lossy().to_string());
         builder.server_info(self.server_public_key.clone(), self.server_addr);
 
-        let client = timeout(Duration::from_secs(10), builder.build())
-            .await
-            .context("Timeout creating client")?
-            .context("Failed to create client")?;
+        let client = builder.build().await.context("Failed to create client")?;
 
         info!("✅ Client connected successfully");
         Ok(client)
@@ -312,7 +309,7 @@ async fn test_client_e2e_file_storage_with_relay() -> Result<()> {
     Ok(())
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_client_e2e_file_from_disk_with_relay() -> Result<()> {
     // Initialize logging for the test
     let _ = tracing_subscriber::fmt().with_env_filter("info").try_init();

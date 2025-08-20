@@ -2,7 +2,7 @@
 name = "zoe-wire-protocol"
 version = "0.1.0"
 edition = "2021"
-description = "Zoe wire protocol with dynamic authentication, ed25519-derived TLS certificates, and relay service definitions"
+description = "Zoe wire protocol with dynamic authentication, ML-DSA post-quantum TLS certificates, and relay service definitions"
 license = "MIT OR Apache-2.0"
 
 [dependencies]
@@ -39,7 +39,10 @@ blake3 = { workspace = true }
 
 # QUIC transport
 quinn = { workspace = true }
-rustls = { workspace = true }
+rustls = { workspace = true, features = ["std", "aws_lc_rs", "prefer-post-quantum"] }
+rustls-pki-types = "1.12"
+rustls-webpki = "0.103"
+rustls-post-quantum = { version = "0.2.3", features = ["aws-lc-rs-unstable"] }
 rcgen = "0.12"
 
 # Networking utilities
@@ -88,3 +91,4 @@ chrono = { workspace = true }
 default = []
 client = []
 server = []
+tls-ml-dsa-44 = []  # Enable ML-DSA-44 post-quantum transport security

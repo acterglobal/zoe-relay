@@ -15,13 +15,13 @@ use zoe_blob_store::BlobServiceImpl;
 use zoe_client::RelayClient;
 use zoe_message_store::RedisMessageStorage;
 use zoe_relay::{RelayServer, RelayServiceRouter};
-use zoe_wire_protocol::{generate_ml_dsa_44_keypair_for_tls, prelude::*};
+use zoe_wire_protocol::{KeyPair, Kind, Message, MessageFilters, MessageFull, Tag, TransportPrivateKey, TransportPublicKey, VerifyingKey, generate_keypair};
 
 /// Test infrastructure for managing relay server and clients
 pub struct TestInfrastructure {
     pub server_handle: tokio::task::JoinHandle<Result<(), anyhow::Error>>,
     pub server_addr: SocketAddr,
-    pub server_public_key: ml_dsa::VerifyingKey<ml_dsa::MlDsa44>,
+    pub server_public_key: TransportPublicKey,
     pub client_keypair: KeyPair,
     pub temp_dirs: Vec<TempDir>,
     pub redis_url: String,
@@ -45,9 +45,9 @@ impl TestInfrastructure {
         let blob_temp_dir = TempDir::new().context("Failed to create blob temp directory")?;
         let blob_dir = blob_temp_dir.path().to_path_buf();
 
-        // Generate server keys (ML-DSA-44 for TLS)
-        let server_keypair = generate_ml_dsa_44_keypair_for_tls();
-        let server_public_key = server_keypair.verifying_key().clone();
+        // Generate server keys (Ed25519 for TLS by default)
+        let server_keypair = TransportPrivateKey::default(); // Ed25519 by default
+        let server_public_key = server_keypair.public_key();
 
         info!(
             "🔑 Server public key: {}",
@@ -329,7 +329,6 @@ mod tests {
         // Create two different clients
         let client1 = infra.create_client().await?;
         let client2 = {
-            let client2_key = generate_keypair(&mut thread_rng()).signing_key().clone();
             timeout(
                 Duration::from_secs(5),
                 RelayClient::new(
@@ -414,7 +413,7 @@ mod tests {
             vec![channel_tag.clone()],
         );
 
-        let message1_full = zoe_wire_protocol::MessageFull::new(message1, client1.signing_key())
+        let message1_full = zoe_wire_protocol::MessageFull::new(message1, client1.keypair())
             .map_err(|e| anyhow::anyhow!("Failed to create MessageFull for client 1: {}", e))?;
 
         let message1_id = message1_full.id;
@@ -433,7 +432,7 @@ mod tests {
             vec![channel_tag.clone()],
         );
 
-        let message2_full = zoe_wire_protocol::MessageFull::new(message2, client2.signing_key())
+        let message2_full = zoe_wire_protocol::MessageFull::new(message2, client2.keypair())
             .map_err(|e| anyhow::anyhow!("Failed to create MessageFull for client 2: {}", e))?;
 
         let message2_id = message2_full.id;
@@ -531,7 +530,6 @@ mod tests {
         // Create two different clients
         let client1 = infra.create_client().await?;
         let client2 = {
-            let client2_key = generate_keypair(&mut thread_rng()).signing_key().clone();
             timeout(
                 Duration::from_secs(5),
                 RelayClient::new(
@@ -727,7 +725,6 @@ mod tests {
 
         // Create a third client to test fresh remote retrieval
         let client3 = {
-            let client3_key = generate_keypair(&mut thread_rng()).signing_key().clone();
             timeout(
                 Duration::from_secs(5),
                 RelayClient::new(
@@ -791,7 +788,6 @@ mod tests {
         // Create two different clients with different keys
         let client1 = infra.create_client().await?;
         let client2 = {
-            let client2_key = generate_keypair(&mut thread_rng()).signing_key().clone();
             timeout(
                 Duration::from_secs(5),
                 RelayClient::new(
@@ -869,7 +865,7 @@ mod tests {
             .create_group(
                 create_group,
                 Some(shared_encryption_key.clone()),
-                client1.signing_key(),
+                client1.keypair(),
                 timestamp,
             )
             .map_err(|e| anyhow::anyhow!("Failed to create group: {}", e))?;
@@ -1078,7 +1074,6 @@ mod tests {
         // Create two different clients with different keys
         let client1 = infra.create_client().await?;
         let client2 = {
-            let client2_key = generate_keypair(&mut thread_rng()).signing_key().clone();
             timeout(
                 Duration::from_secs(5),
                 RelayClient::new(
@@ -1167,7 +1162,7 @@ mod tests {
                 vec![channel_tag.clone()],
             );
 
-            let message_full = zoe_wire_protocol::MessageFull::new(message, client2.signing_key())
+            let message_full = zoe_wire_protocol::MessageFull::new(message, client2.keypair())
                 .map_err(|e| anyhow::anyhow!("Failed to create MessageFull for client 2: {}", e))?;
 
             // Track expected message for validation
@@ -1259,7 +1254,7 @@ mod tests {
                 vec![channel_tag.clone()],
             );
 
-            let message_full = zoe_wire_protocol::MessageFull::new(message, client2.signing_key())
+            let message_full = zoe_wire_protocol::MessageFull::new(message, client2.keypair())
                 .map_err(|e| anyhow::anyhow!("Failed to create MessageFull for client 2: {}", e))?;
 
             // Track expected live message for validation

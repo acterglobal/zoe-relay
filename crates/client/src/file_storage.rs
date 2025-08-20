@@ -101,6 +101,17 @@ impl FileStorage {
         })
     }
 
+    /// Set the remote blob service for an existing FileStorage instance
+    /// This enables lazy initialization of remote capabilities
+    pub fn set_remote_blob_service(&mut self, remote_blob_service: BlobService) {
+        self.remote_blob_service = Some(remote_blob_service);
+    }
+
+    /// Check if remote blob service is connected
+    pub fn has_remote_service(&self) -> bool {
+        self.remote_blob_service.is_some()
+    }
+
     /// Store a file by reading from disk, encrypting, and storing in blob storage
     ///
     /// This method:

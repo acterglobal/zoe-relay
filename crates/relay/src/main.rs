@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use tracing::info;
 use zoe_blob_store::BlobServiceImpl;
 use zoe_message_store::RedisMessageStorage;
-use zoe_wire_protocol::generate_ml_dsa_44_keypair_for_tls;
+// Import will be conditional based on features
 
 use zoe_relay::{RelayConfig, RelayServer, RelayServiceRouter};
 
@@ -63,9 +63,9 @@ async fn main() -> Result<()> {
 
     // Handle key generation
     if matches.get_flag("generate-key") {
-        let server_keypair = generate_ml_dsa_44_keypair_for_tls();
-        let hex_key = hex::encode(server_keypair.signing_key().encode());
-        println!("Generated server key: {hex_key}");
+        use zoe_wire_protocol::ServerKeypair;
+        let server_keypair = ServerKeypair::default(); // Generates Ed25519 by default
+        println!("Generated server keypair: {}", server_keypair.public_key());
         println!(
             "You can use this key in your configuration file or set it via environment variable."
         );
@@ -94,8 +94,10 @@ async fn main() -> Result<()> {
         if let Some(private_key) = matches.get_one::<String>("private-key") {
             let _private_key_bytes: [u8; 32] =
                 hex::decode(private_key).unwrap().try_into().unwrap();
-            // TODO: Implement proper ML-DSA key loading from bytes
-            config.server_keypair = generate_ml_dsa_44_keypair_for_tls();
+            // TODO: Implement proper key loading from bytes
+            // For now, just use default Ed25519 generation
+            use zoe_wire_protocol::ServerKeypair;
+            config.server_keypair = ServerKeypair::default();
         }
 
         config
@@ -104,8 +106,9 @@ async fn main() -> Result<()> {
     info!("Starting Zoe Relay Server");
     info!("Server address: {}", address);
     info!(
-        "Server public key: {}",
-        hex::encode(config.server_keypair.verifying_key().encode())
+        "Server identity: {} ({})",
+        config.server_keypair.public_key(),
+        config.server_keypair.public_key().algorithm()
     );
     info!("Blob storage directory: {:?}", config.blob_config.data_dir);
 
@@ -168,7 +171,7 @@ mod tests {
         let config_path = temp_dir.path().join("test_config.toml");
 
         let test_config = RelayConfig {
-            server_keypair: generate_ml_dsa_44_keypair_for_tls(),
+            server_keypair: zoe_wire_protocol::ServerKeypair::default(), // Ed25519 by default
             blob_config: zoe_relay::BlobConfig {
                 data_dir: PathBuf::from("/test/path"),
             },

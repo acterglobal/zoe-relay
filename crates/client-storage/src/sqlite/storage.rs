@@ -571,17 +571,7 @@ impl MessageStorage for SqliteMessageStorage {
         for sync_result in sync_iter {
             let (relay_pubkey_bytes, global_stream_id, synced_at) = sync_result?;
 
-            if relay_pubkey_bytes.len() != 32 {
-                return Err(StorageError::Database(rusqlite::Error::InvalidColumnType(
-                    0,
-                    "relay_pubkey".to_string(),
-                    rusqlite::types::Type::Blob,
-                )));
-            }
-
-            let mut key_array = [0u8; 32];
-            key_array.copy_from_slice(&relay_pubkey_bytes);
-            let relay_pubkey = zoe_wire_protocol::verifying_key_from_bytes(&key_array)
+            let relay_pubkey = zoe_wire_protocol::verifying_key_from_bytes(&relay_pubkey_bytes)
                 .map_err(|e| StorageError::Internal(format!("Invalid relay public key: {e}")))?;
 
             sync_statuses.push(RelaySyncStatus {

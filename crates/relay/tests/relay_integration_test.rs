@@ -11,8 +11,7 @@ use tokio::time::{timeout, Duration};
 use zoe_relay::Service;
 use zoe_relay::{ConnectionInfo, RelayServer, ServiceRouter};
 use zoe_wire_protocol::{
-    generate_deterministic_cert_from_ml_dsa_44_for_tls, generate_ml_dsa_44_keypair_for_tls,
-    AcceptSpecificServerCertVerifier, StreamPair,
+    AcceptSpecificEd25519ServerCertVerifier, StreamPair,
 };
 
 #[derive(Debug, thiserror::Error)]

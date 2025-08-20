@@ -22,8 +22,7 @@ use tracing::info;
 use zoe_client::{
     RpcMessageListener, TarpcOverMessagesClient, TarpcOverMessagesServer, rpc_transport::RpcMessage,
 };
-use zoe_wire_protocol::prelude::*;
-use zoe_wire_protocol::{MessageFilters, SubscriptionConfig};
+use zoe_wire_protocol::{KeyPair, Kind, Message, MessageFilters, MessageFull, SubscriptionConfig, Tag, VerifyingKey, generate_keypair};
 
 /// Information about the echo service
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
