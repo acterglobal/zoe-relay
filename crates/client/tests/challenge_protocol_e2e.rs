@@ -117,7 +117,7 @@ async fn test_challenge_protocol_basic_handshake() -> Result<()> {
                     panic!("ML-DSA not supported in this test");
                 }
             };
-            let verified_count = zoe_client::challenge::perform_client_challenge_handshake(
+            let (verified_count, _) = zoe_client::challenge::perform_client_challenge_handshake(
                 send,
                 recv,
                 &server_verifying_key,
@@ -232,7 +232,7 @@ async fn test_challenge_protocol_multiple_keys() -> Result<()> {
                     panic!("ML-DSA not supported in this test");
                 }
             };
-            let verified_count = zoe_client::challenge::perform_client_challenge_handshake(
+            let (verified_count, _) = zoe_client::challenge::perform_client_challenge_handshake(
                 send,
                 recv,
                 &server_verifying_key,

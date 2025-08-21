@@ -117,7 +117,7 @@ impl RelayClient {
 
         // Perform ML-DSA challenge-response handshake
         let (send, recv) = connection.accept_bi().await?;
-        let Ok(verified_count) = perform_client_challenge_handshake(
+        let Ok((verified_count, _)) = perform_client_challenge_handshake(
             send,
             recv,
             &server_verifying_key,

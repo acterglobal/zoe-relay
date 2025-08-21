@@ -1,9 +1,12 @@
 use super::MAX_PACKAGE_SIZE;
-use crate::{keys::*, KeyChallenge, KeyProof, KeyResponse, ZoeChallenge, ZoeChallengeResult};
+use crate::{
+    keys::*, KeyChallenge, KeyProof, KeyResponse, ZoeChallenge, ZoeChallengeResult,
+    ZoeChallengeWarning,
+};
 use anyhow::Result;
 use quinn::{RecvStream, SendStream};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 /// Performs the client side of the challenge-response handshake
 ///
@@ -49,7 +52,7 @@ pub async fn perform_client_challenge_handshake(
     mut recv: RecvStream,
     server_public_key: &VerifyingKey,
     key_pairs: &[&KeyPair],
-) -> Result<usize> {
+) -> Result<(usize, Vec<ZoeChallengeWarning>)> {
     info!("🔐 Starting client-side multi-challenge handshake");
 
     if key_pairs.is_empty() {
@@ -59,6 +62,7 @@ pub async fn perform_client_challenge_handshake(
     debug!("Proving possession of {} keys", key_pairs.len());
 
     let verified_count = key_pairs.len();
+    let mut warnings = Vec::new();
 
     loop {
         // Step 3: Receive result from server
@@ -69,18 +73,23 @@ pub async fn perform_client_challenge_handshake(
                 info!("✅ All challenges completed successfully");
                 break;
             }
+            ZoeChallengeResult::Warning(warning) => {
+                warn!("🔔 Warning received: {warning:?}");
+                warnings.push(warning);
+                continue; // we need to read for the next result
+            }
             ZoeChallengeResult::Next => {
                 info!("➡️ Challenge accepted, waiting for next challenge");
                 // Continue to next iteration to receive next challenge
             }
             ZoeChallengeResult::Rejected(rejection) => {
-                return Err(anyhow::anyhow!("Challenge rejected: {:?}", rejection));
+                return Err(anyhow::anyhow!("Challenge rejected: {rejection:?}"));
             }
             ZoeChallengeResult::Error(error) => {
-                return Err(anyhow::anyhow!("Server error: {}", error));
+                return Err(anyhow::anyhow!("Server error: {error}"));
             }
             ZoeChallengeResult::Unknown { discriminant, .. } => {
-                return Err(anyhow::anyhow!("Unsupported result type: {}", discriminant));
+                return Err(anyhow::anyhow!("Unsupported result type: {discriminant}"));
             }
         }
         // Step 1: Receive challenge from server
@@ -116,8 +125,7 @@ pub async fn perform_client_challenge_handshake(
             }
             ZoeChallenge::Unknown { discriminant, .. } => {
                 return Err(anyhow::anyhow!(
-                    "Unsupported challenge type: {}",
-                    discriminant
+                    "Unsupported challenge type: {discriminant}"
                 ));
             }
         }
@@ -128,7 +136,7 @@ pub async fn perform_client_challenge_handshake(
         verified_count
     );
 
-    Ok(verified_count)
+    Ok((verified_count, warnings))
 }
 
 /// Receives a challenge from the server
@@ -279,6 +287,9 @@ mod tests {
         match result {
             ZoeChallengeResult::Accepted => Ok(expected_count),
             ZoeChallengeResult::Next => Ok(expected_count),
+            ZoeChallengeResult::Warning(warning) => {
+                Err(anyhow::anyhow!(format!("Warning received: {warning:?}")))
+            }
             ZoeChallengeResult::Rejected(rejection) => Err(anyhow::anyhow!(format!(
                 "Challenge rejected: {rejection:?}"
             ))),

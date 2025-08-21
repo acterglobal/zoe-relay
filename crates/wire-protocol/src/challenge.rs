@@ -134,6 +134,58 @@ pub enum ZoeChallengeRejection {
     Unknown { discriminant: u32, data: Vec<u8> },
 }
 
+#[derive(Debug, Clone, ForwardCompatibleEnum)]
+pub enum ZoeChallengeWarning {
+    /// The connection is throttled, a reason to display to the user might be provided
+    #[discriminant(20)]
+    ConnectionThrottled(String),
+
+    /// The user is close to the quota limit on this server. This should probably be
+    /// prompted to the user as uploading data might be rejected by the server.
+    #[discriminant(33)]
+    QuotaLimitInReach(String),
+
+    /// The user is out of quota on this server. This should probably be prompted
+    /// to the user as uploading data might be rejected by the server.
+    #[discriminant(34)]
+    OutOfQuota(String),
+
+    /// The user has reached the limits (other than quota) on this server. This
+    /// should probably be prompted to the user as uploading data might be rejected
+    /// by the server.
+    #[discriminant(35)]
+    UserHasLimitedResource(String),
+
+    /// The best ngeotiated protocol version is deprecated. The client should
+    /// prompt the user about this server soon not supporting this client anymore
+    /// and thus the client needs to be upgraded.
+    #[discriminant(41)]
+    ProtocolVersionDeprecated(String),
+
+    /// The server has detected a potential breach of the security policy. The
+    /// client should prompt the user about this and ask for confirmation to
+    /// continue.
+    #[discriminant(42)]
+    PotentialBreach(String),
+
+    /// The server has detected a weak crypto algorithm being used. The client
+    /// should prompt the user about this and ask for confirmation to continue.
+    #[discriminant(43)]
+    WeakCrypto(String),
+
+    /// THe server has a generic warning to show to the user. This should be shown
+    /// to the user by the client.
+    #[discriminant(50)]
+    GenericServerWarning(String),
+
+    /// The server is under high load and might be throttling the user connection,
+    #[discriminant(51)]
+    ServerUnderLoad(String),
+
+    /// Unknown warning type for forward compatibility
+    Unknown { discriminant: u32, data: Vec<u8> },
+}
+
 /// Forward-compatible result system for challenge verification
 ///
 /// After verifying challenge responses, the server sends back results indicating
@@ -149,6 +201,14 @@ pub enum ZoeChallengeResult {
     /// and perform. After this read for another ZoeChallenge.
     #[discriminant(30)]
     Next,
+
+    /// The server wants to warn the client and potentially the user about a
+    /// possible issue. The client should consider the warning and maybe
+    /// inform the user about it. But other than that it should continue by
+    /// waiting for another result. Can be sent multiple times for different
+    /// problems.
+    #[discriminant(31)]
+    Warning(ZoeChallengeWarning),
 
     /// The challenge has been rejected The connection will be closed. A message
     /// might be provided to explain why and what to do before trying again.
