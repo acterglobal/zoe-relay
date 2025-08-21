@@ -14,7 +14,7 @@ fn create_test_signature(keypair: &KeyPair) -> zoe_wire_protocol::Signature {
     match keypair {
         KeyPair::MlDsa65(kp) => {
             let signature = kp.sign(&[1, 2, 3, 4]);
-            zoe_wire_protocol::Signature::MlDsa65(signature)
+            zoe_wire_protocol::Signature::MlDsa65(Box::new(signature))
         }
         _ => panic!("Expected MlDsa65 keypair"),
     }
@@ -25,7 +25,7 @@ async fn test_create_single_key_proof() -> Result<()> {
     // Generate test keys
     let server_key = ed25519_dalek::SigningKey::generate(&mut rand::thread_rng());
     let server_public_key = server_key.verifying_key();
-    let client_keypair = KeyPair::MlDsa65(MlDsa65::key_gen(&mut rand::thread_rng()));
+    let client_keypair = KeyPair::MlDsa65(Box::new(MlDsa65::key_gen(&mut rand::thread_rng())));
 
     // Create challenge
     let challenge = MlDsaMultiKeyChallenge {
@@ -55,9 +55,9 @@ async fn test_create_multiple_key_proofs() -> Result<()> {
     let server_key = ed25519_dalek::SigningKey::generate(&mut rand::thread_rng());
     let server_public_key = server_key.verifying_key();
 
-    let client_keypair1 = KeyPair::MlDsa65(MlDsa65::key_gen(&mut rand::thread_rng()));
-    let client_keypair2 = KeyPair::MlDsa65(MlDsa65::key_gen(&mut rand::thread_rng()));
-    let client_keypair3 = KeyPair::MlDsa65(MlDsa65::key_gen(&mut rand::thread_rng()));
+    let client_keypair1 = KeyPair::MlDsa65(Box::new(MlDsa65::key_gen(&mut rand::thread_rng())));
+    let client_keypair2 = KeyPair::MlDsa65(Box::new(MlDsa65::key_gen(&mut rand::thread_rng())));
+    let client_keypair3 = KeyPair::MlDsa65(Box::new(MlDsa65::key_gen(&mut rand::thread_rng())));
 
     // Create challenge
     let challenge = MlDsaMultiKeyChallenge {
@@ -99,7 +99,7 @@ async fn test_key_proof_signature_verification() -> Result<()> {
     // Generate test keys
     let server_key = ed25519_dalek::SigningKey::generate(&mut rand::thread_rng());
     let server_public_key = server_key.verifying_key();
-    let client_keypair = KeyPair::MlDsa65(MlDsa65::key_gen(&mut rand::thread_rng()));
+    let client_keypair = KeyPair::MlDsa65(Box::new(MlDsa65::key_gen(&mut rand::thread_rng())));
 
     // Create challenge
     let challenge = MlDsaMultiKeyChallenge {
@@ -151,7 +151,7 @@ async fn test_response_serialization_roundtrip() -> Result<()> {
     // Generate test keys
     let server_key = ed25519_dalek::SigningKey::generate(&mut rand::thread_rng());
     let server_public_key = server_key.verifying_key();
-    let client_keypair = KeyPair::MlDsa65(MlDsa65::key_gen(&mut rand::thread_rng()));
+    let client_keypair = KeyPair::MlDsa65(Box::new(MlDsa65::key_gen(&mut rand::thread_rng())));
 
     // Create challenge and response
     let challenge = MlDsaMultiKeyChallenge {
@@ -216,7 +216,7 @@ async fn test_empty_key_list_error() -> Result<()> {
     // Test that empty key list returns an error
     let server_key = ed25519_dalek::SigningKey::generate(&mut rand::thread_rng());
     let server_public_key = server_key.verifying_key();
-    let client_keypair = KeyPair::MlDsa65(MlDsa65::key_gen(&mut rand::thread_rng()));
+    let client_keypair = KeyPair::MlDsa65(Box::new(MlDsa65::key_gen(&mut rand::thread_rng())));
 
     let challenge = MlDsaMultiKeyChallenge {
         nonce: [1u8; 32],
@@ -240,14 +240,14 @@ async fn test_challenge_type_matching() -> Result<()> {
     // Test that the client correctly handles different challenge types
     let server_key = ed25519_dalek::SigningKey::generate(&mut rand::thread_rng());
     let server_public_key = server_key.verifying_key();
-    let client_keypair = KeyPair::MlDsa65(MlDsa65::key_gen(&mut rand::thread_rng()));
+    let client_keypair = KeyPair::MlDsa65(Box::new(MlDsa65::key_gen(&mut rand::thread_rng())));
 
     // Test ML-DSA challenge
-    let ml_dsa_challenge = ZoeChallenge::MlDsaMultiKey(MlDsaMultiKeyChallenge {
+    let ml_dsa_challenge = ZoeChallenge::MlDsaMultiKey(Box::new(MlDsaMultiKeyChallenge {
         nonce: [55u8; 32],
         signature: create_test_signature(&client_keypair),
         expires_at: SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs() + 30,
-    });
+    }));
 
     // Serialize and deserialize to ensure it works
     let serialized = postcard::to_stdvec(&ml_dsa_challenge)?;

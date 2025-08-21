@@ -115,7 +115,7 @@ impl<TarpcMsg> RpcMessageListener<TarpcMsg> {
         };
 
         // Extract header information from the message
-        let header = match &*message.message() {
+        let header = match message.message() {
             Message::MessageV0(msg) => msg.header.clone(),
         };
 

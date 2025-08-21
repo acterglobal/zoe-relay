@@ -3,6 +3,8 @@
 //! This module provides TLS certificate generation and verification utilities
 //! for different cryptographic algorithms used in transport security.
 
+#[cfg(feature = "client")]
+pub mod client;
 pub mod ed25519;
 
 #[cfg(feature = "tls-ml-dsa-44")]

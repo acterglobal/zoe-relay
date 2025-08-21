@@ -255,12 +255,12 @@ impl<R: ServiceRouter + 'static> RelayServer<R> {
                 // For Ed25519 transport, we need to generate or load an ML-DSA-44 key for message authentication
                 // For now, we'll use a default/generated key - this should be configurable in the future
                 let mut rng = rand::thread_rng();
-                zoe_wire_protocol::KeyPair::MlDsa44(ml_dsa::MlDsa44::key_gen(&mut rng))
+                zoe_wire_protocol::KeyPair::MlDsa44(Box::new(ml_dsa::MlDsa44::key_gen(&mut rng)))
             }
             #[cfg(feature = "tls-ml-dsa-44")]
             TransportPrivateKey::MlDsa44 { keypair } => {
                 // Use the same ML-DSA-44 key for both transport and message authentication
-                zoe_wire_protocol::KeyPair::MlDsa44(keypair.clone())
+                zoe_wire_protocol::KeyPair::MlDsa44(Box::new(keypair.clone()))
             }
         };
 
@@ -543,17 +543,13 @@ mod tests {
     // E-2-E-Test over quinn
 
     use anyhow::Result;
-    use futures::future::join;
-    use ml_dsa::{MlDsa44, SigningKey, VerifyingKey};
 
     use crate::Service;
-    use crate::{ConnectionInfo, RelayServer, ServiceRouter};
-    use ml_dsa::KeyPair;
-    use std::net::SocketAddr;
+    use crate::{ConnectionInfo, ServiceRouter};
+
     use std::sync::Arc;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::sync::Notify;
-    use tokio::time::{timeout, Duration};
 
     // ML-DSA-44 imports (only available with tls-ml-dsa-44 feature)
     #[cfg(feature = "tls-ml-dsa-44")]
@@ -828,32 +824,7 @@ mod tests {
             &self,
             server_public_key: &ml_dsa::VerifyingKey<ml_dsa::MlDsa44>,
         ) -> Result<quinn::Endpoint> {
-            use quinn::{crypto::rustls::QuicClientConfig, ClientConfig, Endpoint};
-            use rustls::ClientConfig as RustlsClientConfig;
-            use std::sync::Arc;
-
-            // Generate client certificate for mutual TLS
-            let client_keypair = generate_ml_dsa_44_keypair_for_tls();
-            let client_certs =
-                generate_deterministic_cert_from_ml_dsa_44_for_tls(&client_keypair, "client")?;
-
-            // Create custom certificate verifier that accepts our server
-            let verifier = AcceptSpecificServerCertVerifier::new(server_public_key.clone());
-
-            // Create client config with client certificate for mutual TLS
-            let cert_resolver =
-                MlDsaCertResolver::new(client_keypair.signing_key().clone(), client_certs);
-            let crypto = RustlsClientConfig::builder()
-                .dangerous()
-                .with_custom_certificate_verifier(Arc::new(verifier))
-                .with_client_cert_resolver(Arc::new(cert_resolver));
-
-            let client_config = ClientConfig::new(Arc::new(QuicClientConfig::try_from(crypto)?));
-
-            let mut endpoint = Endpoint::client("0.0.0.0:0".parse()?)?;
-            endpoint.set_default_client_config(client_config);
-
-            Ok(endpoint)
+            Ok(create_client_endpoint(server_public_key)?)
         }
     }
 

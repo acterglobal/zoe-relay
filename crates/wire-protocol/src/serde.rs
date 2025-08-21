@@ -1,3 +1,5 @@
+#![allow(clippy::borrowed_box)]
+
 use ::serde::{Deserialize, Deserializer, Serialize, Serializer};
 use ml_dsa;
 
@@ -7,7 +9,7 @@ pub struct VerifyingKeyDef44;
 
 impl VerifyingKeyDef44 {
     pub fn serialize<S>(
-        key: &ml_dsa::VerifyingKey<ml_dsa::MlDsa44>,
+        key: &Box<ml_dsa::VerifyingKey<ml_dsa::MlDsa44>>,
         serializer: S,
     ) -> Result<S::Ok, S::Error>
     where
@@ -19,14 +21,16 @@ impl VerifyingKeyDef44 {
 
     pub fn deserialize<'de, D>(
         deserializer: D,
-    ) -> Result<ml_dsa::VerifyingKey<ml_dsa::MlDsa44>, D::Error>
+    ) -> Result<Box<ml_dsa::VerifyingKey<ml_dsa::MlDsa44>>, D::Error>
     where
         D: Deserializer<'de>,
     {
         let bytes = Vec::<u8>::deserialize(deserializer)?;
         let encoded = ml_dsa::EncodedVerifyingKey::<ml_dsa::MlDsa44>::try_from(bytes.as_slice())
             .map_err(::serde::de::Error::custom)?;
-        Ok(ml_dsa::VerifyingKey::<ml_dsa::MlDsa44>::decode(&encoded))
+        Ok(Box::new(ml_dsa::VerifyingKey::<ml_dsa::MlDsa44>::decode(
+            &encoded,
+        )))
     }
 }
 
@@ -36,7 +40,7 @@ pub struct VerifyingKeyDef65;
 
 impl VerifyingKeyDef65 {
     pub fn serialize<S>(
-        key: &ml_dsa::VerifyingKey<ml_dsa::MlDsa65>,
+        key: &Box<ml_dsa::VerifyingKey<ml_dsa::MlDsa65>>,
         serializer: S,
     ) -> Result<S::Ok, S::Error>
     where
@@ -48,14 +52,16 @@ impl VerifyingKeyDef65 {
 
     pub fn deserialize<'de, D>(
         deserializer: D,
-    ) -> Result<ml_dsa::VerifyingKey<ml_dsa::MlDsa65>, D::Error>
+    ) -> Result<Box<ml_dsa::VerifyingKey<ml_dsa::MlDsa65>>, D::Error>
     where
         D: Deserializer<'de>,
     {
         let bytes = Vec::<u8>::deserialize(deserializer)?;
         let encoded = ml_dsa::EncodedVerifyingKey::<ml_dsa::MlDsa65>::try_from(bytes.as_slice())
             .map_err(::serde::de::Error::custom)?;
-        Ok(ml_dsa::VerifyingKey::<ml_dsa::MlDsa65>::decode(&encoded))
+        Ok(Box::new(ml_dsa::VerifyingKey::<ml_dsa::MlDsa65>::decode(
+            &encoded,
+        )))
     }
 }
 
@@ -65,7 +71,7 @@ pub struct VerifyingKeyDef87;
 
 impl VerifyingKeyDef87 {
     pub fn serialize<S>(
-        key: &ml_dsa::VerifyingKey<ml_dsa::MlDsa87>,
+        key: &Box<ml_dsa::VerifyingKey<ml_dsa::MlDsa87>>,
         serializer: S,
     ) -> Result<S::Ok, S::Error>
     where
@@ -77,14 +83,16 @@ impl VerifyingKeyDef87 {
 
     pub fn deserialize<'de, D>(
         deserializer: D,
-    ) -> Result<ml_dsa::VerifyingKey<ml_dsa::MlDsa87>, D::Error>
+    ) -> Result<Box<ml_dsa::VerifyingKey<ml_dsa::MlDsa87>>, D::Error>
     where
         D: Deserializer<'de>,
     {
         let bytes = Vec::<u8>::deserialize(deserializer)?;
         let encoded = ml_dsa::EncodedVerifyingKey::<ml_dsa::MlDsa87>::try_from(bytes.as_slice())
             .map_err(::serde::de::Error::custom)?;
-        Ok(ml_dsa::VerifyingKey::<ml_dsa::MlDsa87>::decode(&encoded))
+        Ok(Box::new(ml_dsa::VerifyingKey::<ml_dsa::MlDsa87>::decode(
+            &encoded,
+        )))
     }
 }
 
@@ -94,7 +102,7 @@ pub struct SigningKeyDef44;
 
 impl SigningKeyDef44 {
     pub fn serialize<S>(
-        key: &ml_dsa::SigningKey<ml_dsa::MlDsa44>,
+        key: &Box<ml_dsa::SigningKey<ml_dsa::MlDsa44>>,
         serializer: S,
     ) -> Result<S::Ok, S::Error>
     where
@@ -106,14 +114,16 @@ impl SigningKeyDef44 {
 
     pub fn deserialize<'de, D>(
         deserializer: D,
-    ) -> Result<ml_dsa::SigningKey<ml_dsa::MlDsa44>, D::Error>
+    ) -> Result<Box<ml_dsa::SigningKey<ml_dsa::MlDsa44>>, D::Error>
     where
         D: Deserializer<'de>,
     {
         let bytes = Vec::<u8>::deserialize(deserializer)?;
         let encoded = ml_dsa::EncodedSigningKey::<ml_dsa::MlDsa44>::try_from(bytes.as_slice())
             .map_err(::serde::de::Error::custom)?;
-        Ok(ml_dsa::SigningKey::<ml_dsa::MlDsa44>::decode(&encoded))
+        Ok(Box::new(ml_dsa::SigningKey::<ml_dsa::MlDsa44>::decode(
+            &encoded,
+        )))
     }
 }
 
@@ -123,7 +133,7 @@ pub struct SigningKeyDef65;
 
 impl SigningKeyDef65 {
     pub fn serialize<S>(
-        key: &ml_dsa::SigningKey<ml_dsa::MlDsa65>,
+        key: &Box<ml_dsa::SigningKey<ml_dsa::MlDsa65>>,
         serializer: S,
     ) -> Result<S::Ok, S::Error>
     where
@@ -135,14 +145,16 @@ impl SigningKeyDef65 {
 
     pub fn deserialize<'de, D>(
         deserializer: D,
-    ) -> Result<ml_dsa::SigningKey<ml_dsa::MlDsa65>, D::Error>
+    ) -> Result<Box<ml_dsa::SigningKey<ml_dsa::MlDsa65>>, D::Error>
     where
         D: Deserializer<'de>,
     {
         let bytes = Vec::<u8>::deserialize(deserializer)?;
         let encoded = ml_dsa::EncodedSigningKey::<ml_dsa::MlDsa65>::try_from(bytes.as_slice())
             .map_err(::serde::de::Error::custom)?;
-        Ok(ml_dsa::SigningKey::<ml_dsa::MlDsa65>::decode(&encoded))
+        Ok(Box::new(ml_dsa::SigningKey::<ml_dsa::MlDsa65>::decode(
+            &encoded,
+        )))
     }
 }
 
@@ -152,7 +164,7 @@ pub struct SigningKeyDef87;
 
 impl SigningKeyDef87 {
     pub fn serialize<S>(
-        key: &ml_dsa::SigningKey<ml_dsa::MlDsa87>,
+        key: &Box<ml_dsa::SigningKey<ml_dsa::MlDsa87>>,
         serializer: S,
     ) -> Result<S::Ok, S::Error>
     where
@@ -164,14 +176,16 @@ impl SigningKeyDef87 {
 
     pub fn deserialize<'de, D>(
         deserializer: D,
-    ) -> Result<ml_dsa::SigningKey<ml_dsa::MlDsa87>, D::Error>
+    ) -> Result<Box<ml_dsa::SigningKey<ml_dsa::MlDsa87>>, D::Error>
     where
         D: Deserializer<'de>,
     {
         let bytes = Vec::<u8>::deserialize(deserializer)?;
         let encoded = ml_dsa::EncodedSigningKey::<ml_dsa::MlDsa87>::try_from(bytes.as_slice())
             .map_err(::serde::de::Error::custom)?;
-        Ok(ml_dsa::SigningKey::<ml_dsa::MlDsa87>::decode(&encoded))
+        Ok(Box::new(ml_dsa::SigningKey::<ml_dsa::MlDsa87>::decode(
+            &encoded,
+        )))
     }
 }
 
@@ -181,7 +195,7 @@ pub struct SignatureDef44;
 
 impl SignatureDef44 {
     pub fn serialize<S>(
-        sig: &ml_dsa::Signature<ml_dsa::MlDsa44>,
+        sig: &Box<ml_dsa::Signature<ml_dsa::MlDsa44>>,
         serializer: S,
     ) -> Result<S::Ok, S::Error>
     where
@@ -193,7 +207,7 @@ impl SignatureDef44 {
 
     pub fn deserialize<'de, D>(
         deserializer: D,
-    ) -> Result<ml_dsa::Signature<ml_dsa::MlDsa44>, D::Error>
+    ) -> Result<Box<ml_dsa::Signature<ml_dsa::MlDsa44>>, D::Error>
     where
         D: Deserializer<'de>,
     {
@@ -202,6 +216,7 @@ impl SignatureDef44 {
             .map_err(::serde::de::Error::custom)?;
         ml_dsa::Signature::<ml_dsa::MlDsa44>::decode(&encoded)
             .ok_or_else(|| ::serde::de::Error::custom("Invalid signature encoding"))
+            .map(Box::new)
     }
 }
 
@@ -211,7 +226,7 @@ pub struct SignatureDef65;
 
 impl SignatureDef65 {
     pub fn serialize<S>(
-        sig: &ml_dsa::Signature<ml_dsa::MlDsa65>,
+        sig: &Box<ml_dsa::Signature<ml_dsa::MlDsa65>>,
         serializer: S,
     ) -> Result<S::Ok, S::Error>
     where
@@ -223,7 +238,7 @@ impl SignatureDef65 {
 
     pub fn deserialize<'de, D>(
         deserializer: D,
-    ) -> Result<ml_dsa::Signature<ml_dsa::MlDsa65>, D::Error>
+    ) -> Result<Box<ml_dsa::Signature<ml_dsa::MlDsa65>>, D::Error>
     where
         D: Deserializer<'de>,
     {
@@ -232,6 +247,7 @@ impl SignatureDef65 {
             .map_err(::serde::de::Error::custom)?;
         ml_dsa::Signature::<ml_dsa::MlDsa65>::decode(&encoded)
             .ok_or_else(|| ::serde::de::Error::custom("Invalid signature encoding"))
+            .map(Box::new)
     }
 }
 
@@ -241,7 +257,7 @@ pub struct SignatureDef87;
 
 impl SignatureDef87 {
     pub fn serialize<S>(
-        sig: &ml_dsa::Signature<ml_dsa::MlDsa87>,
+        sig: &Box<ml_dsa::Signature<ml_dsa::MlDsa87>>,
         serializer: S,
     ) -> Result<S::Ok, S::Error>
     where
@@ -253,7 +269,7 @@ impl SignatureDef87 {
 
     pub fn deserialize<'de, D>(
         deserializer: D,
-    ) -> Result<ml_dsa::Signature<ml_dsa::MlDsa87>, D::Error>
+    ) -> Result<Box<ml_dsa::Signature<ml_dsa::MlDsa87>>, D::Error>
     where
         D: Deserializer<'de>,
     {
@@ -262,5 +278,6 @@ impl SignatureDef87 {
             .map_err(::serde::de::Error::custom)?;
         ml_dsa::Signature::<ml_dsa::MlDsa87>::decode(&encoded)
             .ok_or_else(|| ::serde::de::Error::custom("Invalid signature encoding"))
+            .map(Box::new)
     }
 }

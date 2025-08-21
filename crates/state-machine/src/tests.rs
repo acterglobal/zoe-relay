@@ -5,8 +5,8 @@ use zoe_wire_protocol::{KeyPair, Tag};
 
 fn create_test_keys() -> (KeyPair, KeyPair) {
     let mut rng = thread_rng();
-    let alice_key = KeyPair::MlDsa65(MlDsa65::key_gen(&mut rng));
-    let bob_key = KeyPair::MlDsa65(MlDsa65::key_gen(&mut rng));
+    let alice_key = KeyPair::MlDsa65(Box::new(MlDsa65::key_gen(&mut rng)));
+    let bob_key = KeyPair::MlDsa65(Box::new(MlDsa65::key_gen(&mut rng)));
     (alice_key, bob_key)
 }
 
@@ -543,7 +543,7 @@ fn test_mnemonic_key_integration_with_group_creation() {
     use ml_dsa::{KeyGen, MlDsa65};
 
     let mut dga = DigitalGroupAssistant::new();
-    let alice_key = KeyPair::MlDsa65(MlDsa65::key_gen(&mut rand::thread_rng()));
+    let alice_key = KeyPair::MlDsa65(Box::new(MlDsa65::key_gen(&mut rand::thread_rng())));
     let timestamp = chrono::Utc::now().timestamp() as u64;
 
     // Generate mnemonic and create encryption key

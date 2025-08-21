@@ -144,7 +144,7 @@ async fn test_atomic_multi_field_operations() {
 #[tokio::test]
 async fn test_channel_streams_storage_and_retrieval() {
     let storage = setup_test_storage().await;
-    let keypair = KeyPair::MlDsa65(MlDsa65::key_gen(&mut OsRng));
+    let keypair = KeyPair::MlDsa65(Box::new(MlDsa65::key_gen(&mut OsRng)));
 
     let channel_a = b"channel-a";
     let channel_b = b"channel-b";
@@ -306,7 +306,7 @@ async fn test_duplicate_prevention() {
 #[tokio::test]
 async fn test_comprehensive_scenario() {
     let storage = setup_test_storage().await;
-    let keypair = KeyPair::MlDsa65(MlDsa65::key_gen(&mut OsRng));
+    let keypair = KeyPair::MlDsa65(Box::new(MlDsa65::key_gen(&mut OsRng)));
 
     // Simulate a complex real-world scenario
     let general_channel = b"general";
@@ -427,7 +427,7 @@ async fn test_comprehensive_scenario() {
 // #[tokio::test]
 // async fn test_expired_message_handling() -> Result<(), Box<dyn std::error::Error>> {
 //     let storage = setup_test_storage().await;
-//     let keypair = KeyPair::MlDsa65(MlDsa65::key_gen(&mut OsRng));
+//     let keypair = KeyPair::MlDsa65(Box::new(MlDsa65::key_gen(&mut OsRng)));
 //     let channel_id = b"test-channel";
 
 //     // Create an expired message (expired 1 hour ago)
@@ -456,7 +456,7 @@ async fn test_comprehensive_scenario() {
 #[tokio::test]
 async fn test_check_messages_bulk_sync() -> Result<(), Box<dyn std::error::Error>> {
     let storage = setup_test_storage().await;
-    let keypair = KeyPair::MlDsa65(MlDsa65::key_gen(&mut OsRng));
+    let keypair = KeyPair::MlDsa65(Box::new(MlDsa65::key_gen(&mut OsRng)));
     let channel_id = b"test-channel";
 
     // Create some test messages
@@ -476,7 +476,7 @@ async fn test_check_messages_bulk_sync() -> Result<(), Box<dyn std::error::Error
         .expect("Message should not be expired");
 
     // Check all three messages in bulk
-    let message_ids = vec![msg1.id().clone(), msg2.id().clone(), msg3.id().clone()];
+    let message_ids = vec![*msg1.id(), *msg2.id(), *msg3.id()];
     let check_results = storage.check_messages(&message_ids).await?;
 
     // Verify results are in the correct order
@@ -492,7 +492,7 @@ async fn test_check_messages_bulk_sync() -> Result<(), Box<dyn std::error::Error
     // Test with only non-existent messages
     let msg4 = create_test_message(channel_id, &keypair, "Message 4");
     let msg5 = create_test_message(channel_id, &keypair, "Message 5");
-    let nonexistent_ids = vec![msg4.id().clone(), msg5.id().clone()];
+    let nonexistent_ids = vec![*msg4.id(), *msg5.id()];
     let nonexistent_results = storage.check_messages(&nonexistent_ids).await?;
     assert_eq!(nonexistent_results, vec![None, None]);
 

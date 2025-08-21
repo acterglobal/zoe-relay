@@ -194,7 +194,7 @@ mod tests {
         use rand::rngs::OsRng;
         let signing_key = generate_ed25519_relay_keypair(&mut OsRng);
         match signing_key.public_key() {
-            VerifyingKey::Ed25519(key) => key,
+            VerifyingKey::Ed25519(key) => *key,
             _ => panic!("Expected Ed25519 key from generate_ed25519_relay_keypair"),
         }
     }

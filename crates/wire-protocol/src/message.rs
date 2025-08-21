@@ -370,7 +370,7 @@ impl Message {
         signature: &Signature,
     ) -> Result<bool, Box<dyn std::error::Error>> {
         match self {
-            Message::MessageV0(ref inner) => inner.header.sender.verify(&message_bytes, signature),
+            Message::MessageV0(ref inner) => inner.header.sender.verify(message_bytes, signature),
         }
     }
 
@@ -783,11 +783,11 @@ pub struct MessageFullWire {
     message: Box<Message>,
 }
 
-impl Into<MessageFullWire> for MessageFull {
-    fn into(self) -> MessageFullWire {
+impl From<MessageFull> for MessageFullWire {
+    fn from(val: MessageFull) -> Self {
         MessageFullWire {
-            signature: self.signature,
-            message: self.message,
+            signature: val.signature,
+            message: val.message,
         }
     }
 }
@@ -813,7 +813,7 @@ impl MessageFull {
         message: Box<Message>,
         message_bytes: &[u8],
     ) -> Result<Self, Box<dyn std::error::Error>> {
-        if !message.verify_sender_signature(&message_bytes, &signature)? {
+        if !message.verify_sender_signature(message_bytes, &signature)? {
             return Err("Signature does not match sender message".into());
         }
         let mut hasher = Hasher::new();
@@ -830,7 +830,7 @@ impl MessageFull {
     }
 
     pub fn message(&self) -> &Message {
-        &*self.message
+        &self.message
     }
 
     pub fn signature(&self) -> &Signature {
@@ -1104,7 +1104,7 @@ mod tests {
 
     fn make_keys() -> (KeyPair, VerifyingKey) {
         let mut csprng = OsRng;
-        let keypair = KeyPair::MlDsa65(MlDsa65::key_gen(&mut csprng));
+        let keypair = KeyPair::MlDsa65(Box::new(MlDsa65::key_gen(&mut csprng)));
         let public_key = keypair.public_key();
         (keypair, public_key)
     }

@@ -45,7 +45,7 @@ mod integration_tests {
 
     // Helper function to extract timestamp from a MessageFull
     fn get_message_timestamp(message: &MessageFull) -> u64 {
-        match &*message.message() {
+        match message.message() {
             Message::MessageV0(msg) => msg.header.when,
         }
     }
@@ -77,7 +77,7 @@ mod integration_tests {
     async fn test_store_and_retrieve_message() {
         let (config, _temp_dir) = create_test_storage_config();
         let encryption_key = [1u8; 32];
-        let keypair = KeyPair::MlDsa65(MlDsa65::key_gen(&mut OsRng));
+        let keypair = KeyPair::MlDsa65(Box::new(MlDsa65::key_gen(&mut OsRng)));
 
         let storage = SqliteMessageStorage::new(config, &encryption_key)
             .await
@@ -89,25 +89,25 @@ mod integration_tests {
         storage.store_message(&message).await.unwrap();
 
         // Retrieve the message
-        let retrieved = storage.get_message(&message_id).await.unwrap();
+        let retrieved = storage.get_message(message_id).await.unwrap();
         assert!(retrieved.is_some());
 
         let retrieved = retrieved.unwrap();
         assert_eq!(retrieved.id(), message.id());
         // Both messages should have the same author
-        let original_author = match &*message.message() {
+        let original_author = match message.message() {
             Message::MessageV0(msg) => msg.header.sender.clone(),
         };
-        let retrieved_author = match &*retrieved.message() {
+        let retrieved_author = match retrieved.message() {
             Message::MessageV0(msg) => msg.header.sender.clone(),
         };
         assert_eq!(retrieved_author, original_author);
 
         // Compare message content
-        let original_content = match &*message.message() {
+        let original_content = match message.message() {
             Message::MessageV0(msg) => &msg.content,
         };
-        let retrieved_content = match &*retrieved.message() {
+        let retrieved_content = match retrieved.message() {
             Message::MessageV0(msg) => &msg.content,
         };
         assert_eq!(original_content, retrieved_content);
@@ -132,7 +132,7 @@ mod integration_tests {
     async fn test_delete_message() {
         let (config, _temp_dir) = create_test_storage_config();
         let encryption_key = [3u8; 32];
-        let keypair = KeyPair::MlDsa65(MlDsa65::key_gen(&mut OsRng));
+        let keypair = KeyPair::MlDsa65(Box::new(MlDsa65::key_gen(&mut OsRng)));
 
         let storage = SqliteMessageStorage::new(config, &encryption_key)
             .await
@@ -144,19 +144,19 @@ mod integration_tests {
         storage.store_message(&message).await.unwrap();
 
         // Verify it exists
-        let retrieved = storage.get_message(&message_id).await.unwrap();
+        let retrieved = storage.get_message(message_id).await.unwrap();
         assert!(retrieved.is_some());
 
         // Delete the message
-        let deleted = storage.delete_message(&message_id).await.unwrap();
+        let deleted = storage.delete_message(message_id).await.unwrap();
         assert!(deleted);
 
         // Verify it's gone
-        let retrieved = storage.get_message(&message_id).await.unwrap();
+        let retrieved = storage.get_message(message_id).await.unwrap();
         assert!(retrieved.is_none());
 
         // Try to delete again
-        let deleted_again = storage.delete_message(&message_id).await.unwrap();
+        let deleted_again = storage.delete_message(message_id).await.unwrap();
         assert!(!deleted_again);
     }
 
@@ -164,8 +164,8 @@ mod integration_tests {
     async fn test_query_messages_by_author() {
         let (config, _temp_dir) = create_test_storage_config();
         let encryption_key = [4u8; 32];
-        let keypair1 = KeyPair::MlDsa65(MlDsa65::key_gen(&mut OsRng));
-        let keypair2 = KeyPair::MlDsa65(MlDsa65::key_gen(&mut OsRng));
+        let keypair1 = KeyPair::MlDsa65(Box::new(MlDsa65::key_gen(&mut OsRng)));
+        let keypair2 = KeyPair::MlDsa65(Box::new(MlDsa65::key_gen(&mut OsRng)));
 
         let storage = SqliteMessageStorage::new(config, &encryption_key)
             .await
@@ -188,7 +188,7 @@ mod integration_tests {
 
         assert_eq!(author1_messages.len(), 2);
         for msg in &author1_messages {
-            let author = match &*msg.message() {
+            let author = match msg.message() {
                 Message::MessageV0(m) => m.header.sender.clone(),
             };
             assert_eq!(author, keypair1.public_key());
@@ -201,7 +201,7 @@ mod integration_tests {
             .unwrap();
 
         assert_eq!(author2_messages.len(), 1);
-        let author = match &*author2_messages[0].message() {
+        let author = match author2_messages[0].message() {
             Message::MessageV0(m) => m.header.sender.clone(),
         };
         assert_eq!(author, keypair2.public_key());
@@ -211,7 +211,7 @@ mod integration_tests {
     async fn test_query_messages_with_timestamp_filter() {
         let (config, _temp_dir) = create_test_storage_config();
         let encryption_key = [5u8; 32];
-        let keypair = KeyPair::MlDsa65(MlDsa65::key_gen(&mut OsRng));
+        let keypair = KeyPair::MlDsa65(Box::new(MlDsa65::key_gen(&mut OsRng)));
 
         let storage = SqliteMessageStorage::new(config, &encryption_key)
             .await
@@ -259,7 +259,7 @@ mod integration_tests {
     async fn test_message_count_and_stats() {
         let (config, _temp_dir) = create_test_storage_config();
         let encryption_key = [6u8; 32];
-        let keypair = KeyPair::MlDsa65(MlDsa65::key_gen(&mut OsRng));
+        let keypair = KeyPair::MlDsa65(Box::new(MlDsa65::key_gen(&mut OsRng)));
 
         let storage = SqliteMessageStorage::new(config, &encryption_key)
             .await
@@ -292,7 +292,7 @@ mod integration_tests {
     async fn test_clear_all_messages() {
         let (config, _temp_dir) = create_test_storage_config();
         let encryption_key = [7u8; 32];
-        let keypair = KeyPair::MlDsa65(MlDsa65::key_gen(&mut OsRng));
+        let keypair = KeyPair::MlDsa65(Box::new(MlDsa65::key_gen(&mut OsRng)));
 
         let storage = SqliteMessageStorage::new(config, &encryption_key)
             .await
@@ -331,7 +331,7 @@ mod integration_tests {
         let (config, _temp_dir) = create_test_storage_config();
         let encryption_key1 = [9u8; 32];
         let encryption_key2 = [10u8; 32];
-        let keypair = KeyPair::MlDsa65(MlDsa65::key_gen(&mut OsRng));
+        let keypair = KeyPair::MlDsa65(Box::new(MlDsa65::key_gen(&mut OsRng)));
 
         // Create storage with first key
         let storage1 = SqliteMessageStorage::new(config.clone(), &encryption_key1)
@@ -370,12 +370,12 @@ mod integration_tests {
         for i in 0..10 {
             let storage = storage.clone();
             // Generate a new keypair for each task since KeyPair doesn't implement Clone
-            let keypair = KeyPair::MlDsa65(MlDsa65::key_gen(&mut OsRng));
+            let keypair = KeyPair::MlDsa65(Box::new(MlDsa65::key_gen(&mut OsRng)));
 
             let handle = tokio::spawn(async move {
                 let message = create_test_message(&format!("Concurrent message {i}"), &keypair);
                 storage.store_message(&message).await.unwrap();
-                message.id().clone()
+                *message.id()
             });
             handles.push(handle);
         }
@@ -406,7 +406,7 @@ mod integration_tests {
             .unwrap();
 
         // Create test messages
-        let keypair = KeyPair::MlDsa65(MlDsa65::key_gen(&mut OsRng));
+        let keypair = KeyPair::MlDsa65(Box::new(MlDsa65::key_gen(&mut OsRng)));
         let message1 = create_test_message("Test message 1", &keypair);
         let message2 = create_test_message("Test message 2", &keypair);
 
@@ -433,7 +433,7 @@ mod integration_tests {
 
         // Mark message1 as synced to relay1
         storage
-            .mark_message_synced(&message1.id(), &relay1_key, "100")
+            .mark_message_synced(message1.id(), &relay1_key, "100")
             .await
             .unwrap();
 
@@ -453,7 +453,7 @@ mod integration_tests {
 
         // Mark message1 as synced to relay2 as well
         storage
-            .mark_message_synced(&message1.id(), &relay2_key, "200")
+            .mark_message_synced(message1.id(), &relay2_key, "200")
             .await
             .unwrap();
 
@@ -482,7 +482,7 @@ mod integration_tests {
             .unwrap();
 
         // Create test message
-        let keypair = KeyPair::MlDsa65(MlDsa65::key_gen(&mut OsRng));
+        let keypair = KeyPair::MlDsa65(Box::new(MlDsa65::key_gen(&mut OsRng)));
         let message = create_test_message("Test sync status message", &keypair);
         storage.store_message(&message).await.unwrap();
 
@@ -496,11 +496,11 @@ mod integration_tests {
 
         // Mark as synced to relay1 and relay2
         storage
-            .mark_message_synced(&message.id(), &relay1_key, "100")
+            .mark_message_synced(message.id(), &relay1_key, "100")
             .await
             .unwrap();
         storage
-            .mark_message_synced(&message.id(), &relay2_key, "200")
+            .mark_message_synced(message.id(), &relay2_key, "200")
             .await
             .unwrap();
 
@@ -524,7 +524,7 @@ mod integration_tests {
             .unwrap();
 
         // Create test messages
-        let keypair = KeyPair::MlDsa65(MlDsa65::key_gen(&mut OsRng));
+        let keypair = KeyPair::MlDsa65(Box::new(MlDsa65::key_gen(&mut OsRng)));
         let message1 = create_test_message("Synced message 1", &keypair);
         let message2 = create_test_message("Synced message 2", &keypair);
         let message3 = create_test_message("Unsynced message", &keypair);
@@ -538,11 +538,11 @@ mod integration_tests {
 
         // Initially, no messages have sync status
         let message1_status = storage
-            .get_message_sync_status(&message1.id())
+            .get_message_sync_status(message1.id())
             .await
             .unwrap();
         let message2_status = storage
-            .get_message_sync_status(&message2.id())
+            .get_message_sync_status(message2.id())
             .await
             .unwrap();
         assert_eq!(message1_status.len(), 0);
@@ -550,25 +550,25 @@ mod integration_tests {
 
         // Mark message1 and message2 as synced (but not message3)
         storage
-            .mark_message_synced(&message1.id(), &relay_key, "100")
+            .mark_message_synced(message1.id(), &relay_key, "100")
             .await
             .unwrap();
         storage
-            .mark_message_synced(&message2.id(), &relay_key, "200")
+            .mark_message_synced(message2.id(), &relay_key, "200")
             .await
             .unwrap();
 
         // Verify sync status for individual messages
         let message1_status = storage
-            .get_message_sync_status(&message1.id())
+            .get_message_sync_status(message1.id())
             .await
             .unwrap();
         let message2_status = storage
-            .get_message_sync_status(&message2.id())
+            .get_message_sync_status(message2.id())
             .await
             .unwrap();
         let message3_status = storage
-            .get_message_sync_status(&message3.id())
+            .get_message_sync_status(message3.id())
             .await
             .unwrap();
 
@@ -588,7 +588,7 @@ mod integration_tests {
             .unwrap();
 
         // Create test message
-        let keypair = KeyPair::MlDsa65(MlDsa65::key_gen(&mut OsRng));
+        let keypair = KeyPair::MlDsa65(Box::new(MlDsa65::key_gen(&mut OsRng)));
         let message = create_test_message("Update test message", &keypair);
         storage.store_message(&message).await.unwrap();
 
@@ -597,7 +597,7 @@ mod integration_tests {
 
         // Mark as synced with initial stream ID
         storage
-            .mark_message_synced(&message.id(), &relay_key, "100")
+            .mark_message_synced(message.id(), &relay_key, "100")
             .await
             .unwrap();
 
@@ -607,7 +607,7 @@ mod integration_tests {
 
         // Update with new stream ID (should replace, not add)
         storage
-            .mark_message_synced(&message.id(), &relay_key, "150")
+            .mark_message_synced(message.id(), &relay_key, "150")
             .await
             .unwrap();
 
@@ -625,7 +625,7 @@ mod integration_tests {
             .unwrap();
 
         // Create multiple test messages
-        let keypair = KeyPair::MlDsa65(MlDsa65::key_gen(&mut OsRng));
+        let keypair = KeyPair::MlDsa65(Box::new(MlDsa65::key_gen(&mut OsRng)));
         let mut messages = Vec::new();
         for i in 0..5 {
             let message = create_test_message(&format!("Message {i}"), &keypair);
@@ -644,11 +644,11 @@ mod integration_tests {
 
         // Mark 2 messages as synced
         storage
-            .mark_message_synced(&messages[0].id(), &relay_key, "100")
+            .mark_message_synced(messages[0].id(), &relay_key, "100")
             .await
             .unwrap();
         storage
-            .mark_message_synced(&messages[1].id(), &relay_key, "101")
+            .mark_message_synced(messages[1].id(), &relay_key, "101")
             .await
             .unwrap();
 
@@ -661,11 +661,11 @@ mod integration_tests {
 
         // Verify sync status of marked messages
         let msg0_status = storage
-            .get_message_sync_status(&messages[0].id())
+            .get_message_sync_status(messages[0].id())
             .await
             .unwrap();
         let msg1_status = storage
-            .get_message_sync_status(&messages[1].id())
+            .get_message_sync_status(messages[1].id())
             .await
             .unwrap();
 

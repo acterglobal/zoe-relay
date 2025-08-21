@@ -215,7 +215,7 @@ async fn test_user_data_storage_and_lookup() -> Result<()> {
                         stream_height,
                     } => {
                         // Check if this is a user data message
-                        let Message::MessageV0(message_payload) = &*msg.message();
+                        let Message::MessageV0(message_payload) = msg.message();
                         let has_user_tag = message_payload
                             .tags
                             .iter()

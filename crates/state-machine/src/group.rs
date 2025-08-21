@@ -141,11 +141,11 @@ impl DigitalGroupAssistant {
             current_key: encryption_key,
             previous_keys: Vec::new(),
         };
-        self.group_keys.insert(group_id.clone(), encryption_state);
+        self.group_keys.insert(*group_id, encryption_state);
 
         // Create the initial group state using the unified constructor
         let group_state = GroupState::new(
-            group_id.clone(),
+            *group_id,
             group_info.name.clone(),
             group_info.settings.clone(),
             group_info.metadata.clone(),
@@ -154,10 +154,10 @@ impl DigitalGroupAssistant {
         );
 
         // Store the group state
-        self.groups.insert(group_id.clone(), group_state);
+        self.groups.insert(*group_id, group_state);
 
         Ok(CreateGroupResult {
-            group_id: group_id.clone(),
+            group_id: *group_id,
             message: message_full,
         })
     }
@@ -224,7 +224,7 @@ impl DigitalGroupAssistant {
             let group_id = message_full.id();
 
             // Get the encryption key for this group (must have been added via inbox system)
-            let encryption_state = self.group_keys.get(&group_id).ok_or_else(|| {
+            let encryption_state = self.group_keys.get(group_id).ok_or_else(|| {
                 DgaError::InvalidEvent(format!(
                     "No encryption key available for group {group_id:?}"
                 ))
@@ -232,7 +232,7 @@ impl DigitalGroupAssistant {
 
             let event =
                 self.decrypt_group_event(encrypted_payload, &encryption_state.current_key)?;
-            (group_id.clone(), event)
+            (*group_id, event)
         } else {
             // This is a subsequent event - find the group by channel tag
             let group_id = self.find_group_by_event_tag(&message.tags)?;
@@ -273,7 +273,7 @@ impl DigitalGroupAssistant {
 
         // Apply the event to the group state (convert GroupStateError to DgaError)
         group_state
-            .apply_event(&event, message_full.id().clone(), sender.clone(), timestamp)
+            .apply_event(&event, *message_full.id(), sender.clone(), timestamp)
             .map_err(|e| match e {
                 GroupStateError::PermissionDenied(msg) => DgaError::PermissionDenied(msg),
                 GroupStateError::MemberNotFound { member, group } => {

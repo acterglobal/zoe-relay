@@ -6,8 +6,8 @@
 use anyhow::Result;
 use ed25519_dalek::pkcs8::EncodePrivateKey;
 use ml_dsa::{KeyGen, MlDsa65};
-use quinn::{ClientConfig, Endpoint, ServerConfig};
-use signature::{SignatureEncoding, Signer};
+use quinn::{Endpoint, ServerConfig};
+use signature::{Signer};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
@@ -15,9 +15,16 @@ use tokio::time::timeout;
 use tracing::info;
 use zoe_client::challenge::perform_client_ml_dsa_handshake;
 use zoe_wire_protocol::{
-    generate_deterministic_cert_from_ml_dsa_44_for_tls, generate_ml_dsa_44_keypair_for_tls,
-    AcceptSpecificServerCertVerifier,
+    connection::client::create_client_endpoint,
+    generate_ed25519_cert_for_tls,
+    KeyPair, 
+    TransportPrivateKey, 
+    TransportPublicKey,
+    VerifyingKey
 };
+
+#[cfg(feature = "tls-ml-dsa-44")]
+use zoe_wire_protocol::generate_ml_dsa_44_cert_for_tls;
 
 /// Initialize tracing for tests
 fn init_tracing() {
@@ -29,25 +36,43 @@ fn init_tracing() {
 
 /// Creates a test QUIC server with ML-DSA-44 certificate
 async fn create_test_server(
-    server_keypair: &ml_dsa::KeyPair<ml_dsa::MlDsa44>,
+    server_keypair: &TransportPrivateKey,
 ) -> Result<(Endpoint, SocketAddr)> {
-    // Generate certificate from ML-DSA-44 key
-    let cert_der = generate_deterministic_cert_from_ml_dsa_44_for_tls(server_keypair, "localhost")?;
+    // Generate certificate from transport key (Ed25519 only for tests)
+    let (cert_der, key_der) = match server_keypair {
+        TransportPrivateKey::Ed25519 { signing_key } => {
+            let cert_chain = generate_ed25519_cert_for_tls(signing_key, "localhost")?;
+            let key_der = rustls::pki_types::PrivateKeyDer::Pkcs8(
+                signing_key
+                    .to_pkcs8_der()
+                    .unwrap()
+                    .as_bytes()
+                    .to_vec()
+                    .into(),
+            );
+            (cert_chain, key_der)
+        }
+        #[cfg(feature = "tls-ml-dsa-44")]
+        TransportPrivateKey::MlDsa44 { keypair } => {
+            let cert_chain = generate_ml_dsa_44_cert_for_tls(keypair, "localhost")?;
+            // For ML-DSA-44, we need to create a compatible key format
+            // This is a simplified approach - in production you'd want proper ML-DSA key handling
+            let temp_ed25519_key = ed25519_dalek::SigningKey::generate(&mut rand::thread_rng());
+            let key_der = rustls::pki_types::PrivateKeyDer::Pkcs8(
+                temp_ed25519_key
+                    .to_pkcs8_der()
+                    .unwrap()
+                    .as_bytes()
+                    .to_vec()
+                    .into(),
+            );
+            (cert_chain, key_der)
+        }
+    };
 
-    // Create a temporary Ed25519 key for rustls compatibility
-    let temp_ed25519_key = ed25519_dalek::SigningKey::generate(&mut rand::thread_rng());
-    let key_der = rustls::pki_types::PrivateKeyDer::Pkcs8(
-        temp_ed25519_key
-            .to_pkcs8_der()
-            .unwrap()
-            .as_bytes()
-            .to_vec()
-            .into(),
-    );
-
-    // Create server config
+    // Create server config with no client cert verification for tests
     let rustls_config = rustls::ServerConfig::builder()
-        .with_client_cert_verifier(Arc::new(zoe_wire_protocol::ZoeClientCertVerifier::new()))
+        .with_no_client_auth()
         .with_single_cert(cert_der, key_der)
         .map_err(|e| anyhow::anyhow!("Server config error: {}", e))?;
 
@@ -66,67 +91,23 @@ async fn create_test_server(
     Ok((server_endpoint, server_addr))
 }
 
-/// Creates a test QUIC client with ML-DSA-44 certificate
-async fn create_test_client(
-    client_keypair: &ml_dsa::KeyPair<ml_dsa::MlDsa44>,
-    server_public_key: &ml_dsa::VerifyingKey<ml_dsa::MlDsa44>,
-) -> Result<Endpoint> {
-    // Generate client certificate from ML-DSA-44 key
-    let cert_der = generate_deterministic_cert_from_ml_dsa_44_for_tls(client_keypair, "localhost")?;
-
-    // Create a temporary Ed25519 key for rustls compatibility
-    let temp_ed25519_key = ed25519_dalek::SigningKey::generate(&mut rand::thread_rng());
-    let key_der = rustls::pki_types::PrivateKeyDer::Pkcs8(
-        temp_ed25519_key
-            .to_pkcs8_der()
-            .unwrap()
-            .as_bytes()
-            .to_vec()
-            .into(),
-    );
-
-    // Create client config with server verification
-    let crypto = rustls::ClientConfig::builder()
-        .dangerous()
-        .with_custom_certificate_verifier(Arc::new(AcceptSpecificServerCertVerifier::new(
-            server_public_key.clone(),
-        )))
-        .with_client_auth_cert(cert_der, key_der)
-        .map_err(|e| anyhow::anyhow!("Client config error: {}", e))?;
-
-    let mut client_config = ClientConfig::new(Arc::new(
-        quinn::crypto::rustls::QuicClientConfig::try_from(crypto)
-            .map_err(|e| anyhow::anyhow!("QUIC client config error: {}", e))?,
-    ));
-
-    // Set transport config
-    client_config.transport_config(Arc::new(quinn::TransportConfig::default()));
-
-    // Create client endpoint
-    let mut client_endpoint = Endpoint::client("127.0.0.1:0".parse().unwrap())
-        .map_err(|e| anyhow::anyhow!("Client endpoint error: {}", e))?;
-    client_endpoint.set_default_client_config(client_config);
-
-    Ok(client_endpoint)
-}
-
 #[tokio::test]
 async fn test_single_key_challenge_success() -> Result<()> {
     init_tracing();
 
     // Generate test keys
-    let server_keypair = generate_ml_dsa_44_keypair_for_tls();
-    let server_public_key = server_keypair.verifying_key();
-    let server_key = server_keypair.signing_key();
-    let client_keypair_tls = generate_ml_dsa_44_keypair_for_tls();
-    let client_key = client_keypair_tls.signing_key();
-    let client_keypair = MlDsa65::key_gen(&mut rand::thread_rng());
+    let server_keypair = TransportPrivateKey::Ed25519 {
+        signing_key: ed25519_dalek::SigningKey::generate(&mut rand::rngs::OsRng),
+    };
+    let server_public_key = server_keypair.public_key();
+    let client_keypair = KeyPair::MlDsa65(Box::new(MlDsa65::key_gen(&mut rand::thread_rng())));
 
     // Create server
     let (server_endpoint, server_addr) = create_test_server(&server_keypair).await?;
 
     // Create client
-    let client_endpoint = create_test_client(&client_keypair_tls, server_public_key).await?;
+    let client_endpoint =
+        create_client_endpoint(&server_public_key)?;
 
     // Server task: accept connection and perform handshake
     let server_task = tokio::spawn(async move {
@@ -140,6 +121,19 @@ async fn test_single_key_challenge_success() -> Result<()> {
             .unwrap()
     });
 
+    // Convert TransportPublicKey to VerifyingKey for challenge
+    let server_verifying_key = match &server_public_key {
+        TransportPublicKey::Ed25519 { verifying_key } => {
+            VerifyingKey::Ed25519(Box::new(*verifying_key))
+        }
+        TransportPublicKey::MlDsa44 { verifying_key_bytes } => {
+            let encoded = ml_dsa::EncodedVerifyingKey::<ml_dsa::MlDsa44>::try_from(
+                verifying_key_bytes.as_slice(),
+            ).unwrap();
+            VerifyingKey::MlDsa44(Box::new(ml_dsa::VerifyingKey::<ml_dsa::MlDsa44>::decode(&encoded)))
+        }
+    };
+
     // Client task: connect and perform handshake
     let client_task = tokio::spawn(async move {
         let connection = client_endpoint
@@ -149,7 +143,7 @@ async fn test_single_key_challenge_success() -> Result<()> {
             .unwrap();
         let (send, recv) = connection.open_bi().await.unwrap();
 
-        perform_client_ml_dsa_handshake(send, recv, &[&client_keypair])
+        perform_client_ml_dsa_handshake(send, recv, &server_verifying_key, &[&client_keypair])
             .await
             .unwrap()
     });
@@ -171,20 +165,35 @@ async fn test_multiple_keys_challenge_success() -> Result<()> {
     init_tracing();
 
     // Generate test keys
-    let server_keypair = generate_ml_dsa_44_keypair_for_tls();
-    let server_public_key = server_keypair.verifying_key();
-    let client_keypair_tls = generate_ml_dsa_44_keypair_for_tls();
+    let server_keypair = TransportPrivateKey::Ed25519 {
+        signing_key: ed25519_dalek::SigningKey::generate(&mut rand::rngs::OsRng),
+    };
+    let server_public_key = server_keypair.public_key();
 
     // Generate multiple ML-DSA keypairs
-    let client_keypair1 = MlDsa65::key_gen(&mut rand::thread_rng());
-    let client_keypair2 = MlDsa65::key_gen(&mut rand::thread_rng());
-    let client_keypair3 = MlDsa65::key_gen(&mut rand::thread_rng());
+    let client_keypair1 = KeyPair::MlDsa65(Box::new(MlDsa65::key_gen(&mut rand::thread_rng())));
+    let client_keypair2 = KeyPair::MlDsa65(Box::new(MlDsa65::key_gen(&mut rand::thread_rng())));
+    let client_keypair3 = KeyPair::MlDsa65(Box::new(MlDsa65::key_gen(&mut rand::thread_rng())));
 
     // Create server
     let (server_endpoint, server_addr) = create_test_server(&server_keypair).await?;
 
     // Create client
-    let client_endpoint = create_test_client(&client_keypair_tls, server_public_key).await?;
+    let client_endpoint =
+        create_client_endpoint(&server_public_key)?;
+
+    // Convert TransportPublicKey to VerifyingKey for challenge
+    let server_verifying_key = match &server_public_key {
+        TransportPublicKey::Ed25519 { verifying_key } => {
+            VerifyingKey::Ed25519(Box::new(*verifying_key))
+        }
+        TransportPublicKey::MlDsa44 { verifying_key_bytes } => {
+            let encoded = ml_dsa::EncodedVerifyingKey::<ml_dsa::MlDsa44>::try_from(
+                verifying_key_bytes.as_slice(),
+            ).unwrap();
+            VerifyingKey::MlDsa44(Box::new(ml_dsa::VerifyingKey::<ml_dsa::MlDsa44>::decode(&encoded)))
+        }
+    };
 
     // Server task: accept connection and perform handshake
     let server_task = tokio::spawn(async move {
@@ -210,6 +219,7 @@ async fn test_multiple_keys_challenge_success() -> Result<()> {
         perform_client_ml_dsa_handshake(
             send,
             recv,
+            &server_verifying_key,
             &[&client_keypair1, &client_keypair2, &client_keypair3],
         )
         .await
@@ -233,18 +243,20 @@ async fn test_challenge_with_invalid_key() -> Result<()> {
     init_tracing();
 
     // Generate test keys
-    let server_keypair = generate_ml_dsa_44_keypair_for_tls();
-    let server_public_key = server_keypair.verifying_key();
-    let client_keypair_tls = generate_ml_dsa_44_keypair_for_tls();
+    let server_keypair = TransportPrivateKey::Ed25519 {
+        signing_key: ed25519_dalek::SigningKey::generate(&mut rand::rngs::OsRng),
+    };
+    let server_public_key = server_keypair.public_key();
 
     // Generate ML-DSA keypairs (we'll create invalid signatures)
-    let client_keypair = MlDsa65::key_gen(&mut rand::thread_rng());
+    let client_keypair = KeyPair::MlDsa65(Box::new(MlDsa65::key_gen(&mut rand::thread_rng())));
 
     // Create server
     let (server_endpoint, server_addr) = create_test_server(&server_keypair).await?;
 
     // Create client
-    let client_endpoint = create_test_client(&client_keypair_tls, server_public_key).await?;
+    let client_endpoint =
+        create_client_endpoint(&server_public_key)?;
 
     // Server task: accept connection and perform handshake
     let server_task = tokio::spawn(async move {
@@ -277,11 +289,14 @@ async fn test_challenge_with_invalid_key() -> Result<()> {
         let challenge: ZoeChallenge = postcard::from_bytes(&challenge_buf).unwrap();
 
         // Create invalid response (wrong signature)
-        let invalid_signature = client_keypair.signing_key().sign(b"wrong data");
+        let invalid_signature = client_keypair.sign(b"wrong data");
         let response = MlDsaMultiKeyResponse {
             key_proofs: vec![MlDsaKeyProof {
-                public_key: client_keypair.verifying_key().encode().as_slice().to_vec(),
-                signature: invalid_signature.to_bytes().to_vec(),
+                public_key: client_keypair.public_key().encode(),
+                signature: match invalid_signature {
+                    zoe_wire_protocol::Signature::MlDsa65(sig) => sig.encode().to_vec(),
+                    _ => panic!("Expected MlDsa65 signature"),
+                },
             }],
         };
 
@@ -310,15 +325,17 @@ async fn test_connection_without_challenge() -> Result<()> {
     init_tracing();
 
     // Generate test keys
-    let server_keypair = generate_ml_dsa_44_keypair_for_tls();
-    let server_public_key = server_keypair.verifying_key();
-    let client_keypair_tls = generate_ml_dsa_44_keypair_for_tls();
+    let server_keypair = TransportPrivateKey::Ed25519 {
+        signing_key: ed25519_dalek::SigningKey::generate(&mut rand::rngs::OsRng),
+    };
+    let server_public_key = server_keypair.public_key();
 
     // Create server
     let (server_endpoint, server_addr) = create_test_server(&server_keypair).await?;
 
     // Create client
-    let client_endpoint = create_test_client(&client_keypair_tls, server_public_key).await?;
+    let client_endpoint =
+        create_client_endpoint(&server_public_key)?;
 
     // Server task: accept connection but don't perform handshake
     let server_task = tokio::spawn(async move {
@@ -360,15 +377,17 @@ async fn test_challenge_timeout() -> Result<()> {
     init_tracing();
 
     // Generate test keys
-    let server_keypair = generate_ml_dsa_44_keypair_for_tls();
-    let server_public_key = server_keypair.verifying_key();
-    let client_keypair_tls = generate_ml_dsa_44_keypair_for_tls();
+    let server_keypair = TransportPrivateKey::Ed25519 {
+        signing_key: ed25519_dalek::SigningKey::generate(&mut rand::rngs::OsRng),
+    };
+    let server_public_key = server_keypair.public_key();
 
     // Create server
     let (server_endpoint, server_addr) = create_test_server(&server_keypair).await?;
 
     // Create client
-    let client_endpoint = create_test_client(&client_keypair_tls, server_public_key).await?;
+    let client_endpoint =
+        create_client_endpoint(&server_public_key)?;
 
     // Server task: accept connection and perform handshake
     let server_task = tokio::spawn(async move {

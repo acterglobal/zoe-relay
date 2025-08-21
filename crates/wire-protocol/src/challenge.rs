@@ -87,7 +87,7 @@ pub enum ZoeChallenge {
     /// The client must sign `(nonce || server_public_key)` with each private key
     /// they wish to prove possession of.
     #[discriminant(1)]
-    MlDsaMultiKey(MlDsaMultiKeyChallenge),
+    MlDsaMultiKey(Box<MlDsaMultiKeyChallenge>),
 
     /// Unknown challenge type for forward compatibility
     Unknown { discriminant: u32, data: Vec<u8> },

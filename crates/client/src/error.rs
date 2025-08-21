@@ -13,7 +13,7 @@ pub enum ClientError {
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
     #[error("Crypto error: {0}")]
-    Crypto(String),
+    Crypto(#[from] zoe_wire_protocol::CryptoError),
     #[error("Address parse error: {0}")]
     AddrParse(#[from] std::net::AddrParseError),
     #[error("File storage error: {0}")]

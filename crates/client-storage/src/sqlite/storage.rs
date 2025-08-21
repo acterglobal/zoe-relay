@@ -246,7 +246,7 @@ impl MessageStorage for SqliteMessageStorage {
         let data = postcard::to_stdvec(message)?;
 
         // Extract fields for indexing
-        let (author, timestamp, tags) = match &*message.message() {
+        let (author, timestamp, tags) = match message.message() {
             zoe_wire_protocol::Message::MessageV0(msg) => {
                 let author = msg.sender.encode().as_slice().to_vec();
                 let timestamp = msg.when as i64;
@@ -355,10 +355,9 @@ impl MessageStorage for SqliteMessageStorage {
             // Handle Protected tag filtering (requires post-query filtering)
             if let Some(target_tag) = &query.tag
                 && matches!(target_tag, Tag::Protected)
+                && !message.tags().contains(target_tag)
             {
-                if !message.tags().contains(target_tag) {
-                    continue;
-                }
+                continue;
             }
 
             messages.push(message);

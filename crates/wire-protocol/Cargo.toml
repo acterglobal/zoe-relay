@@ -5,6 +5,14 @@ edition = "2021"
 description = "Zoe wire protocol with dynamic authentication, ML-DSA post-quantum TLS certificates, and relay service definitions"
 license = "MIT OR Apache-2.0"
 
+
+[features]
+default = []
+client = []
+server = []
+tls-ml-dsa-44 = []  # Enable ML-DSA-44 post-quantum transport security
+
+
 [dependencies]
 # Async runtime
 tokio = { workspace = true }
@@ -86,9 +94,3 @@ pretty_assertions = { workspace = true }
 criterion = "0.5"
 hex-literal = "0.4"
 chrono = { workspace = true }
-
-[features]
-default = []
-client = []
-server = []
-tls-ml-dsa-44 = []  # Enable ML-DSA-44 post-quantum transport security

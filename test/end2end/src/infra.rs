@@ -1171,7 +1171,7 @@ mod tests {
             // Track expected message for validation
             expected_historical_messages.push(TestMessage {
                 content: message_content.clone(),
-                message_id: Some(message_full.id().clone()),
+                message_id: Some(*message_full.id()),
                 timestamp: message_timestamp,
             });
 
@@ -1263,7 +1263,7 @@ mod tests {
             // Track expected live message for validation
             expected_live_messages.push(TestMessage {
                 content: message_content.clone(),
-                message_id: Some(message_full.id().clone()),
+                message_id: Some(*message_full.id()),
                 timestamp: message_timestamp,
             });
 
@@ -1302,7 +1302,7 @@ mod tests {
                                 let content = String::from_utf8_lossy(raw_content);
                                 received_live_messages.push(TestMessage {
                                     content: content.to_string(),
-                                    message_id: Some(message.id().clone()),
+                                    message_id: Some(*message.id()),
                                     timestamp: *message.when(),
                                 });
                                 info!("📥 Received live message: {}", content);

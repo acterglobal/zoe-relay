@@ -7,8 +7,8 @@ use tokio::sync::RwLock;
 use tokio::time::{timeout, Duration};
 use zoe_message_store::RedisMessageStorage;
 use zoe_wire_protocol::{
-    generate_keypair, CatchUpRequest, FilterField, FilterOperation, FilterUpdateRequest, KeyPair,
-    Kind, Message, MessageFilters, MessageFull, Tag, VerifyingKey,
+    CatchUpRequest, FilterField, FilterOperation, FilterUpdateRequest, KeyPair, Kind, Message,
+    MessageFilters, MessageFull, Tag,
 };
 
 // Test helper to set up tracing
@@ -72,7 +72,7 @@ async fn setup_test_storage() -> Result<RedisMessageStorage> {
 async fn test_message_storage_and_retrieval() -> Result<()> {
     setup_tracing();
     let storage = setup_test_storage().await?;
-    let keypair = KeyPair::MlDsa65(MlDsa65::key_gen(&mut OsRng));
+    let keypair = KeyPair::MlDsa65(Box::new(MlDsa65::key_gen(&mut OsRng)));
 
     // Test basic message storage and retrieval
     let channel_id = b"test-channel";
@@ -124,7 +124,7 @@ async fn test_message_storage_and_retrieval() -> Result<()> {
 async fn test_channel_catch_up_functionality() -> Result<()> {
     setup_tracing();
     let storage = setup_test_storage().await?;
-    let keypair = KeyPair::MlDsa65(MlDsa65::key_gen(&mut OsRng));
+    let keypair = KeyPair::MlDsa65(Box::new(MlDsa65::key_gen(&mut OsRng)));
 
     let channel_id = b"history-channel";
     let messages = vec![
@@ -218,7 +218,7 @@ async fn test_filter_operations() -> Result<()> {
 async fn test_concurrent_catch_up_and_live_streaming() -> Result<()> {
     setup_tracing();
     let storage = setup_test_storage().await?;
-    let keypair = KeyPair::MlDsa65(MlDsa65::key_gen(&mut OsRng));
+    let keypair = KeyPair::MlDsa65(Box::new(MlDsa65::key_gen(&mut OsRng)));
 
     let channel_id = b"concurrent-test";
 
@@ -363,7 +363,7 @@ async fn test_filter_state_management() -> Result<()> {
 async fn test_multiple_channel_catch_up() -> Result<()> {
     setup_tracing();
     let storage = setup_test_storage().await?;
-    let keypair = KeyPair::MlDsa65(MlDsa65::key_gen(&mut OsRng));
+    let keypair = KeyPair::MlDsa65(Box::new(MlDsa65::key_gen(&mut OsRng)));
 
     let channels = [b"channel1".as_slice(), b"channel2", b"channel3"];
 
@@ -404,7 +404,7 @@ async fn test_multiple_channel_catch_up() -> Result<()> {
 async fn test_race_condition_prevention_logic() -> Result<()> {
     setup_tracing();
     let storage = setup_test_storage().await?;
-    let keypair = KeyPair::MlDsa65(MlDsa65::key_gen(&mut OsRng));
+    let keypair = KeyPair::MlDsa65(Box::new(MlDsa65::key_gen(&mut OsRng)));
 
     let initial_channel = b"initial";
     let new_channel = b"newchannel";
@@ -522,11 +522,11 @@ async fn test_race_condition_prevention_logic() -> Result<()> {
 async fn test_generic_catch_up_requests() -> Result<()> {
     setup_tracing();
     let storage = setup_test_storage().await?;
-    let keypair = KeyPair::MlDsa65(MlDsa65::key_gen(&mut OsRng));
+    let keypair = KeyPair::MlDsa65(Box::new(MlDsa65::key_gen(&mut OsRng)));
 
     // Test that CatchUpRequest convenience constructors work correctly
     let channel_id = b"test-channel";
-    let author_key = keypair.verifying_key();
+    let author_key = keypair.public_key();
     let author_encoded = author_key.encode();
     let author_id = author_encoded.as_slice();
     let event_id = b"test-event";

@@ -71,8 +71,7 @@ pub fn generate_ed25519_cert_for_tls(
             .map_err(|e| CryptoError::ParseError(format!("Failed to create RDN: {e}")))?,
     );
 
-    let subject = Name::try_from(vec![rdn])
-        .map_err(|e| CryptoError::ParseError(format!("Failed to create subject: {e}")))?;
+    let subject = Name::from(vec![rdn]);
 
     // Set validity period (1 year from now)
     let now = std::time::SystemTime::now();
@@ -200,88 +199,6 @@ pub fn extract_ed25519_public_key_from_cert(
 
     tracing::debug!("✅ Successfully extracted Ed25519 public key from certificate");
     Ok(verifying_key)
-}
-
-/// Create certificate verifier for client-side (Ed25519)
-///
-/// This verifier accepts any certificate but extracts and validates
-/// the embedded Ed25519 public key against a known server key.
-#[derive(Debug)]
-pub struct AcceptSpecificEd25519ServerCertVerifier {
-    expected_server_key_ed25519: ed25519_dalek::VerifyingKey,
-}
-
-impl AcceptSpecificEd25519ServerCertVerifier {
-    pub fn new(expected_server_key_ed25519: ed25519_dalek::VerifyingKey) -> Self {
-        Self {
-            expected_server_key_ed25519,
-        }
-    }
-}
-
-impl rustls::client::danger::ServerCertVerifier for AcceptSpecificEd25519ServerCertVerifier {
-    fn verify_server_cert(
-        &self,
-        end_entity: &CertificateDer,
-        _intermediates: &[CertificateDer],
-        _server_name: &rustls::pki_types::ServerName,
-        _ocsp_response: &[u8],
-        _now: rustls::pki_types::UnixTime,
-    ) -> std::result::Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
-        // Extract Ed25519 key from certificate
-        match extract_ed25519_public_key_from_cert(end_entity) {
-            Ok(server_ed25519_key) => {
-                let extracted_key_hex = hex::encode(server_ed25519_key.to_bytes());
-                let expected_key_hex = hex::encode(self.expected_server_key_ed25519.to_bytes());
-
-                tracing::debug!("🔍 Extracted server key: {}", extracted_key_hex);
-                tracing::debug!("🔍 Expected server key:  {}", expected_key_hex);
-
-                // Verify it matches our expected key
-                if server_ed25519_key.to_bytes() == self.expected_server_key_ed25519.to_bytes() {
-                    tracing::info!("✅ Server Ed25519 identity verified via certificate");
-                    Ok(rustls::client::danger::ServerCertVerified::assertion())
-                } else {
-                    tracing::error!("❌ Server Ed25519 key mismatch");
-                    tracing::error!("   Extracted: {}", extracted_key_hex);
-                    tracing::error!("   Expected:  {}", expected_key_hex);
-                    Err(rustls::Error::InvalidCertificate(
-                        rustls::CertificateError::ApplicationVerificationFailure,
-                    ))
-                }
-            }
-            Err(e) => {
-                tracing::error!("❌ Failed to extract Ed25519 key from certificate: {}", e);
-                Err(rustls::Error::InvalidCertificate(
-                    rustls::CertificateError::ApplicationVerificationFailure,
-                ))
-            }
-        }
-    }
-
-    fn verify_tls12_signature(
-        &self,
-        _message: &[u8],
-        _cert: &CertificateDer,
-        _dss: &rustls::DigitallySignedStruct,
-    ) -> std::result::Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
-        // We only support TLS 1.3
-        Err(rustls::Error::UnsupportedNameType)
-    }
-
-    fn verify_tls13_signature(
-        &self,
-        _message: &[u8],
-        _cert: &CertificateDer,
-        _dss: &rustls::DigitallySignedStruct,
-    ) -> std::result::Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
-        // Accept any TLS 1.3 signature - we verify identity via the embedded Ed25519 key
-        Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
-    }
-
-    fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
-        vec![rustls::SignatureScheme::ED25519]
-    }
 }
 
 /// Create a complete rustls ServerConfig for Ed25519 certificates

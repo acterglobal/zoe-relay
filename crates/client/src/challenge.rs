@@ -306,8 +306,8 @@ mod tests {
     #[test]
     fn test_create_key_proofs() {
         // Generate test keys
-        let keypair1 = KeyPair::MlDsa65(MlDsa65::key_gen(&mut rand::thread_rng()));
-        let keypair2 = KeyPair::MlDsa65(MlDsa65::key_gen(&mut rand::thread_rng()));
+        let keypair1 = KeyPair::MlDsa65(Box::new(MlDsa65::key_gen(&mut rand::thread_rng())));
+        let keypair2 = KeyPair::MlDsa65(Box::new(MlDsa65::key_gen(&mut rand::thread_rng())));
 
         // Create test challenge
         let test_data = [1u8, 2, 3, 4];
@@ -317,10 +317,10 @@ mod tests {
         };
         let challenge_data = MlDsaMultiKeyChallenge {
             nonce: [42u8; 32],
-            signature: zoe_wire_protocol::Signature::MlDsa65(signature),
+            signature: zoe_wire_protocol::Signature::MlDsa65(Box::new(signature)),
             expires_at: 1234567890,
         };
-        let challenge = ZoeChallenge::MlDsaMultiKey(challenge_data.clone());
+        let challenge = ZoeChallenge::MlDsaMultiKey(Box::new(challenge_data.clone()));
 
         // Create proofs
         let keys = vec![&keypair1, &keypair2];
