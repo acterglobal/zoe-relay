@@ -833,6 +833,10 @@ impl MessageFull {
         &*self.message
     }
 
+    pub fn signature(&self) -> &Signature {
+        &self.signature
+    }
+
     /// The value this message is stored under in the storage
     pub fn storage_value(&self) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
         Ok(postcard::to_stdvec(&self)?)

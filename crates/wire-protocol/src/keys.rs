@@ -4,7 +4,7 @@
 //! without needing to know the specific ML-DSA implementation details.
 use ml_dsa::KeyGen;
 use serde::{Deserialize, Serialize};
-use signature::{Signer, Verifier};
+use signature::{SignatureEncoding, Signer, Verifier};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum VerifyingKey {
@@ -109,6 +109,56 @@ pub enum Signature {
     MlDsa65(ml_dsa::Signature<ml_dsa::MlDsa65>),
     #[serde(with = "crate::serde::SignatureDef87")]
     MlDsa87(ml_dsa::Signature<ml_dsa::MlDsa87>),
+}
+
+impl PartialEq for Signature {
+    fn eq(&self, other: &Self) -> bool {
+        self.partial_cmp(other) == Some(std::cmp::Ordering::Equal)
+    }
+}
+
+/// Signature "ordering" is used as tie-breaker for messages with the same timestamp,
+///
+/// The order is determined by the signature index (the higher the index in the enum, the higher the signature)
+/// and if they are the same by comparing the signature bytes directly with each other.
+impl PartialOrd for Signature {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        // we first compare the signature index,
+        let my_key = match self {
+            Signature::Ed25519(_) => 0,
+            Signature::MlDsa44(_) => 1,
+            Signature::MlDsa65(_) => 2,
+            Signature::MlDsa87(_) => 3,
+        };
+        let other_key_idx = match other {
+            Signature::Ed25519(_) => 0,
+            Signature::MlDsa44(_) => 1,
+            Signature::MlDsa65(_) => 2,
+            Signature::MlDsa87(_) => 3,
+        };
+        if my_key < other_key_idx {
+            Some(std::cmp::Ordering::Less)
+        } else if my_key > other_key_idx {
+            Some(std::cmp::Ordering::Greater)
+        } else {
+            //  only compare the content if the signature index is the same
+            match (self, other) {
+                (Signature::Ed25519(a), Signature::Ed25519(b)) => {
+                    a.to_bytes().partial_cmp(&b.to_bytes())
+                }
+                (Signature::MlDsa44(a), Signature::MlDsa44(b)) => {
+                    a.to_bytes().partial_cmp(&b.to_bytes())
+                }
+                (Signature::MlDsa65(a), Signature::MlDsa65(b)) => {
+                    a.to_bytes().partial_cmp(&b.to_bytes())
+                }
+                (Signature::MlDsa87(a), Signature::MlDsa87(b)) => {
+                    a.to_bytes().partial_cmp(&b.to_bytes())
+                }
+                _ => None,
+            }
+        }
+    }
 }
 
 pub enum KeyPair {
