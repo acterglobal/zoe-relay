@@ -93,8 +93,8 @@ impl Service for EchoService {
             connections_handled,
         } = self;
         println!(
-            "🔗 Echo service handling connection from client: {}",
-            hex::encode(connection_info.client_public_key.encode()),
+            "🔗 Echo service handling connection with {} verified keys",
+            connection_info.verified_keys.len(),
         );
 
         // Echo everything back

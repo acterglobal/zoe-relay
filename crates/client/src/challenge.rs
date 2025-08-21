@@ -4,8 +4,7 @@ use quinn::{RecvStream, SendStream};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tracing::{debug, info};
 use zoe_wire_protocol::{
-    MlDsaKeyProof, MlDsaMultiKeyChallenge, MlDsaMultiKeyResponse, ZoeChallenge, ZoeChallengeResult,
-    keys::*,
+    KeyChallenge, KeyProof, KeyResponse, ZoeChallenge, ZoeChallengeResult, keys::*,
 };
 
 /// Maximum size for challenge messages (to prevent DoS)
@@ -14,11 +13,11 @@ const MAX_CHALLENGE_SIZE: usize = 1024; // Should be enough for challenge data
 /// Maximum size for result messages
 const MAX_RESULT_SIZE: usize = 1024; // Should be enough for result data
 
-/// Performs the client side of the ML-DSA challenge-response handshake
+/// Performs the client side of the challenge-response handshake
 ///
 /// This function implements the client side of the challenge protocol:
 /// 1. Receives a challenge from the server
-/// 2. Creates proofs for all provided ML-DSA keys
+/// 2. Creates proofs for all provided keys
 /// 3. Sends the response to the server
 /// 4. Receives and processes the verification result
 ///
@@ -26,7 +25,7 @@ const MAX_RESULT_SIZE: usize = 1024; // Should be enough for result data
 ///
 /// * `send` - Stream for sending data to the server
 /// * `recv` - Stream for receiving data from the server
-/// * `ml_dsa_keys` - Slice of ML-DSA signing keys to prove possession of
+/// * `key_pairs` - Slice of signing keys to prove possession of
 ///
 /// # Returns
 ///
@@ -43,9 +42,9 @@ const MAX_RESULT_SIZE: usize = 1024; // Should be enough for result data
 /// # Example
 ///
 /// ```rust
-/// use zoe_client::challenge::perform_client_ml_dsa_handshake;
+/// use zoe_client::challenge::perform_client_challenge_handshake;
 ///
-/// let verified_count = perform_client_ml_dsa_handshake(
+/// let verified_count = perform_client_challenge_handshake(
 ///     send_stream,
 ///     recv_stream,
 ///     &[&personal_key, &work_key]
@@ -53,54 +52,23 @@ const MAX_RESULT_SIZE: usize = 1024; // Should be enough for result data
 ///
 /// info!("Successfully verified {} out of {} keys", verified_count, 2);
 /// ```
-pub async fn perform_client_ml_dsa_handshake(
+pub async fn perform_client_challenge_handshake(
     mut send: SendStream,
     mut recv: RecvStream,
     server_public_key: &VerifyingKey,
-    ml_dsa_keys: &[&KeyPair],
+    key_pairs: &[&KeyPair],
 ) -> Result<usize> {
     info!("🔐 Starting client-side multi-challenge handshake");
 
-    if ml_dsa_keys.is_empty() {
-        return Err(anyhow::anyhow!("No ML-DSA keys provided for handshake"));
+    if key_pairs.is_empty() {
+        return Err(anyhow::anyhow!("No keys provided for handshake"));
     }
 
-    debug!("Proving possession of {} ML-DSA keys", ml_dsa_keys.len());
+    debug!("Proving possession of {} keys", key_pairs.len());
 
-    let ml_dsa_verified_count = ml_dsa_keys.len();
+    let verified_count = key_pairs.len();
 
     loop {
-        // Step 1: Receive challenge from server
-        let challenge = receive_challenge(&mut recv).await?;
-
-        // Step 2: Handle different challenge types
-        match challenge {
-            ZoeChallenge::MlDsaMultiKey(ml_dsa_challenge) => {
-                info!("📝 Received ML-DSA challenge");
-
-                // check the signature
-                let nonce = ml_dsa_challenge.nonce;
-                let signature = &ml_dsa_challenge.signature;
-                if server_public_key.verify(&nonce, signature).is_err() {
-                    return Err(anyhow::anyhow!(
-                        "Invalid signature in challenge. Person-in-the-middle attack?"
-                    ));
-                }
-
-                // Create proofs for all keys
-                let response = create_ml_dsa_key_proofs(&ml_dsa_challenge, ml_dsa_keys)?;
-
-                // Send response directly (no wrapper enum)
-                send_ml_dsa_response(&mut send, &response).await?;
-            }
-            ZoeChallenge::Unknown { discriminant, .. } => {
-                return Err(anyhow::anyhow!(
-                    "Unsupported challenge type: {}",
-                    discriminant
-                ));
-            }
-        }
-
         // Step 3: Receive result from server
         let result = receive_result(&mut recv).await?;
 
@@ -123,14 +91,52 @@ pub async fn perform_client_ml_dsa_handshake(
                 return Err(anyhow::anyhow!("Unsupported result type: {}", discriminant));
             }
         }
+        // Step 1: Receive challenge from server
+        info!("📥 Waiting to receive challenge from server...");
+        let challenge = receive_challenge(&mut recv).await?;
+        info!("✅ Received challenge from server");
+
+        // Step 2: Handle different challenge types
+        match challenge {
+            ZoeChallenge::Key(key_challenge) => {
+                info!("📝 Received key challenge");
+
+                // check the signature
+                let nonce = key_challenge.nonce;
+                let signature = &key_challenge.signature;
+                info!("🔍 Verifying server signature on challenge nonce...");
+                if server_public_key.verify(&nonce, signature).is_err() {
+                    return Err(anyhow::anyhow!(
+                        "Invalid signature in challenge. Person-in-the-middle attack?"
+                    ));
+                }
+                info!("✅ Server signature verified");
+
+                // Create proofs for all keys
+                info!("🔧 Creating key proofs for {} keys...", key_pairs.len());
+                let response = create_key_proofs(&key_challenge, key_pairs)?;
+                info!("✅ Created {} key proofs", response.key_proofs.len());
+
+                // Send response directly (no wrapper enum)
+                info!("📤 Sending key response to server...");
+                send_key_response(&mut send, &response).await?;
+                info!("✅ Key response sent");
+            }
+            ZoeChallenge::Unknown { discriminant, .. } => {
+                return Err(anyhow::anyhow!(
+                    "Unsupported challenge type: {}",
+                    discriminant
+                ));
+            }
+        }
     }
 
     info!(
-        "✅ Client-side multi-challenge handshake completed. {} ML-DSA keys verified",
-        ml_dsa_verified_count
+        "✅ Client-side multi-challenge handshake completed. {} keys verified",
+        verified_count
     );
 
-    Ok(ml_dsa_verified_count)
+    Ok(verified_count)
 }
 
 /// Receives a challenge from the server
@@ -169,7 +175,7 @@ async fn receive_challenge(recv: &mut RecvStream) -> Result<ZoeChallenge> {
     Ok(challenge)
 }
 
-/// Creates key proofs for all provided ML-DSA keys
+/// Creates key proofs for all provided keys
 ///
 /// For each key, creates a signature over (nonce || server_public_key) and
 /// packages it with the corresponding public key.
@@ -177,55 +183,49 @@ async fn receive_challenge(recv: &mut RecvStream) -> Result<ZoeChallenge> {
 /// # Arguments
 ///
 /// * `challenge` - Challenge received from server
-/// * `ml_dsa_keys` - Keys to create proofs for
+/// * `key_pairs` - Keys to create proofs for
 ///
 /// # Returns
 ///
 /// A response containing all key proofs
-pub fn create_ml_dsa_key_proofs(
-    challenge: &MlDsaMultiKeyChallenge,
-    ml_dsa_keys: &[&KeyPair],
-) -> Result<MlDsaMultiKeyResponse> {
+pub fn create_key_proofs(challenge: &KeyChallenge, key_pairs: &[&KeyPair]) -> Result<KeyResponse> {
     let challenge_data = challenge;
 
     // Prepare signature data: just the nonce (as updated in the protocol)
     let signature_data = challenge_data.nonce.to_vec();
 
-    debug!("Creating proofs for {} keys", ml_dsa_keys.len());
+    debug!("Creating proofs for {} keys", key_pairs.len());
 
     let mut key_proofs = Vec::new();
 
-    for (index, ml_dsa_keypair) in ml_dsa_keys.iter().enumerate() {
+    for (index, keypair) in key_pairs.iter().enumerate() {
         // Create signature over challenge data
-        let signature = ml_dsa_keypair.sign(&signature_data);
-        let verifying_key = ml_dsa_keypair.public_key();
+        let signature = keypair.sign(&signature_data);
+        let verifying_key = keypair.public_key();
 
         // Create key proof
-        let key_proof = MlDsaKeyProof {
-            public_key: postcard::to_stdvec(&verifying_key)?,
-            signature: postcard::to_stdvec(&signature)?,
+        let key_proof = KeyProof {
+            public_key: verifying_key,
+            signature,
         };
 
         key_proofs.push(key_proof);
         debug!("Created proof for key {}", index);
     }
 
-    let response = MlDsaMultiKeyResponse { key_proofs };
+    let response = KeyResponse { key_proofs };
     Ok(response)
 }
 
-/// Sends the ML-DSA challenge response to the server
+/// Sends the key challenge response to the server
 ///
 /// Serializes the response using postcard and sends it with a length prefix.
 ///
 /// # Arguments
 ///
 /// * `send` - Stream to send the response on
-/// * `response` - ML-DSA response to send
-async fn send_ml_dsa_response(
-    send: &mut SendStream,
-    response: &MlDsaMultiKeyResponse,
-) -> Result<()> {
+/// * `response` - Key response to send
+async fn send_key_response(send: &mut SendStream, response: &KeyResponse) -> Result<()> {
     let response_bytes = postcard::to_stdvec(response)?;
 
     debug!("Sending response ({} bytes)", response_bytes.len());
@@ -299,48 +299,45 @@ fn process_result(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ml_dsa::{KeyGen, MlDsa65};
-    use signature::Signer;
-    use zoe_wire_protocol::MlDsaMultiKeyChallenge;
+    use zoe_wire_protocol::{generate_ed25519_relay_keypair, generate_keypair};
 
     #[test]
     fn test_create_key_proofs() {
         // Generate test keys
-        let keypair1 = KeyPair::MlDsa65(Box::new(MlDsa65::key_gen(&mut rand::thread_rng())));
-        let keypair2 = KeyPair::MlDsa65(Box::new(MlDsa65::key_gen(&mut rand::thread_rng())));
+        let keypair1 = generate_keypair(&mut rand::thread_rng());
+        let keypair2 = generate_keypair(&mut rand::thread_rng());
 
         // Create test challenge
-        let test_data = [1u8, 2, 3, 4];
-        let signature = match &keypair1 {
-            KeyPair::MlDsa65(kp) => kp.sign(&test_data),
-            _ => panic!("Expected MlDsa65 keypair"),
-        };
-        let challenge_data = MlDsaMultiKeyChallenge {
-            nonce: [42u8; 32],
-            signature: zoe_wire_protocol::Signature::MlDsa65(Box::new(signature)),
+        let server_keypair = generate_ed25519_relay_keypair(&mut rand::thread_rng());
+        let nonce = [42u8; 32];
+        let server_signature = server_keypair.sign(&nonce);
+
+        let challenge_data = KeyChallenge {
+            nonce,
+            signature: server_signature,
             expires_at: 1234567890,
         };
-        let challenge = ZoeChallenge::MlDsaMultiKey(Box::new(challenge_data.clone()));
 
         // Create proofs
         let keys = vec![&keypair1, &keypair2];
-        let response = create_ml_dsa_key_proofs(&challenge_data, &keys).unwrap();
+        let response = create_key_proofs(&challenge_data, &keys).unwrap();
 
         // Verify response structure
         assert_eq!(response.key_proofs.len(), 2);
 
         // Verify each proof has the expected structure
-        for (i, proof) in response.key_proofs.iter().enumerate() {
-            assert!(
-                !proof.public_key.is_empty(),
-                "Key {} public key should not be empty",
-                i
-            );
-            assert!(
-                !proof.signature.is_empty(),
-                "Key {} signature should not be empty",
-                i
-            );
+        for (i, _proof) in response.key_proofs.iter().enumerate() {
+            // The public_key and signature are now proper types, not Vec<u8>
+            // We can verify they exist by checking the proof structure
+            debug!("Key {} proof created successfully", i);
+
+            // Verify we can create a signature with the key
+            let test_data = b"test";
+            let test_sig = keys[i].sign(test_data);
+            let pub_key = keys[i].public_key();
+
+            // Verify the signature works
+            assert!(pub_key.verify(test_data, &test_sig).unwrap());
         }
     }
 
@@ -364,5 +361,133 @@ mod tests {
         let result = ZoeChallengeResult::Rejected(ZoeChallengeRejection::ChallengeFailed);
         let result = process_result(&result, 3);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_create_key_proofs_client() {
+        let server_keypair = generate_ed25519_relay_keypair(&mut rand::thread_rng());
+        let client_keypair1 = generate_keypair(&mut rand::thread_rng());
+        let client_keypair2 = generate_keypair(&mut rand::thread_rng());
+
+        // Create a challenge
+        let nonce = [42u8; 32];
+        let signature = server_keypair.sign(&nonce);
+        let challenge = KeyChallenge {
+            nonce,
+            signature,
+            expires_at: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs()
+                + 300,
+        };
+
+        let client_keys = vec![&client_keypair1, &client_keypair2];
+        let response = create_key_proofs(&challenge, &client_keys).unwrap();
+
+        // Should have proofs for both keys
+        assert_eq!(response.key_proofs.len(), 2);
+
+        // Each proof should be valid (we can verify this by checking the signature)
+        for (i, proof) in response.key_proofs.iter().enumerate() {
+            let expected_key = &client_keys[i];
+            assert_eq!(
+                proof.public_key.encode(),
+                expected_key.public_key().encode()
+            );
+
+            // Verify the signature
+            assert!(
+                proof
+                    .public_key
+                    .verify(&challenge.nonce, &proof.signature)
+                    .is_ok()
+            );
+        }
+    }
+
+    #[test]
+    fn test_send_key_response_serialization() {
+        let client_keypair = generate_keypair(&mut rand::thread_rng());
+        let signature = client_keypair.sign(b"test data");
+
+        let response = KeyResponse {
+            key_proofs: vec![KeyProof {
+                public_key: client_keypair.public_key(),
+                signature,
+            }],
+        };
+
+        // Test that we can serialize the response (this is what send_key_response does internally)
+        let serialized = postcard::to_stdvec(&response).unwrap();
+        assert!(!serialized.is_empty());
+
+        // Test that we can deserialize it back
+        let deserialized: KeyResponse = postcard::from_bytes(&serialized).unwrap();
+        assert_eq!(response.key_proofs.len(), deserialized.key_proofs.len());
+    }
+
+    #[test]
+    fn test_challenge_signature_verification() {
+        let server_keypair = generate_ed25519_relay_keypair(&mut rand::thread_rng());
+        let server_public_key = server_keypair.public_key();
+
+        // Create a valid challenge
+        let nonce = [42u8; 32];
+        let signature = server_keypair.sign(&nonce);
+        let challenge = KeyChallenge {
+            nonce,
+            signature,
+            expires_at: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs()
+                + 300,
+        };
+
+        // Signature should verify
+        assert!(
+            server_public_key
+                .verify(&challenge.nonce, &challenge.signature)
+                .is_ok()
+        );
+
+        // Wrong signature should fail
+        let wrong_signature = server_keypair.sign(b"wrong data");
+        let bad_challenge = KeyChallenge {
+            nonce,
+            signature: wrong_signature,
+            expires_at: challenge.expires_at,
+        };
+
+        assert_eq!(
+            server_public_key
+                .verify(&bad_challenge.nonce, &bad_challenge.signature)
+                .unwrap(),
+            false
+        );
+    }
+
+    #[test]
+    fn test_empty_key_list() {
+        let server_keypair = generate_ed25519_relay_keypair(&mut rand::thread_rng());
+
+        let nonce = [42u8; 32];
+        let signature = server_keypair.sign(&nonce);
+        let challenge = KeyChallenge {
+            nonce,
+            signature,
+            expires_at: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs()
+                + 300,
+        };
+
+        let empty_keys: Vec<&KeyPair> = vec![];
+        let response = create_key_proofs(&challenge, &empty_keys).unwrap();
+
+        // Should have no proofs
+        assert_eq!(response.key_proofs.len(), 0);
     }
 }

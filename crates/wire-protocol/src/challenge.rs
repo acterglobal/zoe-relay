@@ -1,3 +1,4 @@
+use crate::{Signature, VerifyingKey};
 use forward_compatible_enum::ForwardCompatibleEnum;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
@@ -55,20 +56,20 @@ use std::collections::BTreeSet;
 /// ## Example Usage
 ///
 /// ```rust
-/// use zoe_wire_protocol::{ZoeChallenge, ZoeChallengeResponse, MlDsaMultiKeyChallenge};
+/// use zoe_wire_protocol::{ZoeChallenge, ZoeChallengeResponse, KeyChallenge};
 ///
 /// // Server sends challenge
-/// let challenge = ZoeChallenge::MlDsaMultiKey(MlDsaMultiKeyChallenge {
+/// let challenge = ZoeChallenge::Key(KeyChallenge {
 ///     nonce: generate_nonce(),
 ///     server_public_key: server_key.to_bytes().to_vec(),
 ///     expires_at: current_time() + 30,
 /// });
 ///
 /// // Client creates multiple key proofs
-/// let response = ZoeChallengeResponse::MlDsaMultiKey(MlDsaMultiKeyResponse {
+/// let response = ZoeChallengeResponse::Key(KeyResponse {
 ///     key_proofs: vec![
-///         MlDsaKeyProof { public_key: key1_bytes, signature: sig1_bytes },
-///         MlDsaKeyProof { public_key: key2_bytes, signature: sig2_bytes },
+///         KeyProof { public_key: key1_bytes, signature: sig1_bytes },
+///         KeyProof { public_key: key2_bytes, signature: sig2_bytes },
 ///     ],
 /// });
 /// ```
@@ -87,7 +88,7 @@ pub enum ZoeChallenge {
     /// The client must sign `(nonce || server_public_key)` with each private key
     /// they wish to prove possession of.
     #[discriminant(1)]
-    MlDsaMultiKey(Box<MlDsaMultiKeyChallenge>),
+    Key(Box<KeyChallenge>),
 
     /// Unknown challenge type for forward compatibility
     Unknown { discriminant: u32, data: Vec<u8> },
@@ -173,7 +174,7 @@ pub enum ZoeChallengeResult {
 /// - expires_at: 8 bytes
 /// - overhead: ~8 bytes (postcard encoding)
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct MlDsaMultiKeyChallenge {
+pub struct KeyChallenge {
     /// Cryptographically random nonce that must be included in signatures
     ///
     /// This 32-byte nonce provides replay protection by ensuring each challenge
@@ -186,7 +187,7 @@ pub struct MlDsaMultiKeyChallenge {
     /// Including the server's public key in the signature data prevents
     /// signature replay attacks across different servers. This should be
     /// the same ML-DSA-44 key used in the server's TLS certificate.
-    pub signature: crate::Signature,
+    pub signature: Signature,
 
     /// Unix timestamp when this challenge expires
     ///
@@ -198,7 +199,7 @@ pub struct MlDsaMultiKeyChallenge {
 
 /// Response containing proofs of ML-DSA private key possession
 ///
-/// The client responds to an `MlDsaMultiKeyChallenge` by providing one or more
+/// The client responds to an `KeyChallenge` by providing one or more
 /// key proofs. Each proof demonstrates possession of a specific ML-DSA private key.
 ///
 /// ## Proof Construction
@@ -207,7 +208,7 @@ pub struct MlDsaMultiKeyChallenge {
 ///
 /// 1. Construct signature data: `nonce || server_public_key`
 /// 2. Sign the data using the ML-DSA private key
-/// 3. Create a `MlDsaKeyProof` with the public key and signature
+/// 3. Create a `KeyProof` with the public key and signature
 ///
 /// ## Wire Size
 ///
@@ -218,7 +219,7 @@ pub struct MlDsaMultiKeyChallenge {
 ///
 /// Total message size scales linearly with number of keys being proven.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct MlDsaMultiKeyResponse {
+pub struct KeyResponse {
     /// List of key proofs - one for each ML-DSA key being proven
     ///
     /// The client can prove multiple keys in a single response. Each proof
@@ -228,8 +229,8 @@ pub struct MlDsaMultiKeyResponse {
     /// ## Ordering
     ///
     /// The order of proofs in this vector corresponds to the indices used
-    /// in `MlDsaMultiKeyResult.failed_indices` for error reporting.
-    pub key_proofs: Vec<MlDsaKeyProof>,
+    /// in `KeyResult.failed_indices` for error reporting.
+    pub key_proofs: Vec<KeyProof>,
 }
 
 /// Cryptographic proof of ML-DSA private key possession
@@ -256,13 +257,13 @@ pub struct MlDsaMultiKeyResponse {
 ///
 /// This implementation uses ML-DSA-65 (security level 3, ~192-bit security).
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct MlDsaKeyProof {
+pub struct KeyProof {
     /// Encoded ML-DSA public key being proven
     ///
     /// This should be the result of calling `verifying_key.encode()` on
     /// an ML-DSA verifying key. The encoding includes all necessary
     /// information to reconstruct the public key for verification.
-    pub public_key: Vec<u8>,
+    pub public_key: VerifyingKey,
 
     /// ML-DSA signature over (nonce || server_public_key)
     ///
@@ -274,7 +275,7 @@ pub struct MlDsaKeyProof {
     /// - ML-DSA-44: ~2420 bytes
     /// - ML-DSA-65: ~3309 bytes
     /// - ML-DSA-87: ~4627 bytes
-    pub signature: Vec<u8>,
+    pub signature: Signature,
 }
 
 /// Result of ML-DSA multi-key challenge verification
@@ -297,7 +298,7 @@ pub struct MlDsaKeyProof {
 /// - Retry the connection with different keys
 /// - Debug key or signature generation issues
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum MlDsaMultiKeyResult {
+pub enum KeyResult {
     /// All key proofs were successfully verified
     ///
     /// This is the ideal case where every key the client attempted to prove
@@ -320,7 +321,7 @@ pub enum MlDsaMultiKeyResult {
         /// Zero-based indices of failed key proofs
         ///
         /// These indices correspond to positions in the original
-        /// `MlDsaMultiKeyResponse.key_proofs` vector that failed verification.
+        /// `KeyResponse.key_proofs` vector that failed verification.
         failed_indices: Vec<usize>,
     },
 
@@ -332,7 +333,7 @@ pub enum MlDsaMultiKeyResult {
     AllFailed,
 }
 
-impl MlDsaMultiKeyResult {
+impl KeyResult {
     /// Check if the handshake was successful (at least one key verified)
     ///
     /// Returns `true` if at least one key was successfully verified,
@@ -341,18 +342,18 @@ impl MlDsaMultiKeyResult {
     /// # Example
     ///
     /// ```rust
-    /// use zoe_wire_protocol::MlDsaMultiKeyResult;
+    /// use zoe_wire_protocol::KeyResult;
     ///
-    /// let result = MlDsaMultiKeyResult::PartialFailure {
+    /// let result = KeyResult::PartialFailure {
     ///     failed_indices: vec![1, 3]
     /// };
     /// assert!(result.is_successful());
     ///
-    /// let result = MlDsaMultiKeyResult::AllFailed;
+    /// let result = KeyResult::AllFailed;
     /// assert!(!result.is_successful());
     /// ```
     pub fn is_successful(&self) -> bool {
-        !matches!(self, MlDsaMultiKeyResult::AllFailed)
+        !matches!(self, KeyResult::AllFailed)
     }
 
     /// Get the number of failed key proofs
@@ -368,21 +369,21 @@ impl MlDsaMultiKeyResult {
     /// # Example
     ///
     /// ```rust
-    /// use zoe_wire_protocol::MlDsaMultiKeyResult;
+    /// use zoe_wire_protocol::KeyResult;
     ///
-    /// let result = MlDsaMultiKeyResult::PartialFailure {
+    /// let result = KeyResult::PartialFailure {
     ///     failed_indices: vec![1, 3]
     /// };
     /// assert_eq!(result.failed_count(5), 2);
     ///
-    /// let result = MlDsaMultiKeyResult::AllFailed;
+    /// let result = KeyResult::AllFailed;
     /// assert_eq!(result.failed_count(3), 3);
     /// ```
     pub fn failed_count(&self, total_keys: usize) -> usize {
         match self {
-            MlDsaMultiKeyResult::AllValid => 0,
-            MlDsaMultiKeyResult::PartialFailure { failed_indices } => failed_indices.len(),
-            MlDsaMultiKeyResult::AllFailed => total_keys,
+            KeyResult::AllValid => 0,
+            KeyResult::PartialFailure { failed_indices } => failed_indices.len(),
+            KeyResult::AllFailed => total_keys,
         }
     }
 
@@ -397,14 +398,14 @@ impl MlDsaMultiKeyResult {
     /// # Example
     ///
     /// ```rust
-    /// use zoe_wire_protocol::MlDsaMultiKeyResult;
+    /// use zoe_wire_protocol::KeyResult;
     ///
-    /// let result = MlDsaMultiKeyResult::PartialFailure {
+    /// let result = KeyResult::PartialFailure {
     ///     failed_indices: vec![1]
     /// };
     /// assert_eq!(result.success_count(3), 2);
     ///
-    /// let result = MlDsaMultiKeyResult::AllValid;
+    /// let result = KeyResult::AllValid;
     /// assert_eq!(result.success_count(5), 5);
     /// ```
     pub fn success_count(&self, total_keys: usize) -> usize {
@@ -432,7 +433,7 @@ pub struct ConnectionInfo {
     /// This key identifies the client at the transport layer and is used
     /// for QUIC connection authentication. It remains constant for the
     /// lifetime of the connection.
-    pub client_public_key: ml_dsa::VerifyingKey<ml_dsa::MlDsa44>,
+    pub client_public_key: VerifyingKey,
 
     /// Set of ML-DSA public keys verified during challenge handshake
     ///
@@ -528,27 +529,27 @@ mod tests {
 
     #[test]
     fn test_ml_dsa_result_success_check() {
-        assert!(MlDsaMultiKeyResult::AllValid.is_successful());
-        assert!(MlDsaMultiKeyResult::PartialFailure {
+        assert!(KeyResult::AllValid.is_successful());
+        assert!(KeyResult::PartialFailure {
             failed_indices: vec![1]
         }
         .is_successful());
-        assert!(!MlDsaMultiKeyResult::AllFailed.is_successful());
+        assert!(!KeyResult::AllFailed.is_successful());
     }
 
     #[test]
     fn test_ml_dsa_result_counts() {
-        let result = MlDsaMultiKeyResult::PartialFailure {
+        let result = KeyResult::PartialFailure {
             failed_indices: vec![0, 2],
         };
         assert_eq!(result.failed_count(5), 2);
         assert_eq!(result.success_count(5), 3);
 
-        let result = MlDsaMultiKeyResult::AllValid;
+        let result = KeyResult::AllValid;
         assert_eq!(result.failed_count(3), 0);
         assert_eq!(result.success_count(3), 3);
 
-        let result = MlDsaMultiKeyResult::AllFailed;
+        let result = KeyResult::AllFailed;
         assert_eq!(result.failed_count(4), 4);
         assert_eq!(result.success_count(4), 0);
     }
@@ -561,10 +562,8 @@ mod tests {
 
         let connection_info = ConnectionInfo {
             client_public_key: {
-                use ml_dsa::KeyGen;
-                ml_dsa::MlDsa44::key_gen(&mut rand::thread_rng())
-                    .verifying_key()
-                    .clone()
+                use crate::generate_keypair;
+                generate_keypair(&mut rand::thread_rng()).public_key()
             },
             verified_ml_dsa_keys: verified_keys,
             remote_address: "127.0.0.1:8080".parse().unwrap(),

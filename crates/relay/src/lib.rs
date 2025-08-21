@@ -11,6 +11,6 @@ pub use router::{Service, ServiceRouter};
 pub use services::{BlobService, BlobServiceError, RelayServiceRouter};
 
 // Re-export challenge types for testing
-pub use zoe_wire_protocol::MlDsaMultiKeyResult;
+pub use zoe_wire_protocol::KeyResult;
 
 pub type ZoeRelayServer = RelayServer<RelayServiceRouter>;

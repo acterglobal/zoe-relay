@@ -105,9 +105,7 @@ use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tracing::{error, info};
 use zoe_wire_protocol::{
-    connection::ed25519::extract_ed25519_public_key_from_cert,
-    connection::server::create_server_endpoint, CryptoError, StreamPair, TransportPrivateKey,
-    TransportPublicKey,
+    connection::server::create_server_endpoint, StreamPair, TransportPrivateKey,
 };
 // ML-DSA-44 imports (only available with tls-ml-dsa-44 feature)
 #[cfg(feature = "tls-ml-dsa-44")]
@@ -115,16 +113,11 @@ use ml_dsa::VerifyingKey;
 
 use crate::{Service, ServiceError, ServiceRouter};
 
-// Type alias for client transport keys (now unified with server keys)
-pub type ClientTransportKey = TransportPublicKey;
-
 /// Information about an authenticated connection
 #[derive(Debug, Clone)]
 pub struct ConnectionInfo {
-    /// The public key of the connected client (transport authentication)
-    pub client_public_key: ClientTransportKey,
     /// Set of ML-DSA public keys verified during challenge handshake (message authentication)
-    pub verified_ml_dsa_keys: std::collections::BTreeSet<Vec<u8>>,
+    pub verified_keys: std::collections::BTreeSet<Vec<u8>>,
     /// The remote address of the client
     pub remote_address: SocketAddr,
     /// Timestamp when the connection was established
@@ -134,12 +127,12 @@ pub struct ConnectionInfo {
 impl ConnectionInfo {
     /// Check if a specific ML-DSA public key has been verified for this connection
     pub fn has_verified_ml_dsa_key(&self, public_key: &[u8]) -> bool {
-        self.verified_ml_dsa_keys.contains(public_key)
+        self.verified_keys.contains(public_key)
     }
 
     /// Get the number of verified ML-DSA keys for this connection
     pub fn verified_key_count(&self) -> usize {
-        self.verified_ml_dsa_keys.len()
+        self.verified_keys.len()
     }
 }
 
@@ -216,24 +209,8 @@ impl<R: ServiceRouter + 'static> RelayServer<R> {
         let remote_addr = connection.remote_address();
         info!("🔗 New connection from {}", remote_addr);
 
-        // Extract client's public key from the connection certificate
-        let client_public_key = match extract_client_transport_key(&connection) {
-            Ok(key) => key,
-            Err(error) => {
-                error!(?error, "Failed to extract client public key");
-                connection.close(0u32.into(), b"Missing transport key in client certificate");
-                return Ok(());
-            }
-        };
-
-        info!(
-            "🔑 Client transport key: {} ({})",
-            client_public_key,
-            client_public_key.algorithm()
-        );
-
         // Perform ML-DSA challenge-response handshake
-        let (send, recv) = match connection.accept_bi().await {
+        let (send, recv) = match connection.open_bi().await {
             Ok((send, recv)) => (send, recv),
             Err(e) => {
                 error!("Failed to accept handshake stream: {}", e);
@@ -241,6 +218,8 @@ impl<R: ServiceRouter + 'static> RelayServer<R> {
                 return Ok(());
             }
         };
+
+        tracing::trace!("🔗 Handshake streams accepted");
 
         // Get the server's keypair for the handshake (message layer authentication)
         let server_challenge_keypair = match &server_keypair {
@@ -255,7 +234,7 @@ impl<R: ServiceRouter + 'static> RelayServer<R> {
         };
 
         // Perform the actual challenge handshake
-        let verified_ml_dsa_keys = match crate::challenge::perform_multi_challenge_handshake(
+        let verified_keys = match crate::challenge::perform_multi_challenge_handshake(
             send,
             recv,
             &server_challenge_keypair, // Use the server's keypair for challenge
@@ -278,8 +257,7 @@ impl<R: ServiceRouter + 'static> RelayServer<R> {
 
         // Create connection info with verified ML-DSA keys
         let connection_info = ConnectionInfo {
-            client_public_key: client_public_key.clone(),
-            verified_ml_dsa_keys,
+            verified_keys,
             remote_address: remote_addr,
             connected_at: std::time::SystemTime::now(),
         };
@@ -292,12 +270,7 @@ impl<R: ServiceRouter + 'static> RelayServer<R> {
         // Accept the bi-directional streams for services
         while let Ok((mut send, mut recv)) = connection.accept_bi().await {
             let service_id = recv.read_u8().await?;
-            info!(
-                ?client_public_key,
-                ?remote_addr,
-                "📋 Service ID: {}",
-                service_id
-            );
+            info!(?remote_addr, "📋 Service ID: {}", service_id);
             let service_id = match router.parse_service_id(service_id).await {
                 Ok(service_id) => service_id,
                 Err(error) => {
@@ -350,37 +323,6 @@ fn extract_client_ml_dsa_44_key(
 
     Err(CryptoError::ParseError(
         "ML-DSA-44 key not found in certificate".to_string(),
-    ))
-}
-
-/// Extract the client's transport public key from the QUIC connection
-///
-/// This function tries to extract either Ed25519 or ML-DSA-44 keys from the client certificate
-/// and returns the appropriate TransportPublicKey enum variant.
-fn extract_client_transport_key(
-    connection: &Connection,
-) -> Result<TransportPublicKey, CryptoError> {
-    // Try to get peer certificate from the connection
-    if let Some(identity) = connection.peer_identity() {
-        if let Some(cert_chain) = identity.downcast_ref::<Vec<rustls::pki_types::CertificateDer>>()
-        {
-            if let Some(cert) = cert_chain.first() {
-                // Try Ed25519 first (default)
-                if let Ok(ed25519_key) = extract_ed25519_public_key_from_cert(cert) {
-                    return Ok(TransportPublicKey::from_ed25519(ed25519_key));
-                }
-
-                // Try ML-DSA-44 if tls-ml-dsa-44 feature is enabled
-                #[cfg(feature = "tls-ml-dsa-44")]
-                if let Ok(ml_dsa_key) = extract_ml_dsa_44_public_key_from_cert(cert) {
-                    return Ok(TransportPublicKey::from_ml_dsa_44(&ml_dsa_key));
-                }
-            }
-        }
-    }
-
-    Err(CryptoError::ParseError(
-        "No supported transport key found in client certificate".to_string(),
     ))
 }
 
@@ -455,15 +397,12 @@ mod tests {
         let addr = "127.0.0.1:8080".parse().unwrap();
         let now = std::time::SystemTime::now();
 
-        let transport_key = TransportPublicKey::from_ml_dsa_44(&public_key);
         let info = ConnectionInfo {
-            client_public_key: transport_key.clone(),
-            verified_ml_dsa_keys: std::collections::BTreeSet::new(),
+            verified_keys: std::collections::BTreeSet::new(),
             remote_address: addr,
             connected_at: now,
         };
 
-        assert_eq!(info.client_public_key.encode(), public_key.encode());
         assert_eq!(info.remote_address, addr);
         assert!(info.connected_at <= std::time::SystemTime::now());
     }
@@ -493,7 +432,7 @@ mod tests {
     use crate::{ConnectionInfo, ServiceRouter};
 
     use std::sync::Arc;
-    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::io::AsyncWriteExt;
     use tokio::sync::Notify;
 
     // ML-DSA-44 imports (only available with tls-ml-dsa-44 feature)
@@ -576,8 +515,8 @@ mod tests {
                 connections_handled,
             } = self;
             println!(
-                "🔗 Echo service handling connection from client: {}",
-                hex::encode(connection_info.client_public_key.encode()),
+                "🔗 Echo service handling connection with {} verified keys",
+                connection_info.verified_keys.len(),
             );
 
             // Echo everything back

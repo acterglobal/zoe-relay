@@ -41,8 +41,7 @@ tracing-subscriber = { workspace = true }
 
 # QUIC and TLS support
 quinn = { workspace = true }
-rustls = { workspace = true }
-rustls-post-quantum = { workspace = true, features = ["aws-lc-rs-unstable"]  }
+rustls = { workspace = true, features = ["prefer-post-quantum"] }
 
 # Cryptographic dependencies
 ml-dsa = { workspace = true }

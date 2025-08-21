@@ -1,5 +1,5 @@
 // Remove unused clap imports since they're not needed in this file
-use crate::challenge::perform_client_ml_dsa_handshake;
+use crate::challenge::perform_client_challenge_handshake;
 use crate::error::Result;
 use crate::{BlobService, MessagesService, MessagesStream};
 use ml_dsa;
@@ -116,8 +116,8 @@ impl RelayClient {
         };
 
         // Perform ML-DSA challenge-response handshake
-        let (send, recv) = connection.open_bi().await?;
-        let Ok(verified_count) = perform_client_ml_dsa_handshake(
+        let (send, recv) = connection.accept_bi().await?;
+        let Ok(verified_count) = perform_client_challenge_handshake(
             send,
             recv,
             &server_verifying_key,

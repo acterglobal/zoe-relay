@@ -51,8 +51,7 @@ pkcs8 = "0.10"
 
 # Networking and QUIC
 quinn = "0.11"
-rustls = { version = "0.23.31", default-features = false, features = ["aws_lc_rs"] }
-rustls-post-quantum = { version = "0.2.3" }
+rustls = { version = "0.23.31", features = ["aws-lc-rs", "prefer-post-quantum"] }
 
 # Logging
 tracing = "0.1"

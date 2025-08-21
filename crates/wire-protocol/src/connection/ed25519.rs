@@ -262,19 +262,11 @@ pub(crate) fn create_ed25519_server_config(
         key: private_key,
     };
 
-    let client_verifier =
-        rustls::server::WebPkiClientVerifier::builder(rustls::RootCertStore::empty().into())
-            .allow_unauthenticated()
-            .build()
-            .map_err(|e| {
-                CryptoError::TlsError(format!("Failed to create client verifier: {}", e))
-            })?;
-
     // Create rustls server config
     let rustls_config = rustls::ServerConfig::builder_with_provider(Arc::new(crypto_provider))
         .with_protocol_versions(&[&rustls::version::TLS13])
         .map_err(|e| CryptoError::TlsError(format!("Failed to set TLS version: {}", e)))?
-        .with_client_cert_verifier(client_verifier)
+        .with_no_client_auth() // we accept any client
         .with_cert_resolver(Arc::new(cert_resolver));
 
     Ok(rustls_config)

@@ -16,6 +16,17 @@ use zoe_message_store::RedisMessageStorage;
 use zoe_relay::{RelayServer, RelayServiceRouter};
 use zoe_wire_protocol::{TransportPrivateKey, TransportPublicKey};
 
+// Initialize crypto provider for Rustls
+fn init_crypto_provider() {
+    use std::sync::Once;
+    static INIT: Once = Once::new();
+    INIT.call_once(|| {
+        rustls::crypto::aws_lc_rs::default_provider()
+            .install_default()
+            .expect("Failed to install crypto provider");
+    });
+}
+
 /// Test infrastructure for managing relay server and clients
 struct TestInfrastructure {
     server_handle: tokio::task::JoinHandle<Result<(), anyhow::Error>>,
@@ -95,7 +106,13 @@ impl TestInfrastructure {
         builder.media_storage_path(media_storage_path.to_string_lossy().to_string());
         builder.server_info(self.server_public_key.clone(), self.server_addr);
 
-        let client = builder.build().await.context("Failed to create client")?;
+        info!("🔧 Building client...");
+
+        // Add timeout to client creation to debug hanging
+        let client = tokio::time::timeout(Duration::from_secs(10), builder.build())
+            .await
+            .context("Client creation timed out after 10 seconds")?
+            .context("Failed to create client")?;
 
         info!("✅ Client connected successfully");
         Ok(client)
@@ -133,260 +150,284 @@ async fn find_free_port() -> Result<SocketAddr> {
     anyhow::bail!("Could not find a free port after 10 attempts");
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_client_e2e_file_storage_with_relay() -> Result<()> {
-    // Initialize logging for the test
-    let _ = tracing_subscriber::fmt().with_env_filter("info").try_init();
+    // Add timeout to prevent hanging
+    let result = tokio::time::timeout(Duration::from_secs(30), async {
+        // Initialize crypto provider for Rustls
+        init_crypto_provider();
 
-    info!("🚀 Starting Client E2E File Storage with Relay Test");
+        // Initialize logging for the test
+        let _ = tracing_subscriber::fmt().with_env_filter("info").try_init();
 
-    // Set up test infrastructure
-    let infra = TestInfrastructure::setup().await?;
+        info!("🚀 Starting Client E2E File Storage with Relay Test");
 
-    // Create temporary directories for each client's local storage
-    let temp_dir1 = TempDir::new().context("Failed to create temp dir for client 1")?;
-    let temp_dir2 = TempDir::new().context("Failed to create temp dir for client 2")?;
+        // Set up test infrastructure
+        let infra = TestInfrastructure::setup().await?;
 
-    // Create two clients connected to the relay
-    let client1 = infra.create_client(temp_dir1.path()).await?;
-    let client2 = infra.create_client(temp_dir2.path()).await?;
+        // Create temporary directories for each client's local storage
+        let temp_dir1 = TempDir::new().context("Failed to create temp dir for client 1")?;
+        let temp_dir2 = TempDir::new().context("Failed to create temp dir for client 2")?;
 
-    info!("👥 Created two clients connected to relay server");
+        // Create two clients connected to the relay
+        let client1 = infra.create_client(temp_dir1.path()).await?;
+        let client2 = infra.create_client(temp_dir2.path()).await?;
 
-    // Create test file content
-    let test_content = format!(
-        "🚀 Client E2E File Storage with Relay Test\n\
+        info!("👥 Created two clients connected to relay server");
+
+        // Create test file content
+        let test_content = format!(
+            "🚀 Client E2E File Storage with Relay Test\n\
          📅 Timestamp: {}\n\
          📄 This file demonstrates remote file storage between clients via relay!\n\
          🌟 Client 1 stores → Relay Server → Client 2 fetches = ✨ Magic! ✨\n\
          🎯 Testing the full Client API with real relay server infrastructure.\n",
-        SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs()
-    );
-    let test_bytes = test_content.as_bytes();
+            SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs()
+        );
+        let test_bytes = test_content.as_bytes();
 
-    info!("📝 Created test content ({} bytes)", test_bytes.len());
-    info!(
-        "📄 Content preview: {}",
-        &test_content[..100.min(test_content.len())]
-    );
+        info!("📝 Created test content ({} bytes)", test_bytes.len());
+        info!(
+            "📄 Content preview: {}",
+            &test_content[..100.min(test_content.len())]
+        );
 
-    // Step 1: Client 1 stores the file
-    info!("📤 Client 1 storing file...");
-    let stored_file_ref = client1
-        .store_data(test_bytes, "relay_test.txt", Some("text/plain".to_string()))
-        .await
-        .context("Client 1 failed to store file")?;
+        // Step 1: Client 1 stores the file
+        info!("📤 Client 1 storing file...");
+        let stored_file_ref = client1
+            .store_data(test_bytes, "relay_test.txt", Some("text/plain".to_string()))
+            .await
+            .context("Client 1 failed to store file")?;
 
-    info!("✅ Client 1 stored file with:");
-    info!("   📋 Blob hash: {}", stored_file_ref.blob_hash);
-    info!("   📁 Filename: {:?}", stored_file_ref.filename());
-    info!(
-        "   📊 Original size: {} bytes",
-        stored_file_ref.original_size()
-    );
-    info!(
-        "   🗜️ Was compressed: {}",
-        stored_file_ref.encryption_info.was_compressed
-    );
+        info!("✅ Client 1 stored file with:");
+        info!("   📋 Blob hash: {}", stored_file_ref.blob_hash);
+        info!("   📁 Filename: {:?}", stored_file_ref.filename());
+        info!(
+            "   📊 Original size: {} bytes",
+            stored_file_ref.original_size()
+        );
+        info!(
+            "   🗜️ Was compressed: {}",
+            stored_file_ref.encryption_info.was_compressed
+        );
 
-    // Step 2: Verify Client 1 can retrieve its own file
-    info!("🔍 Client 1 verifying local retrieval...");
-    let client1_retrieved = client1
-        .retrieve_file_bytes(&stored_file_ref)
-        .await
-        .context("Client 1 failed to retrieve its own file")?;
+        // Step 2: Verify Client 1 can retrieve its own file
+        info!("🔍 Client 1 verifying local retrieval...");
+        let client1_retrieved = client1
+            .retrieve_file_bytes(&stored_file_ref)
+            .await
+            .context("Client 1 failed to retrieve its own file")?;
 
-    assert_eq!(
-        client1_retrieved, test_bytes,
-        "Client 1 local retrieval should match original"
-    );
-    info!("✅ Client 1 local retrieval verified");
+        assert_eq!(
+            client1_retrieved, test_bytes,
+            "Client 1 local retrieval should match original"
+        );
+        info!("✅ Client 1 local retrieval verified");
 
-    // Step 3: Give some time for remote synchronization to complete
-    tokio::time::sleep(Duration::from_millis(500)).await;
+        // Step 3: Give some time for remote synchronization to complete
+        tokio::time::sleep(Duration::from_millis(500)).await;
 
-    // Step 4: Client 2 checks if it has the file locally (should be false initially)
-    info!("🔍 Client 2 checking local storage...");
-    let has_local_before = client2
-        .has_file(&stored_file_ref)
-        .await
-        .context("Failed to check if Client 2 has file locally")?;
-    info!(
-        "   💾 Client 2 local storage has file: {}",
-        has_local_before
-    );
+        // Step 4: Client 2 checks if it has the file locally (should be false initially)
+        info!("🔍 Client 2 checking local storage...");
+        let has_local_before = client2
+            .has_file(&stored_file_ref)
+            .await
+            .context("Failed to check if Client 2 has file locally")?;
+        info!(
+            "   💾 Client 2 local storage has file: {}",
+            has_local_before
+        );
 
-    // Step 5: Client 2 retrieves the file (should fetch from relay server)
-    info!("📥 Client 2 attempting remote retrieval via relay...");
-    info!("   📋 Looking for blob hash: {}", stored_file_ref.blob_hash);
+        // Step 5: Client 2 retrieves the file (should fetch from relay server)
+        info!("📥 Client 2 attempting remote retrieval via relay...");
+        info!("   📋 Looking for blob hash: {}", stored_file_ref.blob_hash);
 
-    let client2_retrieved = client2
-        .retrieve_file_bytes(&stored_file_ref)
-        .await
-        .context("Client 2 failed to retrieve file from relay server")?;
+        let client2_retrieved = client2
+            .retrieve_file_bytes(&stored_file_ref)
+            .await
+            .context("Client 2 failed to retrieve file from relay server")?;
 
-    info!("✅ Client 2 successfully retrieved file from relay server");
-    info!("   📊 Retrieved {} bytes", client2_retrieved.len());
+        info!("✅ Client 2 successfully retrieved file from relay server");
+        info!("   📊 Retrieved {} bytes", client2_retrieved.len());
 
-    // Step 6: Verify content integrity across clients
-    assert_eq!(
-        client2_retrieved, test_bytes,
-        "Client 2 remote retrieval should match original content"
-    );
-    info!("✅ Content integrity verified across clients via relay server");
+        // Step 6: Verify content integrity across clients
+        assert_eq!(
+            client2_retrieved, test_bytes,
+            "Client 2 remote retrieval should match original content"
+        );
+        info!("✅ Content integrity verified across clients via relay server");
 
-    // Verify the retrieved content as string
-    let retrieved_content = String::from_utf8(client2_retrieved.clone())
-        .context("Retrieved content should be valid UTF-8")?;
-    assert_eq!(
-        retrieved_content, test_content,
-        "String content should match exactly"
-    );
+        // Verify the retrieved content as string
+        let retrieved_content = String::from_utf8(client2_retrieved.clone())
+            .context("Retrieved content should be valid UTF-8")?;
+        assert_eq!(
+            retrieved_content, test_content,
+            "String content should match exactly"
+        );
 
-    // Step 7: Verify Client 2 now has it cached locally
-    let has_local_after = client2
-        .has_file(&stored_file_ref)
-        .await
-        .context("Failed to check if Client 2 has file locally after retrieval")?;
-    info!(
-        "   💾 Client 2 local cache after retrieval: {}",
-        has_local_after
-    );
+        // Step 7: Verify Client 2 now has it cached locally
+        let has_local_after = client2
+            .has_file(&stored_file_ref)
+            .await
+            .context("Failed to check if Client 2 has file locally after retrieval")?;
+        info!(
+            "   💾 Client 2 local cache after retrieval: {}",
+            has_local_after
+        );
 
-    // Step 8: Test retrieving again from Client 2 (should use local cache)
-    info!("🔍 Client 2 testing local cache retrieval...");
-    let client2_cached = client2
-        .retrieve_file_bytes(&stored_file_ref)
-        .await
-        .context("Client 2 failed to retrieve file from local cache")?;
+        // Step 8: Test retrieving again from Client 2 (should use local cache)
+        info!("🔍 Client 2 testing local cache retrieval...");
+        let client2_cached = client2
+            .retrieve_file_bytes(&stored_file_ref)
+            .await
+            .context("Client 2 failed to retrieve file from local cache")?;
 
-    assert_eq!(
-        client2_cached, test_bytes,
-        "Client 2 cached retrieval should match original"
-    );
-    info!("✅ Client 2 local cache retrieval verified");
+        assert_eq!(
+            client2_cached, test_bytes,
+            "Client 2 cached retrieval should match original"
+        );
+        info!("✅ Client 2 local cache retrieval verified");
 
-    // Step 9: Test convergent encryption property
-    info!("🔒 Testing convergent encryption property...");
-    let duplicate_ref = client2
-        .store_data(
-            test_bytes,
-            "duplicate_file.txt",
-            Some("text/plain".to_string()),
-        )
-        .await
-        .context("Failed to store duplicate content")?;
+        // Step 9: Test convergent encryption property
+        info!("🔒 Testing convergent encryption property...");
+        let duplicate_ref = client2
+            .store_data(
+                test_bytes,
+                "duplicate_file.txt",
+                Some("text/plain".to_string()),
+            )
+            .await
+            .context("Failed to store duplicate content")?;
 
-    assert_eq!(
-        stored_file_ref.blob_hash, duplicate_ref.blob_hash,
-        "Convergent encryption should produce same hash for same content"
-    );
-    info!("✅ Convergent encryption property verified");
+        assert_eq!(
+            stored_file_ref.blob_hash, duplicate_ref.blob_hash,
+            "Convergent encryption should produce same hash for same content"
+        );
+        info!("✅ Convergent encryption property verified");
 
-    // Step 10: Test file-to-disk operations
-    info!("💾 Testing file-to-disk operations...");
-    let output_path = temp_dir2.path().join("retrieved_file.txt");
-    client2
-        .retrieve_file(&stored_file_ref, output_path.clone())
-        .await
-        .context("Failed to retrieve file to disk")?;
+        // Step 10: Test file-to-disk operations
+        info!("💾 Testing file-to-disk operations...");
+        let output_path = temp_dir2.path().join("retrieved_file.txt");
+        client2
+            .retrieve_file(&stored_file_ref, output_path.clone())
+            .await
+            .context("Failed to retrieve file to disk")?;
 
-    let disk_content = tokio::fs::read(&output_path)
-        .await
-        .context("Failed to read file from disk")?;
+        let disk_content = tokio::fs::read(&output_path)
+            .await
+            .context("Failed to read file from disk")?;
 
-    assert_eq!(
-        disk_content, test_bytes,
-        "File saved to disk should match original content"
-    );
-    info!("✅ File-to-disk operation verified");
+        assert_eq!(
+            disk_content, test_bytes,
+            "File saved to disk should match original content"
+        );
+        info!("✅ File-to-disk operation verified");
 
-    info!("🎉 All Client E2E file storage tests with relay server passed!");
+        info!("🎉 All Client E2E file storage tests with relay server passed!");
 
-    // Clean up
-    infra.cleanup().await?;
+        // Clean up
+        infra.cleanup().await?;
 
-    Ok(())
+        Ok(())
+    })
+    .await;
+
+    match result {
+        Ok(r) => r,
+        Err(_) => anyhow::bail!("Test timed out after 30 seconds"),
+    }
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_client_e2e_file_from_disk_with_relay() -> Result<()> {
-    // Initialize logging for the test
-    let _ = tracing_subscriber::fmt().with_env_filter("info").try_init();
+    // Add timeout to prevent hanging
+    let result = tokio::time::timeout(Duration::from_secs(30), async {
+        // Initialize crypto provider for Rustls
+        init_crypto_provider();
 
-    info!("🚀 Starting Client E2E File-from-Disk with Relay Test");
+        // Initialize logging for the test
+        let _ = tracing_subscriber::fmt().with_env_filter("info").try_init();
 
-    // Set up test infrastructure
-    let infra = TestInfrastructure::setup().await?;
+        info!("🚀 Starting Client E2E File-from-Disk with Relay Test");
 
-    // Create temporary directories for each client's local storage
-    let temp_dir1 = TempDir::new().context("Failed to create temp dir for client 1")?;
-    let temp_dir2 = TempDir::new().context("Failed to create temp dir for client 2")?;
+        // Set up test infrastructure
+        let infra = TestInfrastructure::setup().await?;
 
-    // Create two clients connected to the relay
-    let client1 = infra.create_client(temp_dir1.path()).await?;
-    let client2 = infra.create_client(temp_dir2.path()).await?;
+        // Create temporary directories for each client's local storage
+        let temp_dir1 = TempDir::new().context("Failed to create temp dir for client 1")?;
+        let temp_dir2 = TempDir::new().context("Failed to create temp dir for client 2")?;
 
-    info!("👥 Created two clients connected to relay server for file-from-disk test");
+        // Create two clients connected to the relay
+        let client1 = infra.create_client(temp_dir1.path()).await?;
+        let client2 = infra.create_client(temp_dir2.path()).await?;
 
-    // Create a test file on disk for Client 1
-    let test_content = format!(
-        "🚀 Client E2E File-from-Disk with Relay Test\n\
+        info!("👥 Created two clients connected to relay server for file-from-disk test");
+
+        // Create a test file on disk for Client 1
+        let test_content = format!(
+            "🚀 Client E2E File-from-Disk with Relay Test\n\
          📅 Timestamp: {}\n\
          📄 This file was read from disk, stored via Client 1, and retrieved by Client 2!\n\
          🌟 Disk → Client 1 → Relay Server → Client 2 → Disk = ✨ Full Circle! ✨\n",
-        SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs()
-    );
+            SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs()
+        );
 
-    let input_file_path = temp_dir1.path().join("input_test_file.txt");
-    tokio::fs::write(&input_file_path, &test_content)
-        .await
-        .context("Failed to write test file to disk")?;
+        let input_file_path = temp_dir1.path().join("input_test_file.txt");
+        tokio::fs::write(&input_file_path, &test_content)
+            .await
+            .context("Failed to write test file to disk")?;
 
-    info!("📝 Created test file on disk: {:?}", input_file_path);
-    info!("📊 File size: {} bytes", test_content.len());
+        info!("📝 Created test file on disk: {:?}", input_file_path);
+        info!("📊 File size: {} bytes", test_content.len());
 
-    // Step 1: Client 1 stores the file from disk
-    info!("📤 Client 1 storing file from disk...");
-    let stored_file_ref = client1
-        .store_file(input_file_path)
-        .await
-        .context("Client 1 failed to store file from disk")?;
+        // Step 1: Client 1 stores the file from disk
+        info!("📤 Client 1 storing file from disk...");
+        let stored_file_ref = client1
+            .store_file(input_file_path)
+            .await
+            .context("Client 1 failed to store file from disk")?;
 
-    info!("✅ Client 1 stored file with:");
-    info!("   📋 Blob hash: {}", stored_file_ref.blob_hash);
-    info!("   📁 Filename: {:?}", stored_file_ref.filename());
-    info!(
-        "   📊 Original size: {} bytes",
-        stored_file_ref.original_size()
-    );
+        info!("✅ Client 1 stored file with:");
+        info!("   📋 Blob hash: {}", stored_file_ref.blob_hash);
+        info!("   📁 Filename: {:?}", stored_file_ref.filename());
+        info!(
+            "   📊 Original size: {} bytes",
+            stored_file_ref.original_size()
+        );
 
-    // Step 2: Give some time for remote synchronization
-    tokio::time::sleep(Duration::from_millis(500)).await;
+        // Step 2: Give some time for remote synchronization
+        tokio::time::sleep(Duration::from_millis(500)).await;
 
-    // Step 3: Client 2 retrieves and saves to disk
-    info!("📥 Client 2 retrieving file from relay and saving to disk...");
-    let output_file_path = temp_dir2.path().join("output_test_file.txt");
-    client2
-        .retrieve_file(&stored_file_ref, output_file_path.clone())
-        .await
-        .context("Client 2 failed to retrieve file from relay to disk")?;
+        // Step 3: Client 2 retrieves and saves to disk
+        info!("📥 Client 2 retrieving file from relay and saving to disk...");
+        let output_file_path = temp_dir2.path().join("output_test_file.txt");
+        client2
+            .retrieve_file(&stored_file_ref, output_file_path.clone())
+            .await
+            .context("Client 2 failed to retrieve file from relay to disk")?;
 
-    // Step 4: Verify the file content matches
-    let output_content = tokio::fs::read_to_string(&output_file_path)
-        .await
-        .context("Failed to read output file")?;
+        // Step 4: Verify the file content matches
+        let output_content = tokio::fs::read_to_string(&output_file_path)
+            .await
+            .context("Failed to read output file")?;
 
-    assert_eq!(
-        output_content, test_content,
-        "Output file content should match input file content"
-    );
+        assert_eq!(
+            output_content, test_content,
+            "Output file content should match input file content"
+        );
 
-    info!("✅ File content verified across disk → Client 1 → Relay → Client 2 → disk");
-    info!("🎉 Client E2E file-from-disk with relay test passed!");
+        info!("✅ File content verified across disk → Client 1 → Relay → Client 2 → disk");
+        info!("🎉 Client E2E file-from-disk with relay test passed!");
 
-    // Clean up
-    infra.cleanup().await?;
+        // Clean up
+        infra.cleanup().await?;
 
-    Ok(())
+        Ok(())
+    })
+    .await;
+
+    match result {
+        Ok(r) => r,
+        Err(_) => anyhow::bail!("Test timed out after 30 seconds"),
+    }
 }
