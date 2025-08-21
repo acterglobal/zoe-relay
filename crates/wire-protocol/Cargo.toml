@@ -22,6 +22,7 @@ tokio-util = { workspace = true, features = ["codec"] }
 serde = { workspace = true }
 postcard = { workspace = true }
 heapless = "0.7.2"
+semver = { version = "1.0", features = ["serde"] }
 
 # Cryptography
 ml-dsa = { workspace = true }

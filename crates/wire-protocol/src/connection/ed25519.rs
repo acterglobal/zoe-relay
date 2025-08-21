@@ -4,11 +4,13 @@
 //! for transport security in the Zoe wire protocol.
 
 use der::{asn1::*, Encode};
+use ed25519_dalek::pkcs8::EncodePrivateKey;
 use rustls::pki_types::CertificateDer;
 use std::sync::Arc;
 use x509_cert::{
     attr::{AttributeTypeAndValue, AttributeValue},
     certificate::{Certificate, TbsCertificate, Version},
+    ext::{Extension, Extensions},
     name::{Name, RelativeDistinguishedName},
     serial_number::SerialNumber,
     spki::{AlgorithmIdentifier, SubjectPublicKeyInfo},
@@ -17,7 +19,11 @@ use x509_cert::{
 use x509_parser::oid_registry::asn1_rs::oid;
 use x509_parser::prelude::*;
 
-use crate::crypto::{CryptoError, Result};
+use crate::{
+    crypto::{CryptoError, Result},
+    version::ProtocolVersion,
+    ClientProtocolConfig, ServerProtocolConfig,
+};
 
 /// Generate a deterministic TLS certificate using Ed25519
 ///
@@ -26,6 +32,7 @@ use crate::crypto::{CryptoError, Result};
 pub(crate) fn generate_ed25519_cert_for_tls(
     ed25519_signing_key: &ed25519_dalek::SigningKey,
     subject_name: &str,
+    selected_protocol_version: Option<ProtocolVersion>,
 ) -> Result<Vec<CertificateDer<'static>>> {
     tracing::debug!(
         "🔧 Creating proper Ed25519 certificate for subject: {}",
@@ -89,6 +96,31 @@ pub(crate) fn generate_ed25519_cert_for_tls(
         not_after,
     };
 
+    // Create ALPN extension containing the negotiated protocol version
+    let protocol_version_bytes = if let Some(selected_protocol_version) = selected_protocol_version
+    {
+        postcard::to_stdvec(&selected_protocol_version).map_err(|e| {
+            CryptoError::ParseError(format!("Failed to serialize protocol version: {e}"))
+        })?
+    } else {
+        vec![]
+    };
+
+    // Use a custom OID for the ALPN protocol version extension
+    // Using private enterprise arc: 1.3.6.1.4.1.99999.1 (placeholder OID)
+    let alpn_extension_oid = ObjectIdentifier::new("1.3.6.1.4.1.99999.1")
+        .map_err(|e| CryptoError::ParseError(format!("Invalid ALPN extension OID: {e}")))?;
+
+    let alpn_extension = Extension {
+        extn_id: alpn_extension_oid,
+        critical: false, // Non-critical extension
+        extn_value: OctetString::new(protocol_version_bytes).map_err(|e| {
+            CryptoError::ParseError(format!("Failed to create extension value: {e}"))
+        })?,
+    };
+
+    let extensions = Extensions::from(vec![alpn_extension]);
+
     // Create TBS certificate
     let tbs_certificate = TbsCertificate {
         version: Version::V3,
@@ -103,7 +135,7 @@ pub(crate) fn generate_ed25519_cert_for_tls(
         subject_public_key_info,
         issuer_unique_id: None,
         subject_unique_id: None,
-        extensions: None,
+        extensions: Some(extensions),
     };
 
     // Encode TBS certificate for signing
@@ -201,6 +233,75 @@ pub fn extract_ed25519_public_key_from_cert(
     Ok(verifying_key)
 }
 
+// Create a simple certificate resolver that always returns our certificate
+#[derive(Debug)]
+struct Ed25519CertResolver {
+    server_signing_key: ed25519_dalek::SigningKey,
+    server_protocol_config: ServerProtocolConfig,
+}
+
+impl rustls::server::ResolvesServerCert for Ed25519CertResolver {
+    fn resolve(
+        &self,
+        client_hello: rustls::server::ClientHello,
+    ) -> Option<Arc<rustls::sign::CertifiedKey>> {
+        tracing::debug!("🔍 Resolving server certificate for client hello");
+
+        let Some(alpn) = client_hello.alpn() else {
+            tracing::debug!("❌ No ALPN protocols provided by client");
+            return None;
+        };
+
+        let alpn_protocols: Vec<&[u8]> = alpn.collect();
+        let client_protocol_config =
+            match ClientProtocolConfig::from_alpn_data(alpn_protocols.iter().copied()) {
+                Ok(config) => config,
+                Err(e) => {
+                    tracing::error!("❌ Failed to parse client ALPN protocol config: {e}");
+                    return None;
+                }
+            };
+
+        let protocol_version = self
+            .server_protocol_config
+            .negotiate_version(&client_protocol_config.0);
+
+        // Generate TLS certificate with negotiated protocol version
+        let certs = match generate_ed25519_cert_for_tls(
+            &self.server_signing_key,
+            "localhost",
+            protocol_version,
+        ) {
+            Ok(certs) => certs,
+            Err(e) => {
+                tracing::error!("Failed to generate certificate: {e}");
+                return None;
+            }
+        };
+
+        // Create certificate resolver with Ed25519 signing key
+        let pkcs8_der = self
+            .server_signing_key
+            .to_pkcs8_der()
+            .map_err(|e| {
+                tracing::error!("Failed to encode Ed25519 key: {}", e);
+                e
+            })
+            .ok()?;
+
+        let private_key = rustls::pki_types::PrivateKeyDer::from(
+            rustls::pki_types::PrivatePkcs8KeyDer::from(pkcs8_der.as_bytes().to_vec()),
+        );
+
+        let signing_key = rustls::crypto::aws_lc_rs::sign::any_supported_type(&private_key).ok()?;
+
+        Some(Arc::new(rustls::sign::CertifiedKey::new(
+            certs.to_vec(),
+            signing_key,
+        )))
+    }
+}
+
 /// Create a complete rustls ServerConfig for Ed25519 certificates
 ///
 /// This function creates a fully configured rustls ServerConfig that:
@@ -212,62 +313,29 @@ pub fn extract_ed25519_public_key_from_cert(
 /// # Arguments
 /// * `server_signing_key` - The Ed25519 signing key for the server
 /// * `hostname` - The hostname for the certificate (e.g., "localhost")
+/// * `alpn_protocols` - The ALPN protocols to advertise to the client
 ///
 /// # Returns
 /// A configured rustls ServerConfig ready for use with QUIC
-pub(crate) fn create_ed25519_server_config(
+pub(crate) fn create_ed25519_server_config_with_alpn(
     server_signing_key: &ed25519_dalek::SigningKey,
-    hostname: &str,
+    _hostname: &str,
+    server_protocol_config: ServerProtocolConfig,
 ) -> std::result::Result<rustls::ServerConfig, CryptoError> {
-    use ed25519_dalek::pkcs8::EncodePrivateKey;
-
-    // Generate TLS certificate from Ed25519 key
-    let certs = generate_ed25519_cert_for_tls(server_signing_key, hostname)?;
-
-    // Use the default crypto provider (supports Ed25519)
-    let crypto_provider = rustls::crypto::aws_lc_rs::default_provider();
-
-    // Create certificate resolver with Ed25519 signing key
-    let pkcs8_der = server_signing_key
-        .to_pkcs8_der()
-        .map_err(|e| CryptoError::ParseError(format!("Failed to encode Ed25519 key: {}", e)))?;
-
-    let private_key = rustls::pki_types::PrivateKeyDer::from(
-        rustls::pki_types::PrivatePkcs8KeyDer::from(pkcs8_der.as_bytes().to_vec()),
-    );
-
-    // Create a simple certificate resolver that always returns our certificate
-    #[derive(Debug)]
-    struct Ed25519CertResolver {
-        certs: Vec<rustls::pki_types::CertificateDer<'static>>,
-        key: rustls::pki_types::PrivateKeyDer<'static>,
-    }
-
-    impl rustls::server::ResolvesServerCert for Ed25519CertResolver {
-        fn resolve(
-            &self,
-            _client_hello: rustls::server::ClientHello,
-        ) -> Option<Arc<rustls::sign::CertifiedKey>> {
-            let signing_key =
-                rustls::crypto::aws_lc_rs::sign::any_supported_type(&self.key).ok()?;
-            Some(Arc::new(rustls::sign::CertifiedKey::new(
-                self.certs.clone(),
-                signing_key,
-            )))
-        }
-    }
-
     let cert_resolver = Ed25519CertResolver {
-        certs,
-        key: private_key,
+        server_signing_key: server_signing_key.clone(),
+        server_protocol_config,
     };
 
     // Create rustls server config
-    let rustls_config = rustls::ServerConfig::builder_with_provider(Arc::new(crypto_provider))
-        .with_protocol_versions(&[&rustls::version::TLS13])
-        .map_err(|e| CryptoError::TlsError(format!("Failed to set TLS version: {}", e)))?
+    let mut rustls_config = rustls::ServerConfig::builder()
         .with_no_client_auth() // we accept any client
         .with_cert_resolver(Arc::new(cert_resolver));
+
+    // Advertise the same protocols that the default client would send
+    // This ensures ALPN negotiation succeeds and we can do actual negotiation in the cert resolver
+    let default_client_config = crate::version::ClientProtocolConfig::default();
+    rustls_config.alpn_protocols = default_client_config.alpn_protocols();
 
     Ok(rustls_config)
 }

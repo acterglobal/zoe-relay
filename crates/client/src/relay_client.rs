@@ -1,6 +1,6 @@
 // Remove unused clap imports since they're not needed in this file
 use crate::challenge::perform_client_challenge_handshake;
-use crate::error::Result;
+use crate::error::{ClientError, Result};
 use crate::{BlobService, MessagesService, MessagesStream};
 use ml_dsa;
 use quinn::Connection;
@@ -94,7 +94,25 @@ impl RelayClient {
         let client_endpoint = create_client_endpoint(server_public_key)?;
         let connection = client_endpoint.connect(server_addr, "localhost")?.await?;
 
-        info!("✅ Connected to relay server");
+        // Validate that the server supports our protocol
+        let client_protocol_config = zoe_wire_protocol::version::ClientProtocolConfig::default();
+        match zoe_wire_protocol::version::validate_server_protocol_support(
+            &connection,
+            &client_protocol_config,
+        ) {
+            Ok(negotiated_version) => {
+                info!(
+                    "✅ Connected to relay server with protocol: {}",
+                    negotiated_version
+                );
+            }
+            Err(e) => {
+                return Err(ClientError::ProtocolError(format!(
+                    "Server protocol validation failed: {}",
+                    e
+                )));
+            }
+        }
 
         // Convert TransportPublicKey to VerifyingKey for challenge
         // TODO: move this to the wire protocol as an into impl

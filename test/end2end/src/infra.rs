@@ -18,7 +18,7 @@ use zoe_message_store::RedisMessageStorage;
 use zoe_relay::{RelayServer, RelayServiceRouter};
 use zoe_wire_protocol::{
     KeyPair, Kind, Message, MessageFilters, MessageFull, Tag, TransportPrivateKey,
-    TransportPublicKey,     VerifyingKey, generate_keypair,
+    TransportPublicKey, VerifyingKey, generate_keypair,
 };
 
 // Initialize crypto provider for Rustls
@@ -46,7 +46,7 @@ impl TestInfrastructure {
     pub async fn setup() -> Result<Self> {
         // Initialize Rustls crypto provider before any TLS operations
         init_crypto_provider();
-        
+
         // Initialize tracing for tests
         let _ = tracing_subscriber::fmt()
             .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())

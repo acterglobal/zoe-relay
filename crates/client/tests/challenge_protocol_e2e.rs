@@ -382,3 +382,155 @@ async fn test_challenge_protocol_invalid_signature() -> Result<()> {
         }
     }
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn test_challenge_protocol_version_mismatch() -> Result<()> {
+    init_crypto_provider();
+    let _ = tracing_subscriber::fmt().with_env_filter("info").try_init();
+
+    info!("🚀 Starting protocol version mismatch test");
+
+    // Generate server and client keys
+    let server_signing_key = generate_ed25519_relay_keypair(&mut rand::thread_rng());
+    let server_keypair = TransportPrivateKey::Ed25519 {
+        signing_key: match server_signing_key {
+            KeyPair::Ed25519(key) => *key,
+            _ => panic!("Expected Ed25519 key"),
+        },
+    };
+    let server_public_key = server_keypair.public_key();
+
+    // Create server with specific protocol requirements that won't match the client
+    use zoe_wire_protocol::version::{ProtocolVariant, ServerProtocolConfig, VersionReq};
+
+    // Server requires a very high version that the client won't support
+    // We'll create a server config that requires an impossibly high version
+    let server_protocol_config = ServerProtocolConfig::new().add_variant_requirement(
+        ProtocolVariant::Relay,
+        VersionReq::parse(">=99.0.0").unwrap(), // Impossibly high version requirement
+    );
+
+    // Find free port and create server endpoint with incompatible protocol requirements
+    let server_endpoint =
+        zoe_wire_protocol::connection::server::create_server_endpoint_with_protocols(
+            SocketAddr::from(([127, 0, 0, 1], 0)),
+            &server_keypair,
+            &server_protocol_config,
+        )?;
+    let server_addr = server_endpoint.local_addr().unwrap();
+
+    info!(
+        "✅ Server endpoint created on {} with high version requirement",
+        server_addr
+    );
+
+    // Create client endpoint with default (low) version
+    let client_endpoint = create_client_endpoint(&server_public_key)?;
+
+    info!("✅ Client endpoint created with default version");
+
+    // Test that the connection is rejected due to protocol mismatch
+    let result = timeout(Duration::from_secs(5), async {
+        // Server task: should accept connection but client will close it after protocol validation
+        let server_task = async {
+            info!("📡 Server waiting for connection (TLS will succeed, but client will close after validation)...");
+            // Try to accept a connection - TLS should succeed but client will close after validation
+            match timeout(Duration::from_secs(2), server_endpoint.accept()).await {
+                Ok(Some(incoming)) => {
+                    // If we get an incoming connection, try to complete the handshake
+                    match timeout(Duration::from_secs(1), incoming).await {
+                        Ok(Ok(_connection)) => {
+                            info!("✅ Server TLS connection succeeded (expected - client will validate and close)");
+                            // Wait a bit for the client to validate and close the connection
+                            sleep(Duration::from_millis(200)).await;
+                            Ok::<(), anyhow::Error>(())
+                        }
+                        Ok(Err(e)) => {
+                            info!("✅ Server connection failed: {}", e);
+                            Ok::<(), anyhow::Error>(())
+                        }
+                        Err(_) => {
+                            info!("✅ Server connection timed out");
+                            Ok::<(), anyhow::Error>(())
+                        }
+                    }
+                }
+                Ok(None) => {
+                    info!("✅ Server accept returned None (no incoming connections)");
+                    Ok::<(), anyhow::Error>(())
+                }
+                Err(_) => {
+                    info!("✅ Server accept timed out");
+                    Ok::<(), anyhow::Error>(())
+                }
+            }
+        };
+
+        // Client task: should fail to connect due to protocol mismatch
+        let client_task = async {
+            sleep(Duration::from_millis(100)).await;
+            info!("🔗 Client attempting to connect (should fail)...");
+            match client_endpoint.connect(server_addr, "localhost") {
+                Ok(connecting) => {
+                    // Try to complete the connection
+                    match timeout(Duration::from_secs(2), connecting).await {
+                        Ok(Ok(connection)) => {
+                            info!("✅ Client TLS connection succeeded, now validating protocol support...");
+                            // Connection succeeded, but we need to validate the protocol
+                            let client_protocol_config = zoe_wire_protocol::version::ClientProtocolConfig::default();
+                            match zoe_wire_protocol::version::validate_server_protocol_support(&connection, &client_protocol_config) {
+                                Ok(negotiated_version) => {
+                                    panic!("Protocol validation succeeded when it should have failed: {}", negotiated_version);
+                                }
+                                Err(zoe_wire_protocol::version::ProtocolVersionError::ProtocolNotSupportedByServer) => {
+                                    info!("✅ Client correctly detected protocol not supported by server");
+                                    Ok::<(), anyhow::Error>(())
+                                }
+                                Err(e) => {
+                                    panic!("Client protocol validation failed with unexpected error: {}", e);
+                                }
+                            }
+                        }
+                        Ok(Err(e)) => {
+                            info!("✅ Client connection correctly failed: {}", e);
+                            // Verify it's the expected error type
+                            let error_string = e.to_string();
+                            if error_string.contains("protocol") || error_string.contains("handshake") {
+                                Ok::<(), anyhow::Error>(())
+                            } else {
+                                panic!("Client failed with unexpected error: {}", e);
+                            }
+                        }
+                        Err(_) => {
+                            info!("✅ Client connection timed out (acceptable for protocol mismatch)");
+                            Ok::<(), anyhow::Error>(())
+                        }
+                    }
+                }
+                Err(e) => {
+                    info!("✅ Client connect failed immediately: {}", e);
+                    Ok::<(), anyhow::Error>(())
+                }
+            }
+        };
+
+        // Run both tasks - both should handle the rejection gracefully
+        let (_server_result, _client_result) = tokio::try_join!(server_task, client_task)?;
+
+        Ok::<_, anyhow::Error>(())
+    })
+    .await;
+
+    match result {
+        Ok(Ok(())) => {
+            info!("✅ Protocol version mismatch test passed!");
+            Ok(())
+        }
+        Ok(Err(e)) => {
+            panic!("Test failed with error: {}", e);
+        }
+        Err(_) => {
+            panic!("Test timed out");
+        }
+    }
+}

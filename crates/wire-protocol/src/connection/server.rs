@@ -1,4 +1,5 @@
 use crate::crypto::{CryptoError, Result};
+use crate::version::ServerProtocolConfig;
 use crate::TransportPrivateKey;
 use quinn::Endpoint;
 use std::net::SocketAddr;
@@ -8,14 +9,21 @@ use quinn::ServerConfig;
 use std::sync::Arc;
 
 #[cfg(feature = "tls-ml-dsa-44")]
-use super::ml_dsa::create_ml_dsa_44_server_config;
-
-use super::ed25519::create_ed25519_server_config;
+use super::ml_dsa::{create_ml_dsa_44_server_config, create_ml_dsa_44_server_config_with_alpn};
 
 /// Create a QUIC server endpoint with TLS certificate (Ed25519 or ML-DSA-44)
 pub fn create_server_endpoint(
     addr: SocketAddr,
     server_keypair: &TransportPrivateKey,
+) -> Result<Endpoint> {
+    create_server_endpoint_with_protocols(addr, server_keypair, &ServerProtocolConfig::default())
+}
+
+/// Create a QUIC server endpoint with protocol version negotiation support
+pub fn create_server_endpoint_with_protocols(
+    addr: SocketAddr,
+    server_keypair: &TransportPrivateKey,
+    protocol_negotiation: &ServerProtocolConfig,
 ) -> Result<Endpoint> {
     info!("🚀 Creating relay server endpoint on {}", addr);
 
@@ -26,8 +34,13 @@ pub fn create_server_endpoint(
                 hex::encode(signing_key.verifying_key().to_bytes())
             );
 
-            // Create Ed25519 server configuration
-            create_ed25519_server_config(signing_key, "localhost").map_err(|e| {
+            // Create Ed25519 server configuration with ALPN
+            super::ed25519::create_ed25519_server_config_with_alpn(
+                signing_key,
+                "localhost",
+                protocol_negotiation.clone(),
+            )
+            .map_err(|e| {
                 CryptoError::TlsError(format!("Failed to create Ed25519 server config: {e}"))
             })?
         }
@@ -39,8 +52,13 @@ pub fn create_server_endpoint(
                 hex::encode(keypair.verifying_key().encode())
             );
 
-            // Create ML-DSA-44 server configuration using the wire protocol wrapper
-            create_ml_dsa_44_server_config(keypair, "localhost").map_err(|e| {
+            // Create ML-DSA-44 server configuration with ALPN
+            create_ml_dsa_44_server_config_with_alpn(
+                keypair,
+                "localhost",
+                protocol_negotiation.clone(),
+            )
+            .map_err(|e| {
                 CryptoError::TlsError(format!("Failed to create ML-DSA-44 server config: {e}"))
             })?
         }

@@ -141,6 +141,7 @@ pub mod relay_identity;
 pub mod serde;
 pub mod services;
 pub mod streaming;
+pub mod version;
 
 pub use blob::*;
 pub use challenge::*;
@@ -155,6 +156,7 @@ pub type ServerKeypair = TransportPrivateKey;
 pub type ClientTransportKey = TransportPublicKey;
 pub use services::*;
 pub use streaming::*; // Re-export streaming protocol types
+pub use version::*; // Re-export protocol version negotiation types
 
 // Re-export keys types for convenient access
 pub use keys::*;

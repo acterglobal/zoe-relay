@@ -6611,6 +6611,9 @@ name = "semver"
 version = "1.0.26"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "56e6fa9c48d24d85fb3de5ad847117517440f6beceb7798af16b4a87d616b8d0"
+dependencies = [
+ "serde",
+]
 
 [[package]]
 name = "send_wrapper"
@@ -9176,6 +9179,7 @@ dependencies = [
  "pretty_assertions",
  "rand 0.8.5",
  "redis 0.24.0",
+ "rustls",
  "serde",
  "serial_test",
  "tarpc",
@@ -9342,6 +9346,7 @@ dependencies = [
  "rustls",
  "rustls-pki-types",
  "rustls-webpki",
+ "semver",
  "serde",
  "serial_test",
  "signature",

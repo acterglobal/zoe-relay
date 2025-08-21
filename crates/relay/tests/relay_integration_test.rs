@@ -231,7 +231,7 @@ impl TestClient {
 async fn test_echo_service_integration() -> Result<()> {
     // Initialize Rustls crypto provider before any TLS operations
     init_crypto_provider();
-    
+
     // Initialize tracing for better debugging
     let _ = tracing_subscriber::fmt::try_init();
 
@@ -307,7 +307,7 @@ async fn test_echo_service_integration() -> Result<()> {
 async fn test_service_id_routing() -> Result<()> {
     // Initialize Rustls crypto provider before any TLS operations
     init_crypto_provider();
-    
+
     // Test that a specific service ID is properly routed
     use std::sync::atomic::{AtomicU8, Ordering};
 

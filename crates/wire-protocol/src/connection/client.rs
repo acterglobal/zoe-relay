@@ -1,4 +1,5 @@
 use crate::crypto::{CryptoError, Result};
+use crate::version::ClientProtocolConfig;
 use crate::TransportPublicKey;
 use quinn::{crypto::rustls::QuicClientConfig, ClientConfig, Endpoint};
 use rustls::ClientConfig as RustlsClientConfig;
@@ -91,6 +92,13 @@ mod ed25519 {
 }
 
 pub fn create_client_endpoint(server_public_key: &TransportPublicKey) -> Result<Endpoint> {
+    create_client_endpoint_with_protocols(server_public_key, &ClientProtocolConfig::default())
+}
+
+pub fn create_client_endpoint_with_protocols(
+    server_public_key: &TransportPublicKey,
+    protocol_versions: &ClientProtocolConfig,
+) -> Result<Endpoint> {
     let cert_verifier = match server_public_key {
         TransportPublicKey::Ed25519 { verifying_key } => {
             ed25519::AcceptSpecificEd25519ServerCertVerifier::new(*verifying_key)
@@ -109,10 +117,14 @@ pub fn create_client_endpoint(server_public_key: &TransportPublicKey) -> Result<
     };
 
     // Create client config with certificate resolver using the appropriate crypto provider
-    let crypto = RustlsClientConfig::builder()
+    let mut crypto = RustlsClientConfig::builder()
         .dangerous()
         .with_custom_certificate_verifier(Arc::new(cert_verifier))
         .with_no_client_auth();
+
+    // Set ALPN protocols for version negotiation
+    let alpn_protocols = protocol_versions.alpn_protocols();
+    crypto.alpn_protocols = alpn_protocols;
 
     // we need to set the keep alive interval to 25 seconds, below the 30s timeout default so we keep the connection alive
     let mut transport_config = quinn::TransportConfig::default();

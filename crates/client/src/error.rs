@@ -24,6 +24,8 @@ pub enum ClientError {
     BlobStore(#[from] zoe_blob_store::BlobStoreError),
     #[error("Challenge error: {0}")]
     Challenge(#[from] anyhow::Error),
+    #[error("Protocol error: {0}")]
+    ProtocolError(String),
 }
 
 pub type Result<T> = std::result::Result<T, ClientError>;

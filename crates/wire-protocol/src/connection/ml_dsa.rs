@@ -214,8 +214,75 @@ pub mod ml_dsa_44 {
         Ok(verifying_key)
     }
 
-    // Additional ML-DSA-44 functionality would go here...
-    // (server config, cert verifiers, etc.)
+    /// Create a complete rustls ServerConfig for ML-DSA-44 certificates
+    pub fn create_ml_dsa_44_server_config(
+        ml_dsa_keypair: &KeyPair<MlDsa44>,
+        hostname: &str,
+    ) -> std::result::Result<rustls::ServerConfig, CryptoError> {
+        create_ml_dsa_44_server_config_with_alpn(
+            ml_dsa_keypair,
+            hostname,
+            crate::version::ServerProtocolConfig::default(),
+        )
+    }
+
+    /// Create a complete rustls ServerConfig for ML-DSA-44 certificates with ALPN support
+    pub fn create_ml_dsa_44_server_config_with_alpn(
+        ml_dsa_keypair: &KeyPair<MlDsa44>,
+        hostname: &str,
+        server_protocol_config: crate::version::ServerProtocolConfig,
+    ) -> std::result::Result<rustls::ServerConfig, CryptoError> {
+        let alpn_protocols = server_protocol_config.alpn_protocols();
+        // Generate TLS certificate from ML-DSA-44 key
+        let certs = generate_ml_dsa_44_cert_for_tls(ml_dsa_keypair, hostname)?;
+
+        // Use the default crypto provider
+        let crypto_provider = rustls::crypto::aws_lc_rs::default_provider();
+
+        // Create certificate resolver with ML-DSA-44 signing key
+        let private_key = rustls::pki_types::PrivateKeyDer::from(
+            rustls::pki_types::PrivatePkcs8KeyDer::from(ml_dsa_keypair.encode().to_vec()),
+        );
+
+        // Create a simple certificate resolver
+        #[derive(Debug)]
+        struct MlDsaCertResolver {
+            certs: Vec<rustls::pki_types::CertificateDer<'static>>,
+            key: rustls::pki_types::PrivateKeyDer<'static>,
+        }
+
+        impl rustls::server::ResolvesServerCert for MlDsaCertResolver {
+            fn resolve(
+                &self,
+                _client_hello: rustls::server::ClientHello,
+            ) -> Option<std::sync::Arc<rustls::sign::CertifiedKey>> {
+                let signing_key =
+                    rustls::crypto::aws_lc_rs::sign::any_supported_type(&self.key).ok()?;
+                Some(std::sync::Arc::new(rustls::sign::CertifiedKey::new(
+                    self.certs.clone(),
+                    signing_key,
+                )))
+            }
+        }
+
+        let cert_resolver = MlDsaCertResolver {
+            certs,
+            key: private_key,
+        };
+
+        // Create rustls server config
+        let mut rustls_config =
+            rustls::ServerConfig::builder_with_provider(std::sync::Arc::new(crypto_provider))
+                .with_protocol_versions(&[&rustls::version::TLS13])
+                .map_err(|e| CryptoError::TlsError(format!("Failed to set TLS version: {}", e)))?
+                .with_no_client_auth() // we accept any client
+                .with_cert_resolver(std::sync::Arc::new(cert_resolver));
+
+        // Set ALPN protocols
+        rustls_config.alpn_protocols = alpn_protocols;
+
+        Ok(rustls_config)
+    }
 }
 
 #[cfg(feature = "tls-ml-dsa-44")]
