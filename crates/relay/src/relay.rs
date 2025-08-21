@@ -105,19 +105,13 @@ use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tracing::{error, info};
 use zoe_wire_protocol::{
-    create_ed25519_server_config, extract_ed25519_public_key_from_cert, CryptoError, StreamPair,
-    TransportPrivateKey, TransportPublicKey,
+    connection::ed25519::extract_ed25519_public_key_from_cert,
+    connection::server::create_server_endpoint, CryptoError, StreamPair, TransportPrivateKey,
+    TransportPublicKey,
 };
-
-// ML-DSA imports for message layer authentication (always available)
-use ml_dsa::KeyGen;
-
 // ML-DSA-44 imports (only available with tls-ml-dsa-44 feature)
 #[cfg(feature = "tls-ml-dsa-44")]
 use ml_dsa::VerifyingKey;
-
-#[cfg(feature = "tls-ml-dsa-44")]
-use zoe_wire_protocol::{create_ml_dsa_44_server_config, extract_ml_dsa_44_public_key_from_cert};
 
 use crate::{Service, ServiceError, ServiceRouter};
 
@@ -249,13 +243,9 @@ impl<R: ServiceRouter + 'static> RelayServer<R> {
         };
 
         // Get the server's keypair for the handshake (message layer authentication)
-        // Note: This is different from transport security - we always use ML-DSA-44 for message authentication
         let server_challenge_keypair = match &server_keypair {
-            TransportPrivateKey::Ed25519 { .. } => {
-                // For Ed25519 transport, we need to generate or load an ML-DSA-44 key for message authentication
-                // For now, we'll use a default/generated key - this should be configurable in the future
-                let mut rng = rand::thread_rng();
-                zoe_wire_protocol::KeyPair::MlDsa44(Box::new(ml_dsa::MlDsa44::key_gen(&mut rng)))
+            TransportPrivateKey::Ed25519 { signing_key } => {
+                zoe_wire_protocol::KeyPair::Ed25519(Box::new(signing_key.clone()))
             }
             #[cfg(feature = "tls-ml-dsa-44")]
             TransportPrivateKey::MlDsa44 { keypair } => {
@@ -392,51 +382,6 @@ fn extract_client_transport_key(
     Err(CryptoError::ParseError(
         "No supported transport key found in client certificate".to_string(),
     ))
-}
-
-/// Create a QUIC server endpoint with TLS certificate (Ed25519 or ML-DSA-44)
-fn create_server_endpoint(
-    addr: SocketAddr,
-    server_keypair: &TransportPrivateKey,
-) -> Result<Endpoint> {
-    use quinn::ServerConfig;
-    use std::sync::Arc;
-
-    info!("🚀 Creating relay server endpoint on {}", addr);
-
-    let rustls_config = match server_keypair {
-        TransportPrivateKey::Ed25519 { signing_key } => {
-            info!(
-                "🔑 Server Ed25519 public key: {}",
-                hex::encode(signing_key.verifying_key().to_bytes())
-            );
-
-            // Create Ed25519 server configuration
-            create_ed25519_server_config(signing_key, "localhost")
-                .map_err(|e| anyhow::anyhow!("Failed to create Ed25519 server config: {}", e))?
-        }
-
-        #[cfg(feature = "tls-ml-dsa-44")]
-        TransportPrivateKey::MlDsa44 { keypair } => {
-            info!(
-                "🔑 Server ML-DSA-44 public key: {}",
-                hex::encode(keypair.verifying_key().encode())
-            );
-
-            // Create ML-DSA-44 server configuration using the wire protocol wrapper
-            create_ml_dsa_44_server_config(keypair, "localhost")
-                .map_err(|e| anyhow::anyhow!("Failed to create ML-DSA-44 server config: {}", e))?
-        }
-    };
-
-    let server_config = ServerConfig::with_crypto(Arc::new(
-        quinn::crypto::rustls::QuicServerConfig::try_from(rustls_config)?,
-    ));
-
-    let endpoint = Endpoint::server(server_config, addr)?;
-    info!("✅ Server endpoint ready on {}", addr);
-
-    Ok(endpoint)
 }
 
 #[cfg(test)]

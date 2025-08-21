@@ -144,7 +144,6 @@ pub mod streaming;
 
 pub use blob::*;
 pub use challenge::*;
-pub use connection::*;
 pub use crypto::*;
 pub use message::*;
 pub use relay::*;
@@ -164,18 +163,6 @@ pub use keys::*;
 pub use crypto::{
     generate_ml_dsa_from_mnemonic, recover_ml_dsa_from_mnemonic, MlDsaSelfEncryptedContent,
 };
-
-// Re-export TLS certificate functions (ML-DSA-44 for transport layer)
-// Re-export Ed25519 connection utilities (default)
-pub use connection::{
-    create_ed25519_server_config, extract_ed25519_public_key_from_cert,
-    generate_ed25519_cert_for_tls,
-};
-
-// Re-export ML-DSA-44 connection utilities (when feature is enabled)
-#[cfg(feature = "tls-ml-dsa-44")]
-pub use connection::{extract_ml_dsa_44_public_key_from_cert, generate_ml_dsa_44_cert_for_tls};
-
 // Re-export bip39 for mnemonic functionality
 pub use bip39;
 

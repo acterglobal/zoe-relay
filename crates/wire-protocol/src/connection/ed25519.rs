@@ -23,7 +23,7 @@ use crate::crypto::{CryptoError, Result};
 ///
 /// This creates a proper Ed25519 certificate where the Ed25519 public key
 /// is stored directly in the SubjectPublicKeyInfo field.
-pub fn generate_ed25519_cert_for_tls(
+pub(crate) fn generate_ed25519_cert_for_tls(
     ed25519_signing_key: &ed25519_dalek::SigningKey,
     subject_name: &str,
 ) -> Result<Vec<CertificateDer<'static>>> {
@@ -215,7 +215,7 @@ pub fn extract_ed25519_public_key_from_cert(
 ///
 /// # Returns
 /// A configured rustls ServerConfig ready for use with QUIC
-pub fn create_ed25519_server_config(
+pub(crate) fn create_ed25519_server_config(
     server_signing_key: &ed25519_dalek::SigningKey,
     hostname: &str,
 ) -> std::result::Result<rustls::ServerConfig, CryptoError> {

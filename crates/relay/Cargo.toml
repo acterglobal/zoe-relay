@@ -9,9 +9,14 @@ license = "MIT OR Apache-2.0"
 name = "zoe-relay"
 path = "src/main.rs"
 
+
+[features]
+default = []
+tls-ml-dsa-44 = ["zoe-wire-protocol/tls-ml-dsa-44"]  # Enable ML-DSA-44 transport security
+
 [dependencies]
 # Wire protocol for crypto utilities
-zoe-wire-protocol = { path = "../wire-protocol" }
+zoe-wire-protocol = { path = "../wire-protocol", features = ["server"] }
 zoe-message-store = { path = "../message-store" }
 zoe-blob-store = { path = "../blob-store" }
 
@@ -65,7 +70,3 @@ tracing-subscriber = { workspace = true }
 
 # Certificate generation for tests
 rcgen = "0.13"
-
-[features]
-default = []
-tls-ml-dsa-44 = ["zoe-wire-protocol/tls-ml-dsa-44"]  # Enable ML-DSA-44 transport security

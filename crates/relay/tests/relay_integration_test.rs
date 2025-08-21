@@ -8,13 +8,10 @@ use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::Notify;
 use tokio::time::{timeout, Duration};
-use zoe_wire_protocol::{
-    connection::client::create_client_endpoint,
-    KeyPair, TransportPrivateKey,
-};
 use zoe_relay::Service;
 use zoe_relay::{ConnectionInfo, RelayServer, ServiceRouter};
 use zoe_wire_protocol::StreamPair;
+use zoe_wire_protocol::{connection::client::create_client_endpoint, KeyPair, TransportPrivateKey};
 
 #[derive(Debug, thiserror::Error)]
 enum TestError {
@@ -230,7 +227,9 @@ async fn test_echo_service_integration() -> Result<()> {
         signing_key: ed25519_dalek::SigningKey::generate(&mut rand::rngs::OsRng),
     };
     // For this test, we'll create a dummy ML-DSA key since the test expects ML-DSA
-    let server_verifying_key = MlDsa44::key_gen(&mut rand::rngs::OsRng).verifying_key().clone();
+    let server_verifying_key = MlDsa44::key_gen(&mut rand::rngs::OsRng)
+        .verifying_key()
+        .clone();
     println!(
         "🔑 Server key: {}",
         hex::encode(server_verifying_key.encode())
@@ -369,7 +368,9 @@ async fn test_service_id_routing() -> Result<()> {
         signing_key: ed25519_dalek::SigningKey::generate(&mut rand::rngs::OsRng),
     };
     // For this test, we'll create a dummy ML-DSA key since the test expects ML-DSA
-    let server_verifying_key = MlDsa44::key_gen(&mut rand::rngs::OsRng).verifying_key().clone();
+    let server_verifying_key = MlDsa44::key_gen(&mut rand::rngs::OsRng)
+        .verifying_key()
+        .clone();
     let router = SingleServiceRouter::new();
 
     let server_addr: SocketAddr = "127.0.0.1:0".parse()?;
