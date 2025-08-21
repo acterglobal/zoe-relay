@@ -4,7 +4,7 @@ use futures::future::join;
 
 use ml_dsa::{KeyGen, MlDsa44, VerifyingKey};
 use std::net::SocketAddr;
-use std::sync::Arc;
+use std::sync::{Arc, Once};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::Notify;
 use tokio::time::{timeout, Duration};
@@ -12,6 +12,16 @@ use zoe_relay::Service;
 use zoe_relay::{ConnectionInfo, RelayServer, ServiceRouter};
 use zoe_wire_protocol::StreamPair;
 use zoe_wire_protocol::{connection::client::create_client_endpoint, KeyPair, TransportPrivateKey};
+
+// Initialize crypto provider for Rustls
+fn init_crypto_provider() {
+    static INIT: Once = Once::new();
+    INIT.call_once(|| {
+        rustls::crypto::aws_lc_rs::default_provider()
+            .install_default()
+            .expect("Failed to install crypto provider");
+    });
+}
 
 #[derive(Debug, thiserror::Error)]
 enum TestError {
@@ -219,6 +229,9 @@ impl TestClient {
 
 #[tokio::test]
 async fn test_echo_service_integration() -> Result<()> {
+    // Initialize Rustls crypto provider before any TLS operations
+    init_crypto_provider();
+    
     // Initialize tracing for better debugging
     let _ = tracing_subscriber::fmt::try_init();
 
@@ -292,6 +305,9 @@ async fn test_echo_service_integration() -> Result<()> {
 
 #[tokio::test]
 async fn test_service_id_routing() -> Result<()> {
+    // Initialize Rustls crypto provider before any TLS operations
+    init_crypto_provider();
+    
     // Test that a specific service ID is properly routed
     use std::sync::atomic::{AtomicU8, Ordering};
 

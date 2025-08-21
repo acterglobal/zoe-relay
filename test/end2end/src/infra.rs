@@ -7,6 +7,7 @@
 use anyhow::{Context, Result};
 use rand::{Rng, thread_rng};
 use std::net::SocketAddr;
+use std::sync::Once;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tempfile::TempDir;
 use tokio::time::timeout;
@@ -17,8 +18,18 @@ use zoe_message_store::RedisMessageStorage;
 use zoe_relay::{RelayServer, RelayServiceRouter};
 use zoe_wire_protocol::{
     KeyPair, Kind, Message, MessageFilters, MessageFull, Tag, TransportPrivateKey,
-    TransportPublicKey, VerifyingKey, generate_keypair,
+    TransportPublicKey,     VerifyingKey, generate_keypair,
 };
+
+// Initialize crypto provider for Rustls
+fn init_crypto_provider() {
+    static INIT: Once = Once::new();
+    INIT.call_once(|| {
+        rustls::crypto::aws_lc_rs::default_provider()
+            .install_default()
+            .expect("Failed to install crypto provider");
+    });
+}
 
 /// Test infrastructure for managing relay server and clients
 pub struct TestInfrastructure {
@@ -33,6 +44,9 @@ pub struct TestInfrastructure {
 impl TestInfrastructure {
     /// Set up complete testing infrastructure with relay server on random port
     pub async fn setup() -> Result<Self> {
+        // Initialize Rustls crypto provider before any TLS operations
+        init_crypto_provider();
+        
         // Initialize tracing for tests
         let _ = tracing_subscriber::fmt()
             .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
