@@ -3,6 +3,18 @@ use forward_compatible_enum::ForwardCompatibleEnum;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
+#[cfg(feature = "server")]
+pub mod server;
+
+#[cfg(feature = "client")]
+pub mod client;
+
+/// Default challenge timeout in seconds
+const DEFAULT_CHALLENGE_TIMEOUT_SECS: u64 = 30;
+
+/// Maximum size for challenge messages (to prevent DoS)
+const MAX_PACKAGE_SIZE: usize = 1024 * 1024; // Should be enough for challenge data
+
 /// Forward-compatible challenge system for connection-level authentication
 ///
 /// The Zoe protocol uses a challenge-response handshake immediately after QUIC connection

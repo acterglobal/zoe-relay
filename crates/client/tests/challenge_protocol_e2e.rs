@@ -3,7 +3,7 @@
 //! These tests verify that the challenge protocol works correctly between
 //! client and server using the wire protocol endpoints.
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use std::net::SocketAddr;
 use std::time::Duration;
 use tokio::time::{sleep, timeout};
@@ -24,21 +24,6 @@ fn init_crypto_provider() {
             .install_default()
             .expect("Failed to install crypto provider");
     });
-}
-
-/// Find a free port for testing
-async fn find_free_port() -> Result<SocketAddr> {
-    for _ in 0..10 {
-        let port: u16 = rand::random::<u16>() % 55000 + 10000;
-        let addr = SocketAddr::from(([127, 0, 0, 1], port));
-
-        // Try to bind to check if port is available
-        if let Ok(listener) = tokio::net::TcpListener::bind(addr).await {
-            drop(listener);
-            return Ok(addr);
-        }
-    }
-    anyhow::bail!("Could not find a free port after 10 attempts");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -195,9 +180,9 @@ async fn test_challenge_protocol_multiple_keys() -> Result<()> {
     let client_keypair2 = generate_keypair(&mut rand::thread_rng());
     let client_keypair3 = generate_keypair(&mut rand::thread_rng());
 
-    // Find free port and create server endpoint
-    let server_addr = find_free_port().await?;
-    let server_endpoint = create_server_endpoint(server_addr, &server_keypair)?;
+    let server_endpoint =
+        create_server_endpoint(SocketAddr::from(([127, 0, 0, 1], 0)), &server_keypair)?;
+    let server_addr = server_endpoint.local_addr().unwrap();
 
     // Create client endpoint
     let client_endpoint = create_client_endpoint(&server_public_key)?;
@@ -316,8 +301,9 @@ async fn test_challenge_protocol_invalid_signature() -> Result<()> {
     let client_keypair = generate_keypair(&mut rand::thread_rng());
 
     // Find free port and create server endpoint
-    let server_addr = find_free_port().await?;
-    let server_endpoint = create_server_endpoint(server_addr, &server_keypair)?;
+    let server_endpoint =
+        create_server_endpoint(SocketAddr::from(([127, 0, 0, 1], 0)), &server_keypair)?;
+    let server_addr = server_endpoint.local_addr().unwrap();
 
     // Create client endpoint with WRONG server public key
     let client_endpoint = create_client_endpoint(&wrong_server_public_key)?;
