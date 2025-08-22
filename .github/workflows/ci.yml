@@ -23,10 +23,10 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       
-      - name: Install SQLCipher
+      - name: Install SQLCipher and Protobuf
         run: |
           sudo apt-get update
-          sudo apt-get install -y libsqlcipher-dev
+          sudo apt-get install -y libsqlcipher-dev protobuf-compiler cmake
           
       - name: Check all targets
         run: cargo check --workspace --all-targets
@@ -41,10 +41,10 @@ jobs:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
       
-      - name: Install SQLCipher
+      - name: Install SQLCipher and Protobuf
         run: |
           sudo apt-get update
-          sudo apt-get install -y libsqlcipher-dev
+          sudo apt-get install -y libsqlcipher-dev protobuf-compiler cmake
       
       - name: Check formatting
         run: cargo fmt --all -- --check
@@ -92,10 +92,10 @@ jobs:
           components: llvm-tools-preview
       - uses: Swatinem/rust-cache@v2
       
-      - name: Install SQLCipher
+      - name: Install SQLCipher and Protobuf
         run: |
           sudo apt-get update
-          sudo apt-get install -y libsqlcipher-dev
+          sudo apt-get install -y libsqlcipher-dev protobuf-compiler cmake
       
       - name: Install cargo-nextest
         uses: taiki-e/install-action@v2
@@ -133,10 +133,10 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       
-      - name: Install SQLCipher
+      - name: Install SQLCipher and Protobuf
         run: |
           sudo apt-get update
-          sudo apt-get install -y libsqlcipher-dev
+          sudo apt-get install -y libsqlcipher-dev protobuf-compiler cmake
       
       - name: Build examples (excluding problematic crates)
         run: |
@@ -186,16 +186,23 @@ jobs:
           targets: ${{ matrix.target }}
       - uses: Swatinem/rust-cache@v2
       
-      - name: Install SQLCipher (Linux)
+      - name: Install SQLCipher and Protobuf (Linux)
         if: matrix.os == 'ubuntu-latest'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libsqlcipher-dev
+          sudo apt-get install -y libsqlcipher-dev protobuf-compiler cmake
           
-      - name: Install SQLCipher (macOS)
+      - name: Install SQLCipher and Protobuf (macOS)
         if: matrix.os == 'macos-latest'
         run: |
-          brew install sqlcipher
+          brew install sqlcipher protobuf cmake llvm
+          echo "/opt/homebrew/opt/llvm/bin" >> $GITHUB_PATH
+          echo "LIBCLANG_PATH=/opt/homebrew/opt/llvm/lib" >> $GITHUB_ENV
+          
+      - name: Install Protobuf and CMake (Windows)
+        if: matrix.os == 'windows-latest'
+        run: |
+          choco install protoc cmake
           
       - name: Install Android NDK (Linux)
         if: contains(matrix.target, 'android') && matrix.os == 'ubuntu-latest'
@@ -267,10 +274,10 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       
-      - name: Install SQLCipher
+      - name: Install SQLCipher and Protobuf
         run: |
           sudo apt-get update
-          sudo apt-get install -y libsqlcipher-dev
+          sudo apt-get install -y libsqlcipher-dev protobuf-compiler cmake
       
       - name: Check documentation
         run: cargo doc --workspace --no-deps --document-private-items
@@ -290,10 +297,10 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       
-      - name: Install SQLCipher
+      - name: Install SQLCipher and Protobuf
         run: |
           sudo apt-get update
-          sudo apt-get install -y libsqlcipher-dev
+          sudo apt-get install -y libsqlcipher-dev protobuf-compiler cmake
       
       - name: Generate documentation
         run: |
@@ -343,10 +350,10 @@ jobs:
           toolchain: ${{ matrix.rust }}
       - uses: Swatinem/rust-cache@v2
         
-      - name: Install SQLCipher
+      - name: Install SQLCipher and Protobuf
         run: |
           sudo apt-get update
-          sudo apt-get install -y libsqlcipher-dev
+          sudo apt-get install -y libsqlcipher-dev protobuf-compiler cmake
           
       - name: Install cargo-nextest
         uses: taiki-e/install-action@v2
