@@ -214,6 +214,11 @@ jobs:
           echo "ANDROID_NDK_HOME=$PWD/android-ndk-r25c" >> $GITHUB_ENV
           echo "NDK_HOME=$PWD/android-ndk-r25c" >> $GITHUB_ENV
           
+      - name: Install bindgen-cli (Linux)
+        if: contains(matrix.target, 'android') && matrix.os == 'ubuntu-latest'
+        run: |
+          cargo install --force --locked bindgen-cli
+          
       - name: Setup Android environment (Linux)
         if: contains(matrix.target, 'android') && matrix.os == 'ubuntu-latest'
         run: |
@@ -244,6 +249,13 @@ jobs:
           echo "AR_armv7_linux_androideabi=$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ar" >> $GITHUB_ENV
           echo "AR_x86_64_linux_android=$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ar" >> $GITHUB_ENV
           echo "AR_i686_linux_android=$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ar" >> $GITHUB_ENV
+          
+          # Set BINDGEN_EXTRA_CLANG_ARGS for aws-lc-sys to find Android headers
+          ANDROID_SYSROOT="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot"
+          echo "BINDGEN_EXTRA_CLANG_ARGS_aarch64_linux_android=--sysroot=$ANDROID_SYSROOT -I$ANDROID_SYSROOT/usr/include -I$ANDROID_SYSROOT/usr/include/aarch64-linux-android" >> $GITHUB_ENV
+          echo "BINDGEN_EXTRA_CLANG_ARGS_armv7_linux_androideabi=--sysroot=$ANDROID_SYSROOT -I$ANDROID_SYSROOT/usr/include -I$ANDROID_SYSROOT/usr/include/arm-linux-androideabi" >> $GITHUB_ENV
+          echo "BINDGEN_EXTRA_CLANG_ARGS_x86_64_linux_android=--sysroot=$ANDROID_SYSROOT -I$ANDROID_SYSROOT/usr/include -I$ANDROID_SYSROOT/usr/include/x86_64-linux-android" >> $GITHUB_ENV
+          echo "BINDGEN_EXTRA_CLANG_ARGS_i686_linux_android=--sysroot=$ANDROID_SYSROOT -I$ANDROID_SYSROOT/usr/include -I$ANDROID_SYSROOT/usr/include/i686-linux-android" >> $GITHUB_ENV
           
       - name: Install cross-compilation tools (Linux ARM)
         if: matrix.target == 'aarch64-unknown-linux-gnu'
