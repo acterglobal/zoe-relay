@@ -1145,3 +1145,1104 @@ impl GroupState {
         map
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::group::events::roles::GroupRole;
+    use crate::group::events::{GroupActivityEvent, GroupInfo, GroupKeyInfo, GroupSettings};
+    use crate::{IdentityInfo, IdentityType, Metadata, Permission};
+
+    use rand::rngs::OsRng;
+    use zoe_wire_protocol::{Hash, VerifyingKey, generate_keypair};
+
+    // Helper functions for creating test data
+    fn create_test_verifying_key() -> VerifyingKey {
+        let keypair = generate_keypair(&mut OsRng);
+        keypair.public_key()
+    }
+
+    fn create_test_hash(seed: u8) -> Hash {
+        Hash::from([seed; 32])
+    }
+
+    fn create_test_group_key_info() -> GroupKeyInfo {
+        GroupKeyInfo::new_chacha20_poly1305(
+            vec![1, 2, 3, 4],
+            zoe_wire_protocol::crypto::KeyDerivationInfo {
+                method: zoe_wire_protocol::crypto::KeyDerivationMethod::Bip39Argon2,
+                salt: vec![1, 2, 3, 4, 5, 6, 7, 8],
+                argon2_params: zoe_wire_protocol::crypto::Argon2Params::default(),
+                context: "test-group-key".to_string(),
+            },
+        )
+    }
+
+    fn create_test_group_info() -> GroupInfo {
+        GroupInfo {
+            name: "Test Group".to_string(),
+            settings: GroupSettings::default(),
+            key_info: create_test_group_key_info(),
+            metadata: vec![
+                Metadata::Description("Test group description".to_string()),
+                Metadata::Generic {
+                    key: "category".to_string(),
+                    value: "test".to_string(),
+                },
+            ],
+        }
+    }
+
+    // GroupMembership Tests
+    #[test]
+    fn test_group_membership_new() {
+        let membership = GroupMembership::new();
+        assert!(membership.identity_info.is_empty());
+        assert!(membership.identity_roles.is_empty());
+    }
+
+    #[test]
+    fn test_group_membership_default() {
+        let membership = GroupMembership::default();
+        assert!(membership.identity_info.is_empty());
+        assert!(membership.identity_roles.is_empty());
+    }
+
+    #[test]
+    fn test_group_membership_is_authorized() {
+        let membership = GroupMembership::new();
+        let key = create_test_verifying_key();
+
+        // Test authorization for key identity
+        let key_identity = IdentityRef::Key(key.clone());
+        assert!(membership.is_authorized(&key, &key_identity));
+
+        // Test authorization for alias identity
+        let alias_identity = IdentityRef::Alias {
+            key: key.clone(),
+            alias: "test_alias".to_string(),
+        };
+        assert!(membership.is_authorized(&key, &alias_identity));
+
+        // Test authorization failure for different key
+        let other_key = create_test_verifying_key();
+        let other_identity = IdentityRef::Key(other_key);
+        assert!(!membership.is_authorized(&key, &other_identity));
+    }
+
+    #[test]
+    fn test_group_membership_get_role() {
+        let mut membership = GroupMembership::new();
+        let key = create_test_verifying_key();
+        let identity = IdentityRef::Key(key);
+
+        // Test default role
+        assert_eq!(membership.get_role(&identity), Some(GroupRole::Member));
+
+        // Test explicit role assignment
+        membership
+            .identity_roles
+            .insert(identity.clone(), GroupRole::Admin);
+        assert_eq!(membership.get_role(&identity), Some(GroupRole::Admin));
+    }
+
+    #[test]
+    fn test_group_membership_get_available_identities() {
+        let membership = GroupMembership::new();
+        let key = create_test_verifying_key();
+
+        // Currently returns empty set due to ML-DSA transition
+        let identities = membership.get_available_identities(&key);
+        assert!(identities.is_empty());
+    }
+
+    #[test]
+    fn test_group_membership_get_effective_role() {
+        let membership = GroupMembership::new();
+        let key = create_test_verifying_key();
+
+        // Currently returns default member role due to ML-DSA transition
+        let role = membership.get_effective_role(&key, &None);
+        assert_eq!(role, Some(GroupRole::Member));
+
+        let role_with_alias = membership.get_effective_role(&key, &Some("alias".to_string()));
+        assert_eq!(role_with_alias, Some(GroupRole::Member));
+    }
+
+    #[test]
+    fn test_group_membership_get_display_name() {
+        let membership = GroupMembership::new();
+        let key = create_test_verifying_key();
+
+        // Test main identity display name
+        let main_type = IdentityType::Main;
+        let display_name = membership.get_display_name(&key, &main_type);
+        assert!(display_name.starts_with("ML-DSA Key:"));
+
+        // Test alias identity display name
+        let alias_type = IdentityType::Alias {
+            alias_id: "test_alias".to_string(),
+        };
+        let alias_display_name = membership.get_display_name(&key, &alias_type);
+        assert_eq!(alias_display_name, "test_alias");
+    }
+
+    #[test]
+    fn test_group_membership_has_identity_info() {
+        let membership = GroupMembership::new();
+        let key = create_test_verifying_key();
+        let identity_type = IdentityType::Main;
+
+        // Currently returns false due to ML-DSA transition
+        assert!(!membership.has_identity_info(&key, &identity_type));
+    }
+
+    // GroupMember Tests
+    #[test]
+    fn test_group_member_creation() {
+        let key = create_test_verifying_key();
+        let identity_ref = IdentityRef::Key(key);
+        let timestamp = 1234567890;
+
+        let member = GroupMember {
+            key: identity_ref.clone(),
+            role: GroupRole::Member,
+            joined_at: timestamp,
+            last_active: timestamp,
+            metadata: vec![],
+        };
+
+        assert_eq!(member.key, identity_ref);
+        assert_eq!(member.role, GroupRole::Member);
+        assert_eq!(member.joined_at, timestamp);
+        assert_eq!(member.last_active, timestamp);
+        assert!(member.metadata.is_empty());
+    }
+
+    #[test]
+    fn test_group_member_with_metadata() {
+        let key = create_test_verifying_key();
+        let identity_ref = IdentityRef::Key(key);
+
+        let metadata = vec![
+            Metadata::Generic {
+                key: "department".to_string(),
+                value: "engineering".to_string(),
+            },
+            Metadata::Email("user@example.com".to_string()),
+        ];
+
+        let member = GroupMember {
+            key: identity_ref,
+            role: GroupRole::Admin,
+            joined_at: 1000,
+            last_active: 2000,
+            metadata: metadata.clone(),
+        };
+
+        assert_eq!(member.metadata, metadata);
+        assert_eq!(member.role, GroupRole::Admin);
+    }
+
+    // GroupState Tests
+    #[test]
+    fn test_group_state_new() {
+        let creator_key = create_test_verifying_key();
+        let group_id = create_test_hash(1);
+        let timestamp = 1234567890;
+
+        let metadata = vec![
+            Metadata::Description("Test group".to_string()),
+            Metadata::Generic {
+                key: "category".to_string(),
+                value: "test".to_string(),
+            },
+        ];
+
+        let group_state = GroupState::new(
+            group_id,
+            "Test Group".to_string(),
+            GroupSettings::default(),
+            metadata.clone(),
+            creator_key.clone(),
+            timestamp,
+        );
+
+        assert_eq!(group_state.group_id, group_id);
+        assert_eq!(group_state.name, "Test Group");
+        assert_eq!(group_state.metadata, metadata);
+        assert_eq!(group_state.members.len(), 1);
+        assert_eq!(group_state.version, 1);
+        assert_eq!(group_state.last_event_timestamp, timestamp);
+        assert_eq!(group_state.event_history.len(), 1);
+        assert_eq!(group_state.event_history[0], group_id);
+
+        // Verify creator is added as owner
+        assert!(group_state.is_member(&creator_key));
+        assert_eq!(
+            group_state.get_member_role(&creator_key),
+            Some(&GroupRole::Owner)
+        );
+    }
+
+    #[test]
+    fn test_group_state_from_group_info() {
+        let creator_key = create_test_verifying_key();
+        let group_id = create_test_hash(2);
+        let group_info = create_test_group_info();
+        let timestamp = 1234567890;
+
+        let group_state =
+            GroupState::from_group_info(group_id, &group_info, creator_key.clone(), timestamp);
+
+        assert_eq!(group_state.group_id, group_id);
+        assert_eq!(group_state.name, group_info.name);
+        assert_eq!(group_state.settings, group_info.settings);
+        assert_eq!(group_state.metadata, group_info.metadata);
+        assert!(group_state.is_member(&creator_key));
+    }
+
+    #[test]
+    fn test_group_state_to_group_info() {
+        let creator_key = create_test_verifying_key();
+        let group_id = create_test_hash(3);
+        let group_state = GroupState::new(
+            group_id,
+            "Test Group".to_string(),
+            GroupSettings::default(),
+            vec![],
+            creator_key,
+            1000,
+        );
+
+        let key_info = create_test_group_key_info();
+        let group_info = group_state.to_group_info(key_info.clone());
+
+        assert_eq!(group_info.name, group_state.name);
+        assert_eq!(group_info.settings, group_state.settings);
+        assert_eq!(group_info.key_info, key_info);
+        assert_eq!(group_info.metadata, group_state.metadata);
+    }
+
+    #[test]
+    fn test_group_state_is_member() {
+        let creator_key = create_test_verifying_key();
+        let other_key = create_test_verifying_key();
+        let group_state = GroupState::new(
+            create_test_hash(4),
+            "Test".to_string(),
+            GroupSettings::default(),
+            vec![],
+            creator_key.clone(),
+            1000,
+        );
+
+        assert!(group_state.is_member(&creator_key));
+        assert!(!group_state.is_member(&other_key));
+    }
+
+    #[test]
+    fn test_group_state_get_member_role() {
+        let creator_key = create_test_verifying_key();
+        let group_state = GroupState::new(
+            create_test_hash(5),
+            "Test".to_string(),
+            GroupSettings::default(),
+            vec![],
+            creator_key.clone(),
+            1000,
+        );
+
+        assert_eq!(
+            group_state.get_member_role(&creator_key),
+            Some(&GroupRole::Owner)
+        );
+
+        let non_member_key = create_test_verifying_key();
+        assert_eq!(group_state.get_member_role(&non_member_key), None);
+    }
+
+    #[test]
+    fn test_group_state_get_members() {
+        let creator_key = create_test_verifying_key();
+        let group_state = GroupState::new(
+            create_test_hash(6),
+            "Test".to_string(),
+            GroupSettings::default(),
+            vec![],
+            creator_key.clone(),
+            1000,
+        );
+
+        let members = group_state.get_members();
+        assert_eq!(members.len(), 1);
+
+        let creator_ref = IdentityRef::Key(creator_key);
+        assert!(members.contains_key(&creator_ref));
+    }
+
+    #[test]
+    fn test_group_state_description() {
+        let creator_key = create_test_verifying_key();
+
+        // Test with description
+        let metadata_with_desc = vec![
+            Metadata::Description("Test description".to_string()),
+            Metadata::Generic {
+                key: "other".to_string(),
+                value: "value".to_string(),
+            },
+        ];
+
+        let group_state_with_desc = GroupState::new(
+            create_test_hash(7),
+            "Test".to_string(),
+            GroupSettings::default(),
+            metadata_with_desc,
+            creator_key.clone(),
+            1000,
+        );
+
+        assert_eq!(
+            group_state_with_desc.description(),
+            Some("Test description".to_string())
+        );
+
+        // Test without description
+        let metadata_no_desc = vec![Metadata::Generic {
+            key: "other".to_string(),
+            value: "value".to_string(),
+        }];
+
+        let group_state_no_desc = GroupState::new(
+            create_test_hash(8),
+            "Test".to_string(),
+            GroupSettings::default(),
+            metadata_no_desc,
+            creator_key,
+            1000,
+        );
+
+        assert_eq!(group_state_no_desc.description(), None);
+    }
+
+    #[test]
+    fn test_group_state_generic_metadata() {
+        let creator_key = create_test_verifying_key();
+
+        let metadata = vec![
+            Metadata::Description("Not included".to_string()),
+            Metadata::Generic {
+                key: "category".to_string(),
+                value: "test".to_string(),
+            },
+            Metadata::Generic {
+                key: "priority".to_string(),
+                value: "high".to_string(),
+            },
+        ];
+
+        let group_state = GroupState::new(
+            create_test_hash(9),
+            "Test".to_string(),
+            GroupSettings::default(),
+            metadata,
+            creator_key,
+            1000,
+        );
+
+        let generic_meta = group_state.generic_metadata();
+        assert_eq!(generic_meta.len(), 2);
+        assert_eq!(generic_meta.get("category"), Some(&"test".to_string()));
+        assert_eq!(generic_meta.get("priority"), Some(&"high".to_string()));
+        assert!(!generic_meta.contains_key("description"));
+    }
+
+    // Event Processing Tests
+    #[test]
+    fn test_group_state_apply_activity_event() {
+        let creator_key = create_test_verifying_key();
+        let new_member_key = create_test_verifying_key();
+        let mut group_state = GroupState::new(
+            create_test_hash(10),
+            "Test".to_string(),
+            GroupSettings::default(),
+            vec![],
+            creator_key,
+            1000,
+        );
+
+        let activity_event = GroupActivityEvent::Activity(());
+        let event_id = create_test_hash(11);
+
+        // New member announces participation
+        let result =
+            group_state.apply_event(&activity_event, event_id, new_member_key.clone(), 1001);
+
+        assert!(result.is_ok());
+        assert!(group_state.is_member(&new_member_key));
+        assert_eq!(group_state.members.len(), 2);
+        assert_eq!(group_state.version, 2);
+        assert_eq!(group_state.last_event_timestamp, 1001);
+        assert_eq!(group_state.event_history.len(), 2);
+        assert_eq!(group_state.event_history[1], event_id);
+
+        // Verify new member has default role
+        assert_eq!(
+            group_state.get_member_role(&new_member_key),
+            Some(&GroupRole::Member)
+        );
+    }
+
+    #[test]
+    fn test_group_state_apply_update_group_event() {
+        let creator_key = create_test_verifying_key();
+        let mut group_state = GroupState::new(
+            create_test_hash(12),
+            "Original Name".to_string(),
+            GroupSettings::default(),
+            vec![],
+            creator_key.clone(),
+            1000,
+        );
+
+        let new_group_info = GroupInfo {
+            name: "Updated Name".to_string(),
+            settings: GroupSettings::default(),
+            key_info: create_test_group_key_info(),
+            metadata: vec![Metadata::Description("Updated description".to_string())],
+        };
+
+        let update_event: GroupActivityEvent<()> =
+            GroupActivityEvent::UpdateGroup(new_group_info.clone());
+        let event_id = create_test_hash(13);
+
+        let result = group_state.apply_event(&update_event, event_id, creator_key.clone(), 1001);
+
+        assert!(result.is_ok());
+        assert_eq!(group_state.name, "Updated Name");
+        assert_eq!(group_state.settings, new_group_info.settings);
+        assert_eq!(group_state.metadata, new_group_info.metadata);
+        assert_eq!(group_state.version, 2);
+    }
+
+    #[test]
+    fn test_group_state_apply_leave_group_event() {
+        let creator_key = create_test_verifying_key();
+        let member_key = create_test_verifying_key();
+        let mut group_state = GroupState::new(
+            create_test_hash(14),
+            "Test".to_string(),
+            GroupSettings::default(),
+            vec![],
+            creator_key,
+            1000,
+        );
+
+        // Add member first
+        let activity_event = GroupActivityEvent::Activity(());
+        group_state
+            .apply_event(
+                &activity_event,
+                create_test_hash(15),
+                member_key.clone(),
+                1001,
+            )
+            .unwrap();
+
+        assert!(group_state.is_member(&member_key));
+        assert_eq!(group_state.members.len(), 2);
+
+        // Member leaves
+        let leave_event: GroupActivityEvent<()> = GroupActivityEvent::LeaveGroup {
+            message: Some("Goodbye".to_string()),
+        };
+        let result =
+            group_state.apply_event(&leave_event, create_test_hash(16), member_key.clone(), 1002);
+
+        assert!(result.is_ok());
+        assert!(!group_state.is_member(&member_key));
+        assert_eq!(group_state.members.len(), 1);
+        assert_eq!(group_state.version, 3);
+    }
+
+    #[test]
+    fn test_group_state_apply_assign_role_event() {
+        let creator_key = create_test_verifying_key();
+        let member_key = create_test_verifying_key();
+        let mut group_state = GroupState::new(
+            create_test_hash(17),
+            "Test".to_string(),
+            GroupSettings::default(),
+            vec![],
+            creator_key.clone(),
+            1000,
+        );
+
+        // Add member first
+        let activity_event = GroupActivityEvent::Activity(());
+        group_state
+            .apply_event(
+                &activity_event,
+                create_test_hash(18),
+                member_key.clone(),
+                1001,
+            )
+            .unwrap();
+
+        // Assign admin role
+        let target_identity = IdentityRef::Key(member_key.clone());
+        let assign_role_event: GroupActivityEvent<()> = GroupActivityEvent::AssignRole {
+            target: target_identity,
+            role: GroupRole::Admin,
+        };
+
+        let result =
+            group_state.apply_event(&assign_role_event, create_test_hash(19), creator_key, 1002);
+
+        assert!(result.is_ok());
+        assert_eq!(
+            group_state.get_member_role(&member_key),
+            Some(&GroupRole::Admin)
+        );
+        assert_eq!(group_state.version, 3);
+    }
+
+    #[test]
+    fn test_group_state_apply_event_timestamp_ordering() {
+        let creator_key = create_test_verifying_key();
+        let mut group_state = GroupState::new(
+            create_test_hash(20),
+            "Test".to_string(),
+            GroupSettings::default(),
+            vec![],
+            creator_key.clone(),
+            1000,
+        );
+
+        let activity_event = GroupActivityEvent::Activity(());
+
+        // Try to apply event with older timestamp
+        let result = group_state.apply_event(
+            &activity_event,
+            create_test_hash(21),
+            creator_key,
+            999, // Older than creation timestamp
+        );
+
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            GroupStateError::StateTransition(msg) => {
+                assert!(msg.contains("older than last processed timestamp"));
+            }
+            _ => panic!("Expected StateTransition error"),
+        }
+    }
+
+    // Permission Tests
+    #[test]
+    fn test_group_state_check_permission_success() {
+        let creator_key = create_test_verifying_key();
+        let group_state = GroupState::new(
+            create_test_hash(22),
+            "Test".to_string(),
+            GroupSettings::default(),
+            vec![],
+            creator_key.clone(),
+            1000,
+        );
+
+        // Owner should have all permissions
+        let result = group_state.check_permission(&creator_key, &Permission::OwnerOnly);
+        assert!(result.is_ok());
+
+        let result = group_state.check_permission(&creator_key, &Permission::AdminOrAbove);
+        assert!(result.is_ok());
+
+        let result = group_state.check_permission(&creator_key, &Permission::AllMembers);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_group_state_check_permission_denied() {
+        let creator_key = create_test_verifying_key();
+        let member_key = create_test_verifying_key();
+        let mut group_state = GroupState::new(
+            create_test_hash(23),
+            "Test".to_string(),
+            GroupSettings::default(),
+            vec![],
+            creator_key,
+            1000,
+        );
+
+        // Add member
+        let activity_event = GroupActivityEvent::Activity(());
+        group_state
+            .apply_event(
+                &activity_event,
+                create_test_hash(24),
+                member_key.clone(),
+                1001,
+            )
+            .unwrap();
+
+        // Member should not have owner-only permissions
+        let result = group_state.check_permission(&member_key, &Permission::OwnerOnly);
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            GroupStateError::PermissionDenied(msg) => {
+                assert!(msg.contains("does not have required permission"));
+            }
+            _ => panic!("Expected PermissionDenied error"),
+        }
+
+        // But should have all-members permissions
+        let result = group_state.check_permission(&member_key, &Permission::AllMembers);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_group_state_check_permission_member_not_found() {
+        let creator_key = create_test_verifying_key();
+        let non_member_key = create_test_verifying_key();
+        let group_state = GroupState::new(
+            create_test_hash(25),
+            "Test".to_string(),
+            GroupSettings::default(),
+            vec![],
+            creator_key,
+            1000,
+        );
+
+        let result = group_state.check_permission(&non_member_key, &Permission::AllMembers);
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            GroupStateError::MemberNotFound { .. } => {}
+            _ => panic!("Expected MemberNotFound error"),
+        }
+    }
+
+    // Error Handling Tests
+    #[test]
+    fn test_group_state_error_display() {
+        let error = GroupStateError::PermissionDenied("Test permission denied".to_string());
+        assert_eq!(
+            error.to_string(),
+            "Permission denied: Test permission denied"
+        );
+
+        let error = GroupStateError::MemberNotFound {
+            member: "test_member".to_string(),
+            group: "test_group".to_string(),
+        };
+        assert_eq!(
+            error.to_string(),
+            "Member not found: test_member in group test_group"
+        );
+
+        let error = GroupStateError::StateTransition("Test transition error".to_string());
+        assert_eq!(
+            error.to_string(),
+            "State transition error: Test transition error"
+        );
+
+        let error = GroupStateError::InvalidOperation("Test invalid operation".to_string());
+        assert_eq!(
+            error.to_string(),
+            "Invalid operation: Test invalid operation"
+        );
+    }
+
+    #[test]
+    fn test_group_state_handle_leave_group_member_not_found() {
+        let creator_key = create_test_verifying_key();
+        let non_member_key = create_test_verifying_key();
+        let mut group_state = GroupState::new(
+            create_test_hash(26),
+            "Test".to_string(),
+            GroupSettings::default(),
+            vec![],
+            creator_key,
+            1000,
+        );
+
+        let leave_event: GroupActivityEvent<()> = GroupActivityEvent::LeaveGroup { message: None };
+        let result =
+            group_state.apply_event(&leave_event, create_test_hash(27), non_member_key, 1001);
+
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            GroupStateError::MemberNotFound { .. } => {}
+            _ => panic!("Expected MemberNotFound error"),
+        }
+    }
+
+    #[test]
+    fn test_group_state_handle_role_assignment_member_not_found() {
+        let creator_key = create_test_verifying_key();
+        let non_member_key = create_test_verifying_key();
+        let mut group_state = GroupState::new(
+            create_test_hash(28),
+            "Test".to_string(),
+            GroupSettings::default(),
+            vec![],
+            creator_key.clone(),
+            1000,
+        );
+
+        let target_identity = IdentityRef::Key(non_member_key);
+        let assign_role_event: GroupActivityEvent<()> = GroupActivityEvent::AssignRole {
+            target: target_identity,
+            role: GroupRole::Admin,
+        };
+
+        let result =
+            group_state.apply_event(&assign_role_event, create_test_hash(29), creator_key, 1001);
+
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            GroupStateError::MemberNotFound { .. } => {}
+            _ => panic!("Expected MemberNotFound error"),
+        }
+    }
+
+    #[test]
+    fn test_group_state_handle_role_assignment_permission_denied() {
+        let creator_key = create_test_verifying_key();
+        let member_key = create_test_verifying_key();
+        let target_key = create_test_verifying_key();
+        let mut group_state = GroupState::new(
+            create_test_hash(30),
+            "Test".to_string(),
+            GroupSettings::default(),
+            vec![],
+            creator_key,
+            1000,
+        );
+
+        // Add both members
+        let activity_event = GroupActivityEvent::Activity(());
+        group_state
+            .apply_event(
+                &activity_event,
+                create_test_hash(31),
+                member_key.clone(),
+                1001,
+            )
+            .unwrap();
+        group_state
+            .apply_event(
+                &activity_event,
+                create_test_hash(32),
+                target_key.clone(),
+                1002,
+            )
+            .unwrap();
+
+        // Regular member tries to assign role (should fail)
+        let target_identity = IdentityRef::Key(target_key);
+        let assign_role_event: GroupActivityEvent<()> = GroupActivityEvent::AssignRole {
+            target: target_identity,
+            role: GroupRole::Admin,
+        };
+
+        let result = group_state.apply_event(
+            &assign_role_event,
+            create_test_hash(33),
+            member_key, // Regular member, not owner
+            1003,
+        );
+
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            GroupStateError::PermissionDenied(_) => {}
+            _ => panic!("Expected PermissionDenied error"),
+        }
+    }
+
+    // Serialization Tests
+    #[test]
+    fn test_postcard_serialization_group_membership() {
+        let mut membership = GroupMembership::new();
+        let key = create_test_verifying_key();
+        let identity = IdentityRef::Key(key);
+
+        membership
+            .identity_roles
+            .insert(identity.clone(), GroupRole::Admin);
+        membership.identity_info.insert(
+            identity,
+            IdentityInfo {
+                display_name: "Test User".to_string(),
+                metadata: vec![Metadata::Email("test@example.com".to_string())],
+            },
+        );
+
+        let serialized = postcard::to_stdvec(&membership).expect("Failed to serialize");
+        let deserialized: GroupMembership =
+            postcard::from_bytes(&serialized).expect("Failed to deserialize");
+
+        assert_eq!(
+            membership.identity_roles.len(),
+            deserialized.identity_roles.len()
+        );
+        assert_eq!(
+            membership.identity_info.len(),
+            deserialized.identity_info.len()
+        );
+    }
+
+    #[test]
+    fn test_postcard_serialization_group_member() {
+        let key = create_test_verifying_key();
+        let identity_ref = IdentityRef::Key(key);
+
+        let member = GroupMember {
+            key: identity_ref,
+            role: GroupRole::Moderator,
+            joined_at: 1234567890,
+            last_active: 1234567900,
+            metadata: vec![Metadata::Generic {
+                key: "department".to_string(),
+                value: "engineering".to_string(),
+            }],
+        };
+
+        let serialized = postcard::to_stdvec(&member).expect("Failed to serialize");
+        let deserialized: GroupMember =
+            postcard::from_bytes(&serialized).expect("Failed to deserialize");
+
+        assert_eq!(member.role, deserialized.role);
+        assert_eq!(member.joined_at, deserialized.joined_at);
+        assert_eq!(member.last_active, deserialized.last_active);
+        assert_eq!(member.metadata, deserialized.metadata);
+    }
+
+    #[test]
+    fn test_postcard_serialization_group_state() {
+        let creator_key = create_test_verifying_key();
+        let group_state = GroupState::new(
+            create_test_hash(34),
+            "Serialization Test Group".to_string(),
+            GroupSettings::default(),
+            vec![
+                Metadata::Description("Test serialization".to_string()),
+                Metadata::Generic {
+                    key: "test".to_string(),
+                    value: "value".to_string(),
+                },
+            ],
+            creator_key,
+            1234567890,
+        );
+
+        let serialized = postcard::to_stdvec(&group_state).expect("Failed to serialize");
+        let deserialized: GroupState =
+            postcard::from_bytes(&serialized).expect("Failed to deserialize");
+
+        assert_eq!(group_state.group_id, deserialized.group_id);
+        assert_eq!(group_state.name, deserialized.name);
+        assert_eq!(group_state.settings, deserialized.settings);
+        assert_eq!(group_state.metadata, deserialized.metadata);
+        assert_eq!(group_state.members.len(), deserialized.members.len());
+        assert_eq!(group_state.version, deserialized.version);
+        assert_eq!(
+            group_state.last_event_timestamp,
+            deserialized.last_event_timestamp
+        );
+        assert_eq!(group_state.event_history, deserialized.event_history);
+    }
+
+    // Integration Tests
+    #[test]
+    fn test_group_state_full_lifecycle() {
+        let creator_key = create_test_verifying_key();
+        let member1_key = create_test_verifying_key();
+        let member2_key = create_test_verifying_key();
+
+        // Create group
+        let mut group_state = GroupState::new(
+            create_test_hash(35),
+            "Lifecycle Test Group".to_string(),
+            GroupSettings::default(),
+            vec![Metadata::Description("Full lifecycle test".to_string())],
+            creator_key.clone(),
+            1000,
+        );
+
+        assert_eq!(group_state.members.len(), 1);
+        assert_eq!(group_state.version, 1);
+
+        // Member 1 joins
+        let activity_event = GroupActivityEvent::Activity(());
+        group_state
+            .apply_event(
+                &activity_event,
+                create_test_hash(36),
+                member1_key.clone(),
+                1001,
+            )
+            .unwrap();
+
+        assert_eq!(group_state.members.len(), 2);
+        assert_eq!(group_state.version, 2);
+        assert!(group_state.is_member(&member1_key));
+
+        // Member 2 joins
+        group_state
+            .apply_event(
+                &activity_event,
+                create_test_hash(37),
+                member2_key.clone(),
+                1002,
+            )
+            .unwrap();
+
+        assert_eq!(group_state.members.len(), 3);
+        assert_eq!(group_state.version, 3);
+
+        // Creator promotes member1 to admin
+        let promote_event: GroupActivityEvent<()> = GroupActivityEvent::AssignRole {
+            target: IdentityRef::Key(member1_key.clone()),
+            role: GroupRole::Admin,
+        };
+        group_state
+            .apply_event(
+                &promote_event,
+                create_test_hash(38),
+                creator_key.clone(),
+                1003,
+            )
+            .unwrap();
+
+        assert_eq!(
+            group_state.get_member_role(&member1_key),
+            Some(&GroupRole::Admin)
+        );
+        assert_eq!(group_state.version, 4);
+
+        // Creator (owner) promotes member2 to moderator (only owners can assign roles by default)
+        let promote_event2: GroupActivityEvent<()> = GroupActivityEvent::AssignRole {
+            target: IdentityRef::Key(member2_key.clone()),
+            role: GroupRole::Moderator,
+        };
+        group_state
+            .apply_event(
+                &promote_event2,
+                create_test_hash(39),
+                creator_key.clone(),
+                1004,
+            )
+            .unwrap();
+
+        assert_eq!(
+            group_state.get_member_role(&member2_key),
+            Some(&GroupRole::Moderator)
+        );
+        assert_eq!(group_state.version, 5);
+
+        // Update group info
+        let new_group_info = GroupInfo {
+            name: "Updated Lifecycle Test Group".to_string(),
+            settings: GroupSettings::default(),
+            key_info: create_test_group_key_info(),
+            metadata: vec![
+                Metadata::Description("Updated description".to_string()),
+                Metadata::Generic {
+                    key: "status".to_string(),
+                    value: "active".to_string(),
+                },
+            ],
+        };
+
+        let update_event: GroupActivityEvent<()> =
+            GroupActivityEvent::UpdateGroup(new_group_info.clone());
+        group_state
+            .apply_event(
+                &update_event,
+                create_test_hash(40),
+                creator_key.clone(),
+                1005,
+            )
+            .unwrap();
+
+        assert_eq!(group_state.name, "Updated Lifecycle Test Group");
+        assert_eq!(group_state.metadata, new_group_info.metadata);
+        assert_eq!(group_state.version, 6);
+
+        // Member2 leaves
+        let leave_event: GroupActivityEvent<()> = GroupActivityEvent::LeaveGroup {
+            message: Some("Goodbye!".to_string()),
+        };
+        group_state
+            .apply_event(
+                &leave_event,
+                create_test_hash(41),
+                member2_key.clone(),
+                1006,
+            )
+            .unwrap();
+
+        assert!(!group_state.is_member(&member2_key));
+        assert_eq!(group_state.members.len(), 2);
+        assert_eq!(group_state.version, 7);
+
+        // Verify final state
+        assert_eq!(group_state.event_history.len(), 7);
+        assert_eq!(group_state.last_event_timestamp, 1006);
+        assert!(group_state.is_member(&creator_key));
+        assert!(group_state.is_member(&member1_key));
+        assert!(!group_state.is_member(&member2_key));
+    }
+
+    #[test]
+    fn test_group_state_concurrent_member_activity() {
+        let creator_key = create_test_verifying_key();
+        let member_key = create_test_verifying_key();
+        let mut group_state = GroupState::new(
+            create_test_hash(42),
+            "Concurrent Test".to_string(),
+            GroupSettings::default(),
+            vec![],
+            creator_key,
+            1000,
+        );
+
+        // Member joins
+        let activity_event = GroupActivityEvent::Activity(());
+        group_state
+            .apply_event(
+                &activity_event,
+                create_test_hash(43),
+                member_key.clone(),
+                1001,
+            )
+            .unwrap();
+
+        let initial_last_active = group_state
+            .members
+            .get(&IdentityRef::Key(member_key.clone()))
+            .unwrap()
+            .last_active;
+        assert_eq!(initial_last_active, 1001);
+
+        // Member is active again (should update last_active)
+        group_state
+            .apply_event(
+                &activity_event,
+                create_test_hash(44),
+                member_key.clone(),
+                1010,
+            )
+            .unwrap();
+
+        let updated_last_active = group_state
+            .members
+            .get(&IdentityRef::Key(member_key))
+            .unwrap()
+            .last_active;
+        assert_eq!(updated_last_active, 1010);
+        assert_eq!(group_state.members.len(), 2); // Should still be 2 members
+    }
+}
