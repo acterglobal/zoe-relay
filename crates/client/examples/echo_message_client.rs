@@ -24,8 +24,8 @@ use tokio::time::timeout;
 use tracing::{error, info, warn};
 use zoe_client::{ClientError, MessagesService, MessagesStream, RelayClient};
 use zoe_wire_protocol::{
-    Content, Hash, KeyPair, Kind, Message, MessageFilters, MessageFull, StreamMessage,
-    SubscriptionConfig, Tag, VerifyingKey, generate_keypair,
+    KeyPair, Kind, Message, MessageFilters, MessageFull, StreamMessage, SubscriptionConfig,
+    VerifyingKey, generate_keypair,
 };
 
 /// Run the complete message echo test

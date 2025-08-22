@@ -827,11 +827,8 @@ impl GroupState {
                 self.metadata = group_info.metadata.clone();
             }
 
-            GroupActivityEvent::AssignRole { target: _, role: _ } => {
-                // For now, skip role assignment for Ed25519-based identities when sender is ML-DSA
-                // This is a temporary compatibility limitation during the transition
-                // TODO: Implement proper key type conversion or dual-key support
-                // Note: Skipping role assignment due to key type mismatch during ML-DSA transition
+            GroupActivityEvent::AssignRole { target, role } => {
+                self.handle_role_assignment(sender, target, role, timestamp)?;
             }
 
             GroupActivityEvent::SetIdentity(_) => {
@@ -937,6 +934,39 @@ impl GroupState {
 
         // Remove from active members list
         self.members.remove(&sender_bytes);
+        Ok(())
+    }
+
+    /// Handle role assignment using IdentityRef
+    fn handle_role_assignment(
+        &mut self,
+        sender: VerifyingKey,
+        target: &IdentityRef,
+        role: &GroupRole,
+        _timestamp: u64,
+    ) -> GroupStateResult<()> {
+        // Check permission - sender must have permission to assign roles
+        self.check_permission(&sender, &self.settings.permissions.assign_roles)?;
+
+        // Extract the target key from IdentityRef
+        let target_key = match target {
+            IdentityRef::Key(key) => key,
+            IdentityRef::Alias { key, .. } => key,
+        };
+
+        let target_bytes = verifying_key_to_bytes(target_key);
+
+        // Check if target member exists
+        let member_info =
+            self.members
+                .get_mut(&target_bytes)
+                .ok_or_else(|| GroupStateError::MemberNotFound {
+                    member: format!("{target_key:?}"),
+                    group: format!("{:?}", self.group_id),
+                })?;
+
+        // Update role
+        member_info.role = role.clone();
         Ok(())
     }
 

@@ -9177,6 +9177,7 @@ dependencies = [
  "ml-dsa",
  "postcard",
  "pretty_assertions",
+ "quinn",
  "rand 0.8.5",
  "redis 0.24.0",
  "rustls",
@@ -9276,6 +9277,7 @@ dependencies = [
  "tracing-subscriber",
  "zoe-blob-store",
  "zoe-client",
+ "zoe-e2e-tests",
  "zoe-message-store",
  "zoe-wire-protocol",
 ]

@@ -24,7 +24,7 @@ use clap::{Arg, Command};
 use std::{fs, net::SocketAddr, path::Path};
 use tracing::{error, info};
 use zoe_client::{BlobService, RelayClient};
-use zoe_wire_protocol::{Hash, KeyPair, VerifyingKey, generate_keypair};
+use zoe_wire_protocol::generate_keypair;
 
 /// Upload a file to the blob store
 async fn upload_file(blob_service: &BlobService, file_path: &Path) -> Result<String> {

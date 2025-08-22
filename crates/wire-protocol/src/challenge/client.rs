@@ -456,12 +456,9 @@ mod tests {
             expires_at: challenge.expires_at,
         };
 
-        assert_eq!(
-            server_public_key
-                .verify(&bad_challenge.nonce, &bad_challenge.signature)
-                .unwrap(),
-            false
-        );
+        assert!(!server_public_key
+            .verify(&bad_challenge.nonce, &bad_challenge.signature)
+            .unwrap());
     }
 
     #[test]

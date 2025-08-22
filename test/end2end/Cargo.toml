@@ -33,6 +33,7 @@ futures = { workspace = true }
 postcard = { workspace = true }
 forward-compatible-enum = { path = "../../crates/forward-compatible-enum" }
 rustls = { workspace = true }
+quinn = { workspace = true }
 
 # Redis client for message store tests
 redis = { version = "0.24", features = ["tokio-comp"] }

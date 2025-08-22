@@ -283,9 +283,8 @@ impl rustls::server::ResolvesServerCert for Ed25519CertResolver {
         let pkcs8_der = self
             .server_signing_key
             .to_pkcs8_der()
-            .map_err(|e| {
+            .inspect_err(|&e| {
                 tracing::error!("Failed to encode Ed25519 key: {}", e);
-                e
             })
             .ok()?;
 

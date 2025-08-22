@@ -37,8 +37,8 @@ use tokio::{
 use tracing::{error, info, warn};
 use zoe_client::{ClientError, MessagesService, RelayClient};
 use zoe_wire_protocol::{
-    Content, Hash, KeyPair, Kind, Message, MessageFilters, MessageFull, StreamMessage,
-    SubscriptionConfig, Tag, VerifyingKey, generate_keypair,
+    KeyPair, Kind, Message, MessageFilters, MessageFull, StreamMessage, SubscriptionConfig, Tag,
+    generate_keypair,
 };
 
 /// Configuration for the chat client

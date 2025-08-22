@@ -2,7 +2,6 @@ use anyhow::Result;
 
 use futures::future::join;
 
-use ml_dsa::{KeyGen, MlDsa44, VerifyingKey};
 use std::net::SocketAddr;
 use std::sync::{Arc, Once};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -11,7 +10,7 @@ use tokio::time::{timeout, Duration};
 use zoe_relay::Service;
 use zoe_relay::{ConnectionInfo, RelayServer, ServiceRouter};
 use zoe_wire_protocol::StreamPair;
-use zoe_wire_protocol::{connection::client::create_client_endpoint, KeyPair, TransportPrivateKey};
+use zoe_wire_protocol::TransportPrivateKey;
 
 // Initialize crypto provider for Rustls
 fn init_crypto_provider() {
@@ -153,79 +152,6 @@ impl Service for EchoService {
     }
 }
 
-/// A simple QUIC client for testing
-struct TestClient {
-    client_keypair: KeyPair,
-}
-
-impl TestClient {
-    fn new() -> Self {
-        let client_keypair =
-            KeyPair::MlDsa44(Box::new(ml_dsa::MlDsa44::key_gen(&mut rand::rngs::OsRng)));
-        Self { client_keypair }
-    }
-
-    fn client_key(&self) -> &ml_dsa::KeyPair<MlDsa44> {
-        match &self.client_keypair {
-            KeyPair::MlDsa44(kp) => kp,
-            _ => panic!("Expected MlDsa44 keypair"),
-        }
-    }
-
-    fn client_verifying_key(&self) -> ml_dsa::VerifyingKey<MlDsa44> {
-        self.client_key().verifying_key().clone()
-    }
-
-    async fn connect_and_test(
-        &self,
-        server_addr: SocketAddr,
-        server_public_key: &VerifyingKey<MlDsa44>,
-    ) -> Result<()> {
-        // Create client endpoint
-        let client_endpoint = self.create_client_endpoint(server_public_key)?;
-
-        // Connect to server
-        let connection = client_endpoint.connect(server_addr, "localhost")?.await?;
-
-        // Open bidirectional stream
-        let (mut send, mut recv) = connection.open_bi().await?;
-
-        // Send service ID (1 for echo service)
-        send.write_u8(1).await?;
-
-        // Send test message
-        let test_message = b"Hello, Echo Server!";
-        send.write_all(test_message).await?;
-        send.flush().await?;
-
-        // Read echoed response
-        let mut response = vec![0u8; test_message.len()];
-        recv.read_exact(&mut response).await?;
-
-        // Verify echo
-        assert_eq!(response, test_message);
-        println!(
-            "✅ Echo test successful! Received: {}",
-            String::from_utf8_lossy(&response)
-        );
-
-        // Close the connection gracefully
-        connection.close(0u32.into(), b"test complete");
-
-        Ok(())
-    }
-
-    fn create_client_endpoint(
-        &self,
-        server_public_key: &VerifyingKey<MlDsa44>,
-    ) -> Result<quinn::Endpoint> {
-        // Convert ML-DSA VerifyingKey to TransportPublicKey
-        let transport_public_key = zoe_wire_protocol::TransportPublicKey::MlDsa44 {
-            verifying_key_bytes: server_public_key.encode().to_vec(),
-        };
-        Ok(create_client_endpoint(&transport_public_key)?)
-    }
-}
 
 #[tokio::test]
 async fn test_echo_service_integration() -> Result<()> {
@@ -235,17 +161,13 @@ async fn test_echo_service_integration() -> Result<()> {
     // Initialize tracing for better debugging
     let _ = tracing_subscriber::fmt::try_init();
 
-    // Generate server key
-    let server_keypair = TransportPrivateKey::Ed25519 {
-        signing_key: ed25519_dalek::SigningKey::generate(&mut rand::rngs::OsRng),
-    };
-    // For this test, we'll create a dummy ML-DSA key since the test expects ML-DSA
-    let server_verifying_key = MlDsa44::key_gen(&mut rand::rngs::OsRng)
-        .verifying_key()
-        .clone();
+    // Use the new infrastructure approach with proper key generation
+    let server_keypair = TransportPrivateKey::default(); // Ed25519 by default
+    let server_public_key = server_keypair.public_key();
+
     println!(
-        "🔑 Server key: {}",
-        hex::encode(server_verifying_key.encode())
+        "🔑 Server public key: {}",
+        hex::encode(server_public_key.encode())
     );
 
     // Create echo service
@@ -260,11 +182,11 @@ async fn test_echo_service_integration() -> Result<()> {
     let actual_addr = server.endpoint.local_addr()?;
     println!("🚀 Server started on {actual_addr}");
 
-    // Create client
-    let client = TestClient::new();
+    // Generate client keypair using proper wire protocol infrastructure
+    let client_keypair = zoe_wire_protocol::generate_keypair(&mut rand::rngs::OsRng);
     println!(
-        "🔑 Client key: {}",
-        hex::encode(client.client_verifying_key().encode())
+        "🔑 Client public key: {}",
+        hex::encode(client_keypair.public_key().encode())
     );
 
     // Spawn server in background
@@ -273,11 +195,49 @@ async fn test_echo_service_integration() -> Result<()> {
     // Give server time to start
     tokio::time::sleep(Duration::from_millis(100)).await;
 
-    // Run client test
+    // Run client test with proper protocol setup using helper functions
     let client_task = timeout(Duration::from_secs(10), async {
-        client
-            .connect_and_test(actual_addr, &server_verifying_key)
-            .await
+        // Use the new helper function for complete connection setup
+        let (connection, _version, _verified_count, _warnings) = 
+            zoe_e2e_tests::multi_client_infra::create_authenticated_connection(
+                actual_addr,
+                &server_public_key,
+                &[&client_keypair],
+            ).await?;
+
+        // Now test the echo service functionality
+        let (mut send, mut recv) = connection.open_bi().await?;
+
+        // Send service ID (1 for echo service)
+        send.write_u8(1).await?;
+
+        // Send test message
+        let test_message = b"Hello, Echo Server with Protocol!";
+        send.write_all(test_message).await?;
+        send.flush().await?;
+
+        // Read echoed response
+        let mut response = vec![0u8; test_message.len()];
+        recv.read_exact(&mut response).await?;
+
+        // Verify echo
+        if response != test_message {
+            return Err(anyhow::anyhow!(
+                "Echo response mismatch: expected {:?}, got {:?}",
+                String::from_utf8_lossy(test_message),
+                String::from_utf8_lossy(&response)
+            ));
+        }
+
+        println!(
+            "✅ Echo test successful! Received: {}",
+            String::from_utf8_lossy(&response)
+        );
+
+        // Close the connection gracefully
+        connection.close(0u32.into(), b"test complete");
+
+        Result::<(), anyhow::Error>::Ok(())
     });
 
     let connection_wait_task = timeout(Duration::from_secs(10), async {
@@ -299,7 +259,7 @@ async fn test_echo_service_integration() -> Result<()> {
     // Stop the server
     server_handle.abort();
 
-    println!("🎉 Integration test completed successfully!");
+    println!("🎉 Echo service integration test with version negotiation and challenge protocol completed successfully!");
     Ok(())
 }
 
@@ -308,8 +268,9 @@ async fn test_service_id_routing() -> Result<()> {
     // Initialize Rustls crypto provider before any TLS operations
     init_crypto_provider();
 
-    // Test that a specific service ID is properly routed
+    // Test that a specific service ID is properly routed using the new multi-client infrastructure
     use std::sync::atomic::{AtomicU8, Ordering};
+    use zoe_wire_protocol::generate_keypair;
 
     struct SingleService {
         streams: StreamPair,
@@ -380,20 +341,15 @@ async fn test_service_id_routing() -> Result<()> {
         }
     }
 
-    let server_keypair = TransportPrivateKey::Ed25519 {
-        signing_key: ed25519_dalek::SigningKey::generate(&mut rand::rngs::OsRng),
-    };
-    // For this test, we'll create a dummy ML-DSA key since the test expects ML-DSA
-    let server_verifying_key = MlDsa44::key_gen(&mut rand::rngs::OsRng)
-        .verifying_key()
-        .clone();
+    // Use the new infrastructure approach with proper key generation
+    let server_keypair = TransportPrivateKey::default(); // Ed25519 by default
+    let server_public_key = server_keypair.public_key();
     let router = SingleServiceRouter::new();
 
     let server_addr: SocketAddr = "127.0.0.1:0".parse()?;
     let server = RelayServer::new(server_addr, server_keypair, router)?;
     let actual_addr = server.endpoint.local_addr()?;
 
-    let client = TestClient::new();
     let test_service_id = 42u8;
 
     // Spawn server in background
@@ -402,10 +358,20 @@ async fn test_service_id_routing() -> Result<()> {
     // Give server time to start
     tokio::time::sleep(Duration::from_millis(100)).await;
 
-    // Run client test with timeout
-    let client_result = timeout(Duration::from_secs(5), async {
-        let client_endpoint = client.create_client_endpoint(&server_verifying_key)?;
-        let connection = client_endpoint.connect(actual_addr, "localhost")?.await?;
+    // Create client using the proper wire protocol infrastructure
+    let client_keypair = generate_keypair(&mut rand::rngs::OsRng);
+
+    // Run client test with timeout using helper functions
+    let client_result = timeout(Duration::from_secs(10), async {
+        // Use the new helper function for complete connection setup
+        let (connection, _version, _verified_count, _warnings) = 
+            zoe_e2e_tests::multi_client_infra::create_authenticated_connection(
+                actual_addr,
+                &server_public_key,
+                &[&client_keypair],
+            ).await?;
+
+        // Now test the service ID routing
         let (mut send, mut recv) = connection.open_bi().await?;
 
         // Send service ID
@@ -425,11 +391,17 @@ async fn test_service_id_routing() -> Result<()> {
     server_handle.abort();
 
     match client_result {
-        Ok(Ok(())) => println!("✅ Client test successful"),
+        Ok(Ok(())) => {
+            println!("✅ Client test successful");
+            println!(
+                "✅ Service ID {} was correctly routed (verified by echo response)",
+                test_service_id
+            );
+        }
         Ok(Err(e)) => return Err(e),
         Err(_) => return Err(anyhow::anyhow!("Client test timed out")),
     }
 
-    println!("✅ Service ID routing test completed successfully!");
+    println!("✅ Service ID routing test with version negotiation and challenge protocol completed successfully!");
     Ok(())
 }

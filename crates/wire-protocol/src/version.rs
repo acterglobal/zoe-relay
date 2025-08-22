@@ -194,9 +194,9 @@ impl From<String> for ProtocolVariant {
     }
 }
 
-impl Into<String> for ProtocolVariant {
-    fn into(self) -> String {
-        match self {
+impl From<ProtocolVariant> for String {
+    fn from(val: ProtocolVariant) -> Self {
+        match val {
             ProtocolVariant::Relay => "zoer".to_string(),
             ProtocolVariant::PeerToPeer => "zoep".to_string(),
             ProtocolVariant::Mesh => "zoem".to_string(),
@@ -545,7 +545,7 @@ fn extract_protocol_version_from_cert(
         if ext.oid.to_string() == "1.3.6.1.4.1.99999.1" {
             found_extension = true;
             // Found our protocol version extension
-            if let Ok(protocol_version) = postcard::from_bytes::<ProtocolVersion>(&ext.value) {
+            if let Ok(protocol_version) = postcard::from_bytes::<ProtocolVersion>(ext.value) {
                 return Ok(protocol_version);
             }
         }
@@ -624,7 +624,7 @@ mod tests {
         let second_version: ProtocolVersion = postcard::from_bytes(&alpn_protocols[1]).unwrap();
 
         // Check that we have both variants (order may vary due to BTreeMap)
-        let variants = vec![&first_version.variant, &second_version.variant];
+        let variants = [&first_version.variant, &second_version.variant];
         assert!(variants.contains(&&ProtocolVariant::Relay));
         assert!(variants.contains(&&ProtocolVariant::PeerToPeer));
     }

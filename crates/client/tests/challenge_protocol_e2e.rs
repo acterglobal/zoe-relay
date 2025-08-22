@@ -111,7 +111,7 @@ async fn test_challenge_protocol_basic_handshake() -> Result<()> {
                     zoe_wire_protocol::VerifyingKey::Ed25519(Box::new(*verifying_key))
                 }
                 zoe_wire_protocol::TransportPublicKey::MlDsa44 {
-                    verifying_key_bytes,
+                    verifying_key_bytes: _,
                 } => {
                     // This would need proper conversion for ML-DSA
                     panic!("ML-DSA not supported in this test");
