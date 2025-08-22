@@ -757,7 +757,7 @@ pub struct MessageFull {
     /// - **Tamper-evident**: Changes to message or signature change the ID
     /// - **Content-addressed**: Can be used to retrieve the message
     #[serde(skip_serializing)]
-    id: Hash,
+    id: Hash, // FIXNE we could and should compute this on the fly and caceh it
 
     /// ML-DSA digital signature over the serialized message.
     ///
@@ -1020,7 +1020,7 @@ impl MessageFull {
                 }
                 Content::MlDsaSelfEncrypted(encrypted) => {
                     match signing_key {
-                        KeyPair::MlDsa65(key) => {
+                        KeyPair::MlDsa65(key, _) => {
                             let plaintext = encrypted.decrypt(key.signing_key())?;
                             Ok(postcard::from_bytes(&plaintext)?)
                         }
@@ -1072,8 +1072,7 @@ impl Eq for MessageFull {}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::keys::{KeyPair, VerifyingKey};
-    use ml_dsa::{KeyGen, MlDsa65};
+    use crate::keys::{generate_keypair, KeyPair, VerifyingKey};
     use rand::rngs::OsRng;
     // use signature::Signer; // Not needed since we use KeyPair.sign() method
 
@@ -1104,7 +1103,7 @@ mod tests {
 
     fn make_keys() -> (KeyPair, VerifyingKey) {
         let mut csprng = OsRng;
-        let keypair = KeyPair::MlDsa65(Box::new(MlDsa65::key_gen(&mut csprng)));
+        let keypair = generate_keypair(&mut csprng);
         let public_key = keypair.public_key();
         (keypair, public_key)
     }

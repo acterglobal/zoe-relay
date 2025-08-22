@@ -140,9 +140,9 @@ impl TestInfrastructure {
 
         let keypair = match signature_type {
             "Ed25519" => generate_ed25519_relay_keypair(&mut rand::thread_rng()),
-            "MlDsa44" => KeyPair::MlDsa44(Box::new(MlDsa44::key_gen(&mut rand::thread_rng()))),
-            "MlDsa65" => KeyPair::MlDsa65(Box::new(MlDsa65::key_gen(&mut rand::thread_rng()))),
-            "MlDsa87" => KeyPair::MlDsa87(Box::new(MlDsa87::key_gen(&mut rand::thread_rng()))),
+            "MlDsa44" => KeyPair::generate_ml_dsa44(&mut rand::thread_rng()),
+            "MlDsa65" => KeyPair::generate_ml_dsa65(&mut rand::thread_rng()),
+            "MlDsa87" => KeyPair::generate_ml_dsa87(&mut rand::thread_rng()),
             _ => {
                 return Err(anyhow::anyhow!(
                     "Unsupported signature type: {}",

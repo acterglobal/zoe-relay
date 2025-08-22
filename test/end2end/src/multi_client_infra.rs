@@ -133,9 +133,9 @@ pub async fn perform_challenge_handshake(
             )
             .map_err(|e| anyhow::anyhow!("Invalid ML-DSA key encoding: {}", e))?;
 
-            zoe_wire_protocol::VerifyingKey::MlDsa44(Box::new(ml_dsa::VerifyingKey::<
-                ml_dsa::MlDsa44,
-            >::decode(&encoded)))
+            zoe_wire_protocol::VerifyingKey::from(ml_dsa::VerifyingKey::<ml_dsa::MlDsa44>::decode(
+                &encoded,
+            ))
         }
     };
 

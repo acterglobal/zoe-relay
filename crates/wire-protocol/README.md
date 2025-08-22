@@ -21,7 +21,7 @@ use zoe_wire_protocol::{
 };
 
 // Create a keypair (supports Ed25519, ML-DSA-44, ML-DSA-65, ML-DSA-87)
-let keypair = KeyPair::generate_ml_dsa_65();
+let keypair = KeyPair::generate_ml_dsa65();
 let signing_key = keypair.signing_key();
 let verifying_key = keypair.verifying_key();
 

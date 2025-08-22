@@ -8,6 +8,7 @@ mod integration_tests {
     use zoe_wire_protocol::keys::*;
     use zoe_wire_protocol::{
         Content, Hash, Kind, Message, MessageFull, MessageV0, MessageV0Header, Tag,
+        generate_keypair,
     };
 
     // Helper function to create a test message
@@ -77,7 +78,7 @@ mod integration_tests {
     async fn test_store_and_retrieve_message() {
         let (config, _temp_dir) = create_test_storage_config();
         let encryption_key = [1u8; 32];
-        let keypair = KeyPair::MlDsa65(Box::new(MlDsa65::key_gen(&mut OsRng)));
+        let keypair = generate_keypair(&mut OsRng);
 
         let storage = SqliteMessageStorage::new(config, &encryption_key)
             .await
@@ -132,7 +133,7 @@ mod integration_tests {
     async fn test_delete_message() {
         let (config, _temp_dir) = create_test_storage_config();
         let encryption_key = [3u8; 32];
-        let keypair = KeyPair::MlDsa65(Box::new(MlDsa65::key_gen(&mut OsRng)));
+        let keypair = generate_keypair(&mut OsRng);
 
         let storage = SqliteMessageStorage::new(config, &encryption_key)
             .await
@@ -164,8 +165,8 @@ mod integration_tests {
     async fn test_query_messages_by_author() {
         let (config, _temp_dir) = create_test_storage_config();
         let encryption_key = [4u8; 32];
-        let keypair1 = KeyPair::MlDsa65(Box::new(MlDsa65::key_gen(&mut OsRng)));
-        let keypair2 = KeyPair::MlDsa65(Box::new(MlDsa65::key_gen(&mut OsRng)));
+        let keypair1 = generate_keypair(&mut OsRng);
+        let keypair2 = generate_keypair(&mut OsRng);
 
         let storage = SqliteMessageStorage::new(config, &encryption_key)
             .await
@@ -211,7 +212,7 @@ mod integration_tests {
     async fn test_query_messages_with_timestamp_filter() {
         let (config, _temp_dir) = create_test_storage_config();
         let encryption_key = [5u8; 32];
-        let keypair = KeyPair::MlDsa65(Box::new(MlDsa65::key_gen(&mut OsRng)));
+        let keypair = generate_keypair(&mut OsRng);
 
         let storage = SqliteMessageStorage::new(config, &encryption_key)
             .await
@@ -259,7 +260,7 @@ mod integration_tests {
     async fn test_message_count_and_stats() {
         let (config, _temp_dir) = create_test_storage_config();
         let encryption_key = [6u8; 32];
-        let keypair = KeyPair::MlDsa65(Box::new(MlDsa65::key_gen(&mut OsRng)));
+        let keypair = generate_keypair(&mut OsRng);
 
         let storage = SqliteMessageStorage::new(config, &encryption_key)
             .await
@@ -292,7 +293,7 @@ mod integration_tests {
     async fn test_clear_all_messages() {
         let (config, _temp_dir) = create_test_storage_config();
         let encryption_key = [7u8; 32];
-        let keypair = KeyPair::MlDsa65(Box::new(MlDsa65::key_gen(&mut OsRng)));
+        let keypair = generate_keypair(&mut OsRng);
 
         let storage = SqliteMessageStorage::new(config, &encryption_key)
             .await
@@ -331,7 +332,7 @@ mod integration_tests {
         let (config, _temp_dir) = create_test_storage_config();
         let encryption_key1 = [9u8; 32];
         let encryption_key2 = [10u8; 32];
-        let keypair = KeyPair::MlDsa65(Box::new(MlDsa65::key_gen(&mut OsRng)));
+        let keypair = generate_keypair(&mut OsRng);
 
         // Create storage with first key
         let storage1 = SqliteMessageStorage::new(config.clone(), &encryption_key1)
@@ -370,7 +371,7 @@ mod integration_tests {
         for i in 0..10 {
             let storage = storage.clone();
             // Generate a new keypair for each task since KeyPair doesn't implement Clone
-            let keypair = KeyPair::MlDsa65(Box::new(MlDsa65::key_gen(&mut OsRng)));
+            let keypair = generate_keypair(&mut OsRng);
 
             let handle = tokio::spawn(async move {
                 let message = create_test_message(&format!("Concurrent message {i}"), &keypair);
@@ -406,7 +407,7 @@ mod integration_tests {
             .unwrap();
 
         // Create test messages
-        let keypair = KeyPair::MlDsa65(Box::new(MlDsa65::key_gen(&mut OsRng)));
+        let keypair = generate_keypair(&mut OsRng);
         let message1 = create_test_message("Test message 1", &keypair);
         let message2 = create_test_message("Test message 2", &keypair);
 
@@ -482,7 +483,7 @@ mod integration_tests {
             .unwrap();
 
         // Create test message
-        let keypair = KeyPair::MlDsa65(Box::new(MlDsa65::key_gen(&mut OsRng)));
+        let keypair = generate_keypair(&mut OsRng);
         let message = create_test_message("Test sync status message", &keypair);
         storage.store_message(&message).await.unwrap();
 
@@ -524,7 +525,7 @@ mod integration_tests {
             .unwrap();
 
         // Create test messages
-        let keypair = KeyPair::MlDsa65(Box::new(MlDsa65::key_gen(&mut OsRng)));
+        let keypair = generate_keypair(&mut OsRng);
         let message1 = create_test_message("Synced message 1", &keypair);
         let message2 = create_test_message("Synced message 2", &keypair);
         let message3 = create_test_message("Unsynced message", &keypair);
@@ -588,7 +589,7 @@ mod integration_tests {
             .unwrap();
 
         // Create test message
-        let keypair = KeyPair::MlDsa65(Box::new(MlDsa65::key_gen(&mut OsRng)));
+        let keypair = generate_keypair(&mut OsRng);
         let message = create_test_message("Update test message", &keypair);
         storage.store_message(&message).await.unwrap();
 
@@ -625,7 +626,7 @@ mod integration_tests {
             .unwrap();
 
         // Create multiple test messages
-        let keypair = KeyPair::MlDsa65(Box::new(MlDsa65::key_gen(&mut OsRng)));
+        let keypair = generate_keypair(&mut OsRng);
         let mut messages = Vec::new();
         for i in 0..5 {
             let message = create_test_message(&format!("Message {i}"), &keypair);

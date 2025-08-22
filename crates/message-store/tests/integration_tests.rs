@@ -1,5 +1,4 @@
 use futures_util::StreamExt;
-use ml_dsa::{KeyGen, MlDsa44, MlDsa65, MlDsa87};
 use rand::rngs::OsRng;
 use std::{sync::Arc, time::SystemTime};
 use zoe_message_store::RedisMessageStorage;
@@ -144,7 +143,7 @@ async fn test_atomic_multi_field_operations() {
 #[tokio::test]
 async fn test_channel_streams_storage_and_retrieval() {
     let storage = setup_test_storage().await;
-    let keypair = KeyPair::MlDsa65(Box::new(MlDsa65::key_gen(&mut OsRng)));
+    let keypair = KeyPair::generate_ml_dsa65(&mut OsRng);
 
     let channel_a = b"channel-a";
     let channel_b = b"channel-b";
@@ -306,7 +305,7 @@ async fn test_duplicate_prevention() {
 #[tokio::test]
 async fn test_comprehensive_scenario() {
     let storage = setup_test_storage().await;
-    let keypair = KeyPair::MlDsa65(Box::new(MlDsa65::key_gen(&mut OsRng)));
+    let keypair = KeyPair::generate_ml_dsa65(&mut OsRng);
 
     // Simulate a complex real-world scenario
     let general_channel = b"general";
@@ -427,7 +426,7 @@ async fn test_comprehensive_scenario() {
 // #[tokio::test]
 // async fn test_expired_message_handling() -> Result<(), Box<dyn std::error::Error>> {
 //     let storage = setup_test_storage().await;
-//     let keypair = KeyPair::MlDsa65(Box::new(MlDsa65::key_gen(&mut OsRng)));
+//     let keypair = KeyPair::generate_ml_dsa65(&mut OsRng);
 //     let channel_id = b"test-channel";
 
 //     // Create an expired message (expired 1 hour ago)
@@ -456,7 +455,7 @@ async fn test_comprehensive_scenario() {
 #[tokio::test]
 async fn test_check_messages_bulk_sync() -> Result<(), Box<dyn std::error::Error>> {
     let storage = setup_test_storage().await;
-    let keypair = KeyPair::MlDsa65(Box::new(MlDsa65::key_gen(&mut OsRng)));
+    let keypair = KeyPair::generate_ml_dsa65(&mut OsRng);
     let channel_id = b"test-channel";
 
     // Create some test messages
@@ -507,9 +506,9 @@ async fn test_all_signature_types_comprehensive() {
 
     // Generate keypairs for all supported signature types
     let ed25519_keypair = generate_ed25519_relay_keypair(&mut OsRng);
-    let ml_dsa_44_keypair = KeyPair::MlDsa44(Box::new(MlDsa44::key_gen(&mut OsRng)));
-    let ml_dsa_65_keypair = KeyPair::MlDsa65(Box::new(MlDsa65::key_gen(&mut OsRng)));
-    let ml_dsa_87_keypair = KeyPair::MlDsa87(Box::new(MlDsa87::key_gen(&mut OsRng)));
+    let ml_dsa_44_keypair = KeyPair::generate_ml_dsa44(&mut OsRng);
+    let ml_dsa_65_keypair = KeyPair::generate_ml_dsa65(&mut OsRng);
+    let ml_dsa_87_keypair = KeyPair::generate_ml_dsa87(&mut OsRng);
 
     let test_channel = b"signature_test_channel";
 
@@ -796,9 +795,9 @@ async fn test_signature_type_ordering() {
 
     // Generate keypairs for all supported signature types
     let ed25519_keypair = generate_ed25519_relay_keypair(&mut OsRng);
-    let ml_dsa_44_keypair = KeyPair::MlDsa44(Box::new(MlDsa44::key_gen(&mut OsRng)));
-    let ml_dsa_65_keypair = KeyPair::MlDsa65(Box::new(MlDsa65::key_gen(&mut OsRng)));
-    let ml_dsa_87_keypair = KeyPair::MlDsa87(Box::new(MlDsa87::key_gen(&mut OsRng)));
+    let ml_dsa_44_keypair = KeyPair::generate_ml_dsa44(&mut OsRng);
+    let ml_dsa_65_keypair = KeyPair::generate_ml_dsa65(&mut OsRng);
+    let ml_dsa_87_keypair = KeyPair::generate_ml_dsa87(&mut OsRng);
 
     let test_channel = b"signature_ordering_test";
 

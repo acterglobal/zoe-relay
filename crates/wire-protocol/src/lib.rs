@@ -138,7 +138,6 @@ pub mod keys;
 pub mod message;
 pub mod relay;
 pub mod relay_identity;
-pub mod serde;
 pub mod services;
 pub mod streaming;
 pub mod version;

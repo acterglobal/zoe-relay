@@ -127,9 +127,7 @@ impl RelayClient {
                     verifying_key_bytes.as_slice(),
                 )
                 .map_err(|_| anyhow::anyhow!("Invalid ML-DSA-44 public key"))?;
-                VerifyingKey::MlDsa44(Box::new(ml_dsa::VerifyingKey::<ml_dsa::MlDsa44>::decode(
-                    &encoded,
-                )))
+                VerifyingKey::from(ml_dsa::VerifyingKey::<ml_dsa::MlDsa44>::decode(&encoded))
             }
         };
 
