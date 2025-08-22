@@ -3,9 +3,25 @@ use rand::rngs::OsRng;
 use std::{sync::Arc, time::SystemTime};
 use zoe_message_store::RedisMessageStorage;
 use zoe_wire_protocol::{
-    generate_ed25519_relay_keypair, FilterField, FilterOperation, FilterUpdateRequest, KeyPair,
-    Kind, Message, MessageFilters, MessageFull, Tag,
+    generate_ed25519_relay_keypair, keys::Id as KeyId, Filter, FilterOperation,
+    FilterUpdateRequest, KeyPair, Kind, Message, MessageFilters, MessageFull, Tag, VerifyingKey,
 };
+
+// Helper function to create test VerifyingKeys from byte arrays
+fn create_test_verifying_key_id(bytes: &[u8]) -> KeyId {
+    use rand::SeedableRng;
+
+    // Create a simple hash from the input bytes for deterministic generation
+    let mut seed = [0u8; 32];
+    let len = std::cmp::min(bytes.len(), 32);
+    seed[..len].copy_from_slice(&bytes[..len]);
+
+    let mut seed_rng = rand_chacha::ChaCha20Rng::from_seed(seed);
+    let signing_key = ed25519_dalek::SigningKey::generate(&mut seed_rng);
+    let verifying_key = signing_key.verifying_key();
+
+    *VerifyingKey::Ed25519(Box::new(verifying_key)).id()
+}
 
 async fn setup_test_storage() -> RedisMessageStorage {
     // Use a random database number to avoid conflicts between parallel tests
@@ -57,73 +73,82 @@ fn create_test_message(channel_id: &[u8], author_keypair: &KeyPair, content: &st
 async fn test_generic_filter_operations() {
     let mut filters = MessageFilters::default();
 
-    // Test Add operation
+    // Test Add operation for channels
     let add_channels = FilterOperation::add_channels(vec![b"general".to_vec(), b"tech".to_vec()]);
     filters.apply_operation(&add_channels);
 
-    assert_eq!(
-        filters.channels,
-        Some(vec![b"general".to_vec(), b"tech".to_vec()])
-    );
+    // Check that channels were added
+    let expected_filters = vec![
+        Filter::Channel(b"general".to_vec()),
+        Filter::Channel(b"tech".to_vec()),
+    ];
+    assert_eq!(filters.filters, Some(expected_filters));
 
     // Test Add authors
-    let add_authors = FilterOperation::add_authors(vec![b"alice".to_vec(), b"bob".to_vec()]);
+    let alice_key = create_test_verifying_key_id(b"alice");
+    let bob_key = create_test_verifying_key_id(b"bob");
+    let add_authors = FilterOperation::add_authors(vec![alice_key, bob_key]);
     filters.apply_operation(&add_authors);
 
-    assert_eq!(
-        filters.authors,
-        Some(vec![b"alice".to_vec(), b"bob".to_vec()])
-    );
+    // Check that authors were added
+    if let Some(filter_list) = &filters.filters {
+        assert!(filter_list.contains(&Filter::Author(alice_key)));
+        assert!(filter_list.contains(&Filter::Author(bob_key)));
+        assert!(filter_list.contains(&Filter::Channel(b"general".to_vec())));
+        assert!(filter_list.contains(&Filter::Channel(b"tech".to_vec())));
+    } else {
+        panic!("Expected filters to be Some");
+    }
 
     // Test Remove operation
     let remove_channel = FilterOperation::remove_channels(vec![b"general".to_vec()]);
     filters.apply_operation(&remove_channel);
 
-    assert_eq!(filters.channels, Some(vec![b"tech".to_vec()]));
+    // Check that "general" was removed but "tech" remains
+    if let Some(filter_list) = &filters.filters {
+        assert!(!filter_list.contains(&Filter::Channel(b"general".to_vec())));
+        assert!(filter_list.contains(&Filter::Channel(b"tech".to_vec())));
+    }
 
-    // Test Replace operation
-    let replace_events =
-        FilterOperation::replace_events(vec![b"important".to_vec(), b"urgent".to_vec()]);
-    filters.apply_operation(&replace_events);
+    // Test Add events
+    let add_events = FilterOperation::add_events(vec![b"important".to_vec(), b"urgent".to_vec()]);
+    filters.apply_operation(&add_events);
 
-    assert_eq!(
-        filters.events,
-        Some(vec![b"important".to_vec(), b"urgent".to_vec()])
-    );
+    // Check that events were added
+    if let Some(filter_list) = &filters.filters {
+        assert!(filter_list.contains(&Filter::Event(b"important".to_vec())));
+        assert!(filter_list.contains(&Filter::Event(b"urgent".to_vec())));
+    }
 
     // Test Clear operation
-    let clear_authors = FilterOperation::clear_authors();
-    filters.apply_operation(&clear_authors);
+    let clear_op = FilterOperation::clear();
+    filters.apply_operation(&clear_op);
+    assert_eq!(filters.filters, None);
 
-    assert_eq!(filters.authors, None);
-
-    // Test convenience constructors
-    let clear_channels = FilterOperation::clear_channels();
-    filters.apply_operation(&clear_channels);
-    assert_eq!(filters.channels, None);
-
-    // Test ReplaceAll
-    let new_filters = MessageFilters {
-        channels: Some(vec![b"new-channel".to_vec()]),
-        authors: Some(vec![b"new-author".to_vec()]),
-        events: None,
-        users: None,
-    };
-    let replace_all = FilterOperation::ReplaceAll(new_filters.clone());
+    // Test ReplaceAll with new filters
+    let new_author = create_test_verifying_key_id(b"new-author");
+    let new_filter_list = vec![
+        Filter::Channel(b"new-channel".to_vec()),
+        Filter::Author(new_author),
+    ];
+    let replace_all = FilterOperation::ReplaceAll(new_filter_list.clone());
     filters.apply_operation(&replace_all);
 
-    assert_eq!(filters, new_filters);
+    assert_eq!(filters.filters, Some(new_filter_list));
 }
 
 #[tokio::test]
 async fn test_atomic_multi_field_operations() {
     let mut filters = MessageFilters::default();
 
+    let alice_key = create_test_verifying_key_id(b"alice");
+    let user1_key = create_test_verifying_key_id(b"user1");
+
     let operations = vec![
         FilterOperation::add_channels(vec![b"general".to_vec(), b"tech".to_vec()]),
-        FilterOperation::add_authors(vec![b"alice".to_vec()]),
+        FilterOperation::add_authors(vec![alice_key.clone()]),
         FilterOperation::add_events(vec![b"important".to_vec()]),
-        FilterOperation::add_users(vec![b"user1".to_vec()]),
+        FilterOperation::add_users(vec![user1_key.clone()]),
     ];
 
     // Apply all operations atomically
@@ -131,13 +156,16 @@ async fn test_atomic_multi_field_operations() {
         filters.apply_operation(operation);
     }
 
-    assert_eq!(
-        filters.channels,
-        Some(vec![b"general".to_vec(), b"tech".to_vec()])
-    );
-    assert_eq!(filters.authors, Some(vec![b"alice".to_vec()]));
-    assert_eq!(filters.events, Some(vec![b"important".to_vec()]));
-    assert_eq!(filters.users, Some(vec![b"user1".to_vec()]));
+    // Check that all filters were added
+    if let Some(filter_list) = &filters.filters {
+        assert!(filter_list.contains(&Filter::Channel(b"general".to_vec())));
+        assert!(filter_list.contains(&Filter::Channel(b"tech".to_vec())));
+        assert!(filter_list.contains(&Filter::Author(alice_key)));
+        assert!(filter_list.contains(&Filter::Event(b"important".to_vec())));
+        assert!(filter_list.contains(&Filter::User(user1_key)));
+    } else {
+        panic!("Expected filters to be Some");
+    }
 }
 
 #[tokio::test]
@@ -192,8 +220,9 @@ async fn test_channel_streams_storage_and_retrieval() {
     println!("Stored msg4 with stream ID: {stream_id4}");
 
     // Test channel catch-up retrieval - should maintain arrival order
+    let channel_a_filter = Filter::Channel(channel_a.to_vec());
     let channel_a_stream = storage
-        .catch_up(FilterField::Channel, channel_a, None)
+        .catch_up(&channel_a_filter, None)
         .await
         .expect("Failed to get channel A catch-up stream");
 
@@ -234,8 +263,9 @@ async fn test_channel_streams_storage_and_retrieval() {
     assert_eq!(content3, "Message 3 in channel A");
 
     // Test channel B catch-up
+    let channel_b_filter = Filter::Channel(channel_b.to_vec());
     let channel_b_stream = storage
-        .catch_up(FilterField::Channel, channel_b, None)
+        .catch_up(&channel_b_filter, None)
         .await
         .expect("Failed to get channel B catch-up stream");
 
@@ -265,7 +295,7 @@ async fn test_filter_update_request() {
     // Test the FilterUpdateRequest structure
     let operations = vec![
         FilterOperation::add_channels(vec![b"general".to_vec(), b"tech".to_vec()]),
-        FilterOperation::remove_authors(vec![b"spammer".to_vec()]),
+        FilterOperation::remove_authors(vec![create_test_verifying_key_id(b"spammer")]),
         FilterOperation::add_events(vec![b"important".to_vec()]),
     ];
 
@@ -279,12 +309,16 @@ async fn test_filter_update_request() {
         filters.apply_operation(operation);
     }
 
-    assert_eq!(
-        filters.channels,
-        Some(vec![b"general".to_vec(), b"tech".to_vec()])
-    );
-    assert_eq!(filters.authors, None); // Nothing was added, so removing has no effect
-    assert_eq!(filters.events, Some(vec![b"important".to_vec()]));
+    // Check that channels were added correctly
+    if let Some(filter_list) = &filters.filters {
+        assert!(filter_list.contains(&Filter::Channel(b"general".to_vec())));
+        assert!(filter_list.contains(&Filter::Channel(b"tech".to_vec())));
+        assert!(filter_list.contains(&Filter::Event(b"important".to_vec())));
+        // Authors should not contain the "spammer" we tried to remove
+        assert!(!filter_list.iter().any(|f| matches!(f, Filter::Author(_))));
+    } else {
+        panic!("Expected filters to be Some");
+    }
 }
 
 #[tokio::test]
@@ -299,7 +333,15 @@ async fn test_duplicate_prevention() {
     filters.apply_operation(&add_channels2);
 
     // Should only have one instance
-    assert_eq!(filters.channels, Some(vec![b"general".to_vec()]));
+    if let Some(filter_list) = &filters.filters {
+        let channel_count = filter_list
+            .iter()
+            .filter(|f| matches!(f, Filter::Channel(ref c) if c == b"general"))
+            .count();
+        assert_eq!(channel_count, 1);
+    } else {
+        panic!("Expected filters to be Some");
+    }
 }
 
 #[tokio::test]
@@ -342,14 +384,17 @@ async fn test_comprehensive_scenario() {
     }
 
     // Now user is subscribed to both general and tech
-    assert_eq!(
-        filters.channels,
-        Some(vec![general_channel.to_vec(), tech_channel.to_vec()])
-    );
+    if let Some(filter_list) = &filters.filters {
+        assert!(filter_list.contains(&Filter::Channel(general_channel.to_vec())));
+        assert!(filter_list.contains(&Filter::Channel(tech_channel.to_vec())));
+    } else {
+        panic!("Expected filters to be Some");
+    }
 
     // User can catch up on tech channel history
+    let tech_filter = Filter::Channel(tech_channel.to_vec());
     let tech_stream = storage
-        .catch_up(FilterField::Channel, tech_channel, None)
+        .catch_up(&tech_filter, None)
         .await
         .expect("Failed to get tech catch-up stream");
 
@@ -377,7 +422,7 @@ async fn test_comprehensive_scenario() {
     let complex_update = FilterUpdateRequest {
         operations: vec![
             FilterOperation::add_channels(vec![urgent_channel.to_vec()]),
-            FilterOperation::add_authors(vec![b"blocked_user".to_vec()]), // Block by adding to authors filter (inverted logic for demo)
+            FilterOperation::add_authors(vec![create_test_verifying_key_id(b"blocked_user")]), // Block by adding to authors filter (inverted logic for demo)
         ],
     };
 
@@ -386,19 +431,21 @@ async fn test_comprehensive_scenario() {
     }
 
     // Verify complex update worked
-    assert_eq!(
-        filters.channels,
-        Some(vec![
-            general_channel.to_vec(),
-            tech_channel.to_vec(),
-            urgent_channel.to_vec()
-        ])
-    );
-    assert_eq!(filters.authors, Some(vec![b"blocked_user".to_vec()]));
+    if let Some(filter_list) = &filters.filters {
+        assert!(filter_list.contains(&Filter::Channel(general_channel.to_vec())));
+        assert!(filter_list.contains(&Filter::Channel(tech_channel.to_vec())));
+        assert!(filter_list.contains(&Filter::Channel(urgent_channel.to_vec())));
+        // Check that the blocked user author filter was added
+        let blocked_user_key = create_test_verifying_key_id(b"blocked_user");
+        assert!(filter_list.contains(&Filter::Author(blocked_user_key)));
+    } else {
+        panic!("Expected filters to be Some");
+    }
 
     // Get urgent channel history
+    let urgent_filter = Filter::Channel(urgent_channel.to_vec());
     let urgent_stream = storage
-        .catch_up(FilterField::Channel, urgent_channel, None)
+        .catch_up(&urgent_filter, None)
         .await
         .expect("Failed to get urgent catch-up stream");
 
@@ -535,6 +582,10 @@ async fn test_all_signature_types_comprehensive() {
     );
 
     // Store all messages
+    println!(
+        "🔍 Storing Ed25519 message with author ID: {}",
+        hex::encode(ed25519_msg.author().id())
+    );
     let ed25519_result = storage
         .store_message(&ed25519_msg)
         .await
@@ -674,8 +725,9 @@ async fn test_all_signature_types_comprehensive() {
     );
 
     // Test channel streaming with mixed signature types
+    let channel_filter = Filter::Channel(test_channel.to_vec());
     let channel_stream = storage
-        .catch_up(FilterField::Channel, test_channel, None)
+        .catch_up(&channel_filter, None)
         .await
         .expect("Failed to get channel catch-up stream");
 
@@ -685,6 +737,10 @@ async fn test_all_signature_types_comprehensive() {
     while let Some(result) = channel_stream.next().await {
         match result {
             Ok((message, (_global_height, _local_height))) => {
+                println!(
+                    "🔍 Retrieved message ID: {}",
+                    hex::encode(message.id().as_bytes())
+                );
                 all_messages.push(message);
             }
             Err(e) => panic!("Error in channel stream: {e:?}"),
@@ -712,12 +768,19 @@ async fn test_all_signature_types_comprehensive() {
     }
 
     // Test author filtering with different signature types
-    let ed25519_author_key = ed25519_keypair.public_key().encode();
-    let ml_dsa_65_author_key = ml_dsa_65_keypair.public_key().encode();
+    let ed25519_author_id = *ed25519_keypair.public_key().id();
+    let ml_dsa_65_author_id = *ml_dsa_65_keypair.public_key().id();
+
+    println!("🔍 Ed25519 author ID: {}", hex::encode(ed25519_author_id));
+    println!(
+        "🔍 ML-DSA-65 author ID: {}",
+        hex::encode(ml_dsa_65_author_id)
+    );
 
     // Filter by Ed25519 author
+    let ed25519_filter = Filter::Author(ed25519_author_id);
     let ed25519_author_stream = storage
-        .catch_up(FilterField::Author, &ed25519_author_key, None)
+        .catch_up(&ed25519_filter, None)
         .await
         .expect("Failed to get Ed25519 author stream");
 
@@ -732,11 +795,10 @@ async fn test_all_signature_types_comprehensive() {
             Err(e) => panic!("Error in Ed25519 author stream: {e:?}"),
         }
     }
-
+    let found_len = ed25519_author_messages.len();
     assert_eq!(
-        ed25519_author_messages.len(),
-        1,
-        "Should find exactly 1 Ed25519 message"
+        found_len, 1,
+        "Should find exactly 1 Ed25519 message, found {found_len} messages",
     );
     assert_eq!(
         String::from_utf8_lossy(
@@ -748,8 +810,9 @@ async fn test_all_signature_types_comprehensive() {
     );
 
     // Filter by ML-DSA-65 author
+    let ml_dsa_65_filter = Filter::Author(ml_dsa_65_author_id);
     let ml_dsa_65_author_stream = storage
-        .catch_up(FilterField::Author, &ml_dsa_65_author_key, None)
+        .catch_up(&ml_dsa_65_filter, None)
         .await
         .expect("Failed to get ML-DSA-65 author stream");
 
@@ -872,8 +935,9 @@ async fn test_signature_type_ordering() {
         .expect("Failed to store Ed25519 message");
 
     // Retrieve messages and verify ordering
+    let channel_filter = Filter::Channel(test_channel.to_vec());
     let channel_stream = storage
-        .catch_up(FilterField::Channel, test_channel, None)
+        .catch_up(&channel_filter, None)
         .await
         .expect("Failed to get channel catch-up stream");
 

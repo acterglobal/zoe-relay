@@ -69,7 +69,7 @@ use tokio::time::timeout;
 use tracing::{debug, info, warn};
 use zoe_client::RelayClient;
 use zoe_wire_protocol::{
-    Content, KeyPair, Kind, Message, MessageFilters, MessageFull, StreamMessage,
+    Content, Filter, KeyPair, Kind, Message, MessageFilters, MessageFull, StreamMessage,
     SubscriptionConfig, Tag, TransportPublicKey, VerifyingKey, generate_keypair,
 };
 
@@ -341,10 +341,7 @@ impl TestClient {
     ) -> Result<String> {
         let subscription_config = SubscriptionConfig {
             filters: MessageFilters {
-                authors: None,
-                channels: Some(vec![channel.as_bytes().to_vec()]),
-                events: None,
-                users: None,
+                filters: Some(vec![Filter::Channel(channel.as_bytes().to_vec())]),
             },
             since: None,
             limit: None,

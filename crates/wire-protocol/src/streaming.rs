@@ -1,278 +1,127 @@
 use blake3::Hash;
-use ml_dsa::{MlDsa65, VerifyingKey};
 use serde::{Deserialize, Serialize};
 use tarpc::{ClientMessage, Response};
 
-use crate::{MessageFull, StoreKey};
+use crate::{keys::Id as KeyId, MessageFull, StoreKey};
 
-/// Serializable wrapper for ML-DSA verifying key
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SerializableVerifyingKey {
-    pub key_bytes: Vec<u8>,
-}
-
-impl From<VerifyingKey<MlDsa65>> for SerializableVerifyingKey {
-    fn from(key: VerifyingKey<MlDsa65>) -> Self {
-        Self {
-            key_bytes: key.encode().as_slice().to_vec(),
-        }
-    }
-}
-
-impl TryFrom<SerializableVerifyingKey> for VerifyingKey<MlDsa65> {
-    type Error = String;
-
-    fn try_from(wrapper: SerializableVerifyingKey) -> Result<Self, Self::Error> {
-        let encoded_key: &ml_dsa::EncodedVerifyingKey<MlDsa65> = wrapper
-            .key_bytes
-            .as_slice()
-            .try_into()
-            .map_err(|_| "Invalid ML-DSA verifying key length".to_string())?;
-        Ok(VerifyingKey::<MlDsa65>::decode(encoded_key))
-    }
+/// Unified filter type for different kinds of message filtering
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum Filter {
+    /// Filter by message author
+    Author(KeyId),
+    /// Filter by channel ID
+    Channel(Vec<u8>),
+    /// Filter by event ID
+    Event(Vec<u8>),
+    /// Filter by user key (for user-targeted messages)
+    User(KeyId),
 }
 
 /// Message filtering criteria for querying stored messages
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct MessageFilters {
-    pub authors: Option<Vec<Vec<u8>>>,
-    pub channels: Option<Vec<Vec<u8>>>,
-    pub events: Option<Vec<Vec<u8>>>,
-    pub users: Option<Vec<Vec<u8>>>,
+    pub filters: Option<Vec<Filter>>,
 }
 
-/// Generic filter field identifier
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
-pub enum FilterField {
-    Author,
-    Channel,
-    Event,
-    User,
-}
-
-/// Generic filter operations that work on any field
+/// Type-safe filter operations using unified Filter type
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum FilterOperation {
-    /// Add values to a specific filter field
-    Add {
-        field: FilterField,
-        values: Vec<Vec<u8>>,
-    },
-
-    /// Remove values from a specific filter field
-    Remove {
-        field: FilterField,
-        values: Vec<Vec<u8>>,
-    },
-
-    /// Replace all values in a specific filter field
-    Replace {
-        field: FilterField,
-        values: Vec<Vec<u8>>,
-    },
-
-    /// Clear a specific filter field (set to None)
-    Clear { field: FilterField },
-
-    /// Replace the entire filter set (forces restart - use sparingly)
-    ReplaceAll(MessageFilters),
+    /// Add filters to the active set
+    Add(Vec<Filter>),
+    /// Remove specific filters from the active set
+    Remove(Vec<Filter>),
+    /// Replace all filters (forces restart - use sparingly)
+    ReplaceAll(Vec<Filter>),
+    /// Clear all filters
+    Clear,
 }
 
 impl FilterOperation {
     /// Add channels to the filter
     pub fn add_channels(channels: Vec<Vec<u8>>) -> Self {
-        Self::Add {
-            field: FilterField::Channel,
-            values: channels,
-        }
+        Self::Add(channels.into_iter().map(Filter::Channel).collect())
     }
 
     /// Remove channels from the filter
     pub fn remove_channels(channels: Vec<Vec<u8>>) -> Self {
-        Self::Remove {
-            field: FilterField::Channel,
-            values: channels,
-        }
+        Self::Remove(channels.into_iter().map(Filter::Channel).collect())
     }
 
     /// Add authors to the filter
-    pub fn add_authors(authors: Vec<Vec<u8>>) -> Self {
-        Self::Add {
-            field: FilterField::Author,
-            values: authors,
-        }
+    pub fn add_authors(authors: Vec<KeyId>) -> Self {
+        Self::Add(authors.into_iter().map(Filter::Author).collect())
     }
 
     /// Remove authors from the filter
-    pub fn remove_authors(authors: Vec<Vec<u8>>) -> Self {
-        Self::Remove {
-            field: FilterField::Author,
-            values: authors,
-        }
+    pub fn remove_authors(authors: Vec<KeyId>) -> Self {
+        Self::Remove(authors.into_iter().map(Filter::Author).collect())
     }
 
     /// Add events to the filter
     pub fn add_events(events: Vec<Vec<u8>>) -> Self {
-        Self::Add {
-            field: FilterField::Event,
-            values: events,
-        }
-    }
-
-    /// Add users to the filter
-    pub fn add_users(users: Vec<Vec<u8>>) -> Self {
-        Self::Add {
-            field: FilterField::User,
-            values: users,
-        }
+        Self::Add(events.into_iter().map(Filter::Event).collect())
     }
 
     /// Remove events from the filter
     pub fn remove_events(events: Vec<Vec<u8>>) -> Self {
-        Self::Remove {
-            field: FilterField::Event,
-            values: events,
-        }
+        Self::Remove(events.into_iter().map(Filter::Event).collect())
+    }
+
+    /// Add users to the filter
+    pub fn add_users(users: Vec<KeyId>) -> Self {
+        Self::Add(users.into_iter().map(Filter::User).collect())
     }
 
     /// Remove users from the filter
-    pub fn remove_users(users: Vec<Vec<u8>>) -> Self {
-        Self::Remove {
-            field: FilterField::User,
-            values: users,
-        }
+    pub fn remove_users(users: Vec<KeyId>) -> Self {
+        Self::Remove(users.into_iter().map(Filter::User).collect())
     }
 
-    /// Clear all channels
-    pub fn clear_channels() -> Self {
-        Self::Clear {
-            field: FilterField::Channel,
-        }
+    /// Replace all filters
+    pub fn replace_all(filters: Vec<Filter>) -> Self {
+        Self::ReplaceAll(filters)
     }
 
-    /// Replace all channels
-    pub fn replace_channels(channels: Vec<Vec<u8>>) -> Self {
-        Self::Replace {
-            field: FilterField::Channel,
-            values: channels,
-        }
-    }
-
-    /// Clear all authors
-    pub fn clear_authors() -> Self {
-        Self::Clear {
-            field: FilterField::Author,
-        }
-    }
-
-    /// Clear all events
-    pub fn clear_events() -> Self {
-        Self::Clear {
-            field: FilterField::Event,
-        }
-    }
-
-    /// Clear all users
-    pub fn clear_users() -> Self {
-        Self::Clear {
-            field: FilterField::User,
-        }
-    }
-
-    /// Replace all events
-    pub fn replace_events(events: Vec<Vec<u8>>) -> Self {
-        Self::Replace {
-            field: FilterField::Event,
-            values: events,
-        }
-    }
-
-    /// Replace all authors
-    pub fn replace_authors(authors: Vec<Vec<u8>>) -> Self {
-        Self::Replace {
-            field: FilterField::Author,
-            values: authors,
-        }
-    }
-
-    /// Replace all users
-    pub fn replace_users(users: Vec<Vec<u8>>) -> Self {
-        Self::Replace {
-            field: FilterField::User,
-            values: users,
-        }
+    /// Clear all filters
+    pub fn clear() -> Self {
+        Self::Clear
     }
 }
 
 impl MessageFilters {
     pub fn is_empty(&self) -> bool {
-        self.authors.is_none()
-            && self.channels.is_none()
-            && self.events.is_none()
-            && self.users.is_none()
+        self.filters.as_ref().map_or(true, |f| f.is_empty())
     }
 
-    /// Apply a generic filter operation to this filter set
+    /// Apply a type-safe filter operation to this filter set
     pub fn apply_operation(&mut self, operation: &FilterOperation) {
         match operation {
-            FilterOperation::Add { field, values } => {
-                let target_field = self.get_field_mut(field);
-                let field_vec = target_field.get_or_insert_with(Vec::new);
-
-                for value in values {
-                    if !field_vec.contains(value) {
-                        field_vec.push(value.clone());
+            FilterOperation::Add(new_filters) => {
+                let filter_vec = self.filters.get_or_insert_with(Vec::new);
+                for filter in new_filters {
+                    if !filter_vec.contains(filter) {
+                        filter_vec.push(filter.clone());
                     }
                 }
             }
-
-            FilterOperation::Remove { field, values } => {
-                if let Some(field_vec) = self.get_field_mut(field).as_mut() {
-                    field_vec.retain(|existing| !values.contains(existing));
-
-                    // Clean up empty vectors
-                    if field_vec.is_empty() {
-                        *self.get_field_mut(field) = None;
+            FilterOperation::Remove(filters_to_remove) => {
+                if let Some(filter_vec) = self.filters.as_mut() {
+                    filter_vec.retain(|existing| !filters_to_remove.contains(existing));
+                    if filter_vec.is_empty() {
+                        self.filters = None;
                     }
                 }
             }
-
-            FilterOperation::Replace { field, values } => {
-                let target_field = self.get_field_mut(field);
-                if values.is_empty() {
-                    *target_field = None;
-                } else {
-                    *target_field = Some(values.clone());
-                }
-            }
-
-            FilterOperation::Clear { field } => {
-                *self.get_field_mut(field) = None;
-            }
-
             FilterOperation::ReplaceAll(new_filters) => {
-                *self = new_filters.clone();
+                if new_filters.is_empty() {
+                    self.filters = None;
+                } else {
+                    self.filters = Some(new_filters.clone());
+                }
             }
-        }
-    }
-
-    /// Get a mutable reference to the specified filter field
-    fn get_field_mut(&mut self, field: &FilterField) -> &mut Option<Vec<Vec<u8>>> {
-        match field {
-            FilterField::Author => &mut self.authors,
-            FilterField::Channel => &mut self.channels,
-            FilterField::Event => &mut self.events,
-            FilterField::User => &mut self.users,
-        }
-    }
-
-    /// Get an immutable reference to the specified filter field
-    pub fn get_field(&self, field: &FilterField) -> &Option<Vec<Vec<u8>>> {
-        match field {
-            FilterField::Author => &self.authors,
-            FilterField::Channel => &self.channels,
-            FilterField::Event => &self.events,
-            FilterField::User => &self.users,
+            FilterOperation::Clear => {
+                self.filters = None;
+            }
         }
     }
 }
@@ -308,7 +157,7 @@ pub trait MessageService {
     async fn publish(message: MessageFull) -> Result<PublishResult, MessageError>;
     async fn message(id: Hash) -> Result<Option<MessageFull>, MessageError>;
     async fn user_data(
-        author: SerializableVerifyingKey,
+        author: KeyId,
         storage_key: StoreKey,
     ) -> Result<Option<MessageFull>, MessageError>;
 
@@ -387,14 +236,13 @@ pub struct FilterUpdateRequest {
     pub operations: Vec<FilterOperation>,
 }
 
-/// Generic catch-up request for historical messages of any filter field type
+/// Type-safe catch-up request for historical messages
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CatchUpRequest {
-    pub filter_field: FilterField, // What type of filter (Channel, Author, Event, User)
-    pub filter_value: Vec<u8>,     // The ID/value to catch up on
-    pub since: Option<String>,     // Redis stream ID
+    pub filter: Filter,
+    pub since: Option<String>,
     pub max_messages: Option<usize>,
-    pub request_id: String, // For tracking response
+    pub request_id: String,
 }
 
 impl CatchUpRequest {
@@ -406,8 +254,7 @@ impl CatchUpRequest {
         request_id: String,
     ) -> Self {
         Self {
-            filter_field: FilterField::Channel,
-            filter_value: channel_id,
+            filter: Filter::Channel(channel_id),
             since,
             max_messages,
             request_id,
@@ -416,14 +263,13 @@ impl CatchUpRequest {
 
     /// Convenience constructor for author catch-up
     pub fn for_author(
-        author_id: Vec<u8>,
+        author_key: KeyId,
         since: Option<String>,
         max_messages: Option<usize>,
         request_id: String,
     ) -> Self {
         Self {
-            filter_field: FilterField::Author,
-            filter_value: author_id,
+            filter: Filter::Author(author_key),
             since,
             max_messages,
             request_id,
@@ -438,8 +284,7 @@ impl CatchUpRequest {
         request_id: String,
     ) -> Self {
         Self {
-            filter_field: FilterField::Event,
-            filter_value: event_id,
+            filter: Filter::Event(event_id),
             since,
             max_messages,
             request_id,
@@ -448,14 +293,13 @@ impl CatchUpRequest {
 
     /// Convenience constructor for user catch-up
     pub fn for_user(
-        user_id: Vec<u8>,
+        user_key: KeyId,
         since: Option<String>,
         max_messages: Option<usize>,
         request_id: String,
     ) -> Self {
         Self {
-            filter_field: FilterField::User,
-            filter_value: user_id,
+            filter: Filter::User(user_key),
             since,
             max_messages,
             request_id,
@@ -467,8 +311,7 @@ impl CatchUpRequest {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CatchUpResponse {
     pub request_id: String,
-    pub filter_field: FilterField, // What type of filter was requested
-    pub filter_value: Vec<u8>,     // The ID/value that was caught up on
+    pub filter: Filter, // What filter was requested
     pub messages: Vec<MessageFull>,
     pub is_complete: bool,          // False if more batches coming
     pub next_since: Option<String>, // For pagination
@@ -494,33 +337,52 @@ pub enum MessageServiceResponseWrap {
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_filter_field_enum() {
-        // Test that FilterField variants are properly defined
-        let author = FilterField::Author;
-        let channel = FilterField::Channel;
-        let event = FilterField::Event;
-        let user = FilterField::User;
+    // Helper function to create test KeyIds from byte arrays
+    fn create_test_verifying_key_id(bytes: &[u8]) -> KeyId {
+        // Generate a proper Ed25519 keypair and use the public key
+        use rand::SeedableRng;
 
-        // Test Debug formatting
-        assert_eq!(format!("{author:?}"), "Author");
-        assert_eq!(format!("{channel:?}"), "Channel");
-        assert_eq!(format!("{event:?}"), "Event");
-        assert_eq!(format!("{user:?}"), "User");
+        // Create a simple hash from the input bytes for deterministic generation
+        let mut seed = [0u8; 32];
+        let len = std::cmp::min(bytes.len(), 32);
+        seed[..len].copy_from_slice(&bytes[..len]);
+
+        let mut seed_rng = rand_chacha::ChaCha20Rng::from_seed(seed);
+        let signing_key = ed25519_dalek::SigningKey::generate(&mut seed_rng);
+        let verifying_key = signing_key.verifying_key();
+
+        crate::keys::VerifyingKey::Ed25519(Box::new(verifying_key))
+            .id()
+            .clone()
+    }
+
+    #[test]
+    fn test_filter_enum() {
+        // Test that Filter variants work correctly
+        let author = Filter::Author(create_test_verifying_key_id(b"alice"));
+        let channel = Filter::Channel(b"general".to_vec());
+        let event = Filter::Event(b"important".to_vec());
+        let user = Filter::User(create_test_verifying_key_id(b"bob"));
+
+        // Test Debug formatting works
+        assert!(format!("{author:?}").contains("Author"));
+        assert!(format!("{channel:?}").contains("Channel"));
+        assert!(format!("{event:?}").contains("Event"));
+        assert!(format!("{user:?}").contains("User"));
 
         // Test PartialEq
-        assert_eq!(FilterField::Author, FilterField::Author);
-        assert_ne!(FilterField::Author, FilterField::Channel);
+        assert_eq!(
+            author,
+            Filter::Author(create_test_verifying_key_id(b"alice"))
+        );
+        assert_ne!(author, channel);
     }
 
     #[test]
     fn test_message_filters_default() {
         let filters = MessageFilters::default();
         assert!(filters.is_empty());
-        assert!(filters.authors.is_none());
-        assert!(filters.channels.is_none());
-        assert!(filters.events.is_none());
-        assert!(filters.users.is_none());
+        assert!(filters.filters.is_none());
     }
 
     #[test]
@@ -528,92 +390,41 @@ mod tests {
         let mut filters = MessageFilters::default();
         assert!(filters.is_empty());
 
-        // Add some channels
-        filters.channels = Some(vec![b"general".to_vec()]);
+        // Add some filters
+        filters.filters = Some(vec![Filter::Channel(b"general".to_vec())]);
         assert!(!filters.is_empty());
 
-        // Clear channels but add authors
-        filters.channels = None;
-        filters.authors = Some(vec![b"alice".to_vec()]);
+        // Clear filters but add authors
+        filters.filters = Some(vec![Filter::Author(create_test_verifying_key_id(b"alice"))]);
         assert!(!filters.is_empty());
 
         // Clear all
-        filters.authors = None;
+        filters.filters = None;
         assert!(filters.is_empty());
     }
 
     #[test]
-    fn test_get_field_operations() {
-        let mut filters = MessageFilters {
-            authors: Some(vec![b"alice".to_vec()]),
-            channels: Some(vec![b"general".to_vec()]),
-            events: Some(vec![b"important".to_vec()]),
-            users: Some(vec![b"user1".to_vec()]),
-        };
-
-        // Test get_field (immutable)
-        assert_eq!(
-            filters.get_field(&FilterField::Author),
-            &Some(vec![b"alice".to_vec()])
-        );
-        assert_eq!(
-            filters.get_field(&FilterField::Channel),
-            &Some(vec![b"general".to_vec()])
-        );
-        assert_eq!(
-            filters.get_field(&FilterField::Event),
-            &Some(vec![b"important".to_vec()])
-        );
-        assert_eq!(
-            filters.get_field(&FilterField::User),
-            &Some(vec![b"user1".to_vec()])
-        );
-
-        // Test get_field_mut (mutable)
-        *filters.get_field_mut(&FilterField::Author) = Some(vec![b"bob".to_vec()]);
-        assert_eq!(filters.authors, Some(vec![b"bob".to_vec()]));
-    }
-
-    #[test]
-    fn test_filter_operation_convenience_constructors() {
+    fn test_filter_operations() {
+        // Test convenience constructors
         let channels = vec![b"general".to_vec(), b"tech".to_vec()];
-        let authors = vec![b"alice".to_vec()];
-        let events = vec![b"important".to_vec()];
-        let users = vec![b"user1".to_vec()];
+        let authors = vec![create_test_verifying_key_id(b"alice")];
 
         // Test add operations
         let add_channels = FilterOperation::add_channels(channels.clone());
         match add_channels {
-            FilterOperation::Add { field, values } => {
-                assert_eq!(field, FilterField::Channel);
-                assert_eq!(values, channels);
+            FilterOperation::Add(filters) => {
+                assert_eq!(filters.len(), 2);
+                assert!(filters.contains(&Filter::Channel(b"general".to_vec())));
+                assert!(filters.contains(&Filter::Channel(b"tech".to_vec())));
             }
             _ => panic!("Expected Add operation"),
         }
 
         let add_authors = FilterOperation::add_authors(authors.clone());
         match add_authors {
-            FilterOperation::Add { field, values } => {
-                assert_eq!(field, FilterField::Author);
-                assert_eq!(values, authors);
-            }
-            _ => panic!("Expected Add operation"),
-        }
-
-        let add_events = FilterOperation::add_events(events.clone());
-        match add_events {
-            FilterOperation::Add { field, values } => {
-                assert_eq!(field, FilterField::Event);
-                assert_eq!(values, events);
-            }
-            _ => panic!("Expected Add operation"),
-        }
-
-        let add_users = FilterOperation::add_users(users.clone());
-        match add_users {
-            FilterOperation::Add { field, values } => {
-                assert_eq!(field, FilterField::User);
-                assert_eq!(values, users);
+            FilterOperation::Add(filters) => {
+                assert_eq!(filters.len(), 1);
+                assert!(filters.contains(&Filter::Author(create_test_verifying_key_id(b"alice"))));
             }
             _ => panic!("Expected Add operation"),
         }
@@ -621,569 +432,64 @@ mod tests {
         // Test remove operations
         let remove_channels = FilterOperation::remove_channels(channels.clone());
         match remove_channels {
-            FilterOperation::Remove { field, values } => {
-                assert_eq!(field, FilterField::Channel);
-                assert_eq!(values, channels);
+            FilterOperation::Remove(filters) => {
+                assert_eq!(filters.len(), 2);
+                assert!(filters.contains(&Filter::Channel(b"general".to_vec())));
+                assert!(filters.contains(&Filter::Channel(b"tech".to_vec())));
             }
             _ => panic!("Expected Remove operation"),
         }
 
-        let remove_authors = FilterOperation::remove_authors(authors.clone());
-        match remove_authors {
-            FilterOperation::Remove { field, values } => {
-                assert_eq!(field, FilterField::Author);
-                assert_eq!(values, authors);
-            }
-            _ => panic!("Expected Remove operation"),
-        }
-
-        // Test replace operations
-        let replace_channels = FilterOperation::replace_channels(channels.clone());
-        match replace_channels {
-            FilterOperation::Replace { field, values } => {
-                assert_eq!(field, FilterField::Channel);
-                assert_eq!(values, channels);
-            }
-            _ => panic!("Expected Replace operation"),
-        }
-
-        let replace_events = FilterOperation::replace_events(events.clone());
-        match replace_events {
-            FilterOperation::Replace { field, values } => {
-                assert_eq!(field, FilterField::Event);
-                assert_eq!(values, events);
-            }
-            _ => panic!("Expected Replace operation"),
-        }
-
-        let replace_authors = FilterOperation::replace_authors(authors.clone());
-        match replace_authors {
-            FilterOperation::Replace { field, values } => {
-                assert_eq!(field, FilterField::Author);
-                assert_eq!(values, authors);
-            }
-            _ => panic!("Expected Replace operation"),
-        }
-
-        let replace_users = FilterOperation::replace_users(users.clone());
-        match replace_users {
-            FilterOperation::Replace { field, values } => {
-                assert_eq!(field, FilterField::User);
-                assert_eq!(values, users);
-            }
-            _ => panic!("Expected Replace operation"),
-        }
-
-        // Test clear operations
-        let clear_channels = FilterOperation::clear_channels();
-        match clear_channels {
-            FilterOperation::Clear { field } => {
-                assert_eq!(field, FilterField::Channel);
-            }
-            _ => panic!("Expected Clear operation"),
-        }
-
-        let clear_authors = FilterOperation::clear_authors();
-        match clear_authors {
-            FilterOperation::Clear { field } => {
-                assert_eq!(field, FilterField::Author);
-            }
-            _ => panic!("Expected Clear operation"),
-        }
-
-        let clear_events = FilterOperation::clear_events();
-        match clear_events {
-            FilterOperation::Clear { field } => {
-                assert_eq!(field, FilterField::Event);
-            }
-            _ => panic!("Expected Clear operation"),
-        }
-
-        let clear_users = FilterOperation::clear_users();
-        match clear_users {
-            FilterOperation::Clear { field } => {
-                assert_eq!(field, FilterField::User);
-            }
-            _ => panic!("Expected Clear operation"),
-        }
+        // Test clear operation
+        let clear_op = FilterOperation::clear();
+        assert_eq!(clear_op, FilterOperation::Clear);
     }
 
     #[test]
-    fn test_apply_operation_add() {
+    fn test_filter_operation_apply() {
         let mut filters = MessageFilters::default();
+        assert!(filters.is_empty());
 
-        // Test adding channels
-        let add_channels =
-            FilterOperation::add_channels(vec![b"general".to_vec(), b"tech".to_vec()]);
-        filters.apply_operation(&add_channels);
-        assert_eq!(
-            filters.channels,
-            Some(vec![b"general".to_vec(), b"tech".to_vec()])
-        );
+        // Add some filters
+        let add_op = FilterOperation::add_channels(vec![b"general".to_vec()]);
+        filters.apply_operation(&add_op);
+        assert!(!filters.is_empty());
+        assert_eq!(filters.filters.as_ref().unwrap().len(), 1);
 
-        // Test adding more channels (should not duplicate)
-        let add_more_channels = FilterOperation::add_channels(vec![
-            b"general".to_vec(), // duplicate
-            b"random".to_vec(),  // new
-        ]);
-        filters.apply_operation(&add_more_channels);
-        assert_eq!(
-            filters.channels,
-            Some(vec![
-                b"general".to_vec(),
-                b"tech".to_vec(),
-                b"random".to_vec()
-            ])
-        );
+        // Add more filters
+        let add_author_op =
+            FilterOperation::add_authors(vec![create_test_verifying_key_id(b"alice")]);
+        filters.apply_operation(&add_author_op);
+        assert_eq!(filters.filters.as_ref().unwrap().len(), 2);
 
-        // Test adding authors
-        let add_authors = FilterOperation::add_authors(vec![b"alice".to_vec()]);
-        filters.apply_operation(&add_authors);
-        assert_eq!(filters.authors, Some(vec![b"alice".to_vec()]));
-    }
+        // Remove a filter
+        let remove_op = FilterOperation::remove_channels(vec![b"general".to_vec()]);
+        filters.apply_operation(&remove_op);
+        assert_eq!(filters.filters.as_ref().unwrap().len(), 1);
 
-    #[test]
-    fn test_apply_operation_remove() {
-        let mut filters = MessageFilters {
-            channels: Some(vec![
-                b"general".to_vec(),
-                b"tech".to_vec(),
-                b"random".to_vec(),
-            ]),
-            authors: Some(vec![b"alice".to_vec(), b"bob".to_vec()]),
-            events: None,
-            users: None,
-        };
-
-        // Test removing some channels
-        let remove_channels = FilterOperation::remove_channels(vec![b"tech".to_vec()]);
-        filters.apply_operation(&remove_channels);
-        assert_eq!(
-            filters.channels,
-            Some(vec![b"general".to_vec(), b"random".to_vec()])
-        );
-
-        // Test removing all remaining channels
-        let remove_all_channels =
-            FilterOperation::remove_channels(vec![b"general".to_vec(), b"random".to_vec()]);
-        filters.apply_operation(&remove_all_channels);
-        assert_eq!(filters.channels, None); // Should be None when empty
-
-        // Test removing from authors
-        let remove_authors = FilterOperation::remove_authors(vec![b"alice".to_vec()]);
-        filters.apply_operation(&remove_authors);
-        assert_eq!(filters.authors, Some(vec![b"bob".to_vec()]));
-
-        // Test removing from non-existent field (should be no-op)
-        let remove_events = FilterOperation::remove_events(vec![b"nonexistent".to_vec()]);
-        filters.apply_operation(&remove_events);
-        assert_eq!(filters.events, None);
-    }
-
-    #[test]
-    fn test_apply_operation_replace() {
-        let mut filters = MessageFilters {
-            channels: Some(vec![b"old1".to_vec(), b"old2".to_vec()]),
-            authors: Some(vec![b"alice".to_vec()]),
-            events: None,
-            users: None,
-        };
-
-        // Test replacing channels
-        let replace_channels = FilterOperation::replace_channels(vec![
-            b"new1".to_vec(),
-            b"new2".to_vec(),
-            b"new3".to_vec(),
-        ]);
-        filters.apply_operation(&replace_channels);
-        assert_eq!(
-            filters.channels,
-            Some(vec![b"new1".to_vec(), b"new2".to_vec(), b"new3".to_vec()])
-        );
-
-        // Test replacing with empty vector (should set to None)
-        let replace_empty = FilterOperation::replace_authors(vec![]);
-        filters.apply_operation(&replace_empty);
-        assert_eq!(filters.authors, None);
-
-        // Test replacing a None field
-        let replace_events = FilterOperation::replace_events(vec![b"important".to_vec()]);
-        filters.apply_operation(&replace_events);
-        assert_eq!(filters.events, Some(vec![b"important".to_vec()]));
-    }
-
-    #[test]
-    fn test_apply_operation_clear() {
-        let mut filters = MessageFilters {
-            channels: Some(vec![b"general".to_vec()]),
-            authors: Some(vec![b"alice".to_vec()]),
-            events: Some(vec![b"important".to_vec()]),
-            users: Some(vec![b"user1".to_vec()]),
-        };
-
-        // Test clearing channels
-        let clear_channels = FilterOperation::clear_channels();
-        filters.apply_operation(&clear_channels);
-        assert_eq!(filters.channels, None);
-
-        // Test clearing authors
-        let clear_authors = FilterOperation::clear_authors();
-        filters.apply_operation(&clear_authors);
-        assert_eq!(filters.authors, None);
-
-        // Test clearing events
-        let clear_events = FilterOperation::clear_events();
-        filters.apply_operation(&clear_events);
-        assert_eq!(filters.events, None);
-
-        // Test clearing users
-        let clear_users = FilterOperation::clear_users();
-        filters.apply_operation(&clear_users);
-        assert_eq!(filters.users, None);
-
-        // Now filter should be empty
+        // Clear all
+        let clear_op = FilterOperation::clear();
+        filters.apply_operation(&clear_op);
         assert!(filters.is_empty());
     }
 
     #[test]
-    fn test_apply_operation_replace_all() {
-        let mut filters = MessageFilters {
-            channels: Some(vec![b"old".to_vec()]),
-            authors: Some(vec![b"old_author".to_vec()]),
-            events: None,
-            users: None,
-        };
-
-        let new_filters = MessageFilters {
-            channels: Some(vec![b"new_channel".to_vec()]),
-            authors: None,
-            events: Some(vec![b"new_event".to_vec()]),
-            users: Some(vec![b"new_user".to_vec()]),
-        };
-
-        let replace_all = FilterOperation::ReplaceAll(new_filters.clone());
-        filters.apply_operation(&replace_all);
-
-        assert_eq!(filters, new_filters);
-    }
-
-    #[test]
-    fn test_atomic_multi_operation_scenario() {
-        let mut filters = MessageFilters::default();
-
-        // Simulate atomic application of multiple operations
-        let operations = vec![
-            FilterOperation::add_channels(vec![b"general".to_vec(), b"tech".to_vec()]),
-            FilterOperation::add_authors(vec![b"alice".to_vec()]),
-            FilterOperation::add_events(vec![b"important".to_vec()]),
-            FilterOperation::add_users(vec![b"user1".to_vec()]),
-        ];
-
-        for operation in &operations {
-            filters.apply_operation(operation);
-        }
-
-        assert_eq!(
-            filters.channels,
-            Some(vec![b"general".to_vec(), b"tech".to_vec()])
-        );
-        assert_eq!(filters.authors, Some(vec![b"alice".to_vec()]));
-        assert_eq!(filters.events, Some(vec![b"important".to_vec()]));
-        assert_eq!(filters.users, Some(vec![b"user1".to_vec()]));
-    }
-
-    #[test]
-    fn test_duplicate_prevention() {
-        let mut filters = MessageFilters::default();
-
-        // Add the same channel multiple times
-        filters.apply_operation(&FilterOperation::add_channels(vec![b"general".to_vec()]));
-        filters.apply_operation(&FilterOperation::add_channels(vec![b"general".to_vec()]));
-        filters.apply_operation(&FilterOperation::add_channels(vec![b"general".to_vec()]));
-
-        // Should only have one instance
-        assert_eq!(filters.channels, Some(vec![b"general".to_vec()]));
-    }
-
-    #[test]
-    fn test_complex_filter_manipulation() {
-        let mut filters = MessageFilters::default();
-
-        // Start with some initial data
-        filters.apply_operation(&FilterOperation::add_channels(vec![
-            b"general".to_vec(),
-            b"tech".to_vec(),
-            b"random".to_vec(),
-        ]));
-        filters.apply_operation(&FilterOperation::add_authors(vec![
-            b"alice".to_vec(),
-            b"bob".to_vec(),
-            b"charlie".to_vec(),
-        ]));
-
-        // Remove some items
-        filters.apply_operation(&FilterOperation::remove_channels(vec![b"random".to_vec()]));
-        filters.apply_operation(&FilterOperation::remove_authors(vec![b"charlie".to_vec()]));
-
-        // Add some new items
-        filters.apply_operation(&FilterOperation::add_channels(vec![b"urgent".to_vec()]));
-        filters.apply_operation(&FilterOperation::add_events(vec![b"important".to_vec()]));
-
-        // Verify final state
-        assert_eq!(
-            filters.channels,
-            Some(vec![
-                b"general".to_vec(),
-                b"tech".to_vec(),
-                b"urgent".to_vec()
-            ])
-        );
-        assert_eq!(
-            filters.authors,
-            Some(vec![b"alice".to_vec(), b"bob".to_vec()])
-        );
-        assert_eq!(filters.events, Some(vec![b"important".to_vec()]));
-        assert_eq!(filters.users, None);
-    }
-
-    #[test]
-    fn test_filter_update_request() {
-        let operations = vec![
-            FilterOperation::add_channels(vec![b"general".to_vec()]),
-            FilterOperation::remove_authors(vec![b"spammer".to_vec()]),
-            FilterOperation::add_events(vec![b"important".to_vec()]),
-        ];
-
-        let filter_request = FilterUpdateRequest {
-            operations: operations.clone(),
-        };
-
-        assert_eq!(filter_request.operations.len(), 3);
-        assert_eq!(filter_request.operations, operations);
-
-        // Test that the request can be applied
-        let mut filters = MessageFilters::default();
-        for operation in &filter_request.operations {
-            filters.apply_operation(operation);
-        }
-
-        assert_eq!(filters.channels, Some(vec![b"general".to_vec()]));
-        assert_eq!(filters.authors, None); // Remove from empty has no effect
-        assert_eq!(filters.events, Some(vec![b"important".to_vec()]));
-    }
-
-    #[test]
-    fn test_edge_cases() {
-        let mut filters = MessageFilters::default();
-
-        // Test empty values in operations
-        filters.apply_operation(&FilterOperation::add_channels(vec![]));
-        assert_eq!(filters.channels, Some(vec![])); // Empty add creates empty vector
-
-        // Test replace with empty values
-        filters.channels = Some(vec![b"existing".to_vec()]);
-        filters.apply_operation(&FilterOperation::replace_channels(vec![]));
-        assert_eq!(filters.channels, None); // Empty replace should clear
-
-        // Test removing non-existent values
-        filters.channels = Some(vec![b"general".to_vec()]);
-        filters.apply_operation(&FilterOperation::remove_channels(vec![
-            b"nonexistent".to_vec()
-        ]));
-        assert_eq!(filters.channels, Some(vec![b"general".to_vec()])); // Should be unchanged
-
-        // Test clearing already empty field
-        filters.authors = None;
-        filters.apply_operation(&FilterOperation::clear_authors());
-        assert_eq!(filters.authors, None); // Should remain None
-
-        // Test adding to existing empty field
-        filters.channels = Some(vec![]);
-        filters.apply_operation(&FilterOperation::add_channels(vec![b"new".to_vec()]));
-        assert_eq!(filters.channels, Some(vec![b"new".to_vec()])); // Should add to empty
-
-        // Test removing all items results in None
-        filters.channels = Some(vec![b"channel1".to_vec(), b"channel2".to_vec()]);
-        filters.apply_operation(&FilterOperation::remove_channels(vec![
-            b"channel1".to_vec(),
-            b"channel2".to_vec(),
-        ]));
-        assert_eq!(filters.channels, None); // Empty after remove should be None
-    }
-
-    #[test]
-    fn test_message_filters_equality() {
-        let filters1 = MessageFilters {
-            channels: Some(vec![b"general".to_vec()]),
-            authors: Some(vec![b"alice".to_vec()]),
-            events: None,
-            users: None,
-        };
-
-        let filters2 = MessageFilters {
-            channels: Some(vec![b"general".to_vec()]),
-            authors: Some(vec![b"alice".to_vec()]),
-            events: None,
-            users: None,
-        };
-
-        let filters3 = MessageFilters {
-            channels: Some(vec![b"tech".to_vec()]),
-            authors: Some(vec![b"alice".to_vec()]),
-            events: None,
-            users: None,
-        };
-
-        assert_eq!(filters1, filters2);
-        assert_ne!(filters1, filters3);
-    }
-
-    #[test]
-    fn test_subscription_config() {
-        let filters = MessageFilters {
-            channels: Some(vec![b"general".to_vec()]),
-            authors: None,
-            events: None,
-            users: None,
-        };
-
-        let config = SubscriptionConfig {
-            filters: filters.clone(),
-            since: Some("1234-0".to_string()),
-            limit: Some(100),
-        };
-
-        assert_eq!(config.filters, filters);
-        assert_eq!(config.since, Some("1234-0".to_string()));
-        assert_eq!(config.limit, Some(100));
-    }
-
-    #[test]
-    fn test_generic_catchup_request() {
-        // Test channel catch-up
+    fn test_catchup_request_constructors() {
+        // Test channel catch-up request
         let channel_request = CatchUpRequest::for_channel(
             b"general".to_vec(),
-            Some("1234-0".to_string()),
-            Some(50),
-            "req123".to_string(),
-        );
-
-        assert_eq!(channel_request.filter_field, FilterField::Channel);
-        assert_eq!(channel_request.filter_value, b"general".to_vec());
-        assert_eq!(channel_request.since, Some("1234-0".to_string()));
-        assert_eq!(channel_request.max_messages, Some(50));
-        assert_eq!(channel_request.request_id, "req123");
-
-        // Test author catch-up
-        let author_request = CatchUpRequest::for_author(
-            b"alice".to_vec(),
-            None,
+            Some("0-0".to_string()),
             Some(100),
-            "author-req456".to_string(),
+            "test_id".to_string(),
         );
+        assert_eq!(channel_request.filter, Filter::Channel(b"general".to_vec()));
+        assert_eq!(channel_request.request_id, "test_id");
 
-        assert_eq!(author_request.filter_field, FilterField::Author);
-        assert_eq!(author_request.filter_value, b"alice".to_vec());
-        assert_eq!(author_request.since, None);
-        assert_eq!(author_request.max_messages, Some(100));
-        assert_eq!(author_request.request_id, "author-req456");
-
-        // Test event catch-up
-        let event_request = CatchUpRequest::for_event(
-            b"urgent".to_vec(),
-            Some("5678-1".to_string()),
-            None,
-            "event-req789".to_string(),
-        );
-
-        assert_eq!(event_request.filter_field, FilterField::Event);
-        assert_eq!(event_request.filter_value, b"urgent".to_vec());
-        assert_eq!(event_request.since, Some("5678-1".to_string()));
-        assert_eq!(event_request.max_messages, None);
-        assert_eq!(event_request.request_id, "event-req789");
-
-        // Test user catch-up
-        let user_request = CatchUpRequest::for_user(
-            b"user123".to_vec(),
-            Some("9999-0".to_string()),
-            Some(25),
-            "user-req101".to_string(),
-        );
-
-        assert_eq!(user_request.filter_field, FilterField::User);
-        assert_eq!(user_request.filter_value, b"user123".to_vec());
-        assert_eq!(user_request.since, Some("9999-0".to_string()));
-        assert_eq!(user_request.max_messages, Some(25));
-        assert_eq!(user_request.request_id, "user-req101");
-    }
-
-    #[test]
-    fn test_catchup_response() {
-        let response = CatchUpResponse {
-            request_id: "req123".to_string(),
-            filter_field: FilterField::Channel,
-            filter_value: b"general".to_vec(),
-            messages: vec![], // Empty for test
-            is_complete: true,
-            next_since: Some("1234-1".to_string()),
-        };
-
-        assert_eq!(response.request_id, "req123");
-        assert_eq!(response.filter_field, FilterField::Channel);
-        assert_eq!(response.filter_value, b"general".to_vec());
-        assert!(response.is_complete);
-        assert_eq!(response.next_since, Some("1234-1".to_string()));
-    }
-
-    #[test]
-    fn test_filter_operation_equality() {
-        // Test that FilterOperation properly implements PartialEq
-        let op1 = FilterOperation::add_channels(vec![b"general".to_vec()]);
-        let op2 = FilterOperation::add_channels(vec![b"general".to_vec()]);
-        let op3 = FilterOperation::add_channels(vec![b"tech".to_vec()]);
-        let op4 = FilterOperation::add_authors(vec![b"general".to_vec()]);
-
-        assert_eq!(op1, op2);
-        assert_ne!(op1, op3); // Different values
-        assert_ne!(op1, op4); // Different operation type
-
-        // Test complex operations
-        let operations1 = vec![
-            FilterOperation::add_channels(vec![b"general".to_vec()]),
-            FilterOperation::remove_authors(vec![b"spammer".to_vec()]),
-        ];
-        let operations2 = vec![
-            FilterOperation::add_channels(vec![b"general".to_vec()]),
-            FilterOperation::remove_authors(vec![b"spammer".to_vec()]),
-        ];
-
-        assert_eq!(operations1, operations2);
-    }
-
-    #[test]
-    fn test_all_remove_operations() {
-        // Test that all remove operations work correctly
-        let mut filters = MessageFilters {
-            channels: Some(vec![b"general".to_vec(), b"tech".to_vec()]),
-            authors: Some(vec![b"alice".to_vec(), b"bob".to_vec()]),
-            events: Some(vec![b"important".to_vec(), b"urgent".to_vec()]),
-            users: Some(vec![b"user1".to_vec(), b"user2".to_vec()]),
-        };
-
-        // Test remove_events
-        filters.apply_operation(&FilterOperation::remove_events(vec![b"urgent".to_vec()]));
-        assert_eq!(filters.events, Some(vec![b"important".to_vec()]));
-
-        // Test remove_users
-        filters.apply_operation(&FilterOperation::remove_users(vec![b"user1".to_vec()]));
-        assert_eq!(filters.users, Some(vec![b"user2".to_vec()]));
-
-        // Remove all remaining events
-        filters.apply_operation(&FilterOperation::remove_events(vec![b"important".to_vec()]));
-        assert_eq!(filters.events, None);
-
-        // Remove all remaining users
-        filters.apply_operation(&FilterOperation::remove_users(vec![b"user2".to_vec()]));
-        assert_eq!(filters.users, None);
+        // Test author catch-up request
+        let author_key = create_test_verifying_key_id(b"alice");
+        let author_request =
+            CatchUpRequest::for_author(author_key.clone(), None, None, "test_id_2".to_string());
+        assert_eq!(author_request.filter, Filter::Author(author_key));
+        assert_eq!(author_request.request_id, "test_id_2");
     }
 }

@@ -4,7 +4,7 @@ use futures_util::Stream;
 use redis::{aio::ConnectionManager, AsyncCommands, SetOptions};
 use tracing::{debug, error, info, warn};
 use zoe_wire_protocol::{
-    FilterField, Hash, MessageFilters, MessageFull, PublishResult, StoreKey, Tag,
+    Filter, Hash, Id as KeyId, MessageFilters, MessageFull, PublishResult, StoreKey, Tag,
 };
 
 use crate::error::{MessageStoreError, Result};
@@ -239,9 +239,9 @@ impl RedisMessageStorage {
 
         // Collect all script arguments upfront
         let mut script_args = vec![
-            storage_value.to_vec(),                        // ARGV[1] - message data
-            msg_id_bytes.to_vec(),                         // ARGV[2] - message ID bytes
-            message.author().encode().as_slice().to_vec(), // ARGV[3] - author bytes
+            storage_value.to_vec(),         // ARGV[1] - message data
+            msg_id_bytes.to_vec(),          // ARGV[2] - message ID bytes
+            message.author().id().to_vec(), // ARGV[3] - author ID bytes
         ];
         script_args.push(
             ex_time
@@ -320,7 +320,7 @@ impl RedisMessageStorage {
         // These operations are not critical for correctness, so we handle them separately
         Self::add_to_index_stream(
             &mut conn,
-            &format!("author:{}:stream", hex::encode(message.author().encode())),
+            &format!("author:{}:stream", hex::encode(message.author().id())),
             msg_id_bytes,
             global_stream_id,
             ex_time,
@@ -466,18 +466,17 @@ impl RedisMessageStorage {
         Self::get_message_full(&mut conn, id).await
     }
 
-    /// Catch up on a specific tag stream
+    /// Catch up on a specific filter stream
     pub async fn catch_up<'a>(
         &'a self,
-        tag_type: FilterField,
-        tag_id: &[u8],
+        filter: &Filter,
         since: Option<String>,
     ) -> Result<impl Stream<Item = Result<CatchUpItem>> + 'a> {
-        let channel_stream = match tag_type {
-            FilterField::Channel => format!("channel:{}:stream", hex::encode(tag_id)),
-            FilterField::Event => format!("event:{}:stream", hex::encode(tag_id)),
-            FilterField::User => format!("user:{}:stream", hex::encode(tag_id)),
-            FilterField::Author => format!("author:{}:stream", hex::encode(tag_id)),
+        let channel_stream = match filter {
+            Filter::Channel(channel_id) => format!("channel:{}:stream", hex::encode(channel_id)),
+            Filter::Event(event_id) => format!("event:{}:stream", hex::encode(event_id)),
+            Filter::User(user_id) => format!("user:{}:stream", hex::encode(user_id)),
+            Filter::Author(author_id) => format!("author:{}:stream", hex::encode(author_id)),
         };
 
         let mut conn = {
@@ -715,31 +714,51 @@ impl RedisMessageStorage {
 
                                 // checking for filters
                                 EVENT_KEY => {
-                                    let event_id = value;
-                                    if filters.events.is_some() && filters.events.as_ref().unwrap().contains(&event_id) {
-                                        should_yield = true;
-                                        break 'meta;
+                                    if let Some(filter_list) = &filters.filters {
+                                        for filter in filter_list {
+                                            if let Filter::Event(event_id) = filter {
+                                                if value == event_id.as_slice() {
+                                                    should_yield = true;
+                                                    break 'meta;
+                                                }
+                                            }
+                                        }
                                     }
                                 }
                                 AUTHOR_KEY => {
-                                    let author_id = value;
-                                    if filters.authors.is_some() && filters.authors.as_ref().unwrap().contains(&author_id) {
-                                        should_yield = true;
-                                        break 'meta;
+                                    if let Some(filter_list) = &filters.filters {
+                                        for filter in filter_list {
+                                            if let Filter::Author(author_id) = filter {
+                                                if value == author_id {
+                                                    should_yield = true;
+                                                    break 'meta;
+                                                }
+                                            }
+                                        }
                                     }
                                 }
                                 USER_KEY => {
-                                    let user_id = value;
-                                    if filters.users.is_some() && filters.users.as_ref().unwrap().contains(&user_id) {
-                                        should_yield = true;
-                                        break 'meta;
+                                    if let Some(filter_list) = &filters.filters {
+                                        for filter in filter_list {
+                                            if let Filter::User(user_id) = filter {
+                                                if value == user_id {
+                                                    should_yield = true;
+                                                    break 'meta;
+                                                }
+                                            }
+                                        }
                                     }
                                 }
                                 CHANNEL_KEY => {
-                                    let channel_id = value;
-                                    if filters.channels.is_some() && filters.channels.as_ref().unwrap().contains(&channel_id) {
-                                        should_yield = true;
-                                        break 'meta;
+                                    if let Some(filter_list) = &filters.filters {
+                                        for filter in filter_list {
+                                            if let Filter::Channel(channel_id) = filter {
+                                                if value == channel_id.as_slice() {
+                                                    should_yield = true;
+                                                    break 'meta;
+                                                }
+                                            }
+                                        }
                                     }
                                 }
                                 _ => {
@@ -776,7 +795,7 @@ impl RedisMessageStorage {
 
     pub async fn get_user_data(
         &self,
-        user_id: &[u8],
+        user_id: KeyId,
         key: StoreKey,
     ) -> Result<Option<MessageFull>> {
         let message_id = hex::encode(user_id);

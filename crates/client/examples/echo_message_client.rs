@@ -24,7 +24,7 @@ use tokio::time::timeout;
 use tracing::{error, info, warn};
 use zoe_client::{ClientError, MessagesService, MessagesStream, RelayClient};
 use zoe_wire_protocol::{
-    KeyPair, Kind, Message, MessageFilters, MessageFull, StreamMessage, SubscriptionConfig,
+    Filter, KeyPair, Kind, Message, MessageFilters, MessageFull, StreamMessage, SubscriptionConfig,
     VerifyingKey, generate_keypair,
 };
 
@@ -38,10 +38,7 @@ async fn run_echo_test(
     // Step 1: Subscribe to messages from our own key
     let subscription_config = SubscriptionConfig {
         filters: MessageFilters {
-            authors: Some(vec![client_public_key.encode().to_vec()]),
-            channels: None,
-            events: None,
-            users: None,
+            filters: Some(vec![Filter::Author(*client_public_key.id())]),
         },
         since: None,
         limit: None,

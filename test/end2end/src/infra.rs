@@ -406,10 +406,9 @@ mod tests {
         // Set up subscriptions for both clients to listen to the same channel
         let subscription_config1 = zoe_wire_protocol::SubscriptionConfig {
             filters: zoe_wire_protocol::MessageFilters {
-                authors: None, // Listen to messages from any author
-                channels: Some(vec![channel_name.as_bytes().to_vec()]),
-                events: None,
-                users: None,
+                filters: Some(vec![zoe_wire_protocol::Filter::Channel(
+                    channel_name.as_bytes().to_vec(),
+                )]),
             },
             since: None,
             limit: Some(10), // Limit to recent messages
@@ -963,10 +962,9 @@ mod tests {
         // so we need to subscribe to the author instead
         let subscription_config = zoe_wire_protocol::SubscriptionConfig {
             filters: zoe_wire_protocol::MessageFilters {
-                authors: Some(vec![client1.public_key().encode().to_vec()]), // Subscribe to messages from client 1
-                channels: None,
-                events: None,
-                users: None,
+                filters: Some(vec![zoe_wire_protocol::Filter::Author(
+                    *client1.public_key().id(),
+                )]),
             },
             since: None,
             limit: Some(10),
@@ -1152,10 +1150,9 @@ mod tests {
         // Step 1: Client 1 subscribes to an existing channel filter (but no messages there yet)
         let initial_subscription_config = zoe_wire_protocol::SubscriptionConfig {
             filters: zoe_wire_protocol::MessageFilters {
-                authors: None,
-                channels: Some(vec![general_channel.as_bytes().to_vec()]),
-                events: None,
-                users: None,
+                filters: Some(vec![zoe_wire_protocol::Filter::Channel(
+                    general_channel.as_bytes().to_vec(),
+                )]),
             },
             since: None,
             limit: Some(10),
@@ -1233,12 +1230,12 @@ mod tests {
         // Step 3: Test the catch-up API functionality
         info!("🔍 Client 1 testing catch-up API for '{}'", new_channel);
 
-        let catch_up_request = zoe_wire_protocol::CatchUpRequest::for_channel(
-            new_channel.as_bytes().to_vec(),
-            None,     // Get all messages since beginning
-            Some(10), // Max 10 messages
-            format!("catchup_{timestamp_base}"),
-        );
+        let catch_up_request = zoe_wire_protocol::CatchUpRequest {
+            filter: zoe_wire_protocol::Filter::Channel(new_channel.as_bytes().to_vec()),
+            since: None,            // Get all messages since beginning
+            max_messages: Some(10), // Max 10 messages
+            request_id: format!("catchup_{timestamp_base}"),
+        };
 
         let catch_up_id = messages_service1
             .catch_up(catch_up_request)

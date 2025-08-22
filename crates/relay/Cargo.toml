@@ -67,6 +67,9 @@ zoe-e2e-tests = { path = "../../test/end2end" }
 tempfile = { workspace = true }
 redis = { version = "0.32.4", features = ["tokio-comp", "connection-manager"] }
 tracing-subscriber = { workspace = true }
+rand = { workspace = true }
+rand_chacha = { workspace = true }
+ed25519-dalek = { workspace = true }
 
 # Certificate generation for tests
 rcgen = "0.13"

@@ -37,8 +37,8 @@ use tokio::{
 use tracing::{error, info, warn};
 use zoe_client::{ClientError, MessagesService, RelayClient};
 use zoe_wire_protocol::{
-    KeyPair, Kind, Message, MessageFilters, MessageFull, StreamMessage, SubscriptionConfig, Tag,
-    generate_keypair,
+    Filter, KeyPair, Kind, Message, MessageFilters, MessageFull, StreamMessage, SubscriptionConfig,
+    Tag, generate_keypair,
 };
 
 /// Configuration for the chat client
@@ -299,10 +299,7 @@ impl ChatClient {
 
         let subscription_config = SubscriptionConfig {
             filters: MessageFilters {
-                authors: None,
-                channels: Some(vec![channel_bytes]),
-                events: None,
-                users: None,
+                filters: Some(vec![Filter::Channel(channel_bytes)]),
             },
             since: None,
             limit: Some(20), // Get last 20 messages

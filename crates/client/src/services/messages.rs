@@ -75,10 +75,10 @@ impl MessagesService {
                             }
                             Ok(MessageServiceResponseWrap::CatchUpResponse(catch_up_response)) => {
                                 // Log catch-up response for now - could be forwarded to a specific handler
-                                tracing::info!(
-                                    "Received catch-up response: request_id={}, filter_field={:?}, message_count={}",
+                                tracing::trace!(
+                                    "Received catch-up response: request_id={}, filter={:?}, message_count={}",
                                     catch_up_response.request_id,
-                                    catch_up_response.filter_field,
+                                    catch_up_response.filter,
                                     catch_up_response.messages.len()
                                 );
                                 // TODO: Forward to a catch-up response handler if needed
@@ -92,7 +92,7 @@ impl MessagesService {
                     // Poll for messages from rpc client
                     rpc_message = server_transport.next() => {
                         let Some(Ok(rpc_message)) = rpc_message else {
-                            tracing::info!("RPC client closed");
+                            tracing::trace!("RPC client closed");
                             break;
                         };
                         // Send RPC message directly since MessagesServiceRequestWrap is now just ClientMessage

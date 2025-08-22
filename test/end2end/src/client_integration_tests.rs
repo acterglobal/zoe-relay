@@ -14,7 +14,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::time::timeout;
 use tracing::{debug, info, warn};
 use zoe_wire_protocol::{
-    Content, KeyPair, Kind, Message, MessageFilters, MessageFull, StreamMessage,
+    Content, Filter, KeyPair, Kind, Message, MessageFilters, MessageFull, StoreKey, StreamMessage,
     SubscriptionConfig, Tag, VerifyingKey, generate_keypair,
 };
 
@@ -38,10 +38,7 @@ async fn test_message_posting_and_retrieval() -> Result<()> {
     // Subscribe to the channel FIRST (like working test)
     let subscription_config = SubscriptionConfig {
         filters: MessageFilters {
-            authors: None,
-            channels: Some(vec![test_channel.as_bytes().to_vec()]),
-            events: None,
-            users: None,
+            filters: Some(vec![Filter::Channel(test_channel.as_bytes().to_vec())]),
         },
         since: None, // Get all messages
         limit: None,
@@ -144,10 +141,7 @@ async fn test_user_data_storage_and_lookup() -> Result<()> {
     // Subscribe to user data messages FIRST
     let user_subscription_config = SubscriptionConfig {
         filters: MessageFilters {
-            authors: None,
-            channels: None,
-            events: None,
-            users: Some(vec![client.public_key().encode().to_vec()]),
+            filters: Some(vec![Filter::User(*client.public_key().id())]),
         },
         since: None,
         limit: None,
@@ -172,18 +166,12 @@ async fn test_user_data_storage_and_lookup() -> Result<()> {
         r#"{{"name": "Test User", "email": "test@example.com", "timestamp": {timestamp}}}"#
     );
 
-    // Create a user tag to make this a user data message
-    let user_tag = Tag::User {
-        id: client.public_key().encode().to_vec(),
-        relays: vec![],
-    };
-
     let message = Message::new_v0(
         user_data.as_bytes().to_vec(),
         client.public_key(),
         timestamp,
-        Kind::Regular,
-        vec![user_tag],
+        Kind::Store(StoreKey::CustomKey(3)),
+        vec![],
     );
 
     let message_full = MessageFull::new(message, client.keypair())
@@ -199,6 +187,15 @@ async fn test_user_data_storage_and_lookup() -> Result<()> {
 
     // Wait for message to be processed and distributed
     tokio::time::sleep(Duration::from_millis(300)).await;
+
+    // now we fetch the user data
+    let user_data = messages_service
+        .user_data(
+            tarpc::context::current(),
+            *client.public_key().id(),
+            StoreKey::CustomKey(3),
+        )
+        .await?;
 
     // Collect user data messages
     let mut user_data_received = 0;
@@ -270,10 +267,7 @@ async fn test_subscription_unsubscription_functionality() -> Result<()> {
     // Step 1: Subscribe to a specific channel
     let subscription_config = SubscriptionConfig {
         filters: MessageFilters {
-            authors: None,
-            channels: Some(vec![test_channel.as_bytes().to_vec()]),
-            events: None,
-            users: None,
+            filters: Some(vec![Filter::Channel(test_channel.as_bytes().to_vec())]),
         },
         since: None,
         limit: None,
@@ -424,10 +418,7 @@ async fn test_all_signature_types_e2e() -> Result<()> {
     // Subscribe all clients to the test channel
     let subscription_config = SubscriptionConfig {
         filters: MessageFilters {
-            authors: None,
-            channels: Some(vec![test_channel.as_bytes().to_vec()]),
-            events: None,
-            users: None,
+            filters: Some(vec![Filter::Channel(test_channel.as_bytes().to_vec())]),
         },
         since: None,
         limit: None,
@@ -681,10 +672,7 @@ async fn test_signature_type_interoperability_e2e() -> Result<()> {
     // Subscribe both clients to the same channel
     let subscription_config = SubscriptionConfig {
         filters: MessageFilters {
-            authors: None,
-            channels: Some(vec![test_channel.as_bytes().to_vec()]),
-            events: None,
-            users: None,
+            filters: Some(vec![Filter::Channel(test_channel.as_bytes().to_vec())]),
         },
         since: None,
         limit: None,

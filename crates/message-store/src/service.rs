@@ -4,9 +4,9 @@ use std::{collections::HashMap, sync::Arc};
 use tokio::sync::{mpsc, RwLock};
 use tracing::{debug, error, info};
 use zoe_wire_protocol::{
-    CatchUpRequest, CatchUpResponse, FilterUpdateRequest, Hash, MessageError, MessageFilters,
-    MessageFull, MessageService as MessageServiceRpc, MessageServiceResponseWrap, PublishResult,
-    SerializableVerifyingKey, StoreKey, StreamMessage, SubscriptionConfig,
+    keys::Id as KeyId, CatchUpRequest, CatchUpResponse, FilterUpdateRequest, Hash, MessageError,
+    MessageFilters, MessageFull, MessageService as MessageServiceRpc, MessageServiceResponseWrap,
+    PublishResult, StoreKey, StreamMessage, SubscriptionConfig,
 };
 
 /// Subscription state for tracking active subscriptions
@@ -99,9 +99,7 @@ async fn handle_catch_up_request(
 ) -> Result<(), crate::MessageStoreError> {
     info!("Handling catch-up request: {:?}", request);
 
-    let stream = service
-        .catch_up(request.filter_field, &request.filter_value, request.since)
-        .await?;
+    let stream = service.catch_up(&request.filter, request.since).await?;
 
     tokio::pin!(stream);
 
@@ -119,8 +117,7 @@ async fn handle_catch_up_request(
                 if count >= max_messages || messages.len() >= 50 {
                     let response = CatchUpResponse {
                         request_id: request.request_id.clone(),
-                        filter_field: request.filter_field,
-                        filter_value: request.filter_value.clone(),
+                        filter: request.filter.clone(),
                         messages: messages.clone(),
                         is_complete: count >= max_messages,
                         next_since: None, // Could be enhanced for pagination
@@ -151,8 +148,7 @@ async fn handle_catch_up_request(
     if !messages.is_empty() {
         let response = CatchUpResponse {
             request_id: request.request_id.clone(),
-            filter_field: request.filter_field,
-            filter_value: request.filter_value.clone(),
+            filter: request.filter.clone(),
             messages,
             is_complete: true,
             next_since: None,
@@ -199,11 +195,11 @@ impl MessageServiceRpc for MessagesRpcService {
     async fn user_data(
         self,
         _context: ::tarpc::context::Context,
-        author: SerializableVerifyingKey,
+        author: KeyId,
         storage_key: StoreKey,
     ) -> Result<Option<MessageFull>, MessageError> {
         self.store
-            .get_user_data(&author.key_bytes, storage_key)
+            .get_user_data(author, storage_key)
             .await
             .map_err(MessageError::from)
     }
