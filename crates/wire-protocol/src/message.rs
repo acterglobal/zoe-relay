@@ -3,8 +3,8 @@ use blake3::{Hash, Hasher};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    crypto::ChaCha20Poly1305Content, Ed25519SelfEncryptedContent, EphemeralEcdhContent,
-    MlDsaSelfEncryptedContent,
+    crypto::ChaCha20Poly1305Content, keys::Id as VerifyingKeyId, Ed25519SelfEncryptedContent,
+    EphemeralEcdhContent, MlDsaSelfEncryptedContent,
 };
 use forward_compatible_enum::ForwardCompatibleEnum;
 
@@ -22,12 +22,12 @@ pub enum Tag {
     },
     User {
         // Refers to a user in some form
-        id: Vec<u8>,
+        id: VerifyingKeyId,
         #[serde(default)]
         relays: Vec<String>,
     },
     Channel {
-        // Refers to a channel in some form
+        // Refers to a channel in some form, custom length but often times a hash
         id: Vec<u8>,
         #[serde(default)]
         relays: Vec<String>,
@@ -1209,7 +1209,7 @@ mod tests {
             1714857600,
             Kind::Regular,
             vec![Tag::User {
-                id: vec![1],
+                id: [1u8; 32],
                 relays: vec!["relay1".to_string()],
             }],
         )
@@ -1243,7 +1243,7 @@ mod tests {
             1714857600,
             Kind::Regular,
             vec![Tag::User {
-                id: vec![1],
+                id: [1u8; 32],
                 relays: vec!["relay1".to_string()],
             }],
         )
@@ -1304,7 +1304,7 @@ mod tests {
                 relays: vec!["relay1".to_string()],
             },
             Tag::User {
-                id: vec![2],
+                id: [2u8; 32],
                 relays: vec!["relay2".to_string()],
             },
             Tag::Channel {
@@ -1597,7 +1597,7 @@ mod tests {
                     relays: vec!["relay1".to_string()],
                 },
                 Tag::User {
-                    id: vec![2],
+                    id: [2u8; 32],
                     relays: vec!["relay2".to_string()],
                 },
             ],

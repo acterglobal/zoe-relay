@@ -55,13 +55,13 @@ impl<TarpcMsg> RpcMessageListener<TarpcMsg> {
         }
 
         // Check if it's targeted at our public key
-        let our_public_key = self.signing_key.verifying_key().to_bytes().to_vec();
+        let our_public_key = self.signing_key.verifying_key().as_bytes().clone();
         tracing::debug!("Our public key: {}", hex::encode(&our_public_key));
 
         let is_targeted = message.tags().iter().any(|tag| {
             if let Tag::User { id, .. } = tag {
                 tracing::debug!("Checking tag user ID: {}", hex::encode(id));
-                *id == our_public_key
+                id == &our_public_key
             } else {
                 false
             }

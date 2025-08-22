@@ -259,7 +259,7 @@ impl RedisMessageStorage {
                 }
                 Tag::User { id: user_id, .. } => {
                     script_args.push(USER_KEY.as_bytes().to_vec());
-                    script_args.push(user_id.clone());
+                    script_args.push(user_id.to_vec());
                 }
                 Tag::Channel { id: channel_id, .. } => {
                     script_args.push(CHANNEL_KEY.as_bytes().to_vec());
