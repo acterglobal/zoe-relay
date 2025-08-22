@@ -43,7 +43,7 @@
 //!     
 //!     // Create client and establish authenticated connection
 //!     let client_keypair = generate_keypair(&mut rand::rngs::OsRng);
-//!     let (connection, version, verified_count, warnings) = 
+//!     let (connection, version, verified_count, warnings) =
 //!         create_authenticated_connection(
 //!             server_addr,
 //!             &server_public_key,
@@ -70,7 +70,7 @@ use tracing::{debug, info, warn};
 use zoe_client::RelayClient;
 use zoe_wire_protocol::{
     Content, KeyPair, Kind, Message, MessageFilters, MessageFull, StreamMessage,
-    SubscriptionConfig, Tag, VerifyingKey, generate_keypair, TransportPublicKey,
+    SubscriptionConfig, Tag, TransportPublicKey, VerifyingKey, generate_keypair,
 };
 
 // ============================================================================
@@ -78,42 +78,40 @@ use zoe_wire_protocol::{
 // ============================================================================
 
 /// Perform version negotiation with a server connection
-/// 
+///
 /// This is a lower-level helper that can be used by tests that need to manually
 /// control the connection process. Most tests should use `TestClient` which
 /// handles this automatically.
-/// 
+///
 /// # Arguments
 /// * `connection` - The QUIC connection to the server
-/// 
+///
 /// # Returns
 /// * `Ok(version)` - The negotiated protocol version
 /// * `Err(error)` - Version negotiation failed
-pub async fn perform_version_negotiation(
-    connection: &quinn::Connection,
-) -> Result<String> {
+pub async fn perform_version_negotiation(connection: &quinn::Connection) -> Result<String> {
     let client_protocol_config = zoe_wire_protocol::version::ClientProtocolConfig::default();
-    
+
     let protocol_version = zoe_wire_protocol::version::validate_server_protocol_support(
         connection,
         &client_protocol_config,
     )
     .map_err(|e| anyhow::anyhow!("Protocol negotiation failed: {}", e))?;
-    
+
     Ok(protocol_version.to_string())
 }
 
 /// Perform challenge protocol handshake with a server
-/// 
+///
 /// This is a lower-level helper that can be used by tests that need to manually
 /// control the connection process. Most tests should use `TestClient` which
 /// handles this automatically.
-/// 
+///
 /// # Arguments
 /// * `connection` - The QUIC connection to the server
 /// * `server_public_key` - The server's public key for verification
 /// * `client_keypairs` - Array of client keypairs to use for the challenge
-/// 
+///
 /// # Returns
 /// * `Ok((verified_count, warnings))` - Challenge completed successfully
 /// * `Err(error)` - Challenge protocol failed
@@ -127,48 +125,53 @@ pub async fn perform_challenge_handshake(
         TransportPublicKey::Ed25519 { verifying_key } => {
             zoe_wire_protocol::VerifyingKey::Ed25519(Box::new(*verifying_key))
         }
-        TransportPublicKey::MlDsa44 { verifying_key_bytes } => {
+        TransportPublicKey::MlDsa44 {
+            verifying_key_bytes,
+        } => {
             let encoded = ml_dsa::EncodedVerifyingKey::<ml_dsa::MlDsa44>::try_from(
                 verifying_key_bytes.as_slice(),
             )
             .map_err(|e| anyhow::anyhow!("Invalid ML-DSA key encoding: {}", e))?;
-            
-            zoe_wire_protocol::VerifyingKey::MlDsa44(Box::new(
-                ml_dsa::VerifyingKey::<ml_dsa::MlDsa44>::decode(&encoded)
-            ))
+
+            zoe_wire_protocol::VerifyingKey::MlDsa44(Box::new(ml_dsa::VerifyingKey::<
+                ml_dsa::MlDsa44,
+            >::decode(&encoded)))
         }
     };
 
     // Accept bidirectional stream for challenge protocol
-    let (send, recv) = connection.accept_bi().await
+    let (send, recv) = connection
+        .accept_bi()
+        .await
         .map_err(|e| anyhow::anyhow!("Failed to accept challenge stream: {}", e))?;
 
     // Perform the challenge handshake
-    let (verified_count, warnings) = zoe_wire_protocol::challenge::client::perform_client_challenge_handshake(
-        send,
-        recv,
-        &server_verifying_key,
-        client_keypairs,
-    )
-    .await
-    .map_err(|e| anyhow::anyhow!("Challenge protocol failed: {}", e))?;
-    
+    let (verified_count, warnings) =
+        zoe_wire_protocol::challenge::client::perform_client_challenge_handshake(
+            send,
+            recv,
+            &server_verifying_key,
+            client_keypairs,
+        )
+        .await
+        .map_err(|e| anyhow::anyhow!("Challenge protocol failed: {}", e))?;
+
     // Convert warnings to strings
     let warning_strings: Vec<String> = warnings.into_iter().map(|w| format!("{:?}", w)).collect();
-    
+
     Ok((verified_count, warning_strings))
 }
 
 /// Perform complete protocol setup (version negotiation + challenge handshake)
-/// 
+///
 /// This combines version negotiation and challenge protocol into a single
 /// convenient function. This is the recommended approach for most tests.
-/// 
+///
 /// # Arguments
 /// * `connection` - The QUIC connection to the server
 /// * `server_public_key` - The server's public key for verification
 /// * `client_keypairs` - Array of client keypairs to use for the challenge
-/// 
+///
 /// # Returns
 /// * `Ok((version, verified_count, warnings))` - Protocol setup completed
 /// * `Err(error)` - Protocol setup failed
@@ -178,21 +181,23 @@ pub async fn perform_full_protocol_setup(
     client_keypairs: &[&KeyPair],
 ) -> Result<(String, usize, Vec<String>)> {
     // Step 1: Version negotiation
-    let negotiated_version = perform_version_negotiation(connection).await
+    let negotiated_version = perform_version_negotiation(connection)
+        .await
         .context("Version negotiation failed during full protocol setup")?;
-    
+
     info!("✅ Protocol negotiated: {}", negotiated_version);
 
     // Step 2: Challenge protocol handshake
-    let (verified_count, warnings) = perform_challenge_handshake(
-        connection,
-        server_public_key,
-        client_keypairs,
-    ).await
-        .context("Challenge handshake failed during full protocol setup")?;
-    
-    info!("✅ Challenge protocol handshake completed: {} keys verified", verified_count);
-    
+    let (verified_count, warnings) =
+        perform_challenge_handshake(connection, server_public_key, client_keypairs)
+            .await
+            .context("Challenge handshake failed during full protocol setup")?;
+
+    info!(
+        "✅ Challenge protocol handshake completed: {} keys verified",
+        verified_count
+    );
+
     if !warnings.is_empty() {
         warn!("Challenge protocol warnings: {:?}", warnings);
     }
@@ -201,18 +206,18 @@ pub async fn perform_full_protocol_setup(
 }
 
 /// Create a client endpoint and connect to a server with full protocol setup
-/// 
+///
 /// This is the highest-level helper that handles the complete connection process:
 /// 1. Creates a client endpoint
 /// 2. Connects to the server
 /// 3. Performs version negotiation
 /// 4. Performs challenge protocol handshake
-/// 
+///
 /// # Arguments
 /// * `server_addr` - The server address to connect to
 /// * `server_public_key` - The server's public key
 /// * `client_keypairs` - Array of client keypairs to use for the challenge
-/// 
+///
 /// # Returns
 /// * `Ok((connection, version, verified_count, warnings))` - Full connection established
 /// * `Err(error)` - Connection or protocol setup failed
@@ -222,9 +227,10 @@ pub async fn create_authenticated_connection(
     client_keypairs: &[&KeyPair],
 ) -> Result<(quinn::Connection, String, usize, Vec<String>)> {
     // Create client endpoint
-    let client_endpoint = zoe_wire_protocol::connection::client::create_client_endpoint(server_public_key)
-        .map_err(|e| anyhow::anyhow!("Failed to create client endpoint: {}", e))?;
-    
+    let client_endpoint =
+        zoe_wire_protocol::connection::client::create_client_endpoint(server_public_key)
+            .map_err(|e| anyhow::anyhow!("Failed to create client endpoint: {}", e))?;
+
     // Connect to server
     let connection = client_endpoint
         .connect(server_addr, "localhost")
@@ -233,11 +239,8 @@ pub async fn create_authenticated_connection(
         .map_err(|e| anyhow::anyhow!("Failed to establish connection: {}", e))?;
 
     // Perform full protocol setup
-    let (version, verified_count, warnings) = perform_full_protocol_setup(
-        &connection,
-        server_public_key,
-        client_keypairs,
-    ).await?;
+    let (version, verified_count, warnings) =
+        perform_full_protocol_setup(&connection, server_public_key, client_keypairs).await?;
 
     Ok((connection, version, verified_count, warnings))
 }

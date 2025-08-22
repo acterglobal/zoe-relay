@@ -152,7 +152,6 @@ impl Service for EchoService {
     }
 }
 
-
 #[tokio::test]
 async fn test_echo_service_integration() -> Result<()> {
     // Initialize Rustls crypto provider before any TLS operations
@@ -198,12 +197,13 @@ async fn test_echo_service_integration() -> Result<()> {
     // Run client test with proper protocol setup using helper functions
     let client_task = timeout(Duration::from_secs(10), async {
         // Use the new helper function for complete connection setup
-        let (connection, _version, _verified_count, _warnings) = 
+        let (connection, _version, _verified_count, _warnings) =
             zoe_e2e_tests::multi_client_infra::create_authenticated_connection(
                 actual_addr,
                 &server_public_key,
                 &[&client_keypair],
-            ).await?;
+            )
+            .await?;
 
         // Now test the echo service functionality
         let (mut send, mut recv) = connection.open_bi().await?;
@@ -364,12 +364,13 @@ async fn test_service_id_routing() -> Result<()> {
     // Run client test with timeout using helper functions
     let client_result = timeout(Duration::from_secs(10), async {
         // Use the new helper function for complete connection setup
-        let (connection, _version, _verified_count, _warnings) = 
+        let (connection, _version, _verified_count, _warnings) =
             zoe_e2e_tests::multi_client_infra::create_authenticated_connection(
                 actual_addr,
                 &server_public_key,
                 &[&client_keypair],
-            ).await?;
+            )
+            .await?;
 
         // Now test the service ID routing
         let (mut send, mut recv) = connection.open_bi().await?;

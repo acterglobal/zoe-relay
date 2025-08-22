@@ -2,7 +2,7 @@ use forward_compatible_enum::ForwardCompatibleEnum;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
 use super::roles::GroupRole;
-use crate::{IdentityInfo, IdentityRef, IdentityType, Metadata};
+use crate::{IdentityInfo, IdentityRef, Metadata};
 
 pub mod join_info;
 pub mod key_info;
@@ -39,7 +39,7 @@ pub struct GroupInfo {
 #[serde(bound(deserialize = "T: DeserializeOwned", serialize = "T : Serialize"))]
 pub struct GroupEvent<T> {
     /// which identity are we sending this event as
-    idenitity: IdentityType,
+    idenitity: IdentityRef,
     /// the event we are sending
     event: Box<GroupActivityEvent<T>>,
 }

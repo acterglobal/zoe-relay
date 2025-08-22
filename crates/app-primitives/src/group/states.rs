@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashSet};
-use zoe_wire_protocol::{Hash, VerifyingKey, verifying_key_to_bytes};
+use zoe_wire_protocol::{Hash, VerifyingKey};
 
 use super::events::roles::GroupRole;
 use super::events::{GroupActivityEvent, GroupSettings};
@@ -206,7 +206,7 @@ use crate::{IdentityInfo, IdentityRef, IdentityType, Metadata, Permission};
 pub struct GroupMembership {
     /// Identity information for keys and their aliases: (key_bytes, identity_type) -> identity_info
     /// Keys are ML-DSA verifying keys encoded as bytes for serialization compatibility
-    pub identity_info: BTreeMap<(Vec<u8>, IdentityType), IdentityInfo>,
+    pub identity_info: BTreeMap<IdentityRef, IdentityInfo>,
     /// Role assignments for identities (both keys and aliases)
     pub identity_roles: BTreeMap<IdentityRef, GroupRole>,
 }
@@ -407,7 +407,7 @@ pub type GroupStateResult<T> = Result<T, GroupStateError>;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GroupMember {
     /// Member's public key encoded as bytes for serialization compatibility
-    pub public_key: Vec<u8>,
+    pub key: IdentityRef,
     /// Member's role in the group
     pub role: GroupRole,
     /// When they joined the group
@@ -587,7 +587,7 @@ pub struct GroupState {
 
     /// Runtime member state with roles and activity tracking
     /// Keys are ML-DSA verifying keys encoded as bytes for serialization compatibility
-    pub members: BTreeMap<Vec<u8>, GroupMember>,
+    pub members: BTreeMap<IdentityRef, GroupMember>,
 
     /// Advanced identity management for aliases and display names
     pub membership: GroupMembership,
@@ -666,12 +666,12 @@ impl GroupState {
         creator: VerifyingKey,
         timestamp: u64,
     ) -> Self {
-        let creator_bytes = verifying_key_to_bytes(&creator);
+        let creator_ref = IdentityRef::Key(creator.clone());
         let mut members = BTreeMap::new();
         members.insert(
-            creator_bytes.clone(),
+            creator_ref.clone(),
             GroupMember {
-                public_key: creator_bytes,
+                key: creator_ref.clone(),
                 role: GroupRole::Owner,
                 joined_at: timestamp,
                 last_active: timestamp,
@@ -869,8 +869,8 @@ impl GroupState {
         member: &VerifyingKey,
         required_permission: &Permission,
     ) -> GroupStateResult<()> {
-        let member_bytes = verifying_key_to_bytes(member);
-        match self.members.get(&member_bytes) {
+        let member_ref = IdentityRef::Key(member.clone());
+        match self.members.get(&member_ref) {
             Some(member_info) => {
                 if member_info.role.has_permission(required_permission) {
                     Ok(())
@@ -895,16 +895,16 @@ impl GroupState {
         sender: VerifyingKey,
         timestamp: u64,
     ) -> GroupStateResult<()> {
-        let sender_bytes = verifying_key_to_bytes(&sender);
+        let sender_ref = IdentityRef::Key(sender.clone());
         // Add or update member
-        if let Some(existing_member) = self.members.get_mut(&sender_bytes) {
+        if let Some(existing_member) = self.members.get_mut(&sender_ref) {
             existing_member.last_active = timestamp;
         } else {
             // New member - anyone with the key can participate
             self.members.insert(
-                sender_bytes.clone(),
+                sender_ref.clone(),
                 GroupMember {
-                    public_key: sender_bytes,
+                    key: sender_ref.clone(),
                     role: GroupRole::Member, // Default role for new key holders
                     joined_at: timestamp,
                     last_active: timestamp,
@@ -922,10 +922,10 @@ impl GroupState {
         _message: Option<String>,
         _timestamp: u64,
     ) -> GroupStateResult<()> {
-        let sender_bytes = verifying_key_to_bytes(&sender);
+        let sender_ref = IdentityRef::Key(sender.clone());
         // In encrypted groups, leaving is just an announcement - they still have the key
         // This removes them from the active member list but doesn't revoke access
-        if !self.members.contains_key(&sender_bytes) {
+        if !self.members.contains_key(&sender_ref) {
             return Err(GroupStateError::MemberNotFound {
                 member: format!("{sender:?}"),
                 group: format!("{:?}", self.group_id),
@@ -933,7 +933,7 @@ impl GroupState {
         }
 
         // Remove from active members list
-        self.members.remove(&sender_bytes);
+        self.members.remove(&sender_ref);
         Ok(())
     }
 
@@ -948,20 +948,12 @@ impl GroupState {
         // Check permission - sender must have permission to assign roles
         self.check_permission(&sender, &self.settings.permissions.assign_roles)?;
 
-        // Extract the target key from IdentityRef
-        let target_key = match target {
-            IdentityRef::Key(key) => key,
-            IdentityRef::Alias { key, .. } => key,
-        };
-
-        let target_bytes = verifying_key_to_bytes(target_key);
-
         // Check if target member exists
         let member_info =
             self.members
-                .get_mut(&target_bytes)
+                .get_mut(target)
                 .ok_or_else(|| GroupStateError::MemberNotFound {
-                    member: format!("{target_key:?}"),
+                    member: format!("{target:?}"),
                     group: format!("{:?}", self.group_id),
                 })?;
 
@@ -980,11 +972,11 @@ impl GroupState {
         // Check permission
         self.check_permission(&sender, &self.settings.permissions.assign_roles)?;
 
-        let member_bytes = verifying_key_to_bytes(&member);
+        let member_ref = IdentityRef::Key(member.clone());
         // Check if target member exists
         let member_info =
             self.members
-                .get_mut(&member_bytes)
+                .get_mut(&member_ref)
                 .ok_or_else(|| GroupStateError::MemberNotFound {
                     member: format!("{member:?}"),
                     group: format!("{:?}", self.group_id),
@@ -996,20 +988,20 @@ impl GroupState {
     }
 
     /// Get all active members
-    pub fn get_members(&self) -> &BTreeMap<Vec<u8>, GroupMember> {
+    pub fn get_members(&self) -> &BTreeMap<IdentityRef, GroupMember> {
         &self.members
     }
 
     /// Check if a user is a member of this group
     pub fn is_member(&self, user: &VerifyingKey) -> bool {
-        let user_bytes = verifying_key_to_bytes(user);
-        self.members.contains_key(&user_bytes)
+        let user_ref = IdentityRef::Key(user.clone());
+        self.members.contains_key(&user_ref)
     }
 
     /// Get a member's role
     pub fn get_member_role(&self, user: &VerifyingKey) -> Option<&GroupRole> {
-        let user_bytes = verifying_key_to_bytes(user);
-        self.members.get(&user_bytes).map(|m| &m.role)
+        let user_ref = IdentityRef::Key(user.clone());
+        self.members.get(&user_ref).map(|m| &m.role)
     }
 
     /// Extract the group description from structured metadata.

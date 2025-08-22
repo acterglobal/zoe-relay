@@ -127,6 +127,25 @@ impl PartialEq for VerifyingKey {
     }
 }
 
+impl std::hash::Hash for VerifyingKey {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        match self {
+            VerifyingKey::Ed25519(key) => {
+                key.hash(state);
+            }
+            VerifyingKey::MlDsa44(key) => {
+                key.encode().hash(state);
+            }
+            VerifyingKey::MlDsa65(key) => {
+                key.encode().hash(state);
+            }
+            VerifyingKey::MlDsa87(key) => {
+                key.encode().hash(state);
+            }
+        }
+    }
+}
+
 impl VerifyingKey {
     /// Verify a signature against a message using the appropriate algorithm.
     ///

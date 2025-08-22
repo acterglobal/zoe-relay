@@ -6,7 +6,7 @@ use crate::Metadata;
 /// Unified identity type - either a raw VerifyingKey or a VerifyingKey + alias
 ///
 /// This is the fundamental identity concept in the system.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Hash, Serialize, Deserialize)]
 pub enum IdentityRef {
     /// Raw verifying key identity (always valid, no declaration needed)
     Key(VerifyingKey),

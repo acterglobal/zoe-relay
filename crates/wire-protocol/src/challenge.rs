@@ -10,9 +10,11 @@ pub mod server;
 pub mod client;
 
 /// Default challenge timeout in seconds
+#[cfg(any(feature = "client", feature = "server"))]
 const DEFAULT_CHALLENGE_TIMEOUT_SECS: u64 = 30;
 
 /// Maximum size for challenge messages (to prevent DoS)
+#[cfg(any(feature = "client", feature = "server"))]
 const MAX_PACKAGE_SIZE: usize = 1024 * 1024; // Should be enough for challenge data
 
 /// Forward-compatible challenge system for connection-level authentication
