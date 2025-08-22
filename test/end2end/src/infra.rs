@@ -5,6 +5,7 @@
 //! to test the complete system integration.
 
 use anyhow::{Context, Result};
+use ml_dsa::{KeyGen, MlDsa44, MlDsa65, MlDsa87};
 use rand::{Rng, thread_rng};
 use std::net::SocketAddr;
 use std::sync::Once;
@@ -18,7 +19,7 @@ use zoe_message_store::RedisMessageStorage;
 use zoe_relay::{RelayServer, RelayServiceRouter};
 use zoe_wire_protocol::{
     KeyPair, Kind, Message, MessageFilters, MessageFull, Tag, TransportPrivateKey,
-    TransportPublicKey, VerifyingKey, generate_keypair,
+    TransportPublicKey, VerifyingKey, generate_ed25519_relay_keypair, generate_keypair,
 };
 
 // Initialize crypto provider for Rustls
@@ -127,21 +128,41 @@ impl TestInfrastructure {
 
     /// Create a new relay client connected to the test server
     pub async fn create_client(&self) -> Result<RelayClient> {
-        info!("👤 Creating relay client");
+        self.create_client_with_signature_type("MlDsa65").await
+    }
+
+    /// Create a new relay client with a specific signature type
+    pub async fn create_client_with_signature_type(
+        &self,
+        signature_type: &str,
+    ) -> Result<RelayClient> {
+        info!("👤 Creating relay client with {} signature", signature_type);
+
+        let keypair = match signature_type {
+            "Ed25519" => generate_ed25519_relay_keypair(&mut rand::thread_rng()),
+            "MlDsa44" => KeyPair::MlDsa44(Box::new(MlDsa44::key_gen(&mut rand::thread_rng()))),
+            "MlDsa65" => KeyPair::MlDsa65(Box::new(MlDsa65::key_gen(&mut rand::thread_rng()))),
+            "MlDsa87" => KeyPair::MlDsa87(Box::new(MlDsa87::key_gen(&mut rand::thread_rng()))),
+            _ => {
+                return Err(anyhow::anyhow!(
+                    "Unsupported signature type: {}",
+                    signature_type
+                ));
+            }
+        };
 
         let client = timeout(
             Duration::from_secs(5),
-            RelayClient::new(
-                generate_keypair(&mut rand::thread_rng()),
-                self.server_public_key.clone(),
-                self.server_addr,
-            ),
+            RelayClient::new(keypair, self.server_public_key.clone(), self.server_addr),
         )
         .await
         .context("Timeout connecting to relay server")?
         .context("Failed to create relay client")?;
 
-        info!("✅ Relay client connected successfully");
+        info!(
+            "✅ Relay client with {} signature connected successfully",
+            signature_type
+        );
         Ok(client)
     }
 

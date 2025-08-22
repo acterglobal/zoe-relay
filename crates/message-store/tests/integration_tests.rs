@@ -1,11 +1,11 @@
 use futures_util::StreamExt;
-use ml_dsa::{KeyGen, MlDsa65};
+use ml_dsa::{KeyGen, MlDsa44, MlDsa65, MlDsa87};
 use rand::rngs::OsRng;
 use std::{sync::Arc, time::SystemTime};
 use zoe_message_store::RedisMessageStorage;
 use zoe_wire_protocol::{
-    FilterField, FilterOperation, FilterUpdateRequest, KeyPair, Kind, Message, MessageFilters,
-    MessageFull, Tag,
+    generate_ed25519_relay_keypair, FilterField, FilterOperation, FilterUpdateRequest, KeyPair,
+    Kind, Message, MessageFilters, MessageFull, Tag,
 };
 
 async fn setup_test_storage() -> RedisMessageStorage {
@@ -497,4 +497,424 @@ async fn test_check_messages_bulk_sync() -> Result<(), Box<dyn std::error::Error
     assert_eq!(nonexistent_results, vec![None, None]);
 
     Ok(())
+}
+
+/// Comprehensive test for all supported signature types
+/// Tests message storage, retrieval, and verification for Ed25519, MlDsa44, MlDsa65, and MlDsa87
+#[tokio::test]
+async fn test_all_signature_types_comprehensive() {
+    let storage = setup_test_storage().await;
+
+    // Generate keypairs for all supported signature types
+    let ed25519_keypair = generate_ed25519_relay_keypair(&mut OsRng);
+    let ml_dsa_44_keypair = KeyPair::MlDsa44(Box::new(MlDsa44::key_gen(&mut OsRng)));
+    let ml_dsa_65_keypair = KeyPair::MlDsa65(Box::new(MlDsa65::key_gen(&mut OsRng)));
+    let ml_dsa_87_keypair = KeyPair::MlDsa87(Box::new(MlDsa87::key_gen(&mut OsRng)));
+
+    let test_channel = b"signature_test_channel";
+
+    // Create test messages with each signature type
+    let ed25519_msg = create_test_message(
+        test_channel,
+        &ed25519_keypair,
+        "Ed25519 signature test message",
+    );
+    let ml_dsa_44_msg = create_test_message(
+        test_channel,
+        &ml_dsa_44_keypair,
+        "ML-DSA-44 signature test message",
+    );
+    let ml_dsa_65_msg = create_test_message(
+        test_channel,
+        &ml_dsa_65_keypair,
+        "ML-DSA-65 signature test message",
+    );
+    let ml_dsa_87_msg = create_test_message(
+        test_channel,
+        &ml_dsa_87_keypair,
+        "ML-DSA-87 signature test message",
+    );
+
+    // Store all messages
+    let ed25519_result = storage
+        .store_message(&ed25519_msg)
+        .await
+        .expect("Failed to store Ed25519 message");
+    let ed25519_stream_id = ed25519_result
+        .global_stream_id()
+        .expect("Ed25519 message should not be expired");
+
+    let ml_dsa_44_result = storage
+        .store_message(&ml_dsa_44_msg)
+        .await
+        .expect("Failed to store ML-DSA-44 message");
+    let ml_dsa_44_stream_id = ml_dsa_44_result
+        .global_stream_id()
+        .expect("ML-DSA-44 message should not be expired");
+
+    let ml_dsa_65_result = storage
+        .store_message(&ml_dsa_65_msg)
+        .await
+        .expect("Failed to store ML-DSA-65 message");
+    let ml_dsa_65_stream_id = ml_dsa_65_result
+        .global_stream_id()
+        .expect("ML-DSA-65 message should not be expired");
+
+    let ml_dsa_87_result = storage
+        .store_message(&ml_dsa_87_msg)
+        .await
+        .expect("Failed to store ML-DSA-87 message");
+    let ml_dsa_87_stream_id = ml_dsa_87_result
+        .global_stream_id()
+        .expect("ML-DSA-87 message should not be expired");
+
+    println!("✅ All signature types stored successfully:");
+    println!("   📝 Ed25519 stream ID: {ed25519_stream_id}");
+    println!("   📝 ML-DSA-44 stream ID: {ml_dsa_44_stream_id}");
+    println!("   📝 ML-DSA-65 stream ID: {ml_dsa_65_stream_id}");
+    println!("   📝 ML-DSA-87 stream ID: {ml_dsa_87_stream_id}");
+
+    // Retrieve all messages by ID to verify storage integrity
+    let retrieved_ed25519 = storage
+        .get_message(ed25519_msg.id().as_bytes())
+        .await
+        .expect("Failed to retrieve Ed25519 message")
+        .expect("Ed25519 message should exist");
+
+    let retrieved_ml_dsa_44 = storage
+        .get_message(ml_dsa_44_msg.id().as_bytes())
+        .await
+        .expect("Failed to retrieve ML-DSA-44 message")
+        .expect("ML-DSA-44 message should exist");
+
+    let retrieved_ml_dsa_65 = storage
+        .get_message(ml_dsa_65_msg.id().as_bytes())
+        .await
+        .expect("Failed to retrieve ML-DSA-65 message")
+        .expect("ML-DSA-65 message should exist");
+
+    let retrieved_ml_dsa_87 = storage
+        .get_message(ml_dsa_87_msg.id().as_bytes())
+        .await
+        .expect("Failed to retrieve ML-DSA-87 message")
+        .expect("ML-DSA-87 message should exist");
+
+    // Verify message content integrity
+    assert_eq!(
+        String::from_utf8_lossy(
+            retrieved_ed25519
+                .raw_content()
+                .expect("Expected raw content")
+        ),
+        "Ed25519 signature test message"
+    );
+    assert_eq!(
+        String::from_utf8_lossy(
+            retrieved_ml_dsa_44
+                .raw_content()
+                .expect("Expected raw content")
+        ),
+        "ML-DSA-44 signature test message"
+    );
+    assert_eq!(
+        String::from_utf8_lossy(
+            retrieved_ml_dsa_65
+                .raw_content()
+                .expect("Expected raw content")
+        ),
+        "ML-DSA-65 signature test message"
+    );
+    assert_eq!(
+        String::from_utf8_lossy(
+            retrieved_ml_dsa_87
+                .raw_content()
+                .expect("Expected raw content")
+        ),
+        "ML-DSA-87 signature test message"
+    );
+
+    // Verify signature verification works for all types
+    let ed25519_msg_bytes = postcard::to_stdvec(retrieved_ed25519.message())
+        .expect("Failed to serialize Ed25519 message");
+    assert!(
+        retrieved_ed25519
+            .message()
+            .verify_sender_signature(&ed25519_msg_bytes, retrieved_ed25519.signature())
+            .expect("Ed25519 signature verification should succeed"),
+        "Ed25519 signature should be valid"
+    );
+
+    let ml_dsa_44_msg_bytes = postcard::to_stdvec(retrieved_ml_dsa_44.message())
+        .expect("Failed to serialize ML-DSA-44 message");
+    assert!(
+        retrieved_ml_dsa_44
+            .message()
+            .verify_sender_signature(&ml_dsa_44_msg_bytes, retrieved_ml_dsa_44.signature())
+            .expect("ML-DSA-44 signature verification should succeed"),
+        "ML-DSA-44 signature should be valid"
+    );
+
+    let ml_dsa_65_msg_bytes = postcard::to_stdvec(retrieved_ml_dsa_65.message())
+        .expect("Failed to serialize ML-DSA-65 message");
+    assert!(
+        retrieved_ml_dsa_65
+            .message()
+            .verify_sender_signature(&ml_dsa_65_msg_bytes, retrieved_ml_dsa_65.signature())
+            .expect("ML-DSA-65 signature verification should succeed"),
+        "ML-DSA-65 signature should be valid"
+    );
+
+    let ml_dsa_87_msg_bytes = postcard::to_stdvec(retrieved_ml_dsa_87.message())
+        .expect("Failed to serialize ML-DSA-87 message");
+    assert!(
+        retrieved_ml_dsa_87
+            .message()
+            .verify_sender_signature(&ml_dsa_87_msg_bytes, retrieved_ml_dsa_87.signature())
+            .expect("ML-DSA-87 signature verification should succeed"),
+        "ML-DSA-87 signature should be valid"
+    );
+
+    // Test channel streaming with mixed signature types
+    let channel_stream = storage
+        .catch_up(FilterField::Channel, test_channel, None)
+        .await
+        .expect("Failed to get channel catch-up stream");
+
+    tokio::pin!(channel_stream);
+
+    let mut all_messages = Vec::new();
+    while let Some(result) = channel_stream.next().await {
+        match result {
+            Ok((message, (_global_height, _local_height))) => {
+                all_messages.push(message);
+            }
+            Err(e) => panic!("Error in channel stream: {e:?}"),
+        }
+    }
+
+    // Should have all 4 messages
+    assert_eq!(
+        all_messages.len(),
+        4,
+        "Should retrieve all 4 messages with different signature types"
+    );
+
+    // Verify all messages have valid signatures
+    for (i, message) in all_messages.iter().enumerate() {
+        let msg_bytes =
+            postcard::to_stdvec(message.message()).expect("Failed to serialize message");
+        assert!(
+            message
+                .message()
+                .verify_sender_signature(&msg_bytes, message.signature())
+                .expect("Signature verification should succeed"),
+            "Message {i} signature should be valid"
+        );
+    }
+
+    // Test author filtering with different signature types
+    let ed25519_author_key = ed25519_keypair.public_key().encode();
+    let ml_dsa_65_author_key = ml_dsa_65_keypair.public_key().encode();
+
+    // Filter by Ed25519 author
+    let ed25519_author_stream = storage
+        .catch_up(FilterField::Author, &ed25519_author_key, None)
+        .await
+        .expect("Failed to get Ed25519 author stream");
+
+    tokio::pin!(ed25519_author_stream);
+
+    let mut ed25519_author_messages = Vec::new();
+    while let Some(result) = ed25519_author_stream.next().await {
+        match result {
+            Ok((message, _)) => {
+                ed25519_author_messages.push(message);
+            }
+            Err(e) => panic!("Error in Ed25519 author stream: {e:?}"),
+        }
+    }
+
+    assert_eq!(
+        ed25519_author_messages.len(),
+        1,
+        "Should find exactly 1 Ed25519 message"
+    );
+    assert_eq!(
+        String::from_utf8_lossy(
+            ed25519_author_messages[0]
+                .raw_content()
+                .expect("Expected raw content")
+        ),
+        "Ed25519 signature test message"
+    );
+
+    // Filter by ML-DSA-65 author
+    let ml_dsa_65_author_stream = storage
+        .catch_up(FilterField::Author, &ml_dsa_65_author_key, None)
+        .await
+        .expect("Failed to get ML-DSA-65 author stream");
+
+    tokio::pin!(ml_dsa_65_author_stream);
+
+    let mut ml_dsa_65_author_messages = Vec::new();
+    while let Some(result) = ml_dsa_65_author_stream.next().await {
+        match result {
+            Ok((message, _)) => {
+                ml_dsa_65_author_messages.push(message);
+            }
+            Err(e) => panic!("Error in ML-DSA-65 author stream: {e:?}"),
+        }
+    }
+
+    assert_eq!(
+        ml_dsa_65_author_messages.len(),
+        1,
+        "Should find exactly 1 ML-DSA-65 message"
+    );
+    assert_eq!(
+        String::from_utf8_lossy(
+            ml_dsa_65_author_messages[0]
+                .raw_content()
+                .expect("Expected raw content")
+        ),
+        "ML-DSA-65 signature test message"
+    );
+
+    println!("✅ **ALL SIGNATURE TYPES TEST RESULTS**:");
+    println!("   🔑 Ed25519 signatures: ✅ Storage, retrieval, and verification working");
+    println!("   🔑 ML-DSA-44 signatures: ✅ Storage, retrieval, and verification working");
+    println!("   🔑 ML-DSA-65 signatures: ✅ Storage, retrieval, and verification working");
+    println!("   🔑 ML-DSA-87 signatures: ✅ Storage, retrieval, and verification working");
+    println!("   📡 Channel streaming with mixed signatures: ✅ Working");
+    println!("   👤 Author filtering with different signature types: ✅ Working");
+}
+
+/// Test message storage ordering with different signature types
+#[tokio::test]
+async fn test_signature_type_ordering() {
+    let storage = setup_test_storage().await;
+
+    // Generate keypairs for all supported signature types
+    let ed25519_keypair = generate_ed25519_relay_keypair(&mut OsRng);
+    let ml_dsa_44_keypair = KeyPair::MlDsa44(Box::new(MlDsa44::key_gen(&mut OsRng)));
+    let ml_dsa_65_keypair = KeyPair::MlDsa65(Box::new(MlDsa65::key_gen(&mut OsRng)));
+    let ml_dsa_87_keypair = KeyPair::MlDsa87(Box::new(MlDsa87::key_gen(&mut OsRng)));
+
+    let test_channel = b"signature_ordering_test";
+
+    // Create messages with the same timestamp to test signature-based ordering
+    let timestamp = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+
+    let tags = vec![Tag::Channel {
+        id: test_channel.to_vec(),
+        relays: vec![],
+    }];
+
+    // Create messages with identical timestamps but different signature types
+    let ed25519_message = Message::new_v0(
+        b"Ed25519 message".to_vec(),
+        ed25519_keypair.public_key(),
+        timestamp,
+        Kind::Regular,
+        tags.clone(),
+    );
+    let ed25519_full = MessageFull::new(ed25519_message, &ed25519_keypair)
+        .expect("Failed to create Ed25519 MessageFull");
+
+    let ml_dsa_44_message = Message::new_v0(
+        b"ML-DSA-44 message".to_vec(),
+        ml_dsa_44_keypair.public_key(),
+        timestamp,
+        Kind::Regular,
+        tags.clone(),
+    );
+    let ml_dsa_44_full = MessageFull::new(ml_dsa_44_message, &ml_dsa_44_keypair)
+        .expect("Failed to create ML-DSA-44 MessageFull");
+
+    let ml_dsa_65_message = Message::new_v0(
+        b"ML-DSA-65 message".to_vec(),
+        ml_dsa_65_keypair.public_key(),
+        timestamp,
+        Kind::Regular,
+        tags.clone(),
+    );
+    let ml_dsa_65_full = MessageFull::new(ml_dsa_65_message, &ml_dsa_65_keypair)
+        .expect("Failed to create ML-DSA-65 MessageFull");
+
+    let ml_dsa_87_message = Message::new_v0(
+        b"ML-DSA-87 message".to_vec(),
+        ml_dsa_87_keypair.public_key(),
+        timestamp,
+        Kind::Regular,
+        tags,
+    );
+    let ml_dsa_87_full = MessageFull::new(ml_dsa_87_message, &ml_dsa_87_keypair)
+        .expect("Failed to create ML-DSA-87 MessageFull");
+
+    // Store messages in reverse signature type order to test ordering
+    storage
+        .store_message(&ml_dsa_87_full)
+        .await
+        .expect("Failed to store ML-DSA-87 message");
+    storage
+        .store_message(&ml_dsa_65_full)
+        .await
+        .expect("Failed to store ML-DSA-65 message");
+    storage
+        .store_message(&ml_dsa_44_full)
+        .await
+        .expect("Failed to store ML-DSA-44 message");
+    storage
+        .store_message(&ed25519_full)
+        .await
+        .expect("Failed to store Ed25519 message");
+
+    // Retrieve messages and verify ordering
+    let channel_stream = storage
+        .catch_up(FilterField::Channel, test_channel, None)
+        .await
+        .expect("Failed to get channel catch-up stream");
+
+    tokio::pin!(channel_stream);
+
+    let mut ordered_messages = Vec::new();
+    while let Some(result) = channel_stream.next().await {
+        match result {
+            Ok((message, _)) => {
+                ordered_messages.push(message);
+            }
+            Err(e) => panic!("Error in channel stream: {e:?}"),
+        }
+    }
+
+    assert_eq!(ordered_messages.len(), 4, "Should retrieve all 4 messages");
+
+    // Messages are ordered by Redis stream insertion order (storage order)
+    // We stored them in reverse signature type order: ML-DSA-87, ML-DSA-65, ML-DSA-44, Ed25519
+    let expected_contents = [
+        "ML-DSA-87 message",
+        "ML-DSA-65 message",
+        "ML-DSA-44 message",
+        "Ed25519 message",
+    ];
+
+    for (i, (message, expected_content)) in ordered_messages
+        .iter()
+        .zip(expected_contents.iter())
+        .enumerate()
+    {
+        let actual_content =
+            String::from_utf8_lossy(message.raw_content().expect("Expected raw content"));
+        assert_eq!(
+            actual_content, *expected_content,
+            "Message {i} should have content '{expected_content}' but got '{actual_content}'"
+        );
+    }
+
+    println!("✅ **SIGNATURE TYPE STORAGE ORDERING TEST RESULTS**:");
+    println!("   📊 Messages stored and retrieved in insertion order: ✅");
+    println!("   🔢 All signature types work correctly in storage: ✅");
 }
