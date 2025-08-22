@@ -127,6 +127,45 @@ impl PartialEq for VerifyingKey {
     }
 }
 
+impl Eq for VerifyingKey {}
+
+impl PartialOrd for VerifyingKey {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for VerifyingKey {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        // we order by index first
+        let my_key = match self {
+            VerifyingKey::Ed25519(_) => 0,
+            VerifyingKey::MlDsa44(_) => 1,
+            VerifyingKey::MlDsa65(_) => 2,
+            VerifyingKey::MlDsa87(_) => 3,
+        };
+        let other_key_idx = match other {
+            VerifyingKey::Ed25519(_) => 0,
+            VerifyingKey::MlDsa44(_) => 1,
+            VerifyingKey::MlDsa65(_) => 2,
+            VerifyingKey::MlDsa87(_) => 3,
+        };
+        if my_key < other_key_idx {
+            return std::cmp::Ordering::Less;
+        } else if my_key > other_key_idx {
+            return std::cmp::Ordering::Greater;
+        }
+        // we only check the bytes if we are of the same type
+        match (self, other) {
+            (VerifyingKey::Ed25519(a), VerifyingKey::Ed25519(b)) => a.as_bytes().cmp(b.as_bytes()),
+            (VerifyingKey::MlDsa44(a), VerifyingKey::MlDsa44(b)) => a.encode().cmp(&b.encode()),
+            (VerifyingKey::MlDsa65(a), VerifyingKey::MlDsa65(b)) => a.encode().cmp(&b.encode()),
+            (VerifyingKey::MlDsa87(a), VerifyingKey::MlDsa87(b)) => a.encode().cmp(&b.encode()),
+            _ => unreachable!(),
+        }
+    }
+}
+
 impl std::hash::Hash for VerifyingKey {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         match self {

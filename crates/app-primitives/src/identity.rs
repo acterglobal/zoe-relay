@@ -6,7 +6,7 @@ use crate::Metadata;
 /// Unified identity type - either a raw VerifyingKey or a VerifyingKey + alias
 ///
 /// This is the fundamental identity concept in the system.
-#[derive(Debug, Clone, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Hash, PartialEq, PartialOrd, Eq, Ord, Serialize, Deserialize)]
 pub enum IdentityRef {
     /// Raw verifying key identity (always valid, no declaration needed)
     Key(VerifyingKey),
@@ -68,53 +68,4 @@ pub struct IdentityInfo {
     pub display_name: String,
     /// The metadata for this identity
     pub metadata: Vec<Metadata>,
-}
-
-// Manual trait implementations for IdentityRef using encoded bytes for comparison
-impl PartialEq for IdentityRef {
-    fn eq(&self, other: &Self) -> bool {
-        use zoe_wire_protocol::verifying_key_to_bytes;
-        match (self, other) {
-            (IdentityRef::Key(k1), IdentityRef::Key(k2)) => {
-                verifying_key_to_bytes(k1) == verifying_key_to_bytes(k2)
-            }
-            (
-                IdentityRef::Alias { key: k1, alias: a1 },
-                IdentityRef::Alias { key: k2, alias: a2 },
-            ) => verifying_key_to_bytes(k1) == verifying_key_to_bytes(k2) && a1 == a2,
-            _ => false,
-        }
-    }
-}
-
-impl Eq for IdentityRef {}
-
-impl PartialOrd for IdentityRef {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl Ord for IdentityRef {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        use zoe_wire_protocol::verifying_key_to_bytes;
-        match (self, other) {
-            (IdentityRef::Key(k1), IdentityRef::Key(k2)) => {
-                verifying_key_to_bytes(k1).cmp(&verifying_key_to_bytes(k2))
-            }
-            (
-                IdentityRef::Alias { key: k1, alias: a1 },
-                IdentityRef::Alias { key: k2, alias: a2 },
-            ) => {
-                let key_cmp = verifying_key_to_bytes(k1).cmp(&verifying_key_to_bytes(k2));
-                if key_cmp == std::cmp::Ordering::Equal {
-                    a1.cmp(a2)
-                } else {
-                    key_cmp
-                }
-            }
-            (IdentityRef::Key(_), IdentityRef::Alias { .. }) => std::cmp::Ordering::Less,
-            (IdentityRef::Alias { .. }, IdentityRef::Key(_)) => std::cmp::Ordering::Greater,
-        }
-    }
 }
