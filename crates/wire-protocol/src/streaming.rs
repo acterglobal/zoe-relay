@@ -90,7 +90,7 @@ impl FilterOperation {
 
 impl MessageFilters {
     pub fn is_empty(&self) -> bool {
-        self.filters.as_ref().map_or(true, |f| f.is_empty())
+        self.filters.as_ref().is_none_or(|f| f.is_empty())
     }
 
     /// Apply a type-safe filter operation to this filter set
@@ -351,9 +351,7 @@ mod tests {
         let signing_key = ed25519_dalek::SigningKey::generate(&mut seed_rng);
         let verifying_key = signing_key.verifying_key();
 
-        crate::keys::VerifyingKey::Ed25519(Box::new(verifying_key))
-            .id()
-            .clone()
+        *crate::keys::VerifyingKey::Ed25519(Box::new(verifying_key)).id()
     }
 
     #[test]
@@ -488,7 +486,7 @@ mod tests {
         // Test author catch-up request
         let author_key = create_test_verifying_key_id(b"alice");
         let author_request =
-            CatchUpRequest::for_author(author_key.clone(), None, None, "test_id_2".to_string());
+            CatchUpRequest::for_author(author_key, None, None, "test_id_2".to_string());
         assert_eq!(author_request.filter, Filter::Author(author_key));
         assert_eq!(author_request.request_id, "test_id_2");
     }

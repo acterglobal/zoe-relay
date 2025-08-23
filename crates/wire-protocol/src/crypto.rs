@@ -227,6 +227,21 @@ pub struct EphemeralEcdhContent {
     pub ephemeral_public: [u8; 32],
 }
 
+/// PQXDH encrypted content for asynchronous secure communication
+///
+/// This supports both initial handshake messages (Phase 2) and ongoing
+/// session messages (Phase 3) of the PQXDH protocol.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum PqxdhEncryptedContent {
+    /// Initial PQXDH handshake message that establishes the session
+    /// and delivers the first encrypted payload
+    Initial(crate::inbox::pqxdh::PqxdhInitialMessage),
+
+    /// Follow-up session message using established shared secret
+    /// for efficient ongoing communication
+    Session(crate::inbox::pqxdh::PqxdhSessionMessage),
+}
+
 impl Ed25519SelfEncryptedContent {
     /// Encrypt data using ed25519 private key (self-encryption)
     /// Derives a ChaCha20 key from the ed25519 private key deterministically

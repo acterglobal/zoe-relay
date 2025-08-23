@@ -26,15 +26,17 @@ semver = { version = "1.0", features = ["serde"] }
 
 # Cryptography
 ml-dsa = { workspace = true }
-ml-kem = "0.2.1"
+libcrux-ml-kem = { version = "0.0.3", features = ["mlkem768"] }  # Formally verified ML-KEM for PQXDH
 ed25519-dalek = { workspace = true }  # Still needed for TLS certificate compatibility
 signature = { workspace = true }
-x25519-dalek = { version = "2.0", features = ["static_secrets"] }
+x25519-dalek = { version = "2.0", features = ["static_secrets", "serde"] }
 curve25519-dalek = "4.0"
 chacha20poly1305 = "0.10"
 bip39 = "2.0"
 argon2 = "0.5"
 zeroize = { version = "1.7", features = ["zeroize_derive"] }
+hkdf = "0.12"  # HMAC-based Key Derivation Function for PQXDH
+sha2 = "0.10"  # SHA-256 for HKDF
 rand = { workspace = true }
 rand_chacha = "0.3"
 forward-compatible-enum = { path = "../forward-compatible-enum" }

@@ -3,13 +3,14 @@ use blake3::{Hash, Hasher};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    crypto::ChaCha20Poly1305Content, keys::Id as VerifyingKeyId, Ed25519SelfEncryptedContent,
-    EphemeralEcdhContent, MlDsaSelfEncryptedContent,
+    crypto::{ChaCha20Poly1305Content, PqxdhEncryptedContent},
+    keys::Id as VerifyingKeyId,
+    Ed25519SelfEncryptedContent, EphemeralEcdhContent, MlDsaSelfEncryptedContent,
 };
 use forward_compatible_enum::ForwardCompatibleEnum;
 
 mod store_key;
-pub use store_key::StoreKey;
+pub use store_key::{PqxdhInboxProtocol, StoreKey};
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub enum Tag {
@@ -118,7 +119,7 @@ pub enum Kind {
 /// let typed_content = Content::raw_typed(&MyData { value: 42 })?;
 /// # Ok::<(), postcard::Error>(())
 /// ```
-#[derive(Debug, Clone, PartialEq, Eq, ForwardCompatibleEnum)]
+#[derive(Debug, Clone, PartialEq, ForwardCompatibleEnum)]
 pub enum Content {
     /// Raw byte content without encryption.
     ///
@@ -176,6 +177,19 @@ pub enum Content {
     #[discriminant(80)]
     EphemeralEcdh(EphemeralEcdhContent),
 
+    /// PQXDH encrypted content.
+    ///
+    /// Uses the PQXDH (Post-Quantum Extended Diffie-Hellman) protocol for
+    /// asynchronous secure communication establishment. Combines X25519 ECDH
+    /// with ML-KEM for hybrid classical/post-quantum security.
+    /// Suitable for:
+    /// - Asynchronous RPC initiation (tarpc-over-message)
+    /// - Secure inbox messaging
+    /// - Initial key agreement for ongoing sessions
+    /// - Post-quantum secure communication setup
+    #[discriminant(90)]
+    PqxdhEncrypted(PqxdhEncryptedContent),
+
     /// Unknown content type.
     ///
     /// This variant is used when the content type is unknown or not supported.
@@ -212,6 +226,21 @@ impl Content {
     /// Create ephemeral ECDH encrypted content
     pub fn ephemeral_ecdh(content: EphemeralEcdhContent) -> Self {
         Content::EphemeralEcdh(content)
+    }
+
+    /// Create PQXDH encrypted content
+    pub fn pqxdh_encrypted(content: PqxdhEncryptedContent) -> Self {
+        Content::PqxdhEncrypted(content)
+    }
+
+    /// Create PQXDH initial message content
+    pub fn pqxdh_initial(message: crate::inbox::pqxdh::PqxdhInitialMessage) -> Self {
+        Content::PqxdhEncrypted(PqxdhEncryptedContent::Initial(message))
+    }
+
+    /// Create PQXDH session message content
+    pub fn pqxdh_session(message: crate::inbox::pqxdh::PqxdhSessionMessage) -> Self {
+        Content::PqxdhEncrypted(PqxdhEncryptedContent::Session(message))
     }
 
     /// Get the raw bytes if this is raw content
@@ -254,6 +283,14 @@ impl Content {
         Some(content)
     }
 
+    /// Get the PQXDH encrypted content if this is PQXDH encrypted
+    pub fn as_pqxdh_encrypted(&self) -> Option<&PqxdhEncryptedContent> {
+        let Content::PqxdhEncrypted(ref content) = self else {
+            return None;
+        };
+        Some(content)
+    }
+
     /// Check if this content is encrypted
     pub fn is_encrypted(&self) -> bool {
         matches!(
@@ -262,6 +299,7 @@ impl Content {
                 | Content::Ed25519SelfEncrypted(_)
                 | Content::MlDsaSelfEncrypted(_)
                 | Content::EphemeralEcdh(_)
+                | Content::PqxdhEncrypted(_)
         )
     }
 
@@ -348,7 +386,7 @@ impl Content {
 ///     }
 /// }
 /// ```
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub enum Message {
     /// Message format version 0.
     ///
@@ -628,7 +666,7 @@ pub struct MessageV0Header {
 /// let full_message = MessageFull::new(Message::MessageV0(message), &signing_key)?;
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct MessageV0 {
     /// Message header containing metadata and routing information.
     ///
@@ -935,6 +973,9 @@ impl MessageFull {
                     "Cannot deserialize ephemeral ECDH-encrypted content without signing keys"
                         .into(),
                 ),
+                Content::PqxdhEncrypted(_) => {
+                    Err("Cannot deserialize PQXDH-encrypted content without private keys".into())
+                }
                 Content::Unknown { discriminant, .. } => {
                     Err(format!("Unknown content type: {discriminant}").into())
                 }
@@ -966,6 +1007,9 @@ impl MessageFull {
                 Content::EphemeralEcdh(_) => {
                     Err("Cannot decrypt ephemeral ECDH-encrypted content with EncryptionKey - use signing keys instead".into())
                 }
+                Content::PqxdhEncrypted(_) => {
+                    Err("Cannot decrypt PQXDH-encrypted content with EncryptionKey - use PQXDH private keys instead".into())
+                }
                 Content::Unknown { discriminant,.. } => Err(format!("Unknown content type: {discriminant}").into()),
             },
         }
@@ -995,6 +1039,9 @@ impl MessageFull {
                 Content::EphemeralEcdh(encrypted) => {
                     let plaintext = encrypted.decrypt(signing_key)?;
                     Ok(postcard::from_bytes(&plaintext)?)
+                }
+                Content::PqxdhEncrypted(_) => {
+                    Err("Cannot decrypt PQXDH-encrypted content with Ed25519 key - use PQXDH private keys instead".into())
                 }
                 Content::Unknown { discriminant,.. } => Err(format!("Unknown content type: {discriminant}").into()),
             },
@@ -1029,6 +1076,9 @@ impl MessageFull {
                 }
                 Content::EphemeralEcdh(_) => {
                     Err("Cannot decrypt ephemeral ECDH content with ML-DSA key - use Ed25519 signing key instead".into())
+                }
+                Content::PqxdhEncrypted(_) => {
+                    Err("Cannot decrypt PQXDH-encrypted content with ML-DSA key - use PQXDH private keys instead".into())
                 }
                 Content::Unknown { discriminant,.. } => Err(format!("Unknown content type: {discriminant}").into()),
             },
@@ -1688,6 +1738,99 @@ mod tests {
         // Same content should produce same ID
         assert_eq!(msg_full1.id, msg_full2.id);
     }
+
+    #[test]
+    fn test_pqxdh_encrypted_content() {
+        use crate::{
+            inbox::pqxdh::{PqxdhInitialMessage, PqxdhSessionMessage},
+            PqxdhEncryptedContent,
+        };
+
+        // Create a mock PQXDH initial message
+        let pqxdh_initial = PqxdhInitialMessage {
+            initiator_identity: VerifyingKey::Ed25519(Box::new(
+                ed25519_dalek::VerifyingKey::from_bytes(&[0u8; 32]).unwrap(),
+            )),
+            ephemeral_key: x25519_dalek::PublicKey::from([1u8; 32]),
+            kem_ciphertext: vec![2u8; 100],
+            signed_prekey_id: "spk_001".to_string(),
+            one_time_prekey_id: Some("otk_001".to_string()),
+            pq_signed_prekey_id: "pqspk_001".to_string(),
+            pq_one_time_key_id: Some("pqotk_001".to_string()),
+            encrypted_payload: vec![3u8; 50],
+        };
+
+        // Create a mock PQXDH session message
+        let pqxdh_session = PqxdhSessionMessage {
+            session_id: [4u8; 16],
+            sequence_number: 42,
+            encrypted_payload: vec![5u8; 30],
+            auth_tag: [6u8; 16],
+        };
+
+        // Test initial message content
+        let initial_content = Content::pqxdh_initial(pqxdh_initial.clone());
+
+        // Test session message content
+        let session_content = Content::pqxdh_session(pqxdh_session.clone());
+
+        // Test getters
+        let retrieved_initial = initial_content.as_pqxdh_encrypted().unwrap();
+        if let PqxdhEncryptedContent::Initial(msg) = retrieved_initial {
+            assert_eq!(*msg, pqxdh_initial);
+        } else {
+            panic!("Expected Initial variant");
+        }
+
+        let retrieved_session = session_content.as_pqxdh_encrypted().unwrap();
+        if let PqxdhEncryptedContent::Session(msg) = retrieved_session {
+            assert_eq!(*msg, pqxdh_session);
+        } else {
+            panic!("Expected Session variant");
+        }
+
+        // Test is_encrypted
+        assert!(initial_content.is_encrypted());
+        assert!(session_content.is_encrypted());
+        assert!(!initial_content.is_raw());
+        assert!(!session_content.is_raw());
+
+        // Test serialization
+        let initial_serialized = postcard::to_stdvec(&initial_content).unwrap();
+        let initial_deserialized: Content = postcard::from_bytes(&initial_serialized).unwrap();
+        assert_eq!(initial_content, initial_deserialized);
+
+        let session_serialized = postcard::to_stdvec(&session_content).unwrap();
+        let session_deserialized: Content = postcard::from_bytes(&session_serialized).unwrap();
+        assert_eq!(session_content, session_deserialized);
+    }
+
+    #[test]
+    fn test_content_type_discriminants() {
+        // Test that our new PQXDH discriminant doesn't conflict
+        let raw_content = Content::raw(vec![1, 2, 3]);
+        let pqxdh_content = Content::pqxdh_initial(crate::inbox::pqxdh::PqxdhInitialMessage {
+            initiator_identity: VerifyingKey::Ed25519(Box::new(
+                ed25519_dalek::VerifyingKey::from_bytes(&[0u8; 32]).unwrap(),
+            )),
+            ephemeral_key: x25519_dalek::PublicKey::from([0u8; 32]),
+            kem_ciphertext: vec![],
+            signed_prekey_id: "test".to_string(),
+            one_time_prekey_id: None,
+            pq_signed_prekey_id: "test".to_string(),
+            pq_one_time_key_id: None,
+            encrypted_payload: vec![],
+        });
+
+        // Serialize both and ensure they have different discriminants
+        let raw_serialized = postcard::to_stdvec(&raw_content).unwrap();
+        let pqxdh_serialized = postcard::to_stdvec(&pqxdh_content).unwrap();
+
+        // First byte should be the discriminant
+        assert_ne!(raw_serialized[0], pqxdh_serialized[0]);
+        assert_eq!(raw_serialized[0], 0); // Raw should be discriminant 0
+        assert_eq!(pqxdh_serialized[0], 90); // PQXDH should be discriminant 90
+    }
 }
 
 #[cfg(test)]
@@ -1740,28 +1883,28 @@ mod size_tests {
                 "Ed25519" => {
                     // Ed25519: ~120 bytes (allow some variance for postcard overhead)
                     assert!(
-                        size >= 100 && size <= 150,
+                        (100..=150).contains(&size),
                         "Ed25519 message size {size} should be ~120 bytes (100-150 range)"
                     );
                 }
                 "MlDsa44" => {
                     // ML-DSA-44: ~3,832 bytes (allow reasonable variance)
                     assert!(
-                        size >= 3700 && size <= 4000,
+                        (3700..=4000).contains(&size),
                         "ML-DSA-44 message size {size} should be ~3,832 bytes (3700-4000 range)"
                     );
                 }
                 "MlDsa65" => {
                     // ML-DSA-65: ~5,362 bytes (allow reasonable variance)
                     assert!(
-                        size >= 5200 && size <= 5600,
+                        (5200..=5600).contains(&size),
                         "ML-DSA-65 message size {size} should be ~5,362 bytes (5200-5600 range)"
                     );
                 }
                 "MlDsa87" => {
                     // ML-DSA-87: ~7,322 bytes (allow reasonable variance)
                     assert!(
-                        size >= 7100 && size <= 7600,
+                        (7100..=7600).contains(&size),
                         "ML-DSA-87 message size {} should be ~7,322 bytes (7100-7600 range)",
                         size
                     );
@@ -1781,7 +1924,7 @@ mod size_tests {
 
         // Ed25519 should be the smallest - around 120 bytes
         assert!(
-            size >= 100 && size <= 150,
+            (100..=150).contains(&size),
             "Ed25519 minimum message size {} should be approximately 120 bytes",
             size
         );
@@ -1799,7 +1942,7 @@ mod size_tests {
 
         // ML-DSA-44 should be around 3,832 bytes
         assert!(
-            size >= 3700 && size <= 4000,
+            (3700..=4000).contains(&size),
             "ML-DSA-44 minimum message size {} should be approximately 3,832 bytes",
             size
         );
@@ -1817,7 +1960,7 @@ mod size_tests {
 
         // ML-DSA-65 should be around 5,362 bytes
         assert!(
-            size >= 5200 && size <= 5600,
+            (5200..=5600).contains(&size),
             "ML-DSA-65 minimum message size {} should be approximately 5,362 bytes",
             size
         );
@@ -1835,7 +1978,7 @@ mod size_tests {
 
         // ML-DSA-87 should be around 7,322 bytes
         assert!(
-            size >= 7100 && size <= 7600,
+            (7100..=7600).contains(&size),
             "ML-DSA-87 minimum message size {} should be approximately 7,322 bytes",
             size
         );
@@ -1878,17 +2021,17 @@ mod size_tests {
 
         // Assert expected ratios (ML-DSA should be significantly larger)
         assert!(
-            mldsa44_ratio >= 25.0 && mldsa44_ratio <= 40.0,
+            (25.0..=40.0).contains(&mldsa44_ratio),
             "ML-DSA-44 should be 25-40x larger than Ed25519, got {:.1}x",
             mldsa44_ratio
         );
         assert!(
-            mldsa65_ratio >= 35.0 && mldsa65_ratio <= 55.0,
+            (35.0..=55.0).contains(&mldsa65_ratio),
             "ML-DSA-65 should be 35-55x larger than Ed25519, got {:.1}x",
             mldsa65_ratio
         );
         assert!(
-            mldsa87_ratio >= 50.0 && mldsa87_ratio <= 75.0,
+            (50.0..=75.0).contains(&mldsa87_ratio),
             "ML-DSA-87 should be 50-75x larger than Ed25519, got {:.1}x",
             mldsa87_ratio
         );
