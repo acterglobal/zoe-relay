@@ -20,9 +20,7 @@ use x509_parser::oid_registry::asn1_rs::oid;
 use x509_parser::prelude::*;
 
 use crate::{
-    crypto::{CryptoError, Result},
-    version::ProtocolVersion,
-    ClientProtocolConfig, ServerProtocolConfig,
+    crypto::CryptoError, version::ProtocolVersion, ClientProtocolConfig, ServerProtocolConfig,
 };
 
 /// Generate a deterministic TLS certificate using Ed25519
@@ -33,7 +31,7 @@ pub(crate) fn generate_ed25519_cert_for_tls(
     ed25519_signing_key: &ed25519_dalek::SigningKey,
     subject_name: &str,
     selected_protocol_version: Option<ProtocolVersion>,
-) -> Result<Vec<CertificateDer<'static>>> {
+) -> std::result::Result<Vec<CertificateDer<'static>>, CryptoError> {
     tracing::debug!(
         "🔧 Creating proper Ed25519 certificate for subject: {}",
         subject_name
@@ -174,7 +172,7 @@ pub(crate) fn generate_ed25519_cert_for_tls(
 /// SubjectPublicKeyInfo field when the certificate uses the Ed25519 algorithm identifier.
 pub fn extract_ed25519_public_key_from_cert(
     cert_der: &CertificateDer,
-) -> Result<ed25519_dalek::VerifyingKey> {
+) -> std::result::Result<ed25519_dalek::VerifyingKey, CryptoError> {
     // Parse the certificate
     let (_, cert) = X509Certificate::from_der(cert_der.as_ref())
         .map_err(|e| CryptoError::ParseError(format!("Failed to parse certificate: {e:?}")))?;

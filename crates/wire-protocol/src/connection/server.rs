@@ -1,4 +1,4 @@
-use crate::crypto::{CryptoError, Result};
+use crate::crypto::CryptoError;
 use crate::version::ServerProtocolConfig;
 use crate::KeyPair;
 use quinn::Endpoint;
@@ -12,7 +12,10 @@ use std::sync::Arc;
 use super::ml_dsa::{create_ml_dsa_44_server_config, create_ml_dsa_44_server_config_with_alpn};
 
 /// Create a QUIC server endpoint with TLS certificate (Ed25519 or ML-DSA-44)
-pub fn create_server_endpoint(addr: SocketAddr, server_keypair: &KeyPair) -> Result<Endpoint> {
+pub fn create_server_endpoint(
+    addr: SocketAddr,
+    server_keypair: &KeyPair,
+) -> std::result::Result<Endpoint, CryptoError> {
     create_server_endpoint_with_protocols(addr, server_keypair, &ServerProtocolConfig::default())
 }
 
@@ -21,7 +24,7 @@ pub fn create_server_endpoint_with_protocols(
     addr: SocketAddr,
     server_keypair: &KeyPair,
     protocol_negotiation: &ServerProtocolConfig,
-) -> Result<Endpoint> {
+) -> std::result::Result<Endpoint, CryptoError> {
     info!("🚀 Creating relay server endpoint on {}", addr);
 
     let rustls_config = match server_keypair {

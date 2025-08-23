@@ -354,7 +354,7 @@ impl RedisMessageStorage {
 
         // Handle storage key updates (user data storage)
         if let Some(storage_key) = message.store_key() {
-            let author_id = hex::encode(message.author().encode());
+            let author_id = hex::encode(message.author().id());
             let storage_key_enc: u32 = storage_key.into();
             let storage_id = format!("{author_id}:{storage_key_enc}");
 

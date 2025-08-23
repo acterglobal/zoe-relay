@@ -22,7 +22,7 @@ pub mod ml_dsa_44 {
     use x509_parser::oid_registry::asn1_rs::oid;
     use x509_parser::prelude::*;
 
-    use crate::crypto::{CryptoError, Result};
+    use crate::crypto::CryptoError;
 
     /// ML-DSA-44 public key extracted from certificates
     pub type PublicKey = MlDsaVerifyingKey<MlDsa44>;
@@ -34,7 +34,7 @@ pub mod ml_dsa_44 {
     pub fn generate_ml_dsa_44_cert_for_tls(
         ml_dsa_key_pair: &KeyPair<MlDsa44>,
         subject_name: &str,
-    ) -> Result<Vec<CertificateDer<'static>>> {
+    ) -> std::result::Result<Vec<CertificateDer<'static>>, CryptoError> {
         tracing::debug!(
             "🔧 Creating proper ML-DSA-44 certificate for subject: {}",
             subject_name
@@ -151,7 +151,9 @@ pub mod ml_dsa_44 {
     ///
     /// This function extracts the ML-DSA-44 public key directly from the certificate's
     /// SubjectPublicKeyInfo field when the certificate uses the ML-DSA-44 algorithm identifier.
-    pub fn extract_ml_dsa_44_public_key_from_cert(cert_der: &CertificateDer) -> Result<PublicKey> {
+    pub fn extract_ml_dsa_44_public_key_from_cert(
+        cert_der: &CertificateDer,
+    ) -> std::result::Result<PublicKey, CryptoError> {
         // Parse the certificate
         let (_, cert) = X509Certificate::from_der(cert_der.as_ref())
             .map_err(|e| CryptoError::ParseError(format!("Failed to parse certificate: {e:?}")))?;

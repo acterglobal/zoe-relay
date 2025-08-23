@@ -1,4 +1,4 @@
-use crate::crypto::{CryptoError, Result};
+use crate::crypto::CryptoError;
 use crate::version::ClientProtocolConfig;
 use crate::VerifyingKey;
 use quinn::{crypto::rustls::QuicClientConfig, ClientConfig, Endpoint};
@@ -91,14 +91,16 @@ mod ed25519 {
     }
 }
 
-pub fn create_client_endpoint(server_public_key: &VerifyingKey) -> Result<Endpoint> {
+pub fn create_client_endpoint(
+    server_public_key: &VerifyingKey,
+) -> std::result::Result<Endpoint, CryptoError> {
     create_client_endpoint_with_protocols(server_public_key, &ClientProtocolConfig::default())
 }
 
 pub fn create_client_endpoint_with_protocols(
     server_public_key: &VerifyingKey,
     protocol_versions: &ClientProtocolConfig,
-) -> Result<Endpoint> {
+) -> std::result::Result<Endpoint, CryptoError> {
     let cert_verifier = match server_public_key {
         VerifyingKey::Ed25519(verifying_key) => {
             ed25519::AcceptSpecificEd25519ServerCertVerifier::new(**verifying_key)

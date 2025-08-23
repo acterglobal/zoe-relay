@@ -49,8 +49,6 @@ pub enum CryptoError {
     TlsError(String),
 }
 
-pub type Result<T> = std::result::Result<T, CryptoError>;
-
 // ==================== ChaCha20-Poly1305 & Mnemonic Support ====================
 
 /// Mnemonic phrase for key derivation
@@ -62,7 +60,7 @@ pub struct MnemonicPhrase {
 
 impl MnemonicPhrase {
     /// Generate a new 24-word mnemonic phrase
-    pub fn generate() -> Result<Self> {
+    pub fn generate() -> std::result::Result<Self, CryptoError> {
         // Generate 32 bytes of entropy for 24 words
         let mut entropy = [0u8; 32];
         thread_rng().fill_bytes(&mut entropy);
@@ -77,7 +75,7 @@ impl MnemonicPhrase {
     }
 
     /// Create from existing phrase
-    pub fn from_phrase(phrase: &str, language: Language) -> Result<Self> {
+    pub fn from_phrase(phrase: &str, language: Language) -> std::result::Result<Self, CryptoError> {
         // Validate the mnemonic
         Mnemonic::parse_in(language, phrase)
             .map_err(|e| CryptoError::MnemonicError(format!("Invalid mnemonic phrase: {e}")))?;
@@ -89,7 +87,7 @@ impl MnemonicPhrase {
     }
 
     /// Derive a seed from the mnemonic with optional passphrase
-    pub fn to_seed(&self, passphrase: &str) -> Result<[u8; 64]> {
+    pub fn to_seed(&self, passphrase: &str) -> std::result::Result<[u8; 64], CryptoError> {
         let mnemonic = Mnemonic::parse_in(self.language, &self.phrase)
             .map_err(|e| CryptoError::MnemonicError(format!("Invalid mnemonic: {e}")))?;
 
@@ -227,11 +225,29 @@ pub struct EphemeralEcdhContent {
     pub ephemeral_public: [u8; 32],
 }
 
+/// PQXDH encrypted content for asynchronous secure communication
+///
+/// This supports both initial handshake messages (Phase 2) and ongoing
+/// session messages (Phase 3) of the PQXDH protocol.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum PqxdhEncryptedContent {
+    /// Initial PQXDH handshake message that establishes the session
+    /// and delivers the first encrypted payload
+    Initial(crate::inbox::pqxdh::PqxdhInitialMessage),
+
+    /// Follow-up session message using established shared secret
+    /// for efficient ongoing communication
+    Session(crate::inbox::pqxdh::PqxdhSessionMessage),
+}
+
 impl Ed25519SelfEncryptedContent {
     /// Encrypt data using ed25519 private key (self-encryption)
     /// Derives a ChaCha20 key from the ed25519 private key deterministically
     /// Only the same private key can decrypt this content
-    pub fn encrypt(plaintext: &[u8], signing_key: &ed25519_dalek::SigningKey) -> Result<Self> {
+    pub fn encrypt(
+        plaintext: &[u8],
+        signing_key: &ed25519_dalek::SigningKey,
+    ) -> std::result::Result<Self, CryptoError> {
         use chacha20poly1305::aead::{Aead, OsRng};
         use chacha20poly1305::{AeadCore, ChaCha20Poly1305, Key, KeyInit};
 
@@ -263,7 +279,10 @@ impl Ed25519SelfEncryptedContent {
 
     /// Decrypt data using ed25519 private key (self-decryption)
     /// Must be the same private key that was used for encryption
-    pub fn decrypt(&self, signing_key: &ed25519_dalek::SigningKey) -> Result<Vec<u8>> {
+    pub fn decrypt(
+        &self,
+        signing_key: &ed25519_dalek::SigningKey,
+    ) -> std::result::Result<Vec<u8>, CryptoError> {
         use chacha20poly1305::aead::Aead;
         use chacha20poly1305::{ChaCha20Poly1305, Key, KeyInit, Nonce};
 
@@ -305,7 +324,10 @@ impl MlDsaSelfEncryptedContent {
     /// Encrypt data using ML-DSA private key (self-encryption)
     /// Derives a ChaCha20 key from the ML-DSA private key deterministically
     /// Only the same private key can decrypt this content
-    pub fn encrypt(plaintext: &[u8], signing_key: &MLDSA65SigningKey) -> Result<Self> {
+    pub fn encrypt(
+        plaintext: &[u8],
+        signing_key: &MLDSA65SigningKey,
+    ) -> std::result::Result<Self, CryptoError> {
         use chacha20poly1305::aead::{Aead, OsRng};
         use chacha20poly1305::{AeadCore, ChaCha20Poly1305, Key, KeyInit};
 
@@ -337,7 +359,10 @@ impl MlDsaSelfEncryptedContent {
 
     /// Decrypt data using ML-DSA private key (self-decryption)
     /// Must be the same private key that was used for encryption
-    pub fn decrypt(&self, signing_key: &MLDSA65SigningKey) -> Result<Vec<u8>> {
+    pub fn decrypt(
+        &self,
+        signing_key: &MLDSA65SigningKey,
+    ) -> std::result::Result<Vec<u8>, CryptoError> {
         use chacha20poly1305::aead::Aead;
         use chacha20poly1305::{ChaCha20Poly1305, Key, KeyInit, Nonce};
 
@@ -370,7 +395,7 @@ impl EphemeralEcdhContent {
     pub fn encrypt(
         plaintext: &[u8],
         recipient_ed25519_public: &ed25519_dalek::VerifyingKey,
-    ) -> Result<Self> {
+    ) -> std::result::Result<Self, CryptoError> {
         use chacha20poly1305::aead::{Aead, OsRng};
         use chacha20poly1305::{AeadCore, ChaCha20Poly1305, Key, KeyInit};
 
@@ -423,7 +448,10 @@ impl EphemeralEcdhContent {
 
     /// Decrypt data using ephemeral X25519 ECDH
     /// Recipient uses their Ed25519 private key + stored ephemeral public key
-    pub fn decrypt(&self, recipient_ed25519_key: &ed25519_dalek::SigningKey) -> Result<Vec<u8>> {
+    pub fn decrypt(
+        &self,
+        recipient_ed25519_key: &ed25519_dalek::SigningKey,
+    ) -> std::result::Result<Vec<u8>, CryptoError> {
         use chacha20poly1305::aead::Aead;
         use chacha20poly1305::{ChaCha20Poly1305, Key, KeyInit, Nonce};
 
@@ -471,7 +499,7 @@ impl EphemeralEcdhContent {
 /// Both curves use the same underlying Curve25519
 pub fn ed25519_to_x25519_private(
     ed25519_key: &ed25519_dalek::SigningKey,
-) -> Result<X25519PrivateKey> {
+) -> std::result::Result<X25519PrivateKey, CryptoError> {
     // Ed25519 private key is the same as X25519 private key (both are 32-byte scalars)
     let ed25519_bytes = ed25519_key.to_bytes();
     Ok(X25519PrivateKey::from(ed25519_bytes))
@@ -482,7 +510,7 @@ pub fn ed25519_to_x25519_private(
 /// Note: This is a simplified approach that requires the private key
 pub fn ed25519_to_x25519_public(
     ed25519_private_key: &ed25519_dalek::SigningKey,
-) -> Result<X25519PublicKey> {
+) -> std::result::Result<X25519PublicKey, CryptoError> {
     // Convert Ed25519 private key to X25519 private key, then derive public
     let x25519_private = ed25519_to_x25519_private(ed25519_private_key)?;
     Ok(X25519PublicKey::from(&x25519_private))
@@ -493,7 +521,7 @@ pub fn ed25519_to_x25519_public(
 /// the same conversion that happens in the private key derivation path
 pub fn ed25519_to_x25519_public_from_verifying_key(
     ed25519_public: &ed25519_dalek::VerifyingKey,
-) -> Result<X25519PublicKey> {
+) -> std::result::Result<X25519PublicKey, CryptoError> {
     // Use curve25519-dalek's conversion which should match the private key approach
     use curve25519_dalek::edwards::CompressedEdwardsY;
 
@@ -530,7 +558,7 @@ impl EncryptionKey {
         passphrase: &str,
         context: &str, // e.g., "dga-group-key"
         timestamp: u64,
-    ) -> Result<Self> {
+    ) -> std::result::Result<Self, CryptoError> {
         // Generate a random salt
         let mut salt = [0u8; 32];
         thread_rng().fill_bytes(&mut salt);
@@ -545,7 +573,7 @@ impl EncryptionKey {
         context: &str,
         salt: &[u8; 32],
         timestamp: u64,
-    ) -> Result<Self> {
+    ) -> std::result::Result<Self, CryptoError> {
         // First get the BIP39 seed
         let seed = mnemonic.to_seed(passphrase)?;
 
@@ -605,7 +633,10 @@ impl EncryptionKey {
     }
 
     /// Encrypt data to minimal ChaCha20Poly1305Content (no key_id for wire protocol)
-    pub fn encrypt_content(&self, plaintext: &[u8]) -> Result<ChaCha20Poly1305Content> {
+    pub fn encrypt_content(
+        &self,
+        plaintext: &[u8],
+    ) -> std::result::Result<ChaCha20Poly1305Content, CryptoError> {
         let key = Key::from_slice(&self.key);
         let cipher = ChaCha20Poly1305::new(key);
 
@@ -626,7 +657,10 @@ impl EncryptionKey {
     }
 
     /// Decrypt ChaCha20Poly1305Content (assumes correct key based on channel context)
-    pub fn decrypt_content(&self, content: &ChaCha20Poly1305Content) -> Result<Vec<u8>> {
+    pub fn decrypt_content(
+        &self,
+        content: &ChaCha20Poly1305Content,
+    ) -> std::result::Result<Vec<u8>, CryptoError> {
         let key = Key::from_slice(&self.key);
         let cipher = ChaCha20Poly1305::new(key);
         let nonce = Nonce::from_slice(&content.nonce);
@@ -642,7 +676,7 @@ pub fn generate_ed25519_from_mnemonic(
     mnemonic: &MnemonicPhrase,
     passphrase: &str,
     context: &str, // e.g., "ed25519-signing-key"
-) -> Result<ed25519_dalek::SigningKey> {
+) -> std::result::Result<ed25519_dalek::SigningKey, CryptoError> {
     // Get the BIP39 seed
     let seed = mnemonic.to_seed(passphrase)?;
 
@@ -663,7 +697,7 @@ pub fn recover_ed25519_from_mnemonic(
     mnemonic: &MnemonicPhrase,
     passphrase: &str,
     context: &str,
-) -> Result<ed25519_dalek::SigningKey> {
+) -> std::result::Result<ed25519_dalek::SigningKey, CryptoError> {
     // Same as generate - it's deterministic
     generate_ed25519_from_mnemonic(mnemonic, passphrase, context)
 }
@@ -673,7 +707,7 @@ pub fn generate_ml_dsa_from_mnemonic(
     mnemonic: &MnemonicPhrase,
     passphrase: &str,
     context: &str, // e.g., "ml-dsa-signing-key"
-) -> Result<MLDSA65SigningKey> {
+) -> std::result::Result<MLDSA65SigningKey, CryptoError> {
     // Get the BIP39 seed
     let seed = mnemonic.to_seed(passphrase)?;
 
@@ -717,7 +751,7 @@ pub fn recover_ml_dsa_from_mnemonic(
     mnemonic: &MnemonicPhrase,
     passphrase: &str,
     context: &str,
-) -> Result<MLDSA65SigningKey> {
+) -> std::result::Result<MLDSA65SigningKey, CryptoError> {
     // Same as generate - it's deterministic
     generate_ml_dsa_from_mnemonic(mnemonic, passphrase, context)
 }

@@ -34,6 +34,8 @@ postcard = { workspace = true }
 forward-compatible-enum = { path = "../../crates/forward-compatible-enum" }
 rustls = { workspace = true }
 quinn = { workspace = true }
+x25519-dalek = { version = "2.0", features = ["static_secrets", "serde"] }
+ed25519-dalek = { workspace = true }
 
 # Redis client for message store tests
 redis = { version = "0.24", features = ["tokio-comp"] }
