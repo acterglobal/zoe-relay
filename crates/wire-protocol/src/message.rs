@@ -39,10 +39,10 @@ pub enum Kind {
     /// This is a regular event, that should be stored and made available to query for afterwards
     Regular,
     /// An ephemeral event is not kept permanently but mainly forwarded to who ever is interested
-    /// if a number is provided and larger than 0, this is the maximum seconds the event should be
+    /// if a number larger than 0 is provided, this is the maximum seconds the event should be
     /// stored for in case someone asks. If the timestamp + seconds is smaller than the current
     /// server time, the event might be discarded without even forwarding it.
-    Emphemeral(Option<u8>),
+    Emphemeral(u32),
     /// This is an event that should be stored in a specific store
     Store(StoreKey),
     /// This is an event that should clear a specific store
@@ -846,7 +846,7 @@ impl MessageFull {
     pub fn storage_timeout(&self) -> Option<u64> {
         match &*self.message {
             Message::MessageV0(msg) => match msg.header.kind {
-                Kind::Emphemeral(Some(timeout)) if timeout > 0 => Some(timeout as u64),
+                Kind::Emphemeral(timeout) if timeout > 0 => Some(timeout as u64),
                 _ => None,
             },
         }
@@ -1347,7 +1347,7 @@ mod tests {
             complex_content.clone(),
             pk,
             1714857600,
-            Kind::Emphemeral(Some(10)),
+            Kind::Emphemeral(10),
             vec![],
         )
         .unwrap();
