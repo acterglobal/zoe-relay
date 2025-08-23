@@ -33,7 +33,7 @@
 //! ### Low-Level Protocol Testing
 //! ```rust
 //! use zoe_e2e_tests::multi_client_infra::create_authenticated_connection;
-//! use zoe_wire_protocol::generate_keypair;
+//! use zoe_wire_protocol::KeyPair;
 //!
 //! #[tokio::test]
 //! async fn test_custom_protocol() -> Result<()> {
@@ -42,7 +42,7 @@
 //!     let server_public_key = get_server_public_key();
 //!     
 //!     // Create client and establish authenticated connection
-//!     let client_keypair = generate_keypair(&mut rand::rngs::OsRng);
+//!     let client_keypair = KeyPair::generate(&mut rand::rngs::OsRng);
 //!     let (connection, version, verified_count, warnings) =
 //!         create_authenticated_connection(
 //!             server_addr,

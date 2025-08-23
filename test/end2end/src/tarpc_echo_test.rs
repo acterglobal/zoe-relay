@@ -208,26 +208,26 @@ async fn test_tarpc_echo_service_end_to_end_multi_versioned() -> Result<()> {
     let infra = TestInfrastructure::setup().await?;
 
     // Create two clients with different keys - one for service, one for client
-    let service_key = generate_keypair(&mut OsRng).signing_key().clone();
-    let rpc_key_v0 = generate_keypair(&mut OsRng).signing_key().clone();
-    let rpc_key_v1 = generate_keypair(&mut OsRng).signing_key().clone();
+    let service_key = KeyPair::generate(&mut OsRng).signing_key().clone();
+    let rpc_key_v0 = KeyPair::generate(&mut OsRng).signing_key().clone();
+    let rpc_key_v1 = KeyPair::generate(&mut OsRng).signing_key().clone();
 
     let service_client = zoe_client::RelayClient::new(
-        generate_keypair(&mut OsRng),
+        KeyPair::generate(&mut OsRng),
         infra.server_public_key,
         infra.server_addr,
     )
     .await?;
 
     let rpc_client_v0 = zoe_client::RelayClient::new(
-        generate_keypair(&mut OsRng),
+        KeyPair::generate(&mut OsRng),
         infra.server_public_key,
         infra.server_addr,
     )
     .await?;
 
     let rpc_client_v1 = zoe_client::RelayClient::new(
-        generate_keypair(&mut OsRng),
+        KeyPair::generate(&mut OsRng),
         infra.server_public_key,
         infra.server_addr,
     )
@@ -309,7 +309,7 @@ async fn test_tarpc_echo_service_end_to_end_multi_versioned() -> Result<()> {
 
     // Create RPC listeners for the service and client
     let service_request_stream = RpcMessageListener::<ClientMessage<EchoServiceRequestInner>>::new(
-        generate_keypair(&mut OsRng),
+        KeyPair::generate(&mut OsRng),
         service_stream,
     );
     info!("🔧 Created RPC server listeners");
@@ -317,7 +317,7 @@ async fn test_tarpc_echo_service_end_to_end_multi_versioned() -> Result<()> {
     // Create tarpc echo server using TarpcOverMessagesServer
     let echo_server = TarpcOverMessagesServer::new(
         service_request_stream,
-        generate_keypair(&mut OsRng),
+        KeyPair::generate(&mut OsRng),
         service_messages,
         move |transport| {
             let service = EchoServiceImpl::new("TestTarpcEchoService".to_string());
@@ -342,7 +342,7 @@ async fn test_tarpc_echo_service_end_to_end_multi_versioned() -> Result<()> {
     // Create tarpc echo client using TarpcOverMessagesClient
     let echo_client_v0 = TarpcOverMessagesClient::new_with_mapper(
         client_response_listener,
-        generate_keypair(&mut OsRng),
+        KeyPair::generate(&mut OsRng),
         client_messages_v0,
         service_key.verifying_key(),
         move |transport| EchoServiceV0Client::new(Default::default(), transport).spawn(),
@@ -374,7 +374,7 @@ async fn test_tarpc_echo_service_end_to_end_multi_versioned() -> Result<()> {
     // Create tarpc echo client using TarpcOverMessagesClient
     let echo_client_v1 = TarpcOverMessagesClient::new_with_mapper(
         client_response_listener,
-        generate_keypair(&mut OsRng),
+        KeyPair::generate(&mut OsRng),
         client_messages_v1,
         service_key.verifying_key(),
         move |transport| EchoServiceV1Client::new(Default::default(), transport).spawn(),

@@ -19,13 +19,13 @@
 //! ```rust
 //! use zoe_wire_protocol::{
 //!     MessageFull, Message, MessageV0, MessageV0Header, Content, Kind,
-//!     KeyPair, VerifyingKey, SigningKey, generate_keypair
+//!     KeyPair, VerifyingKey, SigningKey
 //! };
 //! use rand::rngs::OsRng;
 //!
 //! # fn main() -> Result<(), Box<dyn std::error::Error>> {
 //! // Create a keypair (supports Ed25519, ML-DSA-44, ML-DSA-65, ML-DSA-87)
-//! let keypair = generate_keypair(&mut OsRng);
+//! let keypair = KeyPair::generate(&mut OsRng);
 //! let verifying_key = keypair.public_key();
 //!
 //! // Create message content (multiple encryption options available)

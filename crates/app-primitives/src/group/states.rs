@@ -103,11 +103,11 @@ use crate::{IdentityInfo, IdentityRef, IdentityType, Metadata, Permission};
 /// ### Setting Up Multiple Identities
 /// ```rust
 /// use zoe_app_primitives::{GroupMembership, IdentityType, IdentityRef, IdentityInfo};
-/// use zoe_wire_protocol::{KeyPair, generate_keypair};
+/// use zoe_wire_protocol::KeyPair;
 /// use std::collections::HashMap;
 ///
 /// let mut membership = GroupMembership::new();
-/// let alice_key = SigningKey::generate(&mut rand::rngs::OsRng).verifying_key();
+/// let alice_key = KeyPair::generate(&mut rand::rngs::OsRng).public_key();
 ///
 /// // Alice declares her main identity
 /// let main_identity = IdentityInfo {
@@ -136,9 +136,9 @@ use crate::{IdentityInfo, IdentityRef, IdentityType, Metadata, Permission};
 /// ### Checking Authorization
 /// ```rust
 /// # use zoe_app_primitives::{GroupMembership, IdentityRef};
-/// # use ed25519_dalek::SigningKey;
+/// # use zoe_wire_protocol::KeyPair;
 /// # let membership = GroupMembership::new();
-/// # let alice_key = SigningKey::generate(&mut rand::rngs::OsRng).verifying_key();
+/// # let alice_key = KeyPair::generate(&mut rand::rngs::OsRng).public_key();
 ///
 /// // Check if Alice can act as her main identity (always true)
 /// let main_ref = IdentityRef::Key(alice_key);
@@ -152,7 +152,7 @@ use crate::{IdentityInfo, IdentityRef, IdentityType, Metadata, Permission};
 /// assert!(membership.is_authorized(&alice_key, &alias_ref));
 ///
 /// // Check if Alice can act as someone else's alias (false)
-/// let other_key = SigningKey::generate(&mut rand::rngs::OsRng).verifying_key();
+/// let other_key = KeyPair::generate(&mut rand::rngs::OsRng).public_key();
 /// let other_alias = IdentityRef::Alias {
 ///     key: other_key,
 ///     alias: "not_alice".to_string(),
@@ -164,9 +164,9 @@ use crate::{IdentityInfo, IdentityRef, IdentityType, Metadata, Permission};
 /// ```rust
 /// # use zoe_app_primitives::{GroupMembership, IdentityRef};
 /// # use zoe_app_primitives::events::roles::GroupRole;
-/// # use ed25519_dalek::SigningKey;
+/// # use zoe_wire_protocol::KeyPair;
 /// # let mut membership = GroupMembership::new();
-/// # let alice_key = SigningKey::generate(&mut rand::rngs::OsRng).verifying_key();
+/// # let alice_key = KeyPair::generate(&mut rand::rngs::OsRng).public_key();
 ///
 /// // Assign admin role to Alice's main identity
 /// let main_ref = IdentityRef::Key(alice_key);
@@ -332,15 +332,15 @@ pub type GroupStateResult<T> = Result<T, GroupStateError>;
 ///
 /// ### Tracking Member Activity
 /// ```rust
-/// use zoe_app_primitives::{GroupMember, events::roles::GroupRole};
-/// use zoe_wire_protocol::{KeyPair, generate_keypair};
+/// use zoe_app_primitives::{GroupMember, IdentityRef, events::roles::GroupRole};
+/// use zoe_wire_protocol::KeyPair;
 /// use std::collections::BTreeMap;
 ///
-/// let member_key = SigningKey::generate(&mut rand::rngs::OsRng).verifying_key();
+/// let member_key = KeyPair::generate(&mut rand::rngs::OsRng).public_key();
 /// let join_time = 1234567890;
 ///
 /// let mut member = GroupMember {
-///     public_key: member_key,
+///     key: IdentityRef::Key(member_key),
 ///     role: GroupRole::Member,
 ///     joined_at: join_time,
 ///     last_active: join_time,
@@ -359,11 +359,11 @@ pub type GroupStateResult<T> = Result<T, GroupStateError>;
 /// ### Role-Based Member Management
 /// ```rust
 /// # use zoe_app_primitives::{GroupMember, events::roles::GroupRole};
-/// # use ed25519_dalek::SigningKey;
+/// # use zoe_wire_protocol::KeyPair;
 /// # use std::collections::BTreeMap;
-/// # let member_key = SigningKey::generate(&mut rand::rngs::OsRng).verifying_key();
+/// # let member_key = KeyPair::generate(&mut rand::rngs::OsRng).public_key();
 /// # let mut member = GroupMember {
-/// #     public_key: member_key, role: GroupRole::Member, joined_at: 0, last_active: 0,
+/// #     key: IdentityRef::Key(member_key), role: GroupRole::Member, joined_at: 0, last_active: 0,
 /// #     metadata: vec![],
 /// # };
 ///
@@ -378,9 +378,10 @@ pub type GroupStateResult<T> = Result<T, GroupStateError>;
 ///
 /// ### Custom Member Metadata
 /// ```rust
-/// # use zoe_app_primitives::{GroupMember, Metadata};
+/// # use zoe_app_primitives::{GroupMember, IdentityRef, Metadata};
+/// # use zoe_wire_protocol::KeyPair;
 /// # let mut member = GroupMember {
-/// #     public_key: generate_keypair(&mut rand::rngs::OsRng).verifying_key().clone(),
+/// #     key: IdentityRef::Key(KeyPair::generate(&mut rand::rngs::OsRng).public_key()),
 /// #     role: zoe_app_primitives::events::roles::GroupRole::Member,
 /// #     joined_at: 0, last_active: 0, metadata: vec![],
 /// # };
@@ -503,10 +504,10 @@ pub struct GroupMember {
 /// ### Creating a Group State
 /// ```rust
 /// use zoe_app_primitives::{GroupState, GroupSettings, Metadata};
-/// use zoe_wire_protocol::{KeyPair, generate_keypair};
+/// use zoe_wire_protocol::KeyPair;
 /// use blake3::Hash;
 ///
-/// let creator_key = SigningKey::generate(&mut rand::rngs::OsRng);
+/// let creator_key = KeyPair::generate(&mut rand::rngs::OsRng);
 /// let group_id = Hash::from([1u8; 32]);
 ///
 /// let metadata = vec![
@@ -531,14 +532,14 @@ pub struct GroupMember {
 /// ### Processing Member Activity
 /// ```rust
 /// # use zoe_app_primitives::*;
-/// # use ed25519_dalek::SigningKey;
+/// # use zoe_wire_protocol::KeyPair;
 /// # use blake3::Hash;
 /// # let mut group_state = GroupState::new(
 /// #     Hash::from([1u8; 32]), "Test".to_string(), GroupSettings::default(),
-/// #     vec![], SigningKey::generate(&mut rand::rngs::OsRng).verifying_key(), 1234567890
+/// #     vec![], KeyPair::generate(&mut rand::rngs::OsRng).public_key(), 1234567890
 /// # );
 ///
-/// let new_member = SigningKey::generate(&mut rand::rngs::OsRng);
+/// let new_member = KeyPair::generate(&mut rand::rngs::OsRng);
 /// let activity_event = GroupActivityEvent::Activity(());
 ///
 /// // New member announces participation
@@ -556,12 +557,12 @@ pub struct GroupMember {
 /// ### Working with Metadata
 /// ```rust
 /// # use zoe_app_primitives::*;
-/// # use ed25519_dalek::SigningKey;
+/// # use zoe_wire_protocol::KeyPair;
 /// # use blake3::Hash;
 /// # let group_state = GroupState::new(
 /// #     Hash::from([1u8; 32]), "Test".to_string(), GroupSettings::default(),
 /// #     vec![Metadata::Description("Test group".to_string())],
-/// #     SigningKey::generate(&mut rand::rngs::OsRng).verifying_key(), 1234567890
+/// #     KeyPair::generate(&mut rand::rngs::OsRng).public_key(), 1234567890
 /// # );
 ///
 /// // Extract specific metadata types
@@ -628,10 +629,10 @@ impl GroupState {
     ///
     /// ```rust
     /// use zoe_app_primitives::{GroupState, GroupSettings, Metadata, events::roles::GroupRole};
-    /// use zoe_wire_protocol::{KeyPair, generate_keypair};
+    /// use zoe_wire_protocol::KeyPair;
     /// use blake3::Hash;
     ///
-    /// let creator_key = SigningKey::generate(&mut rand::rngs::OsRng);
+    /// let creator_key = KeyPair::generate(&mut rand::rngs::OsRng);
     /// let group_id = Hash::from([42u8; 32]);
     ///
     /// let metadata = vec![
@@ -759,11 +760,11 @@ impl GroupState {
     ///
     /// ```rust
     /// use zoe_app_primitives::{GroupState, GroupActivityEvent, GroupSettings, Metadata};
-    /// use zoe_wire_protocol::{KeyPair, generate_keypair};
+    /// use zoe_wire_protocol::KeyPair;
     /// use blake3::Hash;
     ///
-    /// let creator_key = SigningKey::generate(&mut rand::rngs::OsRng);
-    /// let new_member_key = SigningKey::generate(&mut rand::rngs::OsRng);
+    /// let creator_key = KeyPair::generate(&mut rand::rngs::OsRng);
+    /// let new_member_key = KeyPair::generate(&mut rand::rngs::OsRng);
     ///
     /// let mut group_state = GroupState::new(
     ///     Hash::from([1u8; 32]),
@@ -1019,10 +1020,10 @@ impl GroupState {
     ///
     /// ```rust
     /// use zoe_app_primitives::{GroupState, GroupSettings, Metadata};
-    /// use zoe_wire_protocol::{KeyPair, generate_keypair};
+    /// use zoe_wire_protocol::KeyPair;
     /// use blake3::Hash;
     ///
-    /// let creator_key = SigningKey::generate(&mut rand::rngs::OsRng);
+    /// let creator_key = KeyPair::generate(&mut rand::rngs::OsRng);
     ///
     /// // Group with description
     /// let metadata_with_desc = vec![
@@ -1089,10 +1090,10 @@ impl GroupState {
     ///
     /// ```rust
     /// use zoe_app_primitives::{GroupState, GroupSettings, Metadata};
-    /// use zoe_wire_protocol::{KeyPair, generate_keypair};
+    /// use zoe_wire_protocol::KeyPair;
     /// use blake3::Hash;
     ///
-    /// let creator_key = SigningKey::generate(&mut rand::rngs::OsRng);
+    /// let creator_key = KeyPair::generate(&mut rand::rngs::OsRng);
     ///
     /// let metadata = vec![
     ///     Metadata::Description("Team workspace".to_string()), // Not included in generic

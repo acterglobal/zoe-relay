@@ -123,7 +123,7 @@ pub struct MessageFull<T> {
 
 ```rust
 // ML-DSA key generation
-let signing_key = generate_keypair(&mut rng); // ML-DSA-65 for messages
+let signing_key = KeyPair::generate(&mut rng); // ML-DSA-65 for messages
 let verifying_key = signing_key.verifying_key();
 
 // TLS certificate generation from ML-DSA-44 key

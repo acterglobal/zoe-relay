@@ -82,11 +82,11 @@
 //! ### Creating and Managing a Group
 //! ```rust
 //! use zoe_app_primitives::{GroupState, GroupSettings, Metadata, events::roles::GroupRole};
-//! use ed25519_dalek::SigningKey;
+//! use zoe_wire_protocol::KeyPair;
 //! use blake3::Hash;
 //!
 //! // Generate cryptographic identity
-//! let creator_key = SigningKey::generate(&mut rand::rngs::OsRng);
+//! let creator_key = KeyPair::generate(&mut rand::rngs::OsRng);
 //!
 //! // Define structured metadata
 //! let metadata = vec![
@@ -100,7 +100,7 @@
 //!     "Dev Team".to_string(),
 //!     GroupSettings::default(),
 //!     metadata,
-//!     creator_key.verifying_key(),
+//!     creator_key.public_key(),
 //!     1640995200,
 //! );
 //!
@@ -114,10 +114,10 @@
 //! ### Working with Multiple Identities
 //! ```rust
 //! use zoe_app_primitives::{GroupMembership, IdentityRef, IdentityType};
-//! use ed25519_dalek::SigningKey;
+//! use zoe_wire_protocol::KeyPair;
 //!
 //! let membership = GroupMembership::new();
-//! let user_key = SigningKey::generate(&mut rand::rngs::OsRng).verifying_key();
+//! let user_key = KeyPair::generate(&mut rand::rngs::OsRng).public_key();
 //!
 //! // Check available identities (always includes the raw key)
 //! let identities = membership.get_available_identities(&user_key);
@@ -131,10 +131,10 @@
 //! ### Handling Structured Metadata
 //! ```rust
 //! use zoe_app_primitives::{Metadata, GroupState, GroupSettings};
-//! use ed25519_dalek::SigningKey;
+//! use zoe_wire_protocol::KeyPair;
 //! use blake3::Hash;
 //!
-//! let creator = SigningKey::generate(&mut rand::rngs::OsRng).verifying_key();
+//! let creator = KeyPair::generate(&mut rand::rngs::OsRng).public_key();
 //! let metadata = vec![
 //!     Metadata::Description("Project discussion space".to_string()),
 //!     Metadata::Generic { key: "project_id".to_string(), value: "proj_123".to_string() },

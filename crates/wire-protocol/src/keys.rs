@@ -113,12 +113,12 @@ impl fmt::Display for Algorithm {
 /// ## Examples
 ///
 /// ```rust
-/// use zoe_wire_protocol::{VerifyingKey, SigningKey, KeyPair, generate_keypair};
+/// use zoe_wire_protocol::{VerifyingKey, SigningKey, KeyPair};
 /// use rand::rngs::OsRng;
 ///
 /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
 /// // Generate a keypair
-/// let keypair = generate_keypair(&mut OsRng);
+/// let keypair = KeyPair::generate(&mut OsRng);
 /// let verifying_key = keypair.public_key();
 ///
 /// // Sign and verify a message
@@ -343,12 +343,12 @@ impl VerifyingKey {
 /// ## Examples
 ///
 /// ```rust
-/// use zoe_wire_protocol::{KeyPair, SigningKey, VerifyingKey, generate_keypair};
+/// use zoe_wire_protocol::{KeyPair, SigningKey, VerifyingKey};
 /// use rand::rngs::OsRng;
 ///
 /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
 /// // Generate a keypair
-/// let keypair = generate_keypair(&mut OsRng);
+/// let keypair = KeyPair::generate(&mut OsRng);
 ///
 /// // Sign a message
 /// let message = b"Important message";
@@ -636,31 +636,6 @@ impl fmt::Display for KeyPair {
             }
         }
     }
-}
-
-/// Generate a keypair using the default parameters
-#[deprecated(note = "Use KeyPair::generate instead")]
-pub fn generate_keypair<R: rand::CryptoRng + rand::RngCore>(rng: &mut R) -> KeyPair {
-    KeyPair::generate_ml_dsa65(rng)
-}
-
-/// Generate a new Ed25519 keypair for relay operations
-#[deprecated(note = "Use KeyPair::generate_ed25519 instead")]
-pub fn generate_ed25519_relay_keypair<R: rand::CryptoRng + rand::RngCore>(rng: &mut R) -> KeyPair {
-    KeyPair::Ed25519(Box::new(ed25519_dalek::SigningKey::generate(rng)))
-}
-
-/// Convert VerifyingKey to bytes for compatibility with existing serialization
-#[deprecated(note = "Use VerifyingKey.to_bytes instead")]
-pub fn verifying_key_to_bytes(key: &VerifyingKey) -> Vec<u8> {
-    postcard::to_stdvec(key).expect("Failed to serialize VerifyingKey")
-}
-
-/// Create VerifyingKey from bytes
-#[deprecated(note = "Use VerifyingKey::try_from instead")]
-pub fn verifying_key_from_bytes(bytes: &[u8]) -> Result<VerifyingKey, ml_dsa::Error> {
-    let key: VerifyingKey = postcard::from_bytes(bytes).map_err(|_| ml_dsa::Error::new())?;
-    Ok(key)
 }
 
 mod serde_helpers {
@@ -1448,7 +1423,7 @@ mod tests {
     }
 
     #[test]
-    fn test_generate_keypair_defaults_to_ml_dsa65() {
+    fn test_keypair_generate_defaults_to_ml_dsa65() {
         let mut rng = OsRng;
         let default_keypair = KeyPair::generate(&mut rng);
 
@@ -1456,7 +1431,7 @@ mod tests {
             KeyPair::MlDsa65(..) => {
                 // This is expected
             }
-            _ => panic!("generate_keypair should default to ML-DSA-65"),
+            _ => panic!("KeyPair::generate should default to ML-DSA-65"),
         }
     }
 

@@ -68,7 +68,7 @@
 //! ### Creating a New Group
 //! ```rust
 //! use zoe_app_primitives::{GroupInfo, GroupSettings, GroupState, Metadata, GroupKeyInfo};
-//! use ed25519_dalek::SigningKey;
+//! use zoe_wire_protocol::KeyPair;
 //! use blake3::Hash;
 //!
 //! // Define group metadata
@@ -111,7 +111,7 @@
 //! ### Managing Group Membership
 //! ```rust
 //! use zoe_app_primitives::{GroupMembership, IdentityType, IdentityRef, IdentityInfo};
-//! use ed25519_dalek::SigningKey;
+//! use zoe_wire_protocol::KeyPair;
 //!
 //! let mut membership = GroupMembership::new();
 //! let user_key = SigningKey::generate(&mut rand::rngs::OsRng).verifying_key();
@@ -132,7 +132,7 @@
 //! #     "Test".to_string(),
 //! #     zoe_app_primitives::GroupSettings::default(),
 //! #     vec![],
-//! #     ed25519_dalek::SigningKey::generate(&mut rand::rngs::OsRng).verifying_key(),
+//! #     KeyPair::generate(&mut rand::rngs::OsRng).public_key(),
 //! #     1234567890,
 //! # );
 //!
@@ -195,7 +195,7 @@ mod tests {
         let signing_key = KeyPair::generate_ed25519(&mut OsRng);
         match signing_key.public_key() {
             VerifyingKey::Ed25519(key) => *key,
-            _ => panic!("Expected Ed25519 key from generate_ed25519_relay_keypair"),
+            _ => panic!("Expected Ed25519 key from KeyPair::generate_ed25519"),
         }
     }
 
