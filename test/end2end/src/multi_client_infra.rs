@@ -120,7 +120,6 @@ pub async fn perform_challenge_handshake(
     server_public_key: &VerifyingKey,
     client_keypairs: &[&KeyPair],
 ) -> Result<(usize, Vec<String>)> {
-
     // Accept bidirectional stream for challenge protocol
     let (send, recv) = connection
         .accept_bi()

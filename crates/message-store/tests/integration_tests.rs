@@ -3,8 +3,8 @@ use rand::rngs::OsRng;
 use std::{sync::Arc, time::SystemTime};
 use zoe_message_store::RedisMessageStorage;
 use zoe_wire_protocol::{
-    generate_ed25519_relay_keypair, keys::Id as KeyId, Filter, FilterOperation,
-    FilterUpdateRequest, KeyPair, Kind, Message, MessageFilters, MessageFull, Tag, VerifyingKey,
+    keys::Id as KeyId, Filter, FilterOperation, FilterUpdateRequest, KeyPair, Kind, Message,
+    MessageFilters, MessageFull, Tag, VerifyingKey,
 };
 
 // Helper function to create test VerifyingKeys from byte arrays
@@ -552,7 +552,7 @@ async fn test_all_signature_types_comprehensive() {
     let storage = setup_test_storage().await;
 
     // Generate keypairs for all supported signature types
-    let ed25519_keypair = generate_ed25519_relay_keypair(&mut OsRng);
+    let ed25519_keypair = KeyPair::generate_ed25519(&mut OsRng);
     let ml_dsa_44_keypair = KeyPair::generate_ml_dsa44(&mut OsRng);
     let ml_dsa_65_keypair = KeyPair::generate_ml_dsa65(&mut OsRng);
     let ml_dsa_87_keypair = KeyPair::generate_ml_dsa87(&mut OsRng);
@@ -857,7 +857,7 @@ async fn test_signature_type_ordering() {
     let storage = setup_test_storage().await;
 
     // Generate keypairs for all supported signature types
-    let ed25519_keypair = generate_ed25519_relay_keypair(&mut OsRng);
+    let ed25519_keypair = KeyPair::generate_ed25519(&mut OsRng);
     let ml_dsa_44_keypair = KeyPair::generate_ml_dsa44(&mut OsRng);
     let ml_dsa_65_keypair = KeyPair::generate_ml_dsa65(&mut OsRng);
     let ml_dsa_87_keypair = KeyPair::generate_ml_dsa87(&mut OsRng);

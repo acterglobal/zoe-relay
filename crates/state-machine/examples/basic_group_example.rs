@@ -1,4 +1,4 @@
-use zoe_wire_protocol::generate_keypair;
+use zoe_wire_protocol::KeyPair;
 
 use zoe_state_machine::{DigitalGroupAssistant, GroupSettings, create_group_activity_event};
 
@@ -8,8 +8,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Create signing keys for users
     let mut rng = rand::thread_rng();
-    let alice_keypair = generate_keypair(&mut rng);
-    let _bob_keypair = generate_keypair(&mut rng); // Would be used if Bob had the encryption key
+    let alice_keypair = KeyPair::generate(&mut rng);
 
     // Alice creates a group
     let metadata = vec![

@@ -181,18 +181,18 @@ mod tests {
     use super::events::{GroupActivityEvent, GroupInfo, GroupJoinInfo, GroupKeyInfo};
     use crate::{Metadata, RelayEndpoint};
     use std::net::{IpAddr, Ipv4Addr, SocketAddr};
-    use zoe_wire_protocol::{Ed25519VerifyingKey, VerifyingKey, generate_ed25519_relay_keypair};
+    use zoe_wire_protocol::{Ed25519VerifyingKey, KeyPair, VerifyingKey};
 
     fn create_test_verifying_key() -> VerifyingKey {
         use rand::rngs::OsRng;
-        use zoe_wire_protocol::generate_keypair;
-        let keypair = generate_keypair(&mut OsRng);
+        use zoe_wire_protocol::KeyPair;
+        let keypair = KeyPair::generate(&mut OsRng);
         keypair.public_key()
     }
 
     fn create_test_ed25519_verifying_key() -> Ed25519VerifyingKey {
         use rand::rngs::OsRng;
-        let signing_key = generate_ed25519_relay_keypair(&mut OsRng);
+        let signing_key = KeyPair::generate_ed25519(&mut OsRng);
         match signing_key.public_key() {
             VerifyingKey::Ed25519(key) => *key,
             _ => panic!("Expected Ed25519 key from generate_ed25519_relay_keypair"),

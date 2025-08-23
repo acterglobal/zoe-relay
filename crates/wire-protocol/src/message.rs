@@ -1072,7 +1072,7 @@ impl Eq for MessageFull {}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::keys::{generate_keypair, KeyPair, VerifyingKey};
+    use crate::keys::{KeyPair, VerifyingKey};
     use rand::rngs::OsRng;
     // use signature::Signer; // Not needed since we use KeyPair.sign() method
 
@@ -1103,7 +1103,7 @@ mod tests {
 
     fn make_keys() -> (KeyPair, VerifyingKey) {
         let mut csprng = OsRng;
-        let keypair = generate_keypair(&mut csprng);
+        let keypair = KeyPair::generate(&mut csprng);
         let public_key = keypair.public_key();
         (keypair, public_key)
     }

@@ -5,10 +5,8 @@ mod integration_tests {
     use ml_dsa::{KeyGen, MlDsa65};
     use rand::rngs::OsRng;
     use tempfile::TempDir;
-    use zoe_wire_protocol::keys::*;
     use zoe_wire_protocol::{
-        Content, Hash, Kind, Message, MessageFull, MessageV0, MessageV0Header, Tag,
-        generate_keypair,
+        Content, Hash, KeyPair, Kind, Message, MessageFull, MessageV0, MessageV0Header, Tag,
     };
 
     // Helper function to create a test message
@@ -78,7 +76,7 @@ mod integration_tests {
     async fn test_store_and_retrieve_message() {
         let (config, _temp_dir) = create_test_storage_config();
         let encryption_key = [1u8; 32];
-        let keypair = generate_keypair(&mut OsRng);
+        let keypair = KeyPair::generate(&mut OsRng);
 
         let storage = SqliteMessageStorage::new(config, &encryption_key)
             .await
@@ -133,7 +131,7 @@ mod integration_tests {
     async fn test_delete_message() {
         let (config, _temp_dir) = create_test_storage_config();
         let encryption_key = [3u8; 32];
-        let keypair = generate_keypair(&mut OsRng);
+        let keypair = KeyPair::generate(&mut OsRng);
 
         let storage = SqliteMessageStorage::new(config, &encryption_key)
             .await
@@ -165,8 +163,8 @@ mod integration_tests {
     async fn test_query_messages_by_author() {
         let (config, _temp_dir) = create_test_storage_config();
         let encryption_key = [4u8; 32];
-        let keypair1 = generate_keypair(&mut OsRng);
-        let keypair2 = generate_keypair(&mut OsRng);
+        let keypair1 = KeyPair::generate(&mut OsRng);
+        let keypair2 = KeyPair::generate(&mut OsRng);
 
         let storage = SqliteMessageStorage::new(config, &encryption_key)
             .await
@@ -212,7 +210,7 @@ mod integration_tests {
     async fn test_query_messages_with_timestamp_filter() {
         let (config, _temp_dir) = create_test_storage_config();
         let encryption_key = [5u8; 32];
-        let keypair = generate_keypair(&mut OsRng);
+        let keypair = KeyPair::generate(&mut OsRng);
 
         let storage = SqliteMessageStorage::new(config, &encryption_key)
             .await
@@ -260,7 +258,7 @@ mod integration_tests {
     async fn test_message_count_and_stats() {
         let (config, _temp_dir) = create_test_storage_config();
         let encryption_key = [6u8; 32];
-        let keypair = generate_keypair(&mut OsRng);
+        let keypair = KeyPair::generate(&mut OsRng);
 
         let storage = SqliteMessageStorage::new(config, &encryption_key)
             .await
@@ -293,7 +291,7 @@ mod integration_tests {
     async fn test_clear_all_messages() {
         let (config, _temp_dir) = create_test_storage_config();
         let encryption_key = [7u8; 32];
-        let keypair = generate_keypair(&mut OsRng);
+        let keypair = KeyPair::generate(&mut OsRng);
 
         let storage = SqliteMessageStorage::new(config, &encryption_key)
             .await
@@ -332,7 +330,7 @@ mod integration_tests {
         let (config, _temp_dir) = create_test_storage_config();
         let encryption_key1 = [9u8; 32];
         let encryption_key2 = [10u8; 32];
-        let keypair = generate_keypair(&mut OsRng);
+        let keypair = KeyPair::generate(&mut OsRng);
 
         // Create storage with first key
         let storage1 = SqliteMessageStorage::new(config.clone(), &encryption_key1)
@@ -371,7 +369,7 @@ mod integration_tests {
         for i in 0..10 {
             let storage = storage.clone();
             // Generate a new keypair for each task since KeyPair doesn't implement Clone
-            let keypair = generate_keypair(&mut OsRng);
+            let keypair = KeyPair::generate(&mut OsRng);
 
             let handle = tokio::spawn(async move {
                 let message = create_test_message(&format!("Concurrent message {i}"), &keypair);
@@ -407,7 +405,7 @@ mod integration_tests {
             .unwrap();
 
         // Create test messages
-        let keypair = generate_keypair(&mut OsRng);
+        let keypair = KeyPair::generate(&mut OsRng);
         let message1 = create_test_message("Test message 1", &keypair);
         let message2 = create_test_message("Test message 2", &keypair);
 
@@ -416,8 +414,8 @@ mod integration_tests {
         storage.store_message(&message2).await.unwrap();
 
         // Create relay keys
-        let relay1_key = generate_keypair(&mut OsRng).public_key();
-        let relay2_key = generate_keypair(&mut OsRng).public_key();
+        let relay1_key = KeyPair::generate(&mut OsRng).public_key();
+        let relay2_key = KeyPair::generate(&mut OsRng).public_key();
 
         // Initially, all messages should be unsynced for both relays
         let unsynced_relay1 = storage
@@ -483,13 +481,13 @@ mod integration_tests {
             .unwrap();
 
         // Create test message
-        let keypair = generate_keypair(&mut OsRng);
+        let keypair = KeyPair::generate(&mut OsRng);
         let message = create_test_message("Test sync status message", &keypair);
         storage.store_message(&message).await.unwrap();
 
         // Create relay keys
-        let relay1_key = generate_keypair(&mut OsRng).public_key();
-        let relay2_key = generate_keypair(&mut OsRng).public_key();
+        let relay1_key = KeyPair::generate(&mut OsRng).public_key();
+        let relay2_key = KeyPair::generate(&mut OsRng).public_key();
 
         // Initially, no sync status
         let sync_status = storage.get_message_sync_status(message.id()).await.unwrap();
@@ -525,7 +523,7 @@ mod integration_tests {
             .unwrap();
 
         // Create test messages
-        let keypair = generate_keypair(&mut OsRng);
+        let keypair = KeyPair::generate(&mut OsRng);
         let message1 = create_test_message("Synced message 1", &keypair);
         let message2 = create_test_message("Synced message 2", &keypair);
         let message3 = create_test_message("Unsynced message", &keypair);
@@ -535,7 +533,7 @@ mod integration_tests {
         storage.store_message(&message3).await.unwrap();
 
         // Create relay key
-        let relay_key = generate_keypair(&mut OsRng).public_key();
+        let relay_key = KeyPair::generate(&mut OsRng).public_key();
 
         // Initially, no messages have sync status
         let message1_status = storage
@@ -589,12 +587,12 @@ mod integration_tests {
             .unwrap();
 
         // Create test message
-        let keypair = generate_keypair(&mut OsRng);
+        let keypair = KeyPair::generate(&mut OsRng);
         let message = create_test_message("Update test message", &keypair);
         storage.store_message(&message).await.unwrap();
 
         // Create relay key
-        let relay_key = generate_keypair(&mut OsRng).public_key();
+        let relay_key = KeyPair::generate(&mut OsRng).public_key();
 
         // Mark as synced with initial stream ID
         storage
@@ -626,7 +624,7 @@ mod integration_tests {
             .unwrap();
 
         // Create multiple test messages
-        let keypair = generate_keypair(&mut OsRng);
+        let keypair = KeyPair::generate(&mut OsRng);
         let mut messages = Vec::new();
         for i in 0..5 {
             let message = create_test_message(&format!("Message {i}"), &keypair);
@@ -634,7 +632,7 @@ mod integration_tests {
             messages.push(message);
         }
 
-        let relay_key = generate_keypair(&mut OsRng).public_key();
+        let relay_key = KeyPair::generate(&mut OsRng).public_key();
 
         // Test unsynced messages with limit
         let unsynced_limited = storage

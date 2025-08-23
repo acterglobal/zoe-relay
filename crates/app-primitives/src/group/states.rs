@@ -1154,11 +1154,11 @@ mod tests {
     use crate::{IdentityInfo, IdentityType, Metadata, Permission};
 
     use rand::rngs::OsRng;
-    use zoe_wire_protocol::{Hash, VerifyingKey, generate_keypair};
+    use zoe_wire_protocol::{Hash, KeyPair, VerifyingKey};
 
     // Helper functions for creating test data
     fn create_test_verifying_key() -> VerifyingKey {
-        let keypair = generate_keypair(&mut OsRng);
+        let keypair = KeyPair::generate(&mut OsRng);
         keypair.public_key()
     }
 

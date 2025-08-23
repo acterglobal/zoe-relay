@@ -278,7 +278,7 @@ async fn receive_result(recv: &mut RecvStream) -> Result<ZoeChallengeResult> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{generate_ed25519_relay_keypair, generate_keypair, ZoeChallengeRejection};
+    use crate::{KeyPair, ZoeChallengeRejection};
     use anyhow::Result;
 
     /// Process a challenge result and return the verified count or an error
@@ -305,11 +305,11 @@ mod tests {
     #[test]
     fn test_create_key_proofs() {
         // Generate test keys
-        let keypair1 = generate_keypair(&mut rand::thread_rng());
-        let keypair2 = generate_keypair(&mut rand::thread_rng());
+        let keypair1 = KeyPair::generate(&mut rand::thread_rng());
+        let keypair2 = KeyPair::generate(&mut rand::thread_rng());
 
         // Create test challenge
-        let server_keypair = generate_ed25519_relay_keypair(&mut rand::thread_rng());
+        let server_keypair = KeyPair::generate_ed25519(&mut rand::thread_rng());
         let nonce = [42u8; 32];
         let server_signature = server_keypair.sign(&nonce);
 
@@ -365,9 +365,9 @@ mod tests {
 
     #[test]
     fn test_create_key_proofs_client() {
-        let server_keypair = generate_ed25519_relay_keypair(&mut rand::thread_rng());
-        let client_keypair1 = generate_keypair(&mut rand::thread_rng());
-        let client_keypair2 = generate_keypair(&mut rand::thread_rng());
+        let server_keypair = KeyPair::generate_ed25519(&mut rand::thread_rng());
+        let client_keypair1 = KeyPair::generate(&mut rand::thread_rng());
+        let client_keypair2 = KeyPair::generate(&mut rand::thread_rng());
 
         // Create a challenge
         let nonce = [42u8; 32];
@@ -406,7 +406,7 @@ mod tests {
 
     #[test]
     fn test_send_key_response_serialization() {
-        let client_keypair = generate_keypair(&mut rand::thread_rng());
+        let client_keypair = KeyPair::generate(&mut rand::thread_rng());
         let signature = client_keypair.sign(b"test data");
 
         let response = KeyResponse {
@@ -427,7 +427,7 @@ mod tests {
 
     #[test]
     fn test_challenge_signature_verification() {
-        let server_keypair = generate_ed25519_relay_keypair(&mut rand::thread_rng());
+        let server_keypair = KeyPair::generate_ed25519(&mut rand::thread_rng());
         let server_public_key = server_keypair.public_key();
 
         // Create a valid challenge
@@ -463,7 +463,7 @@ mod tests {
 
     #[test]
     fn test_empty_key_list() {
-        let server_keypair = generate_ed25519_relay_keypair(&mut rand::thread_rng());
+        let server_keypair = KeyPair::generate_ed25519(&mut rand::thread_rng());
 
         let nonce = [42u8; 32];
         let signature = server_keypair.sign(&nonce);

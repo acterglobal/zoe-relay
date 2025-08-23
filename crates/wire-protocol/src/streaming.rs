@@ -351,8 +351,7 @@ mod tests {
         let signing_key = ed25519_dalek::SigningKey::generate(&mut seed_rng);
         let verifying_key = signing_key.verifying_key();
 
-        *crate::keys::VerifyingKey::Ed25519(Box::new(verifying_key))
-            .id()
+        *crate::keys::VerifyingKey::Ed25519(Box::new(verifying_key)).id()
     }
 
     #[test]

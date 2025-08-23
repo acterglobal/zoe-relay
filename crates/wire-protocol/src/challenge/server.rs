@@ -359,11 +359,11 @@ pub fn create_key_proofs(challenge: &KeyChallenge, keypairs: &[&KeyPair]) -> Res
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{generate_ed25519_relay_keypair, generate_keypair};
+    use crate::KeyPair;
 
     #[test]
     fn test_key_challenge_generation() {
-        let server_keypair = generate_ed25519_relay_keypair(&mut rand::thread_rng());
+        let server_keypair = KeyPair::generate_ed25519(&mut rand::thread_rng());
         let challenge = generate_key_challenge(&server_keypair).unwrap();
 
         // The signature field contains the server's signature over the nonce
@@ -379,7 +379,7 @@ mod tests {
     #[test]
     fn test_single_key_proof_verification() {
         // Generate test keys
-        let client_keypair = generate_keypair(&mut rand::thread_rng());
+        let client_keypair = KeyPair::generate(&mut rand::thread_rng());
 
         // Create signature data (just the nonce)
         let nonce = [42u8; 32];
@@ -403,7 +403,7 @@ mod tests {
     #[test]
     fn test_invalid_signature_fails() {
         // Generate test keys
-        let client_keypair = generate_keypair(&mut rand::thread_rng());
+        let client_keypair = KeyPair::generate(&mut rand::thread_rng());
 
         // Create signature data
         let signature_data = b"test data";
@@ -425,7 +425,7 @@ mod tests {
 
     #[test]
     fn test_generate_key_challenge() {
-        let server_keypair = generate_ed25519_relay_keypair(&mut rand::thread_rng());
+        let server_keypair = KeyPair::generate_ed25519(&mut rand::thread_rng());
 
         let challenge = generate_key_challenge(&server_keypair).unwrap();
 
@@ -448,9 +448,9 @@ mod tests {
 
     #[test]
     fn test_create_key_proofs() {
-        let server_keypair = generate_ed25519_relay_keypair(&mut rand::thread_rng());
-        let client_keypair1 = generate_keypair(&mut rand::thread_rng());
-        let client_keypair2 = generate_keypair(&mut rand::thread_rng());
+        let server_keypair = KeyPair::generate_ed25519(&mut rand::thread_rng());
+        let client_keypair1 = KeyPair::generate(&mut rand::thread_rng());
+        let client_keypair2 = KeyPair::generate(&mut rand::thread_rng());
 
         let challenge = generate_key_challenge(&server_keypair).unwrap();
         let client_keys = vec![&client_keypair1, &client_keypair2];
@@ -469,9 +469,9 @@ mod tests {
 
     #[test]
     fn test_verify_key_proofs() {
-        let server_keypair = generate_ed25519_relay_keypair(&mut rand::thread_rng());
-        let client_keypair1 = generate_keypair(&mut rand::thread_rng());
-        let client_keypair2 = generate_keypair(&mut rand::thread_rng());
+        let server_keypair = KeyPair::generate_ed25519(&mut rand::thread_rng());
+        let client_keypair1 = KeyPair::generate(&mut rand::thread_rng());
+        let client_keypair2 = KeyPair::generate(&mut rand::thread_rng());
 
         let challenge = generate_key_challenge(&server_keypair).unwrap();
         let client_keys = vec![&client_keypair1, &client_keypair2];
@@ -493,9 +493,9 @@ mod tests {
 
     #[test]
     fn test_verify_key_proofs_partial_failure() {
-        let server_keypair = generate_ed25519_relay_keypair(&mut rand::thread_rng());
-        let client_keypair1 = generate_keypair(&mut rand::thread_rng());
-        let client_keypair2 = generate_keypair(&mut rand::thread_rng());
+        let server_keypair = KeyPair::generate_ed25519(&mut rand::thread_rng());
+        let client_keypair1 = KeyPair::generate(&mut rand::thread_rng());
+        let client_keypair2 = KeyPair::generate(&mut rand::thread_rng());
 
         let challenge = generate_key_challenge(&server_keypair).unwrap();
 
@@ -531,7 +531,7 @@ mod tests {
 
     #[test]
     fn test_challenge_serialization_roundtrip() {
-        let server_keypair = generate_ed25519_relay_keypair(&mut rand::thread_rng());
+        let server_keypair = KeyPair::generate_ed25519(&mut rand::thread_rng());
         let challenge = generate_key_challenge(&server_keypair).unwrap();
 
         // Test serialization and deserialization
@@ -546,7 +546,7 @@ mod tests {
 
     #[test]
     fn test_response_serialization_roundtrip() {
-        let client_keypair = generate_keypair(&mut rand::thread_rng());
+        let client_keypair = KeyPair::generate(&mut rand::thread_rng());
         let signature = client_keypair.sign(b"test data");
 
         let response = KeyResponse {

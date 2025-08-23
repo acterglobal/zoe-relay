@@ -636,8 +636,8 @@ mod tests {
 
         let connection_info = ConnectionInfo {
             client_public_key: {
-                use crate::generate_keypair;
-                generate_keypair(&mut rand::thread_rng()).public_key()
+                use crate::KeyPair;
+                KeyPair::generate(&mut rand::thread_rng()).public_key()
             },
             verified_ml_dsa_keys: verified_keys,
             remote_address: "127.0.0.1:8080".parse().unwrap(),

@@ -182,7 +182,7 @@ async fn test_echo_service_integration() -> Result<()> {
     println!("🚀 Server started on {actual_addr}");
 
     // Generate client keypair using proper wire protocol infrastructure
-    let client_keypair = zoe_wire_protocol::generate_keypair(&mut rand::rngs::OsRng);
+    let client_keypair = zoe_wire_protocol::KeyPair::generate(&mut rand::rngs::OsRng);
     println!(
         "🔑 Client public key: {}",
         hex::encode(client_keypair.public_key().encode())
@@ -270,7 +270,7 @@ async fn test_service_id_routing() -> Result<()> {
 
     // Test that a specific service ID is properly routed using the new multi-client infrastructure
     use std::sync::atomic::{AtomicU8, Ordering};
-    use zoe_wire_protocol::generate_keypair;
+    use zoe_wire_protocol::KeyPair;
 
     struct SingleService {
         streams: StreamPair,
@@ -359,7 +359,7 @@ async fn test_service_id_routing() -> Result<()> {
     tokio::time::sleep(Duration::from_millis(100)).await;
 
     // Create client using the proper wire protocol infrastructure
-    let client_keypair = generate_keypair(&mut rand::rngs::OsRng);
+    let client_keypair = KeyPair::generate(&mut rand::rngs::OsRng);
 
     // Run client test with timeout using helper functions
     let client_result = timeout(Duration::from_secs(10), async {

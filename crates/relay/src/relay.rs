@@ -220,7 +220,6 @@ impl<R: ServiceRouter + 'static> RelayServer<R> {
 
         tracing::trace!("🔗 Handshake streams accepted");
 
-
         // Perform the actual challenge handshake
         let verified_keys = match crate::challenge::perform_multi_challenge_handshake(
             send,
