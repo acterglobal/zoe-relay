@@ -166,17 +166,6 @@ pub enum Content {
     #[discriminant(41)]
     MlDsaSelfEncrypted(MlDsaSelfEncryptedContent),
 
-    /// Ephemeral ECDH encrypted content.
-    ///
-    /// Uses ephemeral X25519 key pairs for each message to encrypt for
-    /// the recipient. Only the recipient can decrypt (proper public key encryption).
-    /// Provides perfect forward secrecy. Suitable for:
-    /// - RPC calls over message infrastructure  
-    /// - One-off encrypted messages
-    /// - Public key encryption scenarios
-    #[discriminant(80)]
-    EphemeralEcdh(EphemeralEcdhContent),
-
     /// PQXDH encrypted content.
     ///
     /// Uses the PQXDH (Post-Quantum Extended Diffie-Hellman) protocol for
@@ -187,8 +176,19 @@ pub enum Content {
     /// - Secure inbox messaging
     /// - Initial key agreement for ongoing sessions
     /// - Post-quantum secure communication setup
-    #[discriminant(90)]
+    #[discriminant(42)]
     PqxdhEncrypted(PqxdhEncryptedContent),
+
+    /// Ephemeral ECDH encrypted content.
+    ///
+    /// Uses ephemeral X25519 key pairs for each message to encrypt for
+    /// the recipient. Only the recipient can decrypt (proper public key encryption).
+    /// Provides perfect forward secrecy. Suitable for:
+    /// - RPC calls over message infrastructure  
+    /// - One-off encrypted messages
+    /// - Public key encryption scenarios
+    #[discriminant(80)]
+    EphemeralEcdh(EphemeralEcdhContent),
 
     /// Unknown content type.
     ///
@@ -1833,7 +1833,7 @@ mod tests {
         // First byte should be the discriminant
         assert_ne!(raw_serialized[0], pqxdh_serialized[0]);
         assert_eq!(raw_serialized[0], 0); // Raw should be discriminant 0
-        assert_eq!(pqxdh_serialized[0], 90); // PQXDH should be discriminant 90
+        assert_eq!(pqxdh_serialized[0], 42); // PQXDH should be discriminant 42
     }
 }
 
