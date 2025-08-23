@@ -186,6 +186,14 @@ impl std::hash::Hash for VerifyingKey {
     }
 }
 
+impl TryFrom<&[u8]> for VerifyingKey {
+    type Error = ml_dsa::Error;
+    fn try_from(value: &[u8]) -> Result<Self, Self::Error> {
+        let key: VerifyingKey = postcard::from_bytes(value).map_err(|_| ml_dsa::Error::new())?;
+        Ok(key)
+    }
+}
+
 impl VerifyingKey {
     /// Verify a signature against a message using the appropriate algorithm.
     ///
@@ -279,6 +287,10 @@ impl VerifyingKey {
             VerifyingKey::MlDsa65((_key, hash)) => hash.as_bytes(),
             VerifyingKey::MlDsa87((_key, hash)) => hash.as_bytes(),
         }
+    }
+
+    pub fn to_bytes(&self) -> Result<Vec<u8>, postcard::Error> {
+        postcard::to_stdvec(self)
     }
 }
 
@@ -528,24 +540,36 @@ impl KeyPair {
         let hash = blake3::hash(key.verifying_key().encode().as_slice());
         KeyPair::MlDsa87(Box::new(key), hash)
     }
+
+    pub fn generate<R: rand::CryptoRng + rand::RngCore>(rng: &mut R) -> KeyPair {
+        KeyPair::generate_ml_dsa65(rng)
+    }
+
+    pub fn generate_ed25519<R: rand::CryptoRng + rand::RngCore>(rng: &mut R) -> KeyPair {
+        KeyPair::Ed25519(Box::new(ed25519_dalek::SigningKey::generate(rng)))
+    }
 }
 
-/// Generate a new ML-DSA keypair using the default parameters (MlDsa65)
+/// Generate a keypair using the default parameters
+#[deprecated(note = "Use KeyPair::generate instead")]
 pub fn generate_keypair<R: rand::CryptoRng + rand::RngCore>(rng: &mut R) -> KeyPair {
     KeyPair::generate_ml_dsa65(rng)
 }
 
 /// Generate a new Ed25519 keypair for relay operations
+#[deprecated(note = "Use KeyPair::generate_ed25519 instead")]
 pub fn generate_ed25519_relay_keypair<R: rand::CryptoRng + rand::RngCore>(rng: &mut R) -> KeyPair {
     KeyPair::Ed25519(Box::new(ed25519_dalek::SigningKey::generate(rng)))
 }
 
 /// Convert VerifyingKey to bytes for compatibility with existing serialization
+#[deprecated(note = "Use VerifyingKey.to_bytes instead")]
 pub fn verifying_key_to_bytes(key: &VerifyingKey) -> Vec<u8> {
     postcard::to_stdvec(key).expect("Failed to serialize VerifyingKey")
 }
 
 /// Create VerifyingKey from bytes
+#[deprecated(note = "Use VerifyingKey::try_from instead")]
 pub fn verifying_key_from_bytes(bytes: &[u8]) -> Result<VerifyingKey, ml_dsa::Error> {
     let key: VerifyingKey = postcard::from_bytes(bytes).map_err(|_| ml_dsa::Error::new())?;
     Ok(key)

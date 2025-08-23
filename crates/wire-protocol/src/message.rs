@@ -1689,3 +1689,270 @@ mod tests {
         assert_eq!(msg_full1.id, msg_full2.id);
     }
 }
+
+#[cfg(test)]
+mod size_tests {
+    use super::*;
+    use crate::keys::KeyPair;
+    use rand::rngs::OsRng;
+    /// Test helper to create keypairs of different types for size testing
+    fn create_keypairs_by_type() -> Vec<(String, KeyPair)> {
+        let mut rng = OsRng;
+        vec![
+            ("Ed25519".to_string(), KeyPair::generate_ed25519(&mut rng)),
+            ("MlDsa44".to_string(), KeyPair::generate_ml_dsa44(&mut rng)),
+            ("MlDsa65".to_string(), KeyPair::generate_ml_dsa65(&mut rng)),
+            ("MlDsa87".to_string(), KeyPair::generate_ml_dsa87(&mut rng)),
+        ]
+    }
+
+    /// Create a minimal message with empty content and no tags
+    fn create_minimal_message(keypair: &KeyPair) -> MessageFull {
+        let public_key = keypair.public_key();
+
+        // Create message with empty raw content and no tags
+        let message = MessageV0 {
+            header: MessageV0Header {
+                sender: public_key,
+                when: 1640995200, // Fixed timestamp for consistency
+                kind: Kind::Regular,
+                tags: vec![], // Empty tags for minimum size
+            },
+            content: Content::Raw(vec![]), // Empty raw content for minimum size
+        };
+
+        MessageFull::new(Message::MessageV0(message), keypair).unwrap()
+    }
+
+    #[test]
+    fn test_minimum_message_sizes_by_key_variant() {
+        let keypairs = create_keypairs_by_type();
+
+        for (key_type, keypair) in keypairs {
+            let msg_full = create_minimal_message(&keypair);
+            let serialized = postcard::to_stdvec(&MessageFullWire::from(msg_full)).unwrap();
+            let size = serialized.len();
+
+            println!("Minimum serialized size for {}: {} bytes", key_type, size);
+
+            // Assert expected minimum sizes based on our analysis
+            match key_type.as_str() {
+                "Ed25519" => {
+                    // Ed25519: ~120 bytes (allow some variance for postcard overhead)
+                    assert!(
+                        size >= 100 && size <= 150,
+                        "Ed25519 message size {size} should be ~120 bytes (100-150 range)"
+                    );
+                }
+                "MlDsa44" => {
+                    // ML-DSA-44: ~3,832 bytes (allow reasonable variance)
+                    assert!(
+                        size >= 3700 && size <= 4000,
+                        "ML-DSA-44 message size {size} should be ~3,832 bytes (3700-4000 range)"
+                    );
+                }
+                "MlDsa65" => {
+                    // ML-DSA-65: ~5,362 bytes (allow reasonable variance)
+                    assert!(
+                        size >= 5200 && size <= 5600,
+                        "ML-DSA-65 message size {size} should be ~5,362 bytes (5200-5600 range)"
+                    );
+                }
+                "MlDsa87" => {
+                    // ML-DSA-87: ~7,322 bytes (allow reasonable variance)
+                    assert!(
+                        size >= 7100 && size <= 7600,
+                        "ML-DSA-87 message size {} should be ~7,322 bytes (7100-7600 range)",
+                        size
+                    );
+                }
+                _ => panic!("Unknown key type: {}", key_type),
+            }
+        }
+    }
+
+    #[test]
+    fn test_ed25519_minimum_size_precise() {
+        let mut rng = OsRng;
+        let keypair = KeyPair::generate_ed25519(&mut rng);
+        let msg_full = create_minimal_message(&keypair);
+        let serialized = postcard::to_stdvec(&MessageFullWire::from(msg_full)).unwrap();
+        let size = serialized.len();
+
+        // Ed25519 should be the smallest - around 120 bytes
+        assert!(
+            size >= 100 && size <= 150,
+            "Ed25519 minimum message size {} should be approximately 120 bytes",
+            size
+        );
+
+        println!("Ed25519 precise minimum size: {} bytes", size);
+    }
+
+    #[test]
+    fn test_mldsa44_minimum_size_precise() {
+        let mut rng = OsRng;
+        let keypair = KeyPair::generate_ml_dsa44(&mut rng);
+        let msg_full = create_minimal_message(&keypair);
+        let serialized = postcard::to_stdvec(&MessageFullWire::from(msg_full)).unwrap();
+        let size = serialized.len();
+
+        // ML-DSA-44 should be around 3,832 bytes
+        assert!(
+            size >= 3700 && size <= 4000,
+            "ML-DSA-44 minimum message size {} should be approximately 3,832 bytes",
+            size
+        );
+
+        println!("ML-DSA-44 precise minimum size: {} bytes", size);
+    }
+
+    #[test]
+    fn test_mldsa65_minimum_size_precise() {
+        let mut rng = OsRng;
+        let keypair = KeyPair::generate_ml_dsa65(&mut rng);
+        let msg_full = create_minimal_message(&keypair);
+        let serialized = postcard::to_stdvec(&MessageFullWire::from(msg_full)).unwrap();
+        let size = serialized.len();
+
+        // ML-DSA-65 should be around 5,362 bytes
+        assert!(
+            size >= 5200 && size <= 5600,
+            "ML-DSA-65 minimum message size {} should be approximately 5,362 bytes",
+            size
+        );
+
+        println!("ML-DSA-65 precise minimum size: {} bytes", size);
+    }
+
+    #[test]
+    fn test_mldsa87_minimum_size_precise() {
+        let mut rng = OsRng;
+        let keypair = KeyPair::generate_ml_dsa87(&mut rng);
+        let msg_full = create_minimal_message(&keypair);
+        let serialized = postcard::to_stdvec(&MessageFullWire::from(msg_full)).unwrap();
+        let size = serialized.len();
+
+        // ML-DSA-87 should be around 7,322 bytes
+        assert!(
+            size >= 7100 && size <= 7600,
+            "ML-DSA-87 minimum message size {} should be approximately 7,322 bytes",
+            size
+        );
+
+        println!("ML-DSA-87 precise minimum size: {} bytes", size);
+    }
+
+    #[test]
+    fn test_size_comparison_ratios() {
+        let keypairs = create_keypairs_by_type();
+        let mut sizes = std::collections::BTreeMap::new();
+
+        for (key_type, keypair) in keypairs {
+            let msg_full = create_minimal_message(&keypair);
+            let serialized = postcard::to_stdvec(&MessageFullWire::from(msg_full)).unwrap();
+            sizes.insert(key_type, serialized.len());
+        }
+
+        let ed25519_size = sizes["Ed25519"] as f64;
+
+        // Test size ratios relative to Ed25519
+        let mldsa44_ratio = sizes["MlDsa44"] as f64 / ed25519_size;
+        let mldsa65_ratio = sizes["MlDsa65"] as f64 / ed25519_size;
+        let mldsa87_ratio = sizes["MlDsa87"] as f64 / ed25519_size;
+
+        println!("Size ratios relative to Ed25519:");
+        println!("  Ed25519: {} bytes (1.0x)", sizes["Ed25519"]);
+        println!(
+            "  ML-DSA-44: {} bytes ({:.1}x)",
+            sizes["MlDsa44"], mldsa44_ratio
+        );
+        println!(
+            "  ML-DSA-65: {} bytes ({:.1}x)",
+            sizes["MlDsa65"], mldsa65_ratio
+        );
+        println!(
+            "  ML-DSA-87: {} bytes ({:.1}x)",
+            sizes["MlDsa87"], mldsa87_ratio
+        );
+
+        // Assert expected ratios (ML-DSA should be significantly larger)
+        assert!(
+            mldsa44_ratio >= 25.0 && mldsa44_ratio <= 40.0,
+            "ML-DSA-44 should be 25-40x larger than Ed25519, got {:.1}x",
+            mldsa44_ratio
+        );
+        assert!(
+            mldsa65_ratio >= 35.0 && mldsa65_ratio <= 55.0,
+            "ML-DSA-65 should be 35-55x larger than Ed25519, got {:.1}x",
+            mldsa65_ratio
+        );
+        assert!(
+            mldsa87_ratio >= 50.0 && mldsa87_ratio <= 75.0,
+            "ML-DSA-87 should be 50-75x larger than Ed25519, got {:.1}x",
+            mldsa87_ratio
+        );
+    }
+
+    #[test]
+    fn test_component_sizes_breakdown() {
+        let mut rng = OsRng;
+
+        // Test each key type and break down the component sizes
+        let test_cases = vec![
+            ("Ed25519", KeyPair::generate_ed25519(&mut rng)),
+            ("MlDsa44", KeyPair::generate_ml_dsa44(&mut rng)),
+            ("MlDsa65", KeyPair::generate_ml_dsa65(&mut rng)),
+            ("MlDsa87", KeyPair::generate_ml_dsa87(&mut rng)),
+        ];
+
+        for (key_type, keypair) in test_cases {
+            let public_key = keypair.public_key();
+
+            // Serialize individual components
+            let verifying_key_size = postcard::to_stdvec(&public_key).unwrap().len();
+
+            // Create a minimal signature
+            let test_data = b"test message";
+            let signature = keypair.sign(test_data);
+            let signature_size = postcard::to_stdvec(&signature).unwrap().len();
+
+            // Create full message and measure
+            let msg_full = create_minimal_message(&keypair);
+            let total_size = postcard::to_stdvec(&MessageFullWire::from(msg_full))
+                .unwrap()
+                .len();
+
+            println!("{} component breakdown:", key_type);
+            println!("  VerifyingKey: {} bytes", verifying_key_size);
+            println!("  Signature: {} bytes", signature_size);
+            println!("  Total message: {} bytes", total_size);
+            println!(
+                "  Overhead: {} bytes",
+                total_size - verifying_key_size - signature_size
+            );
+            println!();
+
+            // Verify that the key and signature are the dominant components
+            let key_and_sig_size = verifying_key_size + signature_size;
+            let overhead = total_size - key_and_sig_size;
+
+            // Overhead should be reasonable (< 100 bytes for fixed fields + postcard encoding)
+            assert!(
+                overhead < 100,
+                "{} overhead {} bytes should be less than 100 bytes",
+                key_type,
+                overhead
+            );
+
+            // Key and signature should account for most of the message size
+            let key_sig_ratio = key_and_sig_size as f64 / total_size as f64;
+            assert!(
+                key_sig_ratio >= 0.85,
+                "{} key+signature should be at least 85% of total size, got {:.1}%",
+                key_type,
+                key_sig_ratio * 100.0
+            );
+        }
+    }
+}
