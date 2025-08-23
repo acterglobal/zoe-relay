@@ -2,7 +2,6 @@
 use crate::challenge::perform_client_challenge_handshake;
 use crate::error::{ClientError, Result};
 use crate::{BlobService, MessagesService, MessagesStream};
-
 use quinn::Connection;
 use std::net::SocketAddr;
 use std::sync::Arc;

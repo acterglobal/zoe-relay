@@ -66,7 +66,17 @@
 //! # }
 //! ```
 use crate::Hash;
-use ml_dsa::KeyGen;
+use hex;
+use libcrux_ml_dsa::{
+    ml_dsa_44,
+    ml_dsa_44::{MLDSA44KeyPair, MLDSA44Signature, MLDSA44SigningKey, MLDSA44VerificationKey},
+    ml_dsa_65,
+    ml_dsa_65::{MLDSA65KeyPair, MLDSA65Signature, MLDSA65SigningKey, MLDSA65VerificationKey},
+    ml_dsa_87,
+    ml_dsa_87::{MLDSA87KeyPair, MLDSA87Signature, MLDSA87SigningKey, MLDSA87VerificationKey},
+    KEY_GENERATION_RANDOMNESS_SIZE, SIGNING_RANDOMNESS_SIZE,
+};
+use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use signature::{Signer, Verifier};
 use std::fmt;
@@ -130,38 +140,58 @@ impl fmt::Display for Algorithm {
 /// # }
 /// ```
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub enum VerifyingKey {
     /// Ed25519 public key (32 bytes)
     Ed25519(Box<ed25519_dalek::VerifyingKey>),
     /// ML-DSA-44 public key (1,312 bytes) - for TLS certificates
     #[serde(with = "serde_helpers::VerifyingKeyDef44")]
-    MlDsa44((Box<ml_dsa::VerifyingKey<ml_dsa::MlDsa44>>, Hash)),
+    MlDsa44((Box<MLDSA44VerificationKey>, Hash)),
     /// ML-DSA-65 public key (1,952 bytes) - for message signatures
     #[serde(with = "serde_helpers::VerifyingKeyDef65")]
-    MlDsa65((Box<ml_dsa::VerifyingKey<ml_dsa::MlDsa65>>, Hash)),
+    MlDsa65((Box<MLDSA65VerificationKey>, Hash)),
     /// ML-DSA-87 public key (2,592 bytes) - for high security
     #[serde(with = "serde_helpers::VerifyingKeyDef87")]
-    MlDsa87((Box<ml_dsa::VerifyingKey<ml_dsa::MlDsa87>>, Hash)),
+    MlDsa87((Box<MLDSA87VerificationKey>, Hash)),
 }
 
-impl From<ml_dsa::VerifyingKey<ml_dsa::MlDsa44>> for VerifyingKey {
-    fn from(key: ml_dsa::VerifyingKey<ml_dsa::MlDsa44>) -> Self {
-        let hash = blake3::hash(key.encode().as_slice());
+impl std::fmt::Debug for VerifyingKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            VerifyingKey::Ed25519(key) => f.debug_tuple("Ed25519").field(key).finish(),
+            VerifyingKey::MlDsa44((_, hash)) => f
+                .debug_tuple("MlDsa44")
+                .field(&format!("hash:{}", hex::encode(hash.as_bytes())))
+                .finish(),
+            VerifyingKey::MlDsa65((_, hash)) => f
+                .debug_tuple("MlDsa65")
+                .field(&format!("hash:{}", hex::encode(hash.as_bytes())))
+                .finish(),
+            VerifyingKey::MlDsa87((_, hash)) => f
+                .debug_tuple("MlDsa87")
+                .field(&format!("hash:{}", hex::encode(hash.as_bytes())))
+                .finish(),
+        }
+    }
+}
+
+impl From<MLDSA44VerificationKey> for VerifyingKey {
+    fn from(key: MLDSA44VerificationKey) -> Self {
+        let hash = blake3::hash(key.as_slice());
         VerifyingKey::MlDsa44((Box::new(key), hash))
     }
 }
 
-impl From<ml_dsa::VerifyingKey<ml_dsa::MlDsa65>> for VerifyingKey {
-    fn from(key: ml_dsa::VerifyingKey<ml_dsa::MlDsa65>) -> Self {
-        let hash = blake3::hash(key.encode().as_slice());
+impl From<MLDSA65VerificationKey> for VerifyingKey {
+    fn from(key: MLDSA65VerificationKey) -> Self {
+        let hash = blake3::hash(key.as_slice());
         VerifyingKey::MlDsa65((Box::new(key), hash))
     }
 }
 
-impl From<ml_dsa::VerifyingKey<ml_dsa::MlDsa87>> for VerifyingKey {
-    fn from(key: ml_dsa::VerifyingKey<ml_dsa::MlDsa87>) -> Self {
-        let hash = blake3::hash(key.encode().as_slice());
+impl From<MLDSA87VerificationKey> for VerifyingKey {
+    fn from(key: MLDSA87VerificationKey) -> Self {
+        let hash = blake3::hash(key.as_slice());
         VerifyingKey::MlDsa87((Box::new(key), hash))
     }
 }
@@ -212,9 +242,9 @@ impl std::hash::Hash for VerifyingKey {
 }
 
 impl TryFrom<&[u8]> for VerifyingKey {
-    type Error = ml_dsa::Error;
+    type Error = postcard::Error;
     fn try_from(value: &[u8]) -> Result<Self, Self::Error> {
-        let key: VerifyingKey = postcard::from_bytes(value).map_err(|_| ml_dsa::Error::new())?;
+        let key: VerifyingKey = postcard::from_bytes(value)?;
         Ok(key)
     }
 }
@@ -273,13 +303,13 @@ impl VerifyingKey {
                 Ok(key.verify(message, sig).is_ok())
             }
             (VerifyingKey::MlDsa44((key, _hash)), Signature::MlDsa44((sig, _hash2))) => {
-                Ok(key.verify(message, sig).is_ok())
+                Ok(ml_dsa_44::portable::verify(key, message, &[], sig).is_ok())
             }
             (VerifyingKey::MlDsa65((key, _hash)), Signature::MlDsa65((sig, _hash2))) => {
-                Ok(key.verify(message, sig).is_ok())
+                Ok(ml_dsa_65::portable::verify(key, message, &[], sig).is_ok())
             }
             (VerifyingKey::MlDsa87((key, _hash)), Signature::MlDsa87((sig, _hash2))) => {
-                Ok(key.verify(message, sig).is_ok())
+                Ok(ml_dsa_87::portable::verify(key, message, &[], sig).is_ok())
             }
             _ => Ok(false), // Mismatched key and signature types
         }
@@ -361,25 +391,51 @@ impl VerifyingKey {
 /// # Ok(())
 /// # }
 /// ```
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub enum SigningKey {
     /// Ed25519 private key (32 bytes)
     Ed25519(Box<ed25519_dalek::SigningKey>),
     /// ML-DSA-44 private key - for TLS certificates
-    MlDsa44((Box<ml_dsa::SigningKey<ml_dsa::MlDsa44>>, Hash)),
+    MlDsa44((Box<MLDSA44SigningKey>, Hash)),
     /// ML-DSA-65 private key - for message signatures
-    MlDsa65((Box<ml_dsa::SigningKey<ml_dsa::MlDsa65>>, Hash)),
+    MlDsa65((Box<MLDSA65SigningKey>, Hash)),
     /// ML-DSA-87 private key - for high security
-    MlDsa87((Box<ml_dsa::SigningKey<ml_dsa::MlDsa87>>, Hash)),
+    MlDsa87((Box<MLDSA87SigningKey>, Hash)),
+}
+
+impl std::fmt::Debug for SigningKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SigningKey::Ed25519(_) => f.debug_tuple("Ed25519").field(&"<private_key>").finish(),
+            SigningKey::MlDsa44((_, hash)) => f
+                .debug_tuple("MlDsa44")
+                .field(&format!("hash:{}", hex::encode(hash.as_bytes())))
+                .finish(),
+            SigningKey::MlDsa65((_, hash)) => f
+                .debug_tuple("MlDsa65")
+                .field(&format!("hash:{}", hex::encode(hash.as_bytes())))
+                .finish(),
+            SigningKey::MlDsa87((_, hash)) => f
+                .debug_tuple("MlDsa87")
+                .field(&format!("hash:{}", hex::encode(hash.as_bytes())))
+                .finish(),
+        }
+    }
 }
 
 impl PartialEq for SigningKey {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
             (SigningKey::Ed25519(a), SigningKey::Ed25519(b)) => a == b,
-            (SigningKey::MlDsa44((a, _)), SigningKey::MlDsa44((b, _))) => a == b,
-            (SigningKey::MlDsa65((a, _)), SigningKey::MlDsa65((b, _))) => a == b,
-            (SigningKey::MlDsa87((a, _)), SigningKey::MlDsa87((b, _))) => a == b,
+            (SigningKey::MlDsa44((_, hash_a)), SigningKey::MlDsa44((_, hash_b))) => {
+                hash_a == hash_b
+            }
+            (SigningKey::MlDsa65((_, hash_a)), SigningKey::MlDsa65((_, hash_b))) => {
+                hash_a == hash_b
+            }
+            (SigningKey::MlDsa87((_, hash_a)), SigningKey::MlDsa87((_, hash_b))) => {
+                hash_a == hash_b
+            }
             _ => false,
         }
     }
@@ -390,9 +446,27 @@ impl SigningKey {
     pub fn sign(&self, message: &[u8]) -> Signature {
         match self {
             SigningKey::Ed25519(key) => Signature::Ed25519(Box::new(key.sign(message))),
-            SigningKey::MlDsa44((key, _)) => key.sign(message).into(),
-            SigningKey::MlDsa65((key, _)) => key.sign(message).into(),
-            SigningKey::MlDsa87((key, _)) => key.sign(message).into(),
+            SigningKey::MlDsa44((key, _)) => {
+                let mut randomness = [0u8; SIGNING_RANDOMNESS_SIZE];
+                rand::thread_rng().fill_bytes(&mut randomness);
+                let signature = ml_dsa_44::portable::sign(key, message, &[], randomness)
+                    .expect("ML-DSA signing should not fail");
+                signature.into()
+            }
+            SigningKey::MlDsa65((key, _)) => {
+                let mut randomness = [0u8; SIGNING_RANDOMNESS_SIZE];
+                rand::thread_rng().fill_bytes(&mut randomness);
+                let signature = ml_dsa_65::portable::sign(key, message, &[], randomness)
+                    .expect("ML-DSA signing should not fail");
+                signature.into()
+            }
+            SigningKey::MlDsa87((key, _)) => {
+                let mut randomness = [0u8; SIGNING_RANDOMNESS_SIZE];
+                rand::thread_rng().fill_bytes(&mut randomness);
+                let signature = ml_dsa_87::portable::sign(key, message, &[], randomness)
+                    .expect("ML-DSA signing should not fail");
+                signature.into()
+            }
         }
     }
 }
@@ -404,34 +478,54 @@ impl Signature {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub enum Signature {
     Ed25519(Box<ed25519_dalek::Signature>),
     #[serde(with = "serde_helpers::SignatureDef44")]
-    MlDsa44((Box<ml_dsa::Signature<ml_dsa::MlDsa44>>, Hash)),
+    MlDsa44((Box<MLDSA44Signature>, Hash)),
     #[serde(with = "serde_helpers::SignatureDef65")]
-    MlDsa65((Box<ml_dsa::Signature<ml_dsa::MlDsa65>>, Hash)),
+    MlDsa65((Box<MLDSA65Signature>, Hash)),
     #[serde(with = "serde_helpers::SignatureDef87")]
-    MlDsa87((Box<ml_dsa::Signature<ml_dsa::MlDsa87>>, Hash)),
+    MlDsa87((Box<MLDSA87Signature>, Hash)),
 }
 
-impl From<ml_dsa::Signature<ml_dsa::MlDsa44>> for Signature {
-    fn from(sig: ml_dsa::Signature<ml_dsa::MlDsa44>) -> Self {
-        let hash = blake3::hash(sig.encode().as_slice());
+impl std::fmt::Debug for Signature {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Signature::Ed25519(sig) => f.debug_tuple("Ed25519").field(sig).finish(),
+            Signature::MlDsa44((_, hash)) => f
+                .debug_tuple("MlDsa44")
+                .field(&format!("hash:{}", hex::encode(hash.as_bytes())))
+                .finish(),
+            Signature::MlDsa65((_, hash)) => f
+                .debug_tuple("MlDsa65")
+                .field(&format!("hash:{}", hex::encode(hash.as_bytes())))
+                .finish(),
+            Signature::MlDsa87((_, hash)) => f
+                .debug_tuple("MlDsa87")
+                .field(&format!("hash:{}", hex::encode(hash.as_bytes())))
+                .finish(),
+        }
+    }
+}
+
+impl From<MLDSA44Signature> for Signature {
+    fn from(sig: MLDSA44Signature) -> Self {
+        let hash = blake3::hash(sig.as_slice());
         Signature::MlDsa44((Box::new(sig), hash))
     }
 }
 
-impl From<ml_dsa::Signature<ml_dsa::MlDsa65>> for Signature {
-    fn from(sig: ml_dsa::Signature<ml_dsa::MlDsa65>) -> Self {
-        let hash = blake3::hash(sig.encode().as_slice());
+impl From<MLDSA65Signature> for Signature {
+    fn from(sig: MLDSA65Signature) -> Self {
+        let hash = blake3::hash(sig.as_slice());
         Signature::MlDsa65((Box::new(sig), hash))
     }
 }
 
-impl From<ml_dsa::Signature<ml_dsa::MlDsa87>> for Signature {
-    fn from(sig: ml_dsa::Signature<ml_dsa::MlDsa87>) -> Self {
-        let hash = blake3::hash(sig.encode().as_slice());
+impl From<MLDSA87Signature> for Signature {
+    fn from(sig: MLDSA87Signature) -> Self {
+        let hash = blake3::hash(sig.as_slice());
         Signature::MlDsa87((Box::new(sig), hash))
     }
 }
@@ -481,12 +575,31 @@ impl PartialOrd for Signature {
     }
 }
 
-#[derive(Debug)]
 pub enum KeyPair {
     Ed25519(Box<ed25519_dalek::SigningKey>),
-    MlDsa44(Box<ml_dsa::KeyPair<ml_dsa::MlDsa44>>, Hash),
-    MlDsa65(Box<ml_dsa::KeyPair<ml_dsa::MlDsa65>>, Hash),
-    MlDsa87(Box<ml_dsa::KeyPair<ml_dsa::MlDsa87>>, Hash),
+    MlDsa44(Box<MLDSA44KeyPair>, Hash),
+    MlDsa65(Box<MLDSA65KeyPair>, Hash),
+    MlDsa87(Box<MLDSA87KeyPair>, Hash),
+}
+
+impl std::fmt::Debug for KeyPair {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            KeyPair::Ed25519(_) => f.debug_tuple("Ed25519").field(&"<keypair>").finish(),
+            KeyPair::MlDsa44(_, hash) => f
+                .debug_tuple("MlDsa44")
+                .field(&format!("hash:{}", hex::encode(hash.as_bytes())))
+                .finish(),
+            KeyPair::MlDsa65(_, hash) => f
+                .debug_tuple("MlDsa65")
+                .field(&format!("hash:{}", hex::encode(hash.as_bytes())))
+                .finish(),
+            KeyPair::MlDsa87(_, hash) => f
+                .debug_tuple("MlDsa87")
+                .field(&format!("hash:{}", hex::encode(hash.as_bytes())))
+                .finish(),
+        }
+    }
 }
 
 impl KeyPair {
@@ -532,15 +645,15 @@ impl From<&KeyPair> for VerifyingKey {
             KeyPair::Ed25519(a) => VerifyingKey::Ed25519(Box::new(a.verifying_key())),
             KeyPair::MlDsa44(a, hash) => {
                 // the keypair hash is over the verifying key, so we can just use the hash
-                let key = a.verifying_key().clone();
+                let key = a.verification_key.clone();
                 VerifyingKey::MlDsa44((Box::new(key), *hash))
             }
             KeyPair::MlDsa65(a, hash) => {
-                let key = a.verifying_key().clone();
+                let key = a.verification_key.clone();
                 VerifyingKey::MlDsa65((Box::new(key), *hash))
             }
             KeyPair::MlDsa87(a, hash) => {
-                let key = a.verifying_key().clone();
+                let key = a.verification_key.clone();
                 VerifyingKey::MlDsa87((Box::new(key), *hash))
             }
         }
@@ -552,38 +665,53 @@ impl KeyPair {
         match self {
             KeyPair::Ed25519(a) => Signature::Ed25519(Box::new(a.sign(message))),
             KeyPair::MlDsa44(a, _) => {
-                let signature = a.sign(message);
-                let hash = blake3::hash(signature.encode().as_slice());
+                let mut randomness = [0u8; SIGNING_RANDOMNESS_SIZE];
+                rand::thread_rng().fill_bytes(&mut randomness);
+                let signature = ml_dsa_44::portable::sign(&a.signing_key, message, &[], randomness)
+                    .expect("ML-DSA signing should not fail");
+                let hash = blake3::hash(signature.as_slice());
                 Signature::MlDsa44((Box::new(signature), hash))
             }
             KeyPair::MlDsa65(a, _) => {
-                let signature = a.sign(message);
-                let hash = blake3::hash(signature.encode().as_slice());
+                let mut randomness = [0u8; SIGNING_RANDOMNESS_SIZE];
+                rand::thread_rng().fill_bytes(&mut randomness);
+                let signature = ml_dsa_65::portable::sign(&a.signing_key, message, &[], randomness)
+                    .expect("ML-DSA signing should not fail");
+                let hash = blake3::hash(signature.as_slice());
                 Signature::MlDsa65((Box::new(signature), hash))
             }
             KeyPair::MlDsa87(a, _) => {
-                let signature = a.sign(message);
-                let hash = blake3::hash(signature.encode().as_slice());
+                let mut randomness = [0u8; SIGNING_RANDOMNESS_SIZE];
+                rand::thread_rng().fill_bytes(&mut randomness);
+                let signature = ml_dsa_87::portable::sign(&a.signing_key, message, &[], randomness)
+                    .expect("ML-DSA signing should not fail");
+                let hash = blake3::hash(signature.as_slice());
                 Signature::MlDsa87((Box::new(signature), hash))
             }
         }
     }
 
     pub fn generate_ml_dsa44<R: rand::CryptoRng + rand::RngCore>(rng: &mut R) -> KeyPair {
-        let key = ml_dsa::MlDsa44::key_gen(rng);
-        let hash = blake3::hash(key.verifying_key().encode().as_slice());
+        let mut randomness = [0u8; KEY_GENERATION_RANDOMNESS_SIZE];
+        rng.fill_bytes(&mut randomness);
+        let key = ml_dsa_44::portable::generate_key_pair(randomness);
+        let hash = blake3::hash(key.verification_key.as_slice());
         KeyPair::MlDsa44(Box::new(key), hash)
     }
 
     pub fn generate_ml_dsa65<R: rand::CryptoRng + rand::RngCore>(rng: &mut R) -> KeyPair {
-        let key = ml_dsa::MlDsa65::key_gen(rng);
-        let hash = blake3::hash(key.verifying_key().encode().as_slice());
+        let mut randomness = [0u8; KEY_GENERATION_RANDOMNESS_SIZE];
+        rng.fill_bytes(&mut randomness);
+        let key = ml_dsa_65::portable::generate_key_pair(randomness);
+        let hash = blake3::hash(key.verification_key.as_slice());
         KeyPair::MlDsa65(Box::new(key), hash)
     }
 
     pub fn generate_ml_dsa87<R: rand::CryptoRng + rand::RngCore>(rng: &mut R) -> KeyPair {
-        let key = ml_dsa::MlDsa87::key_gen(rng);
-        let hash = blake3::hash(key.verifying_key().encode().as_slice());
+        let mut randomness = [0u8; KEY_GENERATION_RANDOMNESS_SIZE];
+        rng.fill_bytes(&mut randomness);
+        let key = ml_dsa_87::portable::generate_key_pair(randomness);
+        let hash = blake3::hash(key.verification_key.as_slice());
         KeyPair::MlDsa87(Box::new(key), hash)
     }
 
@@ -643,7 +771,20 @@ mod serde_helpers {
 
     use crate::Hash;
     use ::serde::{Deserialize, Deserializer, Serialize, Serializer};
-    use ml_dsa;
+    use libcrux_ml_dsa::{
+        ml_dsa_44::{MLDSA44Signature, MLDSA44VerificationKey},
+        ml_dsa_65::{MLDSA65Signature, MLDSA65VerificationKey},
+        ml_dsa_87::{MLDSA87Signature, MLDSA87VerificationKey},
+    };
+    use serde_bytes::ByteArray;
+
+    // ML-DSA sizes from FIPS 204 standard
+    const ML_DSA_44_VERIFICATION_KEY_SIZE: usize = 1312;
+    const ML_DSA_44_SIGNATURE_SIZE: usize = 2420;
+    const ML_DSA_65_VERIFICATION_KEY_SIZE: usize = 1952;
+    const ML_DSA_65_SIGNATURE_SIZE: usize = 3309;
+    const ML_DSA_87_VERIFICATION_KEY_SIZE: usize = 2592;
+    const ML_DSA_87_SIGNATURE_SIZE: usize = 4627;
 
     /// Remote serde definition for ML-DSA-44 VerifyingKey
     /// Use with #[serde(with = "zoe_wire_protocol::serde::VerifyingKeyDef44")]
@@ -651,29 +792,35 @@ mod serde_helpers {
 
     impl VerifyingKeyDef44 {
         pub fn serialize<S>(
-            key: &(Box<ml_dsa::VerifyingKey<ml_dsa::MlDsa44>>, Hash),
+            key: &(Box<MLDSA44VerificationKey>, Hash),
             serializer: S,
         ) -> Result<S::Ok, S::Error>
         where
             S: Serializer,
         {
-            let bytes = key.0.encode().as_slice().to_vec();
-            bytes.serialize(serializer)
+            // Use serde_bytes::ByteArray for efficient fixed-size serialization
+            let key_bytes: &[u8; ML_DSA_44_VERIFICATION_KEY_SIZE] = key
+                .0
+                .as_slice()
+                .try_into()
+                .map_err(|_| serde::ser::Error::custom("ML-DSA-44 key has incorrect size"))?;
+            let byte_array = ByteArray::new(*key_bytes);
+            byte_array.serialize(serializer)
         }
 
         pub fn deserialize<'de, D>(
             deserializer: D,
-        ) -> Result<(Box<ml_dsa::VerifyingKey<ml_dsa::MlDsa44>>, Hash), D::Error>
+        ) -> Result<(Box<MLDSA44VerificationKey>, Hash), D::Error>
         where
             D: Deserializer<'de>,
         {
-            let bytes = Vec::<u8>::deserialize(deserializer)?;
-            let encoded =
-                ml_dsa::EncodedVerifyingKey::<ml_dsa::MlDsa44>::try_from(bytes.as_slice())
-                    .map_err(::serde::de::Error::custom)?;
-            let hash = blake3::hash(bytes.as_slice());
-            let key = Box::new(ml_dsa::VerifyingKey::<ml_dsa::MlDsa44>::decode(&encoded));
-            Ok((key, hash))
+            // Deserialize directly to fixed-size array via serde_bytes
+            let byte_array =
+                ByteArray::<ML_DSA_44_VERIFICATION_KEY_SIZE>::deserialize(deserializer)?;
+            let key_bytes: [u8; ML_DSA_44_VERIFICATION_KEY_SIZE] = byte_array.into_array();
+            let key = MLDSA44VerificationKey::new(key_bytes);
+            let hash = blake3::hash(&key_bytes);
+            Ok((Box::new(key), hash))
         }
     }
 
@@ -683,29 +830,35 @@ mod serde_helpers {
 
     impl VerifyingKeyDef65 {
         pub fn serialize<S>(
-            key: &(Box<ml_dsa::VerifyingKey<ml_dsa::MlDsa65>>, Hash),
+            key: &(Box<MLDSA65VerificationKey>, Hash),
             serializer: S,
         ) -> Result<S::Ok, S::Error>
         where
             S: Serializer,
         {
-            let bytes = key.0.encode().as_slice().to_vec();
-            bytes.serialize(serializer)
+            // Use serde_bytes::ByteArray for efficient fixed-size serialization
+            let key_bytes: &[u8; ML_DSA_65_VERIFICATION_KEY_SIZE] = key
+                .0
+                .as_slice()
+                .try_into()
+                .map_err(|_| serde::ser::Error::custom("ML-DSA-65 key has incorrect size"))?;
+            let byte_array = ByteArray::new(*key_bytes);
+            byte_array.serialize(serializer)
         }
 
         pub fn deserialize<'de, D>(
             deserializer: D,
-        ) -> Result<(Box<ml_dsa::VerifyingKey<ml_dsa::MlDsa65>>, Hash), D::Error>
+        ) -> Result<(Box<MLDSA65VerificationKey>, Hash), D::Error>
         where
             D: Deserializer<'de>,
         {
-            let bytes = Vec::<u8>::deserialize(deserializer)?;
-            let encoded =
-                ml_dsa::EncodedVerifyingKey::<ml_dsa::MlDsa65>::try_from(bytes.as_slice())
-                    .map_err(::serde::de::Error::custom)?;
-            let hash = blake3::hash(bytes.as_slice());
-            let key = Box::new(ml_dsa::VerifyingKey::<ml_dsa::MlDsa65>::decode(&encoded));
-            Ok((key, hash))
+            // Deserialize directly to fixed-size array via serde_bytes
+            let byte_array =
+                ByteArray::<ML_DSA_65_VERIFICATION_KEY_SIZE>::deserialize(deserializer)?;
+            let key_bytes: [u8; ML_DSA_65_VERIFICATION_KEY_SIZE] = byte_array.into_array();
+            let key = MLDSA65VerificationKey::new(key_bytes);
+            let hash = blake3::hash(&key_bytes);
+            Ok((Box::new(key), hash))
         }
     }
 
@@ -715,62 +868,71 @@ mod serde_helpers {
 
     impl VerifyingKeyDef87 {
         pub fn serialize<S>(
-            key: &(Box<ml_dsa::VerifyingKey<ml_dsa::MlDsa87>>, Hash),
+            key: &(Box<MLDSA87VerificationKey>, Hash),
             serializer: S,
         ) -> Result<S::Ok, S::Error>
         where
             S: Serializer,
         {
-            let bytes = key.0.encode().as_slice().to_vec();
-            bytes.serialize(serializer)
+            // Use serde_bytes::ByteArray for efficient fixed-size serialization
+            let key_bytes: &[u8; ML_DSA_87_VERIFICATION_KEY_SIZE] = key
+                .0
+                .as_slice()
+                .try_into()
+                .map_err(|_| serde::ser::Error::custom("ML-DSA-87 key has incorrect size"))?;
+            let byte_array = ByteArray::new(*key_bytes);
+            byte_array.serialize(serializer)
         }
 
         pub fn deserialize<'de, D>(
             deserializer: D,
-        ) -> Result<(Box<ml_dsa::VerifyingKey<ml_dsa::MlDsa87>>, Hash), D::Error>
+        ) -> Result<(Box<MLDSA87VerificationKey>, Hash), D::Error>
         where
             D: Deserializer<'de>,
         {
-            let bytes = Vec::<u8>::deserialize(deserializer)?;
-            let encoded =
-                ml_dsa::EncodedVerifyingKey::<ml_dsa::MlDsa87>::try_from(bytes.as_slice())
-                    .map_err(::serde::de::Error::custom)?;
-            let hash = blake3::hash(bytes.as_slice());
-            let key = Box::new(ml_dsa::VerifyingKey::<ml_dsa::MlDsa87>::decode(&encoded));
-            Ok((key, hash))
+            // Deserialize directly to fixed-size array via serde_bytes
+            let byte_array =
+                ByteArray::<ML_DSA_87_VERIFICATION_KEY_SIZE>::deserialize(deserializer)?;
+            let key_bytes: [u8; ML_DSA_87_VERIFICATION_KEY_SIZE] = byte_array.into_array();
+            let key = MLDSA87VerificationKey::new(key_bytes);
+            let hash = blake3::hash(&key_bytes);
+            Ok((Box::new(key), hash))
         }
     }
+
     /// Remote serde definition for ML-DSA-44 Signature
     /// Use with #[serde(with = "zoe_wire_protocol::serde::SignatureDef44")]
     pub struct SignatureDef44;
+
     impl SignatureDef44 {
         pub fn serialize<S>(
-            sig: &(Box<ml_dsa::Signature<ml_dsa::MlDsa44>>, Hash),
+            sig: &(Box<MLDSA44Signature>, Hash),
             serializer: S,
         ) -> Result<S::Ok, S::Error>
         where
             S: Serializer,
         {
-            let bytes = sig.0.encode().as_slice().to_vec();
-            bytes.serialize(serializer)
+            // Use serde_bytes::ByteArray for efficient fixed-size serialization
+            let sig_bytes: &[u8; ML_DSA_44_SIGNATURE_SIZE] =
+                sig.0.as_slice().try_into().map_err(|_| {
+                    serde::ser::Error::custom("ML-DSA-44 signature has incorrect size")
+                })?;
+            let byte_array = ByteArray::new(*sig_bytes);
+            byte_array.serialize(serializer)
         }
 
         pub fn deserialize<'de, D>(
             deserializer: D,
-        ) -> Result<(Box<ml_dsa::Signature<ml_dsa::MlDsa44>>, Hash), D::Error>
+        ) -> Result<(Box<MLDSA44Signature>, Hash), D::Error>
         where
             D: Deserializer<'de>,
         {
-            let bytes = Vec::<u8>::deserialize(deserializer)?;
-            let encoded = ml_dsa::EncodedSignature::<ml_dsa::MlDsa44>::try_from(bytes.as_slice())
-                .map_err(::serde::de::Error::custom)?;
-            let sig = Box::new(
-                ml_dsa::Signature::<ml_dsa::MlDsa44>::decode(&encoded).ok_or_else(|| {
-                    ::serde::de::Error::custom("Failed to deserialize ML-DSA-44 encoded signature")
-                })?,
-            );
-            let hash = blake3::hash(bytes.as_slice());
-            Ok((sig, hash))
+            // Deserialize directly to fixed-size array via serde_bytes
+            let byte_array = ByteArray::<ML_DSA_44_SIGNATURE_SIZE>::deserialize(deserializer)?;
+            let sig_bytes: [u8; ML_DSA_44_SIGNATURE_SIZE] = byte_array.into_array();
+            let sig = MLDSA44Signature::new(sig_bytes);
+            let hash = blake3::hash(&sig_bytes);
+            Ok((Box::new(sig), hash))
         }
     }
 
@@ -780,32 +942,33 @@ mod serde_helpers {
 
     impl SignatureDef65 {
         pub fn serialize<S>(
-            sig: &(Box<ml_dsa::Signature<ml_dsa::MlDsa65>>, Hash),
+            sig: &(Box<MLDSA65Signature>, Hash),
             serializer: S,
         ) -> Result<S::Ok, S::Error>
         where
             S: Serializer,
         {
-            let bytes = sig.0.encode().as_slice().to_vec();
-            bytes.serialize(serializer)
+            // Use serde_bytes::ByteArray for efficient fixed-size serialization
+            let sig_bytes: &[u8; ML_DSA_65_SIGNATURE_SIZE] =
+                sig.0.as_slice().try_into().map_err(|_| {
+                    serde::ser::Error::custom("ML-DSA-65 signature has incorrect size")
+                })?;
+            let byte_array = ByteArray::new(*sig_bytes);
+            byte_array.serialize(serializer)
         }
 
         pub fn deserialize<'de, D>(
             deserializer: D,
-        ) -> Result<(Box<ml_dsa::Signature<ml_dsa::MlDsa65>>, Hash), D::Error>
+        ) -> Result<(Box<MLDSA65Signature>, Hash), D::Error>
         where
             D: Deserializer<'de>,
         {
-            let bytes = Vec::<u8>::deserialize(deserializer)?;
-            let encoded = ml_dsa::EncodedSignature::<ml_dsa::MlDsa65>::try_from(bytes.as_slice())
-                .map_err(::serde::de::Error::custom)?;
-            let sig = Box::new(
-                ml_dsa::Signature::<ml_dsa::MlDsa65>::decode(&encoded).ok_or_else(|| {
-                    ::serde::de::Error::custom("Failed to deserialize ML-DSA-65 encoded signature")
-                })?,
-            );
-            let hash = blake3::hash(bytes.as_slice());
-            Ok((sig, hash))
+            // Deserialize directly to fixed-size array via serde_bytes
+            let byte_array = ByteArray::<ML_DSA_65_SIGNATURE_SIZE>::deserialize(deserializer)?;
+            let sig_bytes: [u8; ML_DSA_65_SIGNATURE_SIZE] = byte_array.into_array();
+            let sig = MLDSA65Signature::new(sig_bytes);
+            let hash = blake3::hash(&sig_bytes);
+            Ok((Box::new(sig), hash))
         }
     }
 
@@ -815,32 +978,33 @@ mod serde_helpers {
 
     impl SignatureDef87 {
         pub fn serialize<S>(
-            sig: &(Box<ml_dsa::Signature<ml_dsa::MlDsa87>>, Hash),
+            sig: &(Box<MLDSA87Signature>, Hash),
             serializer: S,
         ) -> Result<S::Ok, S::Error>
         where
             S: Serializer,
         {
-            let bytes = sig.0.encode().as_slice().to_vec();
-            bytes.serialize(serializer)
+            // Use serde_bytes::ByteArray for efficient fixed-size serialization
+            let sig_bytes: &[u8; ML_DSA_87_SIGNATURE_SIZE] =
+                sig.0.as_slice().try_into().map_err(|_| {
+                    serde::ser::Error::custom("ML-DSA-87 signature has incorrect size")
+                })?;
+            let byte_array = ByteArray::new(*sig_bytes);
+            byte_array.serialize(serializer)
         }
 
         pub fn deserialize<'de, D>(
             deserializer: D,
-        ) -> Result<(Box<ml_dsa::Signature<ml_dsa::MlDsa87>>, Hash), D::Error>
+        ) -> Result<(Box<MLDSA87Signature>, Hash), D::Error>
         where
             D: Deserializer<'de>,
         {
-            let bytes = Vec::<u8>::deserialize(deserializer)?;
-            let encoded = ml_dsa::EncodedSignature::<ml_dsa::MlDsa87>::try_from(bytes.as_slice())
-                .map_err(::serde::de::Error::custom)?;
-            let sig = Box::new(
-                ml_dsa::Signature::<ml_dsa::MlDsa87>::decode(&encoded).ok_or_else(|| {
-                    ::serde::de::Error::custom("Failed to deserialize ML-DSA-87 encoded signature")
-                })?,
-            );
-            let hash = blake3::hash(bytes.as_slice());
-            Ok((sig, hash))
+            // Deserialize directly to fixed-size array via serde_bytes
+            let byte_array = ByteArray::<ML_DSA_87_SIGNATURE_SIZE>::deserialize(deserializer)?;
+            let sig_bytes: [u8; ML_DSA_87_SIGNATURE_SIZE] = byte_array.into_array();
+            let sig = MLDSA87Signature::new(sig_bytes);
+            let hash = blake3::hash(&sig_bytes);
+            Ok((Box::new(sig), hash))
         }
     }
 }
@@ -1074,7 +1238,7 @@ mod tests {
 
         let ml_dsa_signing = match different_ml_dsa {
             KeyPair::MlDsa65(ref keypair, hash) => {
-                SigningKey::MlDsa65((Box::new(keypair.signing_key().clone()), hash))
+                SigningKey::MlDsa65((Box::new(keypair.signing_key.clone()), hash))
             }
             _ => panic!("Expected ML-DSA-65 keypair"),
         };
@@ -1388,7 +1552,7 @@ mod tests {
 
         match verifying_key {
             VerifyingKey::MlDsa65((ref key, ref stored_hash)) => {
-                let computed_hash = blake3::hash(key.encode().as_slice());
+                let computed_hash = blake3::hash(key.as_slice());
                 assert_eq!(
                     stored_hash.as_bytes(),
                     computed_hash.as_bytes(),
@@ -1461,7 +1625,7 @@ mod tests {
 
         match ml_dsa_sig {
             Signature::MlDsa65((ref sig, ref stored_hash)) => {
-                let computed_hash = blake3::hash(sig.encode().as_slice());
+                let computed_hash = blake3::hash(sig.as_slice());
                 assert_eq!(
                     stored_hash.as_bytes(),
                     computed_hash.as_bytes(),

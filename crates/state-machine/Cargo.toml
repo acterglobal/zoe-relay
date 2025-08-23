@@ -9,7 +9,7 @@ zoe-app-primitives = { path = "../app-primitives" }
 zoe-wire-protocol = { path = "../wire-protocol" }
 serde = { version = "1.0", features = ["derive"] }
 blake3 = "1.5"
-ml-dsa = { workspace = true }
+libcrux-ml-dsa = { workspace = true }
 ed25519-dalek = { workspace = true }
 rand_chacha = "0.3"
 postcard = "1.0"

@@ -60,6 +60,7 @@
 
 use crate::infra::TestInfrastructure;
 use anyhow::{Context, Result};
+use libcrux_ml_dsa;
 use rand::{Rng, RngCore};
 use std::collections::BTreeMap;
 use std::sync::Arc;

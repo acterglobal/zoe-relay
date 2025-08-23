@@ -5,7 +5,6 @@
 //! to test the complete system integration.
 
 use anyhow::{Context, Result};
-use ml_dsa::{KeyGen, MlDsa44, MlDsa65, MlDsa87};
 use rand::{Rng, thread_rng};
 use std::net::SocketAddr;
 use std::sync::Once;

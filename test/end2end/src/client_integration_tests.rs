@@ -7,7 +7,6 @@
 
 use crate::infra::TestInfrastructure;
 use anyhow::{Context, Result};
-use ml_dsa::{KeyGen, MlDsa44, MlDsa65, MlDsa87};
 use rand::{Rng, RngCore};
 use std::collections::BTreeMap;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};

@@ -44,7 +44,7 @@ quinn = { workspace = true }
 rustls = { workspace = true, features = ["prefer-post-quantum"] }
 
 # Cryptographic dependencies
-ml-dsa = { workspace = true }
+libcrux-ml-dsa = { workspace = true }
 ed25519-dalek = { workspace = true }
 signature = { workspace = true }
 postcard = { workspace = true }

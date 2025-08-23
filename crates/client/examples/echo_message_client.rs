@@ -229,13 +229,10 @@ async fn main() -> Result<()> {
         zoe_wire_protocol::VerifyingKey::Ed25519(Box::new(ed25519_key))
     } else {
         // ML-DSA-44 public key (1312 bytes)
-        let ml_dsa_key = ml_dsa::VerifyingKey::<ml_dsa::MlDsa44>::decode(
-            server_key_bytes
-                .as_slice()
-                .try_into()
-                .map_err(|_| anyhow::anyhow!("Invalid ML-DSA-44 public key length"))?,
-        );
-        zoe_wire_protocol::VerifyingKey::MlDsa44((Box::new(ml_dsa_key), blake3::hash(b"")))
+        let mut key_bytes = [0u8; 1312];
+        key_bytes.copy_from_slice(&server_key_bytes);
+        let ml_dsa_key = libcrux_ml_dsa::ml_dsa_44::MLDSA44VerificationKey::new(key_bytes);
+        zoe_wire_protocol::VerifyingKey::from(ml_dsa_key)
     };
 
     // Create client (with optional private key)

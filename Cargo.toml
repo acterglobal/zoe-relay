@@ -41,7 +41,7 @@ futures-util = "0.3"
 async-trait = "0.1"
 
 # Cryptography
-ml-dsa = { version = "0.0.4" }
+libcrux-ml-dsa = { git = "https://github.com/cryspen/libcrux" }
 ml-kem = "0.2.1"
 blake3 = { version = "1.5", features = ["serde"] }
 rand = "0.8"

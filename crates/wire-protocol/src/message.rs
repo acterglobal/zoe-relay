@@ -1021,7 +1021,7 @@ impl MessageFull {
                 Content::MlDsaSelfEncrypted(encrypted) => {
                     match signing_key {
                         KeyPair::MlDsa65(key, _) => {
-                            let plaintext = encrypted.decrypt(key.signing_key())?;
+                            let plaintext = encrypted.decrypt(&key.signing_key)?;
                             Ok(postcard::from_bytes(&plaintext)?)
                         }
                         _ => Err("ML-DSA self-encrypted content requires MlDsa65 signing key".into()),
@@ -1661,7 +1661,7 @@ mod tests {
     }
 
     #[test]
-    fn test_same_content_same_id() {
+    fn test_same_content_different_signatures() {
         let (sk, pk) = make_keys();
         let content = DummyContent { value: 42 };
 
@@ -1685,8 +1685,12 @@ mod tests {
         let msg_full1 = MessageFull::new(core1, &sk).unwrap();
         let msg_full2 = MessageFull::new(core2, &sk).unwrap();
 
-        // Same content should produce same ID
-        assert_eq!(msg_full1.id, msg_full2.id);
+        // Same content but different signatures (ML-DSA is non-deterministic)
+        // should produce different IDs since ID is based on signature
+        assert_ne!(msg_full1.id, msg_full2.id);
+
+        // But the underlying message content should be the same
+        assert_eq!(msg_full1.message, msg_full2.message);
     }
 }
 

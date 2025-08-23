@@ -11,7 +11,7 @@
 //! - Self-encryption and ephemeral ECDH patterns
 //! - Argon2 key derivation with configurable parameters
 
-use ml_dsa::{MlDsa65, SigningKey};
+use libcrux_ml_dsa::ml_dsa_65::MLDSA65SigningKey;
 use x25519_dalek::{PublicKey as X25519PublicKey, StaticSecret as X25519PrivateKey};
 
 // ChaCha20-Poly1305 and mnemonic support
@@ -305,14 +305,14 @@ impl MlDsaSelfEncryptedContent {
     /// Encrypt data using ML-DSA private key (self-encryption)
     /// Derives a ChaCha20 key from the ML-DSA private key deterministically
     /// Only the same private key can decrypt this content
-    pub fn encrypt(plaintext: &[u8], signing_key: &SigningKey<MlDsa65>) -> Result<Self> {
+    pub fn encrypt(plaintext: &[u8], signing_key: &MLDSA65SigningKey) -> Result<Self> {
         use chacha20poly1305::aead::{Aead, OsRng};
         use chacha20poly1305::{AeadCore, ChaCha20Poly1305, Key, KeyInit};
 
         // Derive ChaCha20 key from ML-DSA private key using Blake3
-        let ml_dsa_private_bytes = signing_key.encode();
+        let ml_dsa_private_bytes = signing_key.as_slice();
         let mut key_derivation_input = Vec::new();
-        key_derivation_input.extend_from_slice(&ml_dsa_private_bytes);
+        key_derivation_input.extend_from_slice(ml_dsa_private_bytes);
         key_derivation_input.extend_from_slice(b"ml-dsa-to-chacha20-key-derivation");
 
         let derived_key_hash = blake3::hash(&key_derivation_input);
@@ -337,14 +337,14 @@ impl MlDsaSelfEncryptedContent {
 
     /// Decrypt data using ML-DSA private key (self-decryption)
     /// Must be the same private key that was used for encryption
-    pub fn decrypt(&self, signing_key: &SigningKey<MlDsa65>) -> Result<Vec<u8>> {
+    pub fn decrypt(&self, signing_key: &MLDSA65SigningKey) -> Result<Vec<u8>> {
         use chacha20poly1305::aead::Aead;
         use chacha20poly1305::{ChaCha20Poly1305, Key, KeyInit, Nonce};
 
         // Derive the same ChaCha20 key from ML-DSA private key
-        let ml_dsa_private_bytes = signing_key.encode();
+        let ml_dsa_private_bytes = signing_key.as_slice();
         let mut key_derivation_input = Vec::new();
-        key_derivation_input.extend_from_slice(&ml_dsa_private_bytes);
+        key_derivation_input.extend_from_slice(ml_dsa_private_bytes);
         key_derivation_input.extend_from_slice(b"ml-dsa-to-chacha20-key-derivation");
 
         let derived_key_hash = blake3::hash(&key_derivation_input);
@@ -673,7 +673,7 @@ pub fn generate_ml_dsa_from_mnemonic(
     mnemonic: &MnemonicPhrase,
     passphrase: &str,
     context: &str, // e.g., "ml-dsa-signing-key"
-) -> Result<SigningKey<MlDsa65>> {
+) -> Result<MLDSA65SigningKey> {
     // Get the BIP39 seed
     let seed = mnemonic.to_seed(passphrase)?;
 
@@ -700,13 +700,16 @@ pub fn generate_ml_dsa_from_mnemonic(
     expanded_seed[32..].copy_from_slice(&second_hash.as_bytes()[..32]);
 
     // Generate ML-DSA key from expanded seed
-    use ml_dsa::KeyGen;
+    use libcrux_ml_dsa::{ml_dsa_65, KEY_GENERATION_RANDOMNESS_SIZE};
+    use rand::RngCore;
     // ChaCha20Rng expects 32 bytes, so use the first 32 bytes
     let mut seed_32 = [0u8; 32];
     seed_32.copy_from_slice(&expanded_seed[..32]);
     let mut rng = rand_chacha::ChaCha20Rng::from_seed(seed_32);
-    let keypair = MlDsa65::key_gen(&mut rng);
-    Ok(keypair.signing_key().clone())
+    let mut randomness = [0u8; KEY_GENERATION_RANDOMNESS_SIZE];
+    rng.fill_bytes(&mut randomness);
+    let keypair = ml_dsa_65::portable::generate_key_pair(randomness);
+    Ok(keypair.signing_key)
 }
 
 /// Recover an ML-DSA signing key from a mnemonic phrase (deterministic)
@@ -714,7 +717,7 @@ pub fn recover_ml_dsa_from_mnemonic(
     mnemonic: &MnemonicPhrase,
     passphrase: &str,
     context: &str,
-) -> Result<SigningKey<MlDsa65>> {
+) -> Result<MLDSA65SigningKey> {
     // Same as generate - it's deterministic
     generate_ml_dsa_from_mnemonic(mnemonic, passphrase, context)
 }

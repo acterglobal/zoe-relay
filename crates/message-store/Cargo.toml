@@ -56,7 +56,7 @@ testcontainers = { version = "0.24", features = ["blocking"] }
 testcontainers-modules = { version = "0.12", features = ["redis"] }
 
 # Crypto and utilities for tests
-ml-dsa = { workspace = true }
+libcrux-ml-dsa = { workspace = true }
 rand = { workspace = true }
 rand_chacha = { workspace = true }
 ed25519-dalek = { workspace = true }

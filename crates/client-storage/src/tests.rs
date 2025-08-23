@@ -2,7 +2,6 @@
 mod integration_tests {
     use crate::sqlite::SqliteMessageStorage;
     use crate::storage::{MessageQuery, MessageStorage, StorageConfig};
-    use ml_dsa::{KeyGen, MlDsa65};
     use rand::rngs::OsRng;
     use tempfile::TempDir;
     use zoe_wire_protocol::{
@@ -356,7 +355,7 @@ mod integration_tests {
     async fn test_concurrent_access() {
         let (config, _temp_dir) = create_test_storage_config();
         let encryption_key = [11u8; 32];
-        let _signing_key = MlDsa65::key_gen(&mut OsRng);
+        let _signing_key = KeyPair::generate_ml_dsa65(&mut OsRng);
 
         let storage = std::sync::Arc::new(
             SqliteMessageStorage::new(config, &encryption_key)
