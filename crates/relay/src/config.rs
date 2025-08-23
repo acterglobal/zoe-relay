@@ -1,11 +1,22 @@
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
-use zoe_wire_protocol::ServerKeypair;
+use zoe_wire_protocol::KeyPair;
 
-#[derive(Debug, Serialize, Deserialize, Default)]
+#[derive(Debug)]
 pub struct RelayConfig {
-    pub server_keypair: ServerKeypair,
+    pub server_keypair: KeyPair,
     pub blob_config: BlobConfig,
+}
+
+impl RelayConfig {
+    /// Create a new RelayConfig with Ed25519 keypair for transport security
+    pub fn new_with_new_ed25519_tls_key() -> Self {
+        let mut rng = rand::thread_rng();
+        Self {
+            server_keypair: KeyPair::generate_ed25519(&mut rng),
+            blob_config: BlobConfig::default(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

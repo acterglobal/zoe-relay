@@ -104,9 +104,7 @@ use std::sync::Arc;
 
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tracing::{error, info};
-use zoe_wire_protocol::{
-    connection::server::create_server_endpoint, StreamPair, TransportPrivateKey,
-};
+use zoe_wire_protocol::{connection::server::create_server_endpoint, KeyPair, StreamPair};
 // ML-DSA-44 imports (only available with tls-ml-dsa-44 feature)
 #[cfg(feature = "tls-ml-dsa-44")]
 use ml_dsa::VerifyingKey;
@@ -139,7 +137,7 @@ impl ConnectionInfo {
 /// Main relay server that accepts QUIC connections with transport authentication
 pub struct RelayServer<R: ServiceRouter> {
     pub endpoint: Endpoint,
-    server_keypair: TransportPrivateKey,
+    server_keypair: Arc<KeyPair>,
     router: Arc<R>,
 }
 
@@ -150,7 +148,8 @@ impl<R: ServiceRouter + 'static> RelayServer<R> {
     /// * `addr` - The address to bind the server to
     /// * `server_keypair` - The server keypair for transport security (Ed25519 or ML-DSA-44)
     /// * `router` - The service router implementation
-    pub fn new(addr: SocketAddr, server_keypair: TransportPrivateKey, router: R) -> Result<Self> {
+    pub fn new(addr: SocketAddr, server_keypair: KeyPair, router: R) -> Result<Self> {
+        let server_keypair = Arc::new(server_keypair);
         let endpoint = create_server_endpoint(addr, &server_keypair)?;
 
         Ok(Self {
@@ -179,7 +178,7 @@ impl<R: ServiceRouter + 'static> RelayServer<R> {
 
         while let Some(conn) = self.endpoint.accept().await {
             let router = Arc::clone(&self.router);
-            let server_keypair = self.server_keypair.clone();
+            let server_keypair = Arc::clone(&self.server_keypair);
 
             tokio::spawn(async move {
                 match conn.await {
@@ -204,7 +203,7 @@ impl<R: ServiceRouter + 'static> RelayServer<R> {
     async fn handle_connection(
         connection: Connection,
         router: Arc<R>,
-        server_keypair: TransportPrivateKey,
+        server_keypair: Arc<KeyPair>,
     ) -> Result<()> {
         let remote_addr = connection.remote_address();
         info!("🔗 New connection from {}", remote_addr);
@@ -221,23 +220,12 @@ impl<R: ServiceRouter + 'static> RelayServer<R> {
 
         tracing::trace!("🔗 Handshake streams accepted");
 
-        // Get the server's keypair for the handshake (message layer authentication)
-        let server_challenge_keypair = match &server_keypair {
-            TransportPrivateKey::Ed25519 { signing_key } => {
-                zoe_wire_protocol::KeyPair::Ed25519(Box::new(signing_key.clone()))
-            }
-            #[cfg(feature = "tls-ml-dsa-44")]
-            TransportPrivateKey::MlDsa44 { keypair } => {
-                // Use the same ML-DSA-44 key for both transport and message authentication
-                zoe_wire_protocol::KeyPair::MlDsa44(Box::new(keypair.clone()))
-            }
-        };
 
         // Perform the actual challenge handshake
         let verified_keys = match crate::challenge::perform_multi_challenge_handshake(
             send,
             recv,
-            &server_challenge_keypair, // Use the server's keypair for challenge
+            server_keypair.as_ref(), // Use the server's keypair for challenge
         )
         .await
         {

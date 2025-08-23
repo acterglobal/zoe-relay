@@ -63,8 +63,8 @@ async fn main() -> Result<()> {
 
     // Handle key generation
     if matches.get_flag("generate-key") {
-        use zoe_wire_protocol::ServerKeypair;
-        let server_keypair = ServerKeypair::default(); // Generates Ed25519 by default
+        use zoe_wire_protocol::KeyPair;
+        let server_keypair = KeyPair::generate_ed25519(&mut rand::thread_rng()); // Generates Ed25519 for transport
         println!("Generated server keypair: {}", server_keypair.public_key());
         println!(
             "You can use this key in your configuration file or set it via environment variable."
@@ -84,7 +84,7 @@ async fn main() -> Result<()> {
         load_config(config_path)?
     } else {
         // Create default config with CLI overrides
-        let mut config = RelayConfig::default();
+        let mut config = RelayConfig::new_with_new_ed25519_tls_key();
 
         // Override blob directory if provided
         if let Some(blob_dir) = matches.get_one::<String>("blob-dir") {
@@ -96,8 +96,8 @@ async fn main() -> Result<()> {
                 hex::decode(private_key).unwrap().try_into().unwrap();
             // TODO: Implement proper key loading from bytes
             // For now, just use default Ed25519 generation
-            use zoe_wire_protocol::ServerKeypair;
-            config.server_keypair = ServerKeypair::default();
+            use zoe_wire_protocol::KeyPair;
+            config.server_keypair = KeyPair::generate_ed25519(&mut rand::thread_rng());
         }
 
         config
@@ -152,8 +152,18 @@ fn load_config(config_path: &str) -> Result<RelayConfig> {
     let config_content = std::fs::read_to_string(config_path)
         .map_err(|e| anyhow::anyhow!("Failed to read config file '{}': {}", config_path, e))?;
 
-    let config: RelayConfig = toml::from_str(&config_content)
+    // For now, we only load the blob config from TOML since KeyPair doesn't support serde
+    #[derive(serde::Deserialize)]
+    struct ConfigFile {
+        blob_config: zoe_relay::BlobConfig,
+    }
+
+    let config_file: ConfigFile = toml::from_str(&config_content)
         .map_err(|e| anyhow::anyhow!("Failed to parse config file '{}': {}", config_path, e))?;
+
+    // Create RelayConfig with default Ed25519 keypair and loaded blob config
+    let mut config = RelayConfig::new_with_new_ed25519_tls_key();
+    config.blob_config = config_file.blob_config;
 
     info!("Loaded configuration from: {}", config_path);
     Ok(config)
@@ -170,14 +180,19 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let config_path = temp_dir.path().join("test_config.toml");
 
-        let test_config = RelayConfig {
-            server_keypair: zoe_wire_protocol::ServerKeypair::default(), // Ed25519 by default
+        // Create a test config file with just the blob config (since KeyPair doesn't support serde)
+        #[derive(serde::Serialize)]
+        struct TestConfigFile {
+            blob_config: zoe_relay::BlobConfig,
+        }
+
+        let test_config_file = TestConfigFile {
             blob_config: zoe_relay::BlobConfig {
                 data_dir: PathBuf::from("/test/path"),
             },
         };
 
-        let config_toml = toml::to_string(&test_config).unwrap();
+        let config_toml = toml::to_string(&test_config_file).unwrap();
         fs::write(&config_path, config_toml).unwrap();
 
         let loaded_config = load_config(config_path.to_str().unwrap()).unwrap();
@@ -189,7 +204,7 @@ mod tests {
 
     #[test]
     fn test_default_config() {
-        let config = RelayConfig::default();
+        let config = RelayConfig::new_with_new_ed25519_tls_key();
         assert_eq!(
             config.blob_config.data_dir,
             PathBuf::from("./blob-store-data")

@@ -25,7 +25,7 @@ use tracing::{error, info, warn};
 use zoe_client::{ClientError, MessagesService, MessagesStream, RelayClient};
 use zoe_wire_protocol::{
     Filter, KeyPair, Kind, Message, MessageFilters, MessageFull, StreamMessage, SubscriptionConfig,
-    VerifyingKey, generate_keypair,
+    VerifyingKey,
 };
 
 /// Run the complete message echo test
@@ -226,7 +226,7 @@ async fn main() -> Result<()> {
                 .map_err(|_| anyhow::anyhow!("Invalid Ed25519 public key length"))?,
         )
         .map_err(|e| anyhow::anyhow!("Invalid Ed25519 public key: {}", e))?;
-        zoe_wire_protocol::TransportPublicKey::from_ed25519(ed25519_key)
+        zoe_wire_protocol::VerifyingKey::Ed25519(Box::new(ed25519_key))
     } else {
         // ML-DSA-44 public key (1312 bytes)
         let ml_dsa_key = ml_dsa::VerifyingKey::<ml_dsa::MlDsa44>::decode(
@@ -235,7 +235,7 @@ async fn main() -> Result<()> {
                 .try_into()
                 .map_err(|_| anyhow::anyhow!("Invalid ML-DSA-44 public key length"))?,
         );
-        zoe_wire_protocol::TransportPublicKey::from_ml_dsa_44(&ml_dsa_key)
+        zoe_wire_protocol::VerifyingKey::MlDsa44((Box::new(ml_dsa_key), blake3::hash(b"")))
     };
 
     // Create client (with optional private key)
@@ -243,7 +243,7 @@ async fn main() -> Result<()> {
         let _client_key_bytes = hex::decode(client_key_hex)
             .map_err(|e| anyhow::anyhow!("Invalid client key hex: {}", e))?;
 
-        let client_keypair = generate_keypair(&mut rand::thread_rng()); // TODO: Implement proper key loading
+        let client_keypair = KeyPair::generate(&mut rand::thread_rng()); // TODO: Implement proper key loading
         RelayClient::new(client_keypair, server_public_key, address).await?
     } else {
         RelayClient::new_with_random_key(server_public_key, address).await?

@@ -2,19 +2,16 @@
 use crate::challenge::perform_client_challenge_handshake;
 use crate::error::{ClientError, Result};
 use crate::{BlobService, MessagesService, MessagesStream};
-use ml_dsa;
+
 use quinn::Connection;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tracing::info;
-use zoe_wire_protocol::{
-    KeyPair, TransportPrivateKey, TransportPublicKey, VerifyingKey,
-    connection::client::create_client_endpoint, generate_keypair,
-};
+use zoe_wire_protocol::{KeyPair, VerifyingKey, connection::client::create_client_endpoint};
 
 struct RelayClientInner {
-    client_keypair_tls: TransportPrivateKey, // For TLS certificates (Ed25519 or ML-DSA-44)
-    client_keypair_inner: KeyPair,           // For inner protocol
+    client_keypair_tls: KeyPair, // For TLS certificates (Ed25519 or ML-DSA-44)
+    client_keypair_inner: KeyPair, // For inner protocol
     connection: Connection,
 }
 
@@ -25,20 +22,20 @@ pub struct RelayClient {
 
 impl RelayClient {
     pub async fn new_with_random_key(
-        server_public_key: TransportPublicKey,
+        server_public_key: VerifyingKey,
         server_addr: SocketAddr,
     ) -> Result<Self> {
-        let inner_keypair = generate_keypair(&mut rand::thread_rng()); // ML-DSA-65 for inner protocol
+        let inner_keypair = KeyPair::generate(&mut rand::thread_rng()); // ML-DSA-65 for inner protocol
         Self::new(inner_keypair, server_public_key, server_addr).await
     }
 
     pub async fn new(
-        client_keypair_inner: KeyPair,         // For inner protocol
-        server_public_key: TransportPublicKey, // TLS server key (Ed25519 or ML-DSA-44)
+        client_keypair_inner: KeyPair,   // For inner protocol
+        server_public_key: VerifyingKey, // TLS server key (Ed25519 or ML-DSA-44)
         server_addr: SocketAddr,
     ) -> Result<Self> {
         // Generate TLS keypair for certificates (default to Ed25519)
-        let client_keypair_tls = TransportPrivateKey::default(); // Ed25519 by default
+        let client_keypair_tls = KeyPair::generate_ed25519(&mut rand::thread_rng()); // Ed25519 by default
         let connection = Self::connect_with_transport_keys(
             &client_keypair_tls,
             &client_keypair_inner,
@@ -62,16 +59,16 @@ impl RelayClient {
         server_public_key: ml_dsa::VerifyingKey<ml_dsa::MlDsa44>,
         server_addr: SocketAddr,
     ) -> Result<Self> {
-        let server_key = TransportPublicKey::from_ml_dsa_44(&server_public_key);
+        let server_key = VerifyingKey::from(server_public_key);
         Self::new(client_keypair_inner, server_key, server_addr).await
     }
 
     /// Connect to relay server with transport keys and return the connection
     pub async fn connect_with_transport_keys(
-        client_keypair_tls: &TransportPrivateKey, // For TLS certificates (Ed25519 or ML-DSA-44)
-        client_keypair_inner: &KeyPair,           // For inner protocol
+        client_keypair_tls: &KeyPair, // For TLS certificates (Ed25519 or ML-DSA-44)
+        client_keypair_inner: &KeyPair, // For inner protocol
         server_addr: SocketAddr,
-        server_public_key: &TransportPublicKey,
+        server_public_key: &VerifyingKey,
     ) -> Result<Connection> {
         info!("🚀 Starting relay client with transport keys");
         info!(
@@ -114,29 +111,14 @@ impl RelayClient {
             }
         }
 
-        // Convert TransportPublicKey to VerifyingKey for challenge
-        // TODO: move this to the wire protocol as an into impl
-        let server_verifying_key = match server_public_key {
-            TransportPublicKey::Ed25519 { verifying_key } => {
-                VerifyingKey::Ed25519(Box::new(*verifying_key))
-            }
-            TransportPublicKey::MlDsa44 {
-                verifying_key_bytes,
-            } => {
-                let encoded = ml_dsa::EncodedVerifyingKey::<ml_dsa::MlDsa44>::try_from(
-                    verifying_key_bytes.as_slice(),
-                )
-                .map_err(|_| anyhow::anyhow!("Invalid ML-DSA-44 public key"))?;
-                VerifyingKey::from(ml_dsa::VerifyingKey::<ml_dsa::MlDsa44>::decode(&encoded))
-            }
-        };
+        // No conversion needed - server_public_key is already a VerifyingKey
 
         // Perform ML-DSA challenge-response handshake
         let (send, recv) = connection.accept_bi().await?;
         let Ok((verified_count, _)) = perform_client_challenge_handshake(
             send,
             recv,
-            &server_verifying_key,
+            server_public_key,
             &[client_keypair_inner],
         )
         .await
@@ -172,7 +154,7 @@ impl RelayClient {
     }
 
     /// Get the client's TLS public key (Ed25519 or ML-DSA-44)
-    pub fn tls_public_key(&self) -> TransportPublicKey {
+    pub fn tls_public_key(&self) -> VerifyingKey {
         self.inner.client_keypair_tls.public_key()
     }
 }

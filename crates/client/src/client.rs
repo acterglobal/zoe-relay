@@ -1,6 +1,6 @@
 use crate::error::Result;
 use crate::{ClientError, FileStorage, RelayClient};
-use zoe_wire_protocol::{TransportPublicKey, keys::*};
+use zoe_wire_protocol::{KeyPair, VerifyingKey};
 // Note: serde imports removed since ML-DSA types don't support serde
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -15,8 +15,8 @@ use flutter_rust_bridge::frb;
 // Note: ML-DSA types don't have simple serde serialization, so we'll handle this differently
 #[cfg_attr(feature = "frb-api", frb(opaque))]
 pub struct ClientSecret {
-    inner_keypair: KeyPair,                // ML-DSA-65 for inner protocol
-    server_public_key: TransportPublicKey, // TLS server key (Ed25519 or ML-DSA-44)
+    inner_keypair: KeyPair,          // ML-DSA-65 for inner protocol
+    server_public_key: VerifyingKey, // TLS server key
     server_addr: SocketAddr,
 }
 
@@ -27,7 +27,7 @@ impl ClientSecret {
     // Add this constructor method
     pub fn new(
         inner_keypair: KeyPair,
-        server_public_key: TransportPublicKey,
+        server_public_key: VerifyingKey,
         server_addr: SocketAddr,
     ) -> Self {
         Self {
@@ -42,8 +42,8 @@ impl ClientSecret {
         &self.inner_keypair
     }
 
-    /// Get the server public key (Ed25519 or ML-DSA-44)
-    pub fn server_public_key(&self) -> &TransportPublicKey {
+    /// Get the server public key
+    pub fn server_public_key(&self) -> &VerifyingKey {
         &self.server_public_key
     }
 
@@ -65,7 +65,7 @@ pub struct ClientInner {
 pub struct ClientBuilder {
     media_storage_path: Option<PathBuf>,
     inner_keypair: Option<KeyPair>,
-    server_public_key: Option<TransportPublicKey>,
+    server_public_key: Option<VerifyingKey>,
     server_addr: Option<SocketAddr>,
 }
 
@@ -88,7 +88,7 @@ impl ClientBuilder {
     }
 
     #[cfg_attr(feature = "frb-api", frb)]
-    pub fn server_info(&mut self, server_public_key: TransportPublicKey, server_addr: SocketAddr) {
+    pub fn server_info(&mut self, server_public_key: VerifyingKey, server_addr: SocketAddr) {
         self.server_public_key = Some(server_public_key);
         self.server_addr = Some(server_addr);
     }

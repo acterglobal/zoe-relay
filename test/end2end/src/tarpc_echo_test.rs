@@ -24,7 +24,6 @@ use zoe_client::{
 };
 use zoe_wire_protocol::{
     KeyPair, Kind, Message, MessageFilters, MessageFull, SubscriptionConfig, Tag, VerifyingKey,
-    generate_keypair,
 };
 
 /// Information about the echo service

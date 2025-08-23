@@ -10,9 +10,8 @@ use tokio::time::{sleep, timeout};
 use tracing::info;
 
 use zoe_wire_protocol::{
-    KeyPair, TransportPrivateKey,
+    KeyPair,
     connection::{client::create_client_endpoint, server::create_server_endpoint},
-    generate_ed25519_relay_keypair, generate_keypair,
 };
 
 // Initialize crypto provider for Rustls
@@ -34,15 +33,9 @@ async fn test_challenge_protocol_basic_handshake() -> Result<()> {
     info!("🚀 Starting basic challenge protocol handshake test");
 
     // Generate server and client keys
-    let server_signing_key = generate_ed25519_relay_keypair(&mut rand::thread_rng());
-    let server_keypair = TransportPrivateKey::Ed25519 {
-        signing_key: match server_signing_key {
-            KeyPair::Ed25519(key) => *key,
-            _ => panic!("Expected Ed25519 key"),
-        },
-    };
+    let server_keypair = KeyPair::generate_ed25519(&mut rand::thread_rng());
     let server_public_key = server_keypair.public_key();
-    let client_keypair = generate_keypair(&mut rand::thread_rng());
+    let client_keypair = KeyPair::generate(&mut rand::thread_rng());
 
     // Find free port and create server endpoint
     let server_endpoint =
@@ -67,22 +60,11 @@ async fn test_challenge_protocol_basic_handshake() -> Result<()> {
             let (send, recv) = connection.open_bi().await.unwrap();
             info!("📡 Server accepted bidirectional stream");
 
-            // Use the server's keypair for the challenge
-            let server_challenge_keypair = match &server_keypair {
-                TransportPrivateKey::Ed25519 { signing_key } => {
-                    KeyPair::Ed25519(Box::new(signing_key.clone()))
-                }
-                #[cfg(feature = "tls-ml-dsa-44")]
-                TransportPrivateKey::MlDsa44 { keypair } => {
-                    KeyPair::MlDsa44(Box::new(keypair.clone()))
-                }
-            };
-
             // Perform challenge handshake
             let verified_keys = zoe_relay::challenge::perform_multi_challenge_handshake(
                 send,
                 recv,
-                &server_challenge_keypair,
+                &server_keypair,
             )
             .await?;
 
@@ -105,22 +87,10 @@ async fn test_challenge_protocol_basic_handshake() -> Result<()> {
             let (send, recv) = connection.accept_bi().await?;
             info!("🔗 Client opened bidirectional stream");
 
-            // Perform challenge handshake from client side
-            let server_verifying_key = match &server_public_key {
-                zoe_wire_protocol::TransportPublicKey::Ed25519 { verifying_key } => {
-                    zoe_wire_protocol::VerifyingKey::Ed25519(Box::new(*verifying_key))
-                }
-                zoe_wire_protocol::TransportPublicKey::MlDsa44 {
-                    verifying_key_bytes: _,
-                } => {
-                    // This would need proper conversion for ML-DSA
-                    panic!("ML-DSA not supported in this test");
-                }
-            };
             let (verified_count, _) = zoe_client::challenge::perform_client_challenge_handshake(
                 send,
                 recv,
-                &server_verifying_key,
+                &server_public_key,
                 &[&client_keypair],
             )
             .await?;
@@ -167,18 +137,13 @@ async fn test_challenge_protocol_multiple_keys() -> Result<()> {
     info!("🚀 Starting multiple keys challenge protocol test");
 
     // Generate server and multiple client keys
-    let server_signing_key = generate_ed25519_relay_keypair(&mut rand::thread_rng());
-    let server_keypair = TransportPrivateKey::Ed25519 {
-        signing_key: match server_signing_key {
-            KeyPair::Ed25519(key) => *key,
-            _ => panic!("Expected Ed25519 key"),
-        },
-    };
+    let server_signing_key = KeyPair::generate_ed25519(&mut rand::thread_rng());
+    let server_keypair = server_signing_key;
     let server_public_key = server_keypair.public_key();
 
-    let client_keypair1 = generate_keypair(&mut rand::thread_rng());
-    let client_keypair2 = generate_keypair(&mut rand::thread_rng());
-    let client_keypair3 = generate_keypair(&mut rand::thread_rng());
+    let client_keypair1 = KeyPair::generate(&mut rand::thread_rng());
+    let client_keypair2 = KeyPair::generate(&mut rand::thread_rng());
+    let client_keypair3 = KeyPair::generate(&mut rand::thread_rng());
 
     let server_endpoint =
         create_server_endpoint(SocketAddr::from(([127, 0, 0, 1], 0)), &server_keypair)?;
@@ -194,20 +159,10 @@ async fn test_challenge_protocol_multiple_keys() -> Result<()> {
             let connection = server_endpoint.accept().await.unwrap().await.unwrap();
             let (send, recv) = connection.open_bi().await.unwrap();
 
-            let server_challenge_keypair = match &server_keypair {
-                TransportPrivateKey::Ed25519 { signing_key } => {
-                    KeyPair::Ed25519(Box::new(signing_key.clone()))
-                }
-                #[cfg(feature = "tls-ml-dsa-44")]
-                TransportPrivateKey::MlDsa44 { keypair } => {
-                    KeyPair::MlDsa44(Box::new(keypair.clone()))
-                }
-            };
-
             let verified_keys = zoe_relay::challenge::perform_multi_challenge_handshake(
                 send,
                 recv,
-                &server_challenge_keypair,
+                &server_keypair,
             )
             .await?;
             sleep(Duration::from_millis(100)).await;
@@ -222,20 +177,10 @@ async fn test_challenge_protocol_multiple_keys() -> Result<()> {
             let (send, recv) = connection.accept_bi().await?;
 
             let client_keys = vec![&client_keypair1, &client_keypair2, &client_keypair3];
-            let server_verifying_key = match &server_public_key {
-                zoe_wire_protocol::TransportPublicKey::Ed25519 { verifying_key } => {
-                    zoe_wire_protocol::VerifyingKey::Ed25519(Box::new(*verifying_key))
-                }
-                zoe_wire_protocol::TransportPublicKey::MlDsa44 {
-                    verifying_key_bytes: _,
-                } => {
-                    panic!("ML-DSA not supported in this test");
-                }
-            };
             let (verified_count, _) = zoe_client::challenge::perform_client_challenge_handshake(
                 send,
                 recv,
-                &server_verifying_key,
+                &server_public_key,
                 &client_keys,
             )
             .await?;
@@ -279,26 +224,16 @@ async fn test_challenge_protocol_invalid_signature() -> Result<()> {
     info!("🚀 Starting invalid signature challenge protocol test");
 
     // Generate server keys
-    let server_signing_key = generate_ed25519_relay_keypair(&mut rand::thread_rng());
-    let server_keypair = TransportPrivateKey::Ed25519 {
-        signing_key: match server_signing_key {
-            KeyPair::Ed25519(key) => *key,
-            _ => panic!("Expected Ed25519 key"),
-        },
-    };
+    let server_signing_key = KeyPair::generate_ed25519(&mut rand::thread_rng());
+    let server_keypair = server_signing_key;
     let _server_public_key = server_keypair.public_key();
 
     // Generate a different server key to create invalid signature
-    let wrong_server_signing_key = generate_ed25519_relay_keypair(&mut rand::thread_rng());
-    let wrong_server_keypair = TransportPrivateKey::Ed25519 {
-        signing_key: match wrong_server_signing_key {
-            KeyPair::Ed25519(key) => *key,
-            _ => panic!("Expected Ed25519 key"),
-        },
-    };
+    let wrong_server_signing_key = KeyPair::generate_ed25519(&mut rand::thread_rng());
+    let wrong_server_keypair = wrong_server_signing_key;
     let wrong_server_public_key = wrong_server_keypair.public_key();
 
-    let client_keypair = generate_keypair(&mut rand::thread_rng());
+    let client_keypair = KeyPair::generate(&mut rand::thread_rng());
 
     // Find free port and create server endpoint
     let server_endpoint =
@@ -314,20 +249,10 @@ async fn test_challenge_protocol_invalid_signature() -> Result<()> {
             let connection = server_endpoint.accept().await.unwrap().await.unwrap();
             let (send, recv) = connection.accept_bi().await.unwrap();
 
-            let server_challenge_keypair = match &server_keypair {
-                TransportPrivateKey::Ed25519 { signing_key } => {
-                    KeyPair::Ed25519(Box::new(signing_key.clone()))
-                }
-                #[cfg(feature = "tls-ml-dsa-44")]
-                TransportPrivateKey::MlDsa44 { keypair } => {
-                    KeyPair::MlDsa44(Box::new(keypair.clone()))
-                }
-            };
-
             let _verified_keys = zoe_relay::challenge::perform_multi_challenge_handshake(
                 send,
                 recv,
-                &server_challenge_keypair,
+                &server_keypair,
             )
             .await?;
 
@@ -338,21 +263,10 @@ async fn test_challenge_protocol_invalid_signature() -> Result<()> {
             let connection = client_endpoint.connect(server_addr, "localhost")?.await?;
             let (send, recv) = connection.open_bi().await?;
 
-            // This should fail because client expects wrong server signature
-            let wrong_server_verifying_key = match &wrong_server_public_key {
-                zoe_wire_protocol::TransportPublicKey::Ed25519 { verifying_key } => {
-                    zoe_wire_protocol::VerifyingKey::Ed25519(Box::new(*verifying_key))
-                }
-                zoe_wire_protocol::TransportPublicKey::MlDsa44 {
-                    verifying_key_bytes: _,
-                } => {
-                    panic!("ML-DSA not supported in this test");
-                }
-            };
             let _verified_count = zoe_client::challenge::perform_client_challenge_handshake(
                 send,
                 recv,
-                &wrong_server_verifying_key, // Wrong key!
+                &wrong_server_public_key, // Wrong key!
                 &[&client_keypair],
             )
             .await?;
@@ -391,13 +305,8 @@ async fn test_challenge_protocol_version_mismatch() -> Result<()> {
     info!("🚀 Starting protocol version mismatch test");
 
     // Generate server and client keys
-    let server_signing_key = generate_ed25519_relay_keypair(&mut rand::thread_rng());
-    let server_keypair = TransportPrivateKey::Ed25519 {
-        signing_key: match server_signing_key {
-            KeyPair::Ed25519(key) => *key,
-            _ => panic!("Expected Ed25519 key"),
-        },
-    };
+    let server_signing_key = KeyPair::generate_ed25519(&mut rand::thread_rng());
+    let server_keypair = server_signing_key;
     let server_public_key = server_keypair.public_key();
 
     // Create server with specific protocol requirements that won't match the client

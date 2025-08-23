@@ -38,13 +38,13 @@ use tracing::{error, info, warn};
 use zoe_client::{ClientError, MessagesService, RelayClient};
 use zoe_wire_protocol::{
     Filter, KeyPair, Kind, Message, MessageFilters, MessageFull, StreamMessage, SubscriptionConfig,
-    Tag, generate_keypair,
+    Tag,
 };
 
 /// Configuration for the chat client
 struct ChatConfig {
     server_addr: SocketAddr,
-    server_key: zoe_wire_protocol::TransportPublicKey,
+    server_key: zoe_wire_protocol::VerifyingKey,
     channel: String,
     client_keypair: KeyPair,
 }
@@ -462,7 +462,7 @@ fn parse_args() -> Result<ChatConfig> {
                 .map_err(|_| anyhow::anyhow!("Invalid Ed25519 public key length"))?,
         )
         .map_err(|e| anyhow::anyhow!("Invalid Ed25519 public key: {}", e))?;
-        zoe_wire_protocol::TransportPublicKey::from_ed25519(ed25519_key)
+        zoe_wire_protocol::VerifyingKey::Ed25519(Box::new(ed25519_key))
     } else if server_key_bytes.len() == 1312 {
         // ML-DSA-44 public key (1312 bytes)
         let ml_dsa_key = ml_dsa::VerifyingKey::<ml_dsa::MlDsa44>::decode(
@@ -471,7 +471,7 @@ fn parse_args() -> Result<ChatConfig> {
                 .try_into()
                 .map_err(|e| anyhow::anyhow!("Invalid ML-DSA-44 public key length: {}", e))?,
         );
-        zoe_wire_protocol::TransportPublicKey::from_ml_dsa_44(&ml_dsa_key)
+        zoe_wire_protocol::VerifyingKey::MlDsa44((Box::new(ml_dsa_key), blake3::hash(b"")))
     } else {
         anyhow::bail!("Server key must be either 32 bytes (Ed25519) or 1312 bytes (ML-DSA-44)");
     };
@@ -482,9 +482,9 @@ fn parse_args() -> Result<ChatConfig> {
         let _client_key_bytes = hex::decode(client_key_hex)
             .map_err(|e| anyhow::anyhow!("Invalid client key hex: {}", e))?;
         // TODO: Implement proper ML-DSA key loading from bytes
-        generate_keypair(&mut rand::thread_rng())
+        KeyPair::generate(&mut rand::thread_rng())
     } else {
-        generate_keypair(&mut rand::thread_rng())
+        KeyPair::generate(&mut rand::thread_rng())
     };
 
     Ok(ChatConfig {

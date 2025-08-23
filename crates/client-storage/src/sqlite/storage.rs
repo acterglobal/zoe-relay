@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use rusqlite::{Connection, OptionalExtension, params};
 use std::sync::{Arc, Mutex};
-use zoe_wire_protocol::{Hash, MessageFull, Tag};
+use zoe_wire_protocol::{Hash, MessageFull, Tag, VerifyingKey};
 
 use super::migrations;
 use crate::error::{Result, StorageError};
@@ -180,7 +180,9 @@ impl SqliteMessageStorage {
         // Handle author filtering
         if let Some(author) = &query.author {
             conditions.push("m.author = ?".to_string());
-            params.push(Box::new(zoe_wire_protocol::verifying_key_to_bytes(author)));
+            params.push(Box::new(
+                author.to_bytes().expect("Failed to serialize author key"),
+            ));
         }
 
         // Handle timestamp filtering
@@ -473,7 +475,9 @@ impl MessageStorage for SqliteMessageStorage {
             .map_err(|e| StorageError::Internal(format!("Failed to acquire database lock: {e}")))?;
 
         let message_id_bytes = message_id.as_bytes();
-        let relay_pubkey_bytes = zoe_wire_protocol::verifying_key_to_bytes(relay_pubkey);
+        let relay_pubkey_bytes = relay_pubkey
+            .to_bytes()
+            .expect("Failed to serialize relay pubkey");
 
         conn.execute(
             "INSERT OR REPLACE INTO relay_sync_status (message_id, relay_pubkey, global_stream_id) VALUES (?1, ?2, ?3)",
@@ -500,7 +504,9 @@ impl MessageStorage for SqliteMessageStorage {
             .lock()
             .map_err(|e| StorageError::Internal(format!("Failed to acquire database lock: {e}")))?;
 
-        let relay_pubkey_bytes = zoe_wire_protocol::verifying_key_to_bytes(relay_pubkey);
+        let relay_pubkey_bytes = relay_pubkey
+            .to_bytes()
+            .expect("Failed to serialize relay pubkey");
         let limit_clause = if let Some(l) = limit {
             format!(" LIMIT {l}")
         } else if let Some(default_limit) = self.config.max_query_limit {
@@ -562,7 +568,7 @@ impl MessageStorage for SqliteMessageStorage {
         for sync_result in sync_iter {
             let (relay_pubkey_bytes, global_stream_id, synced_at) = sync_result?;
 
-            let relay_pubkey = zoe_wire_protocol::verifying_key_from_bytes(&relay_pubkey_bytes)
+            let relay_pubkey = VerifyingKey::try_from(relay_pubkey_bytes.as_slice())
                 .map_err(|e| StorageError::Internal(format!("Invalid relay public key: {e}")))?;
 
             sync_statuses.push(RelaySyncStatus {

@@ -9,8 +9,8 @@ use tokio::sync::Notify;
 use tokio::time::{timeout, Duration};
 use zoe_relay::Service;
 use zoe_relay::{ConnectionInfo, RelayServer, ServiceRouter};
+use zoe_wire_protocol::KeyPair;
 use zoe_wire_protocol::StreamPair;
-use zoe_wire_protocol::TransportPrivateKey;
 
 // Initialize crypto provider for Rustls
 fn init_crypto_provider() {
@@ -161,7 +161,7 @@ async fn test_echo_service_integration() -> Result<()> {
     let _ = tracing_subscriber::fmt::try_init();
 
     // Use the new infrastructure approach with proper key generation
-    let server_keypair = TransportPrivateKey::default(); // Ed25519 by default
+    let server_keypair = KeyPair::generate_ed25519(&mut rand::thread_rng()); // Ed25519 for transport
     let server_public_key = server_keypair.public_key();
 
     println!(
@@ -342,7 +342,7 @@ async fn test_service_id_routing() -> Result<()> {
     }
 
     // Use the new infrastructure approach with proper key generation
-    let server_keypair = TransportPrivateKey::default(); // Ed25519 by default
+    let server_keypair = KeyPair::generate_ed25519(&mut rand::thread_rng()); // Ed25519 for transport
     let server_public_key = server_keypair.public_key();
     let router = SingleServiceRouter::new();
 

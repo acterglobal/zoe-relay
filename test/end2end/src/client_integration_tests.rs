@@ -15,7 +15,7 @@ use tokio::time::timeout;
 use tracing::{debug, info, warn};
 use zoe_wire_protocol::{
     Content, Filter, KeyPair, Kind, Message, MessageFilters, MessageFull, StoreKey, StreamMessage,
-    SubscriptionConfig, Tag, VerifyingKey, generate_keypair,
+    SubscriptionConfig, Tag, VerifyingKey,
 };
 
 /// Test message posting and retrieval functionality

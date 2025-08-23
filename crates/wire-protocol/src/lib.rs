@@ -137,7 +137,6 @@ pub mod crypto;
 pub mod keys;
 pub mod message;
 pub mod relay;
-pub mod relay_identity;
 pub mod services;
 pub mod streaming;
 pub mod version;
@@ -147,12 +146,6 @@ pub use challenge::*;
 pub use crypto::*;
 pub use message::*;
 pub use relay::*;
-pub use relay_identity::*;
-
-// Type aliases for backward compatibility and convenience
-pub type RelayIdentityKey = TransportPublicKey;
-pub type ServerKeypair = TransportPrivateKey;
-pub type ClientTransportKey = TransportPublicKey;
 pub use services::*;
 pub use streaming::*; // Re-export streaming protocol types
 pub use version::*; // Re-export protocol version negotiation types

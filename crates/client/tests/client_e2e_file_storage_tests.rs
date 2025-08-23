@@ -14,7 +14,7 @@ use zoe_blob_store::BlobServiceImpl;
 use zoe_client::Client;
 use zoe_message_store::RedisMessageStorage;
 use zoe_relay::{RelayServer, RelayServiceRouter};
-use zoe_wire_protocol::{TransportPrivateKey, TransportPublicKey};
+use zoe_wire_protocol::{KeyPair, VerifyingKey};
 
 // Initialize crypto provider for Rustls
 fn init_crypto_provider() {
@@ -31,7 +31,7 @@ fn init_crypto_provider() {
 struct TestInfrastructure {
     server_handle: tokio::task::JoinHandle<Result<(), anyhow::Error>>,
     server_addr: SocketAddr,
-    server_public_key: TransportPublicKey,
+    server_public_key: VerifyingKey,
     temp_dirs: Vec<TempDir>,
 }
 
@@ -42,7 +42,7 @@ impl TestInfrastructure {
         let server_addr = find_free_port().await?;
 
         // Generate server key (default to Ed25519)
-        let server_keypair = TransportPrivateKey::default(); // Ed25519 by default
+        let server_keypair = KeyPair::generate_ed25519(&mut rand::thread_rng()); // Ed25519 for transport
         let server_public_key = server_keypair.public_key();
 
         info!(

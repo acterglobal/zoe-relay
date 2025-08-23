@@ -14,12 +14,12 @@
 //! ## Key Generation
 //!
 //! ```rust
-//! use zoe_wire_protocol::{KeyPair, VerifyingKey, SigningKey, generate_keypair, generate_ed25519_relay_keypair};
+//! use zoe_wire_protocol::{KeyPair, VerifyingKey, SigningKey};
 //! use rand::rngs::OsRng;
 //!
 //! // Generate different key types
-//! let ed25519_keypair = generate_ed25519_relay_keypair(&mut OsRng);
-//! let ml_dsa_65_keypair = generate_keypair(&mut OsRng); // Default: ML-DSA-65
+//! let ed25519_keypair = KeyPair::generate_ed25519(&mut OsRng);
+//! let ml_dsa_65_keypair = KeyPair::generate(&mut OsRng); // Default: ML-DSA-65
 //!
 //! // Access keys
 //! let verifying_key = ed25519_keypair.public_key();
@@ -29,11 +29,11 @@
 //! ## Signing and Verification
 //!
 //! ```rust
-//! use zoe_wire_protocol::{KeyPair, VerifyingKey, SigningKey, generate_keypair};
+//! use zoe_wire_protocol::{KeyPair, VerifyingKey, SigningKey};
 //! use rand::rngs::OsRng;
 //!
 //! # fn example() -> Result<(), Box<dyn std::error::Error>> {
-//! let keypair = generate_keypair(&mut OsRng);
+//! let keypair = KeyPair::generate(&mut OsRng);
 //! let message = b"Hello, world!";
 //!
 //! // Sign message
@@ -69,9 +69,34 @@ use crate::Hash;
 use ml_dsa::KeyGen;
 use serde::{Deserialize, Serialize};
 use signature::{Signer, Verifier};
+use std::fmt;
 
 // A short hand hash or content of the inner signature or key
 pub type Id = [u8; 32];
+
+/// Cryptographic algorithm identifier
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum Algorithm {
+    /// Ed25519 elliptic curve signatures
+    Ed25519,
+    /// ML-DSA-44 post-quantum signatures (TLS certificates, ~128-bit security)
+    MlDsa44,
+    /// ML-DSA-65 post-quantum signatures (messages, ~192-bit security)
+    MlDsa65,
+    /// ML-DSA-87 post-quantum signatures (high security, ~256-bit security)
+    MlDsa87,
+}
+
+impl fmt::Display for Algorithm {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Algorithm::Ed25519 => write!(f, "Ed25519"),
+            Algorithm::MlDsa44 => write!(f, "ML-DSA-44"),
+            Algorithm::MlDsa65 => write!(f, "ML-DSA-65"),
+            Algorithm::MlDsa87 => write!(f, "ML-DSA-87"),
+        }
+    }
+}
 
 /// Public key for signature verification supporting multiple algorithms.
 ///
@@ -195,6 +220,16 @@ impl TryFrom<&[u8]> for VerifyingKey {
 }
 
 impl VerifyingKey {
+    /// Get the algorithm for this key type
+    pub fn algorithm(&self) -> Algorithm {
+        match self {
+            Self::Ed25519(_) => Algorithm::Ed25519,
+            Self::MlDsa44(..) => Algorithm::MlDsa44,
+            Self::MlDsa65(..) => Algorithm::MlDsa65,
+            Self::MlDsa87(..) => Algorithm::MlDsa87,
+        }
+    }
+
     /// Verify a signature against a message using the appropriate algorithm.
     ///
     /// This method automatically matches the signature type with the key type
@@ -214,11 +249,11 @@ impl VerifyingKey {
     /// # Examples
     ///
     /// ```rust
-    /// use zoe_wire_protocol::{KeyPair, VerifyingKey, SigningKey, generate_ed25519_relay_keypair};
+    /// use zoe_wire_protocol::{KeyPair, VerifyingKey, SigningKey};
     /// use rand::rngs::OsRng;
     ///
     /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
-    /// let keypair = generate_ed25519_relay_keypair(&mut OsRng);
+    /// let keypair = KeyPair::generate_ed25519(&mut OsRng);
     /// let message = b"Hello, world!";
     /// let signature = keypair.sign(message);
     /// let verifying_key = keypair.public_key();
@@ -263,10 +298,10 @@ impl VerifyingKey {
     /// # Examples
     ///
     /// ```rust
-    /// use zoe_wire_protocol::{KeyPair, VerifyingKey, generate_ed25519_relay_keypair};
+    /// use zoe_wire_protocol::{KeyPair, VerifyingKey};
     /// use rand::rngs::OsRng;
     ///
-    /// let keypair = generate_ed25519_relay_keypair(&mut OsRng);
+    /// let keypair = KeyPair::generate_ed25519(&mut OsRng);
     /// let verifying_key = keypair.public_key();
     ///
     /// // Serialize the key
@@ -463,8 +498,19 @@ impl KeyPair {
             KeyPair::MlDsa87(_key, hash) => hash.as_bytes(),
         }
     }
+
     pub fn public_key(&self) -> VerifyingKey {
         self.into()
+    }
+
+    /// Get the algorithm for this key type
+    pub fn algorithm(&self) -> Algorithm {
+        match self {
+            Self::Ed25519(_) => Algorithm::Ed25519,
+            Self::MlDsa44(..) => Algorithm::MlDsa44,
+            Self::MlDsa65(..) => Algorithm::MlDsa65,
+            Self::MlDsa87(..) => Algorithm::MlDsa87,
+        }
     }
 }
 
@@ -547,6 +593,48 @@ impl KeyPair {
 
     pub fn generate_ed25519<R: rand::CryptoRng + rand::RngCore>(rng: &mut R) -> KeyPair {
         KeyPair::Ed25519(Box::new(ed25519_dalek::SigningKey::generate(rng)))
+    }
+}
+
+impl fmt::Display for VerifyingKey {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Ed25519(key) => {
+                write!(f, "Ed25519({})", hex::encode(key.to_bytes()))
+            }
+            Self::MlDsa44((_key, hash)) => {
+                write!(f, "ML-DSA-44({})", hex::encode(hash.as_bytes()))
+            }
+            Self::MlDsa65((_key, hash)) => {
+                write!(f, "ML-DSA-65({})", hex::encode(hash.as_bytes()))
+            }
+            Self::MlDsa87((_key, hash)) => {
+                write!(f, "ML-DSA-87({})", hex::encode(hash.as_bytes()))
+            }
+        }
+    }
+}
+
+impl fmt::Display for KeyPair {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Ed25519(key) => {
+                write!(
+                    f,
+                    "Ed25519({})",
+                    hex::encode(key.verifying_key().to_bytes())
+                )
+            }
+            Self::MlDsa44(_keypair, hash) => {
+                write!(f, "ML-DSA-44({})", hex::encode(hash.as_bytes()))
+            }
+            Self::MlDsa65(_keypair, hash) => {
+                write!(f, "ML-DSA-65({})", hex::encode(hash.as_bytes()))
+            }
+            Self::MlDsa87(_keypair, hash) => {
+                write!(f, "ML-DSA-87({})", hex::encode(hash.as_bytes()))
+            }
+        }
     }
 }
 
@@ -792,7 +880,7 @@ mod tests {
     fn create_test_keypairs() -> Vec<KeyPair> {
         let mut rng = OsRng;
         vec![
-            generate_ed25519_relay_keypair(&mut rng),
+            KeyPair::generate_ed25519(&mut rng),
             KeyPair::generate_ml_dsa44(&mut rng),
             KeyPair::generate_ml_dsa65(&mut rng),
             KeyPair::generate_ml_dsa87(&mut rng),
@@ -967,9 +1055,9 @@ mod tests {
             assert_eq!(encoded, encoded2, "Encoding should be deterministic");
 
             // Test alternative serialization method
-            let bytes = verifying_key_to_bytes(original_key);
-            let restored =
-                verifying_key_from_bytes(&bytes).expect("Should successfully restore from bytes");
+            let bytes = original_key.to_bytes().expect("Should serialize to bytes");
+            let restored = VerifyingKey::try_from(bytes.as_slice())
+                .expect("Should successfully restore from bytes");
 
             assert_eq!(
                 *original_key, restored,
@@ -1001,7 +1089,7 @@ mod tests {
         );
 
         // Test that different keys are not equal
-        let different_ed25519 = generate_ed25519_relay_keypair(&mut rng);
+        let different_ed25519 = KeyPair::generate_ed25519(&mut rng);
         let different_ml_dsa = KeyPair::generate_ml_dsa65(&mut rng);
 
         let ed25519_signing = match different_ed25519 {
@@ -1237,7 +1325,7 @@ mod tests {
         let mut rng = OsRng;
 
         // Create one key of each type
-        let ed25519_key = generate_ed25519_relay_keypair(&mut rng).public_key();
+        let ed25519_key = KeyPair::generate_ed25519(&mut rng).public_key();
         let ml_dsa44_key = KeyPair::generate_ml_dsa44(&mut rng).public_key();
         let ml_dsa65_key = KeyPair::generate_ml_dsa65(&mut rng).public_key();
         let ml_dsa87_key = KeyPair::generate_ml_dsa87(&mut rng).public_key();
@@ -1258,7 +1346,7 @@ mod tests {
 
         // Test same for signatures
         let message = b"test message";
-        let ed25519_sig = generate_ed25519_relay_keypair(&mut rng).sign(message);
+        let ed25519_sig = KeyPair::generate_ed25519(&mut rng).sign(message);
         let ml_dsa44_sig = KeyPair::generate_ml_dsa44(&mut rng).sign(message);
         let ml_dsa65_sig = KeyPair::generate_ml_dsa65(&mut rng).sign(message);
         let ml_dsa87_sig = KeyPair::generate_ml_dsa87(&mut rng).sign(message);
@@ -1344,7 +1432,7 @@ mod tests {
     #[test]
     fn test_ed25519_id_is_key_bytes() {
         let mut rng = OsRng;
-        let ed25519_keypair = generate_ed25519_relay_keypair(&mut rng);
+        let ed25519_keypair = KeyPair::generate_ed25519(&mut rng);
         let verifying_key = ed25519_keypair.public_key();
 
         match verifying_key {
@@ -1362,7 +1450,7 @@ mod tests {
     #[test]
     fn test_generate_keypair_defaults_to_ml_dsa65() {
         let mut rng = OsRng;
-        let default_keypair = generate_keypair(&mut rng);
+        let default_keypair = KeyPair::generate(&mut rng);
 
         match default_keypair {
             KeyPair::MlDsa65(..) => {
@@ -1378,7 +1466,7 @@ mod tests {
         let message = b"test message";
 
         // Test Ed25519 signature ID uses s_bytes
-        let ed25519_keypair = generate_ed25519_relay_keypair(&mut rng);
+        let ed25519_keypair = KeyPair::generate_ed25519(&mut rng);
         let ed25519_sig = ed25519_keypair.sign(message);
 
         match ed25519_sig {

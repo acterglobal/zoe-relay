@@ -1,6 +1,6 @@
 use crate::crypto::{CryptoError, Result};
 use crate::version::ClientProtocolConfig;
-use crate::TransportPublicKey;
+use crate::VerifyingKey;
 use quinn::{crypto::rustls::QuicClientConfig, ClientConfig, Endpoint};
 use rustls::ClientConfig as RustlsClientConfig;
 use std::sync::Arc;
@@ -91,27 +91,25 @@ mod ed25519 {
     }
 }
 
-pub fn create_client_endpoint(server_public_key: &TransportPublicKey) -> Result<Endpoint> {
+pub fn create_client_endpoint(server_public_key: &VerifyingKey) -> Result<Endpoint> {
     create_client_endpoint_with_protocols(server_public_key, &ClientProtocolConfig::default())
 }
 
 pub fn create_client_endpoint_with_protocols(
-    server_public_key: &TransportPublicKey,
+    server_public_key: &VerifyingKey,
     protocol_versions: &ClientProtocolConfig,
 ) -> Result<Endpoint> {
     let cert_verifier = match server_public_key {
-        TransportPublicKey::Ed25519 { verifying_key } => {
-            ed25519::AcceptSpecificEd25519ServerCertVerifier::new(*verifying_key)
+        VerifyingKey::Ed25519(verifying_key) => {
+            ed25519::AcceptSpecificEd25519ServerCertVerifier::new(**verifying_key)
         }
         #[cfg(feature = "tls-ml-dsa-44")]
-        TransportPublicKey::MlDsa44 {
-            verifying_key_bytes,
-        } => AcceptSpecificServerCertVerifier::new(
-            ml_dsa::VerifyingKey::<ml_dsa::MlDsa44>::decode(verifying_key_bytes),
-        ),
+        VerifyingKey::MlDsa44((ml_dsa_key, _)) => {
+            AcceptSpecificServerCertVerifier::new(ml_dsa_key.as_ref().clone())
+        }
         _ => {
             return Err(CryptoError::TlsError(
-                "Server cerficiate type not supported".to_string(),
+                "Server certificate type not supported for TLS".to_string(),
             ));
         }
     };

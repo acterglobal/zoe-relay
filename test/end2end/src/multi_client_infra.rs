@@ -70,7 +70,7 @@ use tracing::{debug, info, warn};
 use zoe_client::RelayClient;
 use zoe_wire_protocol::{
     Content, Filter, KeyPair, Kind, Message, MessageFilters, MessageFull, StreamMessage,
-    SubscriptionConfig, Tag, TransportPublicKey, VerifyingKey, generate_keypair,
+    SubscriptionConfig, Tag, VerifyingKey,
 };
 
 // ============================================================================
@@ -117,27 +117,9 @@ pub async fn perform_version_negotiation(connection: &quinn::Connection) -> Resu
 /// * `Err(error)` - Challenge protocol failed
 pub async fn perform_challenge_handshake(
     connection: &quinn::Connection,
-    server_public_key: &TransportPublicKey,
+    server_public_key: &VerifyingKey,
     client_keypairs: &[&KeyPair],
 ) -> Result<(usize, Vec<String>)> {
-    // Convert TransportPublicKey to VerifyingKey for challenge protocol
-    let server_verifying_key = match server_public_key {
-        TransportPublicKey::Ed25519 { verifying_key } => {
-            zoe_wire_protocol::VerifyingKey::Ed25519(Box::new(*verifying_key))
-        }
-        TransportPublicKey::MlDsa44 {
-            verifying_key_bytes,
-        } => {
-            let encoded = ml_dsa::EncodedVerifyingKey::<ml_dsa::MlDsa44>::try_from(
-                verifying_key_bytes.as_slice(),
-            )
-            .map_err(|e| anyhow::anyhow!("Invalid ML-DSA key encoding: {}", e))?;
-
-            zoe_wire_protocol::VerifyingKey::from(ml_dsa::VerifyingKey::<ml_dsa::MlDsa44>::decode(
-                &encoded,
-            ))
-        }
-    };
 
     // Accept bidirectional stream for challenge protocol
     let (send, recv) = connection
@@ -150,7 +132,7 @@ pub async fn perform_challenge_handshake(
         zoe_wire_protocol::challenge::client::perform_client_challenge_handshake(
             send,
             recv,
-            &server_verifying_key,
+            server_public_key,
             client_keypairs,
         )
         .await
@@ -177,7 +159,7 @@ pub async fn perform_challenge_handshake(
 /// * `Err(error)` - Protocol setup failed
 pub async fn perform_full_protocol_setup(
     connection: &quinn::Connection,
-    server_public_key: &TransportPublicKey,
+    server_public_key: &VerifyingKey,
     client_keypairs: &[&KeyPair],
 ) -> Result<(String, usize, Vec<String>)> {
     // Step 1: Version negotiation
@@ -223,7 +205,7 @@ pub async fn perform_full_protocol_setup(
 /// * `Err(error)` - Connection or protocol setup failed
 pub async fn create_authenticated_connection(
     server_addr: std::net::SocketAddr,
-    server_public_key: &TransportPublicKey,
+    server_public_key: &VerifyingKey,
     client_keypairs: &[&KeyPair],
 ) -> Result<(quinn::Connection, String, usize, Vec<String>)> {
     // Create client endpoint
@@ -409,7 +391,7 @@ impl MultiClientTestHarness {
         info!("👤 Creating test client '{}'", name);
 
         // Generate unique keypair for this client
-        let keypair = generate_keypair(&mut rand::thread_rng());
+        let keypair = KeyPair::generate(&mut rand::thread_rng());
 
         // Create the underlying relay client (this handles version negotiation and challenge protocol)
         let client = timeout(

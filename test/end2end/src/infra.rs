@@ -17,10 +17,7 @@ use zoe_blob_store::BlobServiceImpl;
 use zoe_client::RelayClient;
 use zoe_message_store::RedisMessageStorage;
 use zoe_relay::{RelayServer, RelayServiceRouter};
-use zoe_wire_protocol::{
-    KeyPair, Kind, Message, MessageFilters, MessageFull, Tag, TransportPrivateKey,
-    TransportPublicKey, VerifyingKey, generate_ed25519_relay_keypair, generate_keypair,
-};
+use zoe_wire_protocol::{KeyPair, Kind, Message, MessageFilters, MessageFull, Tag, VerifyingKey};
 
 // Initialize crypto provider for Rustls
 fn init_crypto_provider() {
@@ -36,7 +33,7 @@ fn init_crypto_provider() {
 pub struct TestInfrastructure {
     pub server_handle: tokio::task::JoinHandle<Result<(), anyhow::Error>>,
     pub server_addr: SocketAddr,
-    pub server_public_key: TransportPublicKey,
+    pub server_public_key: VerifyingKey,
     pub client_keypair: KeyPair,
     pub temp_dirs: Vec<TempDir>,
     pub redis_url: String,
@@ -64,7 +61,7 @@ impl TestInfrastructure {
         let blob_dir = blob_temp_dir.path().to_path_buf();
 
         // Generate server keys (Ed25519 for TLS by default)
-        let server_keypair = TransportPrivateKey::default(); // Ed25519 by default
+        let server_keypair = KeyPair::generate_ed25519(&mut rand::thread_rng()); // Ed25519 for transport
         let server_public_key = server_keypair.public_key();
 
         info!(
@@ -112,7 +109,7 @@ impl TestInfrastructure {
         tokio::time::sleep(Duration::from_millis(100)).await;
 
         // Generate client key
-        let client_keypair = generate_keypair(&mut thread_rng());
+        let client_keypair = KeyPair::generate(&mut thread_rng());
 
         info!("✅ Test infrastructure setup complete");
 
@@ -139,7 +136,7 @@ impl TestInfrastructure {
         info!("👤 Creating relay client with {} signature", signature_type);
 
         let keypair = match signature_type {
-            "Ed25519" => generate_ed25519_relay_keypair(&mut rand::thread_rng()),
+            "Ed25519" => KeyPair::generate_ed25519(&mut rand::thread_rng()),
             "MlDsa44" => KeyPair::generate_ml_dsa44(&mut rand::thread_rng()),
             "MlDsa65" => KeyPair::generate_ml_dsa65(&mut rand::thread_rng()),
             "MlDsa87" => KeyPair::generate_ml_dsa87(&mut rand::thread_rng()),
@@ -370,7 +367,7 @@ mod tests {
             timeout(
                 Duration::from_secs(5),
                 RelayClient::new(
-                    generate_keypair(&mut rand::thread_rng()),
+                    KeyPair::generate(&mut rand::thread_rng()),
                     infra.server_public_key.clone(),
                     infra.server_addr,
                 ),
@@ -570,7 +567,7 @@ mod tests {
             timeout(
                 Duration::from_secs(5),
                 RelayClient::new(
-                    generate_keypair(&mut rand::thread_rng()),
+                    KeyPair::generate(&mut rand::thread_rng()),
                     infra.server_public_key.clone(),
                     infra.server_addr,
                 ),
@@ -765,7 +762,7 @@ mod tests {
             timeout(
                 Duration::from_secs(5),
                 RelayClient::new(
-                    generate_keypair(&mut rand::thread_rng()),
+                    KeyPair::generate(&mut rand::thread_rng()),
                     infra.server_public_key.clone(),
                     infra.server_addr,
                 ),
@@ -828,7 +825,7 @@ mod tests {
             timeout(
                 Duration::from_secs(5),
                 RelayClient::new(
-                    generate_keypair(&mut rand::thread_rng()),
+                    KeyPair::generate(&mut rand::thread_rng()),
                     infra.server_public_key.clone(),
                     infra.server_addr,
                 ),
@@ -1113,7 +1110,7 @@ mod tests {
             timeout(
                 Duration::from_secs(5),
                 RelayClient::new(
-                    generate_keypair(&mut rand::thread_rng()),
+                    KeyPair::generate(&mut rand::thread_rng()),
                     infra.server_public_key.clone(),
                     infra.server_addr,
                 ),
