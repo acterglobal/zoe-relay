@@ -787,12 +787,20 @@ impl std::ops::Deref for MessageV0 {
 pub struct MessageFull {
     /// Blake3 hash serving as the unique message identifier.
     ///
-    /// Computed as: `Blake3(signature.encode())`
+    /// Computed as: `Blake3(messsage.as_bytes())`
+    /// Notice that the ID does not include the signature as
+    /// that may contain random ness (ML-DSA does) and thus would
+    /// create different hash IDs for the same content message.
+    ///
+    /// That means that if there are two messages with the same contentn
+    /// but valid signatures (verified against the sender) they are considered
+    /// the same in terms of storage and retrieval and there is no guarantee you
+    /// received the one with the same signature - just with _a_ valid signature.
     ///
     /// This ID is:
     /// - **Unique**: Cryptographically improbable to collide
-    /// - **Deterministic**: Same signed message always produces same ID
-    /// - **Tamper-evident**: Changes to message or signature change the ID
+    /// - **Deterministic**: Same content  always produces same ID
+    /// - **Tamper-evident**: Changes to messagd change the ID
     /// - **Content-addressed**: Can be used to retrieve the message
     #[serde(skip_serializing)]
     id: Hash, // FIXNE we could and should compute this on the fly and caceh it
@@ -855,7 +863,7 @@ impl MessageFull {
             return Err("Signature does not match sender message".into());
         }
         let mut hasher = Hasher::new();
-        hasher.update(&signature.encode());
+        hasher.update(&message_bytes);
         Ok(Self {
             id: hasher.finalize(),
             message,
@@ -1711,7 +1719,7 @@ mod tests {
     }
 
     #[test]
-    fn test_same_content_different_signatures() {
+    fn test_same_content_different_signatures_but_same_id() {
         let (sk, pk) = make_keys();
         let content = DummyContent { value: 42 };
 
@@ -1736,10 +1744,10 @@ mod tests {
         let msg_full2 = MessageFull::new(core2, &sk).unwrap();
 
         // Same content but different signatures (ML-DSA is non-deterministic)
-        // should produce different IDs since ID is based on signature
-        assert_ne!(msg_full1.id, msg_full2.id);
+        assert_ne!(msg_full1.signature, msg_full2.signature);
 
-        // But the underlying message content should be the same
+        // but the id and message should be the same
+        assert_eq!(msg_full1.id, msg_full2.id);
         assert_eq!(msg_full1.message, msg_full2.message);
     }
 
