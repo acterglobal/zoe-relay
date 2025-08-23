@@ -719,6 +719,15 @@ impl KeyPair {
         KeyPair::generate_ml_dsa65(rng)
     }
 
+    pub fn generate_for_algorithm<R: rand::CryptoRng + rand::RngCore>(algorithm: Algorithm, rng: &mut R) -> KeyPair {
+        match algorithm {
+            Algorithm::Ed25519 => KeyPair::generate_ed25519(rng),
+            Algorithm::MlDsa44 => KeyPair::generate_ml_dsa44(rng),
+            Algorithm::MlDsa65 => KeyPair::generate_ml_dsa65(rng),
+            Algorithm::MlDsa87 => KeyPair::generate_ml_dsa87(rng),
+        }
+    }
+
     pub fn generate_ed25519<R: rand::CryptoRng + rand::RngCore>(rng: &mut R) -> KeyPair {
         KeyPair::Ed25519(Box::new(ed25519_dalek::SigningKey::generate(rng)))
     }

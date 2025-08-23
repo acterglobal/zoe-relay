@@ -4,6 +4,7 @@ pub mod error;
 pub mod file_storage;
 #[cfg(feature = "frb-api")]
 pub mod frb_api;
+pub mod pqxdh;
 pub mod relay_client;
 pub mod rpc_transport;
 pub mod services;
@@ -13,6 +14,10 @@ pub use frb_api::*;
 pub use client::{Client, ClientBuilder};
 pub use error::ClientError;
 pub use file_storage::FileStorage;
+pub use pqxdh::{
+    PqxdhSession, PqxdhProtocolHandler, create_pqxdh_prekey_bundle_with_private_keys,
+    publish_pqxdh_inbox, fetch_pqxdh_inbox, send_pqxdh_initial_message,
+};
 pub use relay_client::RelayClient;
 pub use rpc_transport::{RpcMessageListener, TarpcOverMessagesClient, TarpcOverMessagesServer};
 pub use services::{BlobService, MessagesService, MessagesStream};

@@ -13,8 +13,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::time::timeout;
 use tracing::{debug, info, warn};
 use zoe_wire_protocol::{
-    Content, Filter, KeyPair, Kind, Message, MessageFilters, MessageFull, StoreKey, StreamMessage,
-    SubscriptionConfig, Tag, VerifyingKey,
+    Algorithm, Content, Filter, KeyPair, Kind, Message, MessageFilters, MessageFull, StoreKey, StreamMessage, SubscriptionConfig, Tag, VerifyingKey
 };
 
 /// Test message posting and retrieval functionality
@@ -381,10 +380,10 @@ async fn test_all_signature_types_e2e() -> Result<()> {
     let infra = TestInfrastructure::setup().await?;
 
     // Create clients with different signature types
-    let ed25519_client = infra.create_client_with_signature_type("Ed25519").await?;
-    let ml_dsa_44_client = infra.create_client_with_signature_type("MlDsa44").await?;
-    let ml_dsa_65_client = infra.create_client_with_signature_type("MlDsa65").await?;
-    let ml_dsa_87_client = infra.create_client_with_signature_type("MlDsa87").await?;
+    let ed25519_client = infra.create_client_for_algorithm(Algorithm::Ed25519).await?;
+    let ml_dsa_44_client = infra.create_client_for_algorithm(Algorithm::MlDsa44).await?;
+    let ml_dsa_65_client = infra.create_client_for_algorithm(Algorithm::MlDsa65).await?;
+    let ml_dsa_87_client = infra.create_client_for_algorithm(Algorithm::MlDsa87).await?;
 
     info!("🔑 Created clients with all signature types");
 
@@ -650,8 +649,8 @@ async fn test_signature_type_interoperability_e2e() -> Result<()> {
     let infra = TestInfrastructure::setup().await?;
 
     // Create two clients with different signature types
-    let ed25519_client = infra.create_client_with_signature_type("Ed25519").await?;
-    let ml_dsa_65_client = infra.create_client_with_signature_type("MlDsa65").await?;
+    let ed25519_client = infra.create_client_for_algorithm(Algorithm::Ed25519).await?;
+    let ml_dsa_65_client = infra.create_client_for_algorithm(Algorithm::MlDsa65).await?;
 
     info!("🔑 Created Ed25519 and ML-DSA-65 clients for interoperability test");
 

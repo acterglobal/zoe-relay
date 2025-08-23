@@ -72,12 +72,10 @@ pub struct PqxdhPrekeyBundle {
     pub pq_one_time_signatures: BTreeMap<String, Signature>,
 }
 
-/// PQXDH echo service inbox for testing and connectivity verification
+/// PQXDH inbox for connecting to a user
 ///
-/// This inbox type is used for simple echo/ping services that test
-/// PQXDH connectivity and measure round-trip times.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
-pub struct PqxdhEchoServiceInbox {
+pub struct PqxdhInbox {
     /// Access control and responsiveness expectations
     pub inbox_type: InboxType,
     /// PQXDH prekeys for key agreement (always present)
@@ -154,6 +152,20 @@ pub struct PqxdhSharedSecret {
     pub consumed_one_time_key_ids: Vec<String>,
 }
 
+/// Initial payload structure for PQXDH sessions
+/// 
+/// This structure is encrypted inside the PqxdhInitialMessage and contains
+/// both the user's initial payload and a randomized channel ID for subsequent
+/// session messages to provide unlinkability.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct PqxdhInitialPayload {
+    /// The actual user payload (e.g., RPC request)
+    pub user_payload: Vec<u8>,
+    /// Randomized channel ID for subsequent session messages (32 bytes)
+    /// This provides unlinkability - observers cannot correlate session messages
+    pub session_channel_id: [u8; 32],
+}
+
 /// Errors that can occur during PQXDH operations
 #[derive(Debug, thiserror::Error)]
 pub enum PqxdhError {
@@ -200,7 +212,7 @@ impl PqxdhPrekeyBundle {
     }
 }
 
-impl PqxdhEchoServiceInbox {
+impl PqxdhInbox {
     /// Create a new echo service inbox
     pub fn new(
         inbox_type: InboxType,
@@ -328,7 +340,7 @@ mod tests {
             pq_one_time_signatures: BTreeMap::new(),
         };
 
-        let inbox = PqxdhEchoServiceInbox::new(
+        let inbox = PqxdhInbox::new(
             InboxType::Public,
             prekey_bundle,
             Some(1024),
@@ -401,11 +413,11 @@ mod tests {
             pq_one_time_signatures: BTreeMap::new(),
         };
 
-        let inbox = PqxdhEchoServiceInbox::new(InboxType::Private, prekey_bundle, None, None);
+        let inbox = PqxdhInbox::new(InboxType::Private, prekey_bundle, None, None);
 
         // Test serialization round-trip
         let serialized = postcard::to_stdvec(&inbox).unwrap();
-        let deserialized: PqxdhEchoServiceInbox = postcard::from_bytes(&serialized).unwrap();
+        let deserialized: PqxdhInbox = postcard::from_bytes(&serialized).unwrap();
 
         assert_eq!(inbox, deserialized);
     }

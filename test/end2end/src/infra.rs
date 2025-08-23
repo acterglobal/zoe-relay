@@ -16,7 +16,7 @@ use zoe_blob_store::BlobServiceImpl;
 use zoe_client::RelayClient;
 use zoe_message_store::RedisMessageStorage;
 use zoe_relay::{RelayServer, RelayServiceRouter};
-use zoe_wire_protocol::{KeyPair, Kind, Message, MessageFilters, MessageFull, Tag, VerifyingKey};
+use zoe_wire_protocol::{Algorithm, KeyPair, Kind, Message, MessageFilters, MessageFull, Tag, VerifyingKey};
 
 // Initialize crypto provider for Rustls
 fn init_crypto_provider() {
@@ -124,28 +124,17 @@ impl TestInfrastructure {
 
     /// Create a new relay client connected to the test server
     pub async fn create_client(&self) -> Result<RelayClient> {
-        self.create_client_with_signature_type("MlDsa65").await
+        self.create_client_for_algorithm(Algorithm::MlDsa65).await
     }
 
     /// Create a new relay client with a specific signature type
-    pub async fn create_client_with_signature_type(
+    pub async fn create_client_for_algorithm(
         &self,
-        signature_type: &str,
+        algorithm: Algorithm ,
     ) -> Result<RelayClient> {
-        info!("👤 Creating relay client with {} signature", signature_type);
+        info!("👤 Creating relay client with {} signature", algorithm);
 
-        let keypair = match signature_type {
-            "Ed25519" => KeyPair::generate_ed25519(&mut rand::thread_rng()),
-            "MlDsa44" => KeyPair::generate_ml_dsa44(&mut rand::thread_rng()),
-            "MlDsa65" => KeyPair::generate_ml_dsa65(&mut rand::thread_rng()),
-            "MlDsa87" => KeyPair::generate_ml_dsa87(&mut rand::thread_rng()),
-            _ => {
-                return Err(anyhow::anyhow!(
-                    "Unsupported signature type: {}",
-                    signature_type
-                ));
-            }
-        };
+        let keypair = KeyPair::generate_for_algorithm(algorithm, &mut rand::thread_rng());
 
         let client = timeout(
             Duration::from_secs(5),
@@ -157,7 +146,7 @@ impl TestInfrastructure {
 
         info!(
             "✅ Relay client with {} signature connected successfully",
-            signature_type
+            algorithm
         );
         Ok(client)
     }
