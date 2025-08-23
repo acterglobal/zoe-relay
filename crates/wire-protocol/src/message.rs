@@ -1740,28 +1740,28 @@ mod size_tests {
                 "Ed25519" => {
                     // Ed25519: ~120 bytes (allow some variance for postcard overhead)
                     assert!(
-                        size >= 100 && size <= 150,
+                        (100..=150).contains(&size),
                         "Ed25519 message size {size} should be ~120 bytes (100-150 range)"
                     );
                 }
                 "MlDsa44" => {
                     // ML-DSA-44: ~3,832 bytes (allow reasonable variance)
                     assert!(
-                        size >= 3700 && size <= 4000,
+                        (3700..=4000).contains(&size),
                         "ML-DSA-44 message size {size} should be ~3,832 bytes (3700-4000 range)"
                     );
                 }
                 "MlDsa65" => {
                     // ML-DSA-65: ~5,362 bytes (allow reasonable variance)
                     assert!(
-                        size >= 5200 && size <= 5600,
+                        (5200..=5600).contains(&size),
                         "ML-DSA-65 message size {size} should be ~5,362 bytes (5200-5600 range)"
                     );
                 }
                 "MlDsa87" => {
                     // ML-DSA-87: ~7,322 bytes (allow reasonable variance)
                     assert!(
-                        size >= 7100 && size <= 7600,
+                        (7100..=7600).contains(&size),
                         "ML-DSA-87 message size {} should be ~7,322 bytes (7100-7600 range)",
                         size
                     );
@@ -1781,7 +1781,7 @@ mod size_tests {
 
         // Ed25519 should be the smallest - around 120 bytes
         assert!(
-            size >= 100 && size <= 150,
+            (100..=150).contains(&size),
             "Ed25519 minimum message size {} should be approximately 120 bytes",
             size
         );
@@ -1799,7 +1799,7 @@ mod size_tests {
 
         // ML-DSA-44 should be around 3,832 bytes
         assert!(
-            size >= 3700 && size <= 4000,
+            (3700..=4000).contains(&size),
             "ML-DSA-44 minimum message size {} should be approximately 3,832 bytes",
             size
         );
@@ -1817,7 +1817,7 @@ mod size_tests {
 
         // ML-DSA-65 should be around 5,362 bytes
         assert!(
-            size >= 5200 && size <= 5600,
+            (5200..=5600).contains(&size),
             "ML-DSA-65 minimum message size {} should be approximately 5,362 bytes",
             size
         );
@@ -1835,7 +1835,7 @@ mod size_tests {
 
         // ML-DSA-87 should be around 7,322 bytes
         assert!(
-            size >= 7100 && size <= 7600,
+            (7100..=7600).contains(&size),
             "ML-DSA-87 minimum message size {} should be approximately 7,322 bytes",
             size
         );
@@ -1878,17 +1878,17 @@ mod size_tests {
 
         // Assert expected ratios (ML-DSA should be significantly larger)
         assert!(
-            mldsa44_ratio >= 25.0 && mldsa44_ratio <= 40.0,
+            (25.0..=40.0).contains(&mldsa44_ratio),
             "ML-DSA-44 should be 25-40x larger than Ed25519, got {:.1}x",
             mldsa44_ratio
         );
         assert!(
-            mldsa65_ratio >= 35.0 && mldsa65_ratio <= 55.0,
+            (35.0..=55.0).contains(&mldsa65_ratio),
             "ML-DSA-65 should be 35-55x larger than Ed25519, got {:.1}x",
             mldsa65_ratio
         );
         assert!(
-            mldsa87_ratio >= 50.0 && mldsa87_ratio <= 75.0,
+            (50.0..=75.0).contains(&mldsa87_ratio),
             "ML-DSA-87 should be 50-75x larger than Ed25519, got {:.1}x",
             mldsa87_ratio
         );

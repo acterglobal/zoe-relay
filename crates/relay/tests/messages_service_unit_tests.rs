@@ -61,7 +61,7 @@ async fn test_filter_operations_with_new_types() {
 
     // Test adding authors
     let alice_key = create_test_verifying_key(b"alice");
-    let add_authors = FilterOperation::add_authors(vec![alice_key.id().clone()]);
+    let add_authors = FilterOperation::add_authors(vec![*alice_key.id()]);
     filters.apply_operation(&add_authors);
 
     // Check that author was added
@@ -120,7 +120,7 @@ async fn test_catch_up_with_new_api() {
     while let Some(result) = catch_up_stream.next().await {
         let (message, _) = result.expect("Failed to get message from stream");
         messages.push(message);
-        if messages.len() >= 1 {
+        if !messages.is_empty() {
             break; // We expect at least one message
         }
     }

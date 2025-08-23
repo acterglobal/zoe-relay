@@ -163,7 +163,7 @@ impl SqliteMessageStorage {
                 Tag::User { id: user_id, .. } => {
                     joins.push("INNER JOIN tag_users tu ON m.id = tu.message_id".to_string());
                     conditions.push("tu.user_id = ?".to_string());
-                    params.push(Box::new(user_id.clone()));
+                    params.push(Box::new(*user_id));
                 }
                 Tag::Channel { id: channel_id, .. } => {
                     joins.push("INNER JOIN tag_channels tc ON m.id = tc.message_id".to_string());

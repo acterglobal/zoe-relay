@@ -146,9 +146,9 @@ async fn test_atomic_multi_field_operations() {
 
     let operations = vec![
         FilterOperation::add_channels(vec![b"general".to_vec(), b"tech".to_vec()]),
-        FilterOperation::add_authors(vec![alice_key.clone()]),
+        FilterOperation::add_authors(vec![alice_key]),
         FilterOperation::add_events(vec![b"important".to_vec()]),
-        FilterOperation::add_users(vec![user1_key.clone()]),
+        FilterOperation::add_users(vec![user1_key]),
     ];
 
     // Apply all operations atomically
