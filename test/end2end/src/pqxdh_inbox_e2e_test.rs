@@ -18,6 +18,7 @@ use std::collections::BTreeMap;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::time::timeout;
 use tracing::{debug, info, warn};
+use zoe_client::services::MessagesManager;
 use zoe_client::{
     PqxdhSession, PqxdhProtocolHandler, create_pqxdh_prekey_bundle_with_private_keys,
     publish_pqxdh_inbox, fetch_pqxdh_inbox, send_pqxdh_initial_message,
@@ -974,13 +975,19 @@ async fn test_pqxdh_inbox_privacy_preserving_e2e() -> Result<()> {
 
     info!("📤 Step 1: Alice creating protocol handler and publishing inbox");
 
+    // Create messages manager for Alice
+    let alice_manager = MessagesManager::new(
+        alice_messages,
+        alice_stream,
+        None,
+    );
+    
     // Create Alice's protocol handler for echo service
     let mut alice_handler = PqxdhProtocolHandler::<EchoRequest>::new(
-        &alice,
+        &alice_manager,
+        alice.keypair(),
         PqxdhInboxProtocol::EchoService,
-    )
-    .await
-    .context("Failed to create Alice's protocol handler")?;
+    );
 
     // Publish service - the handler manages all the complexity internally
     let dummy_service_data = EchoRequest {
@@ -990,7 +997,7 @@ async fn test_pqxdh_inbox_privacy_preserving_e2e() -> Result<()> {
     };
     
     let _service_tag = alice_handler
-        .publish_service(&dummy_service_data)
+        .publish_service(false) // Don't force overwrite
         .await
         .context("Failed to publish PQXDH service")?;
 
@@ -998,9 +1005,8 @@ async fn test_pqxdh_inbox_privacy_preserving_e2e() -> Result<()> {
     info!("   🎯 All session management, key handling, and subscriptions automated");
 
     // Start listening for client connections (this would handle the message processing)
-    alice_handler
+    let _alice_pqxdh_stream = alice_handler
         .start_listening_for_clients()
-        .await
         .context("Failed to start listening for clients")?;
 
     info!("✅ Alice started listening for client connections");
@@ -1012,13 +1018,19 @@ async fn test_pqxdh_inbox_privacy_preserving_e2e() -> Result<()> {
 
     info!("🔗 Step 2: Bob creating protocol handler and connecting to Alice's service");
 
+    // Create messages manager for Bob
+    let bob_manager = MessagesManager::new(
+        bob_messages,
+        bob_stream,
+        None,
+    );
+
     // Create Bob's protocol handler for echo service
     let mut bob_handler = PqxdhProtocolHandler::<EchoRequest>::new(
-        &bob,
+        &bob_manager,
+        bob.keypair(),
         PqxdhInboxProtocol::EchoService,
-    )
-    .await
-    .context("Failed to create Bob's protocol handler")?;
+    );
 
     // Connect to Alice's service - this handles discovery, session establishment, and subscriptions
     let echo_request = EchoRequest {

@@ -9,21 +9,20 @@ use anyhow::{Context, Result};
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 use zoe_wire_protocol::{
     inbox::pqxdh::{
         PqxdhSharedSecret, PqxdhInbox, PqxdhInitialPayload, InboxType, generate_pqxdh_prekeys, pqxdh_initiate,
         encrypt_pqxdh_session_message, decrypt_pqxdh_session_message,
     },
-    Filter, Kind, Message, MessageFilters, MessageFull, PqxdhInboxProtocol, StoreKey, SubscriptionConfig, Tag, VerifyingKey,
+    Kind, Message, MessageFull, PqxdhInboxProtocol, StoreKey, Tag, VerifyingKey,
 };
 
 /// High-level PQXDH inbox management functions
 /// 
 /// These functions accept a `MessagesService` to allow reuse of existing connections
 /// rather than creating new ones for each operation.
-
+/// 
 /// Publish a PQXDH inbox for a specific protocol
 pub async fn publish_pqxdh_inbox<T: Serialize>(
     messages_service: &MessagesService,
@@ -85,9 +84,11 @@ pub async fn fetch_pqxdh_inbox<T: for<'de> Deserialize<'de>>(
 }
 
 /// A PQXDH session for secure communication
+#[derive(Serialize, Deserialize, Clone)]
 pub struct PqxdhSession {
     shared_secret: PqxdhSharedSecret,
-    sequence_number: AtomicU64,
+    /// Current sequence number for this session (stored as u64 for serialization)
+    sequence_number: u64,
     /// Randomized channel ID for session messages (provides unlinkability)
     session_channel_id: [u8; 32],
 }
@@ -169,7 +170,7 @@ impl PqxdhSession {
         
         let session = Self {
             shared_secret,
-            sequence_number: AtomicU64::new(1),
+            sequence_number: 1,
             session_channel_id,
         };
         
@@ -178,9 +179,16 @@ impl PqxdhSession {
         Ok((session, None))
     }
     
+    /// Get the next sequence number and increment the internal counter
+    pub fn next_sequence_number(&mut self) -> u64 {
+        let current = self.sequence_number;
+        self.sequence_number += 1;
+        current
+    }
+
     /// Send a message in an established PQXDH session
     pub async fn send_message<T: Serialize>(
-        &self,
+        &mut self,
         messages_service: &MessagesService,
         client_keypair: &zoe_wire_protocol::KeyPair,
         payload: &T,
@@ -191,7 +199,7 @@ impl PqxdhSession {
             .context("Failed to serialize payload")?;
         
         // Encrypt as session message
-        let sequence = self.sequence_number.fetch_add(1, Ordering::SeqCst);
+        let sequence = self.next_sequence_number();
         let mut rng = rand::thread_rng();
         let session_message = encrypt_pqxdh_session_message(
             &self.shared_secret,
@@ -254,7 +262,7 @@ impl PqxdhSession {
     ) -> Self {
         Self {
             shared_secret,
-            sequence_number: AtomicU64::new(1),
+            sequence_number: 1,
             session_channel_id,
         }
     }
@@ -309,6 +317,38 @@ pub async fn send_pqxdh_initial_message(
     Ok(derived_tag)
 }
 
+/// Serializable state for a PQXDH protocol handler
+/// 
+/// This structure contains all the persistent state needed to restore a 
+/// PqxdhProtocolHandler across application restarts. It excludes runtime
+/// dependencies like the messages manager and client keypair.
+#[derive(Serialize, Deserialize, Clone)]
+pub struct PqxdhProtocolState {
+    /// The PQXDH protocol variant being used
+    pub protocol: PqxdhInboxProtocol,
+    /// Active sessions keyed by target user ID
+    pub sessions: BTreeMap<Vec<u8>, PqxdhSession>,
+    /// Subscription ID for listening to initial messages (author-based)
+    pub inbox_subscription_id: Option<String>,
+    /// Subscription IDs for session channels keyed by target user ID
+    pub session_subscriptions: BTreeMap<Vec<u8>, String>,
+    /// Private keys for responding to initial messages (if we're a service provider)
+    pub private_keys: Option<zoe_wire_protocol::inbox::pqxdh::PqxdhPrivateKeys>,
+}
+
+impl PqxdhProtocolState {
+    /// Create a new empty protocol state
+    pub fn new(protocol: PqxdhInboxProtocol) -> Self {
+        Self {
+            protocol,
+            sessions: BTreeMap::new(),
+            inbox_subscription_id: None,
+            session_subscriptions: BTreeMap::new(),
+            private_keys: None,
+        }
+    }
+}
+
 /// A complete PQXDH protocol handler that encapsulates all session management,
 /// key observation, subscription handling, and message routing logic.
 /// 
@@ -318,17 +358,10 @@ pub async fn send_pqxdh_initial_message(
 /// - Message sending/receiving with proper channel management
 /// - Automatic subscription management for both initial and session messages
 pub struct PqxdhProtocolHandler<'a, T> {
-    messages_service: MessagesService,
+    messages_manager: &'a crate::services::MessagesManager,
     client_keypair: &'a zoe_wire_protocol::KeyPair,
-    protocol: PqxdhInboxProtocol,
-    /// Active sessions keyed by target user ID
-    sessions: BTreeMap<Vec<u8>, PqxdhSession>,
-    /// Subscription ID for listening to initial messages (author-based)
-    inbox_tag: Option<Tag>,
-    /// Subscription IDs for session channels
-    session_subscriptions: BTreeMap<Vec<u8>, Tag>,
-    /// Private keys for responding to initial messages (if we're a service provider)
-    private_keys: Option<zoe_wire_protocol::inbox::pqxdh::PqxdhPrivateKeys>,
+    /// Persistent state that can be serialized and restored
+    state: PqxdhProtocolState,
     _phantom: std::marker::PhantomData<T>,
 }
 
@@ -341,25 +374,52 @@ where
     /// This creates a handler that can be used either as:
     /// - **Service Provider**: Call `publish_service()` then `start_listening_for_clients()`
     /// - **Client**: Call `connect_to_service()` then `send_message()`
-    pub async fn new(
-        client: &'a crate::RelayClient,
+    /// 
+    /// # Arguments
+    /// * `messages_manager` - The messages manager to use for message operations
+    /// * `client_keypair` - The client's keypair for signing and encryption
+    /// * `protocol` - The specific PQXDH protocol variant to use
+    pub fn new(
+        messages_manager: &'a crate::services::MessagesManager,
+        client_keypair: &'a zoe_wire_protocol::KeyPair,
         protocol: PqxdhInboxProtocol,
-    ) -> Result<Self> {
-        let (messages_service, _stream) = client
-            .connect_message_service()
-            .await
-            .context("Failed to connect to message service")?;
-        
-        Ok(Self {
-            messages_service,
-            client_keypair: client.keypair(),
-            protocol,
-            sessions: BTreeMap::new(),
-            inbox_tag: None,
-            session_subscriptions: BTreeMap::new(),
-            private_keys: None,
+    ) -> Self {
+        Self {
+            messages_manager,
+            client_keypair,
+            state: PqxdhProtocolState::new(protocol),
             _phantom: std::marker::PhantomData,
-        })
+        }
+    }
+
+    /// Create a protocol handler from existing serialized state
+    /// 
+    /// This allows restoring a handler across application restarts by loading
+    /// previously serialized state from a database or file.
+    /// 
+    /// # Arguments
+    /// * `messages_manager` - The messages manager to use for message operations
+    /// * `client_keypair` - The client's keypair for signing and encryption
+    /// * `state` - Previously serialized protocol state
+    pub fn from_state(
+        messages_manager: &'a crate::services::MessagesManager,
+        client_keypair: &'a zoe_wire_protocol::KeyPair,
+        state: PqxdhProtocolState,
+    ) -> Self {
+        Self {
+            messages_manager,
+            client_keypair,
+            state,
+            _phantom: std::marker::PhantomData,
+        }
+    }
+
+    /// Get the current state for serialization and persistence
+    /// 
+    /// This returns a clone of the internal state that can be serialized
+    /// and stored in a database for later restoration.
+    pub fn get_state(&self) -> PqxdhProtocolState {
+        self.state.clone()
     }
     
     /// Publish a service inbox for this protocol (SERVICE PROVIDERS ONLY)
@@ -369,7 +429,7 @@ where
     /// 
     /// After calling this, call `start_listening_for_clients()` to begin accepting connections.
     pub async fn publish_service(&mut self, force_overwrite: bool) -> Result<Tag> {
-        if self.inbox_tag.is_some() && !force_overwrite {
+        if self.state.inbox_subscription_id.is_some() && !force_overwrite {
             return Err(anyhow::anyhow!("Inbox already published, use force_overwrite to overwrite"));
         }
         
@@ -380,7 +440,7 @@ where
         )?;
         
         // Store private keys for responding to initial messages
-        self.private_keys = Some(private_keys);
+        self.state.private_keys = Some(private_keys);
         
         // Create inbox
         let inbox = PqxdhInbox::new(
@@ -392,26 +452,31 @@ where
         
         // Publish using helper
         let tag = publish_pqxdh_inbox(
-            &self.messages_service,
+            self.messages_manager.messages_service(),
             self.client_keypair,
-            self.protocol.clone(),
+            self.state.protocol.clone(),
             &inbox,
         ).await?;
 
-        self.inbox_tag = Some(tag.clone());
+        // Create subscription for this inbox tag
+        let _filters = self.messages_manager
+            .subscribe_to_tag(&tag)
+            .await
+            .context("Failed to create inbox subscription")?;
+        
+        // Note: With the new state-based approach, we don't track individual subscription IDs
+        // The MessagesManager handles all subscription state internally
+        self.state.inbox_subscription_id = Some("inbox".to_string());
 
         Ok(tag)
     }
 
-    /// Get the inbox tag for this service
-    pub fn inbox_tag(&self) -> &Option<Tag> {
-        &self.inbox_tag
+    /// Get the inbox subscription ID for this service
+    pub fn inbox_subscription_id(&self) -> &Option<String> {
+        &self.state.inbox_subscription_id
     }
 
-    /// Set the inbox for this service
-    pub fn set_inbox_tag(&mut self, inbox_tag: Tag) {
-        self.inbox_tag = Some(inbox_tag);
-    }
+
 
     /// Connect to a service provider's inbox (CLIENTS ONLY)
     /// 
@@ -426,16 +491,16 @@ where
     ) -> Result<()> {
         // Discover inbox
         let (inbox, _tag) = fetch_pqxdh_inbox(
-            &self.messages_service,
+            self.messages_manager.messages_service(),
             target_service_key,
-            self.protocol.clone(),
+            self.state.protocol.clone(),
         )
         .await?
         .context("Target inbox not found")?;
         
         // Establish session
         let (session, _response): (PqxdhSession, Option<T>) = PqxdhSession::initiate(
-            &self.messages_service,
+            self.messages_manager.messages_service(),
             self.client_keypair,
             &inbox,
             initial_message,
@@ -443,26 +508,23 @@ where
         
         // Store session
         let target_id = target_service_key.id().to_vec();
-        self.sessions.insert(target_id.clone(), session);
+        self.state.sessions.insert(target_id.clone(), session);
         
         // Subscribe to the session channel for responses
-        let session = &self.sessions[&target_id];
-        let channel_config = SubscriptionConfig {
-            filters: MessageFilters {
-                filters: Some(vec![
-                    Filter::Channel(session.channel_id().to_vec()),
-                ]),
-            },
-            since: None,
-            limit: None,
+        let session = &self.state.sessions[&target_id];
+        let channel_tag = Tag::Channel {
+            id: session.channel_id().to_vec(),
+            relays: vec![],
         };
         
-        let subscription_id = self.messages_service
-            .subscribe(channel_config)
+        let _filters = self.messages_manager
+            .subscribe_to_tag(&channel_tag)
             .await
             .context("Failed to subscribe to session channel")?;
             
-        self.session_subscriptions.insert(target_id, subscription_id);
+        // Store a placeholder ID for this session (the MessagesManager handles the real state)
+        let session_id = format!("session_{:?}", target_id);
+        self.state.session_subscriptions.insert(target_id, session_id);
         
         Ok(())
     }
@@ -471,41 +533,60 @@ where
     /// 
     /// Use this to send additional messages after calling `connect_to_service()`.
     /// The message will be sent over the established secure PQXDH session.
-    pub async fn send_message(&self, target_service_key: &VerifyingKey, message: &T) -> Result<()> {
+    pub async fn send_message(&mut self, target_service_key: &VerifyingKey, message: &T) -> Result<()> {
         let target_id = target_service_key.id().to_vec();
-        let session = self.sessions.get(&target_id)
+        let session = self.state.sessions.get_mut(&target_id)
             .context("No active session with target")?;
             
-        session.send_message(&self.messages_service, self.client_keypair, message).await
+        session.send_message(self.messages_manager.messages_service(), self.client_keypair, message).await
     }
     
     /// Start listening for client connections (SERVICE PROVIDERS ONLY)
     /// 
     /// Call this after `publish_service()` to begin accepting client connections.
-    /// This sets up subscriptions to receive initial PQXDH messages from clients.
-    pub async fn start_listening_for_clients(&mut self) -> Result<()> {
-        if self.private_keys.is_none() {
+    /// This returns a stream of PQXDH messages that should be processed.
+    /// 
+    /// # Returns
+    /// A stream of PQXDH messages that the caller should process
+    pub fn start_listening_for_clients(
+        &self,
+    ) -> Result<impl futures::Stream<Item = zoe_wire_protocol::StreamMessage>> {
+        if self.state.private_keys.is_none() {
             return Err(anyhow::anyhow!("Must call publish_service() before listening for clients"));
         }
 
-        let Some(tag) = &self.inbox_tag else {
-            return Err(anyhow::anyhow!("Must no tag set"));
+        let Some(_subscription_id) = &self.state.inbox_subscription_id else {
+            return Err(anyhow::anyhow!("No inbox subscription found - did you call publish_service()?"));
         };
         
-        // Subscribe to messages from any author (we'll filter by PQXDH content)
-        // In a real implementation, this might be more sophisticated
-        let _config = SubscriptionConfig {
-            filters: MessageFilters {
-                filters: Some(vec![Filter::Tag(tag.clone())]),
-            },
-            since: None,
-            limit: None,
-        };
+        // Get a filtered stream for PQXDH messages
+        // The subscription was already created in publish_service()
+        let pqxdh_stream = self.messages_manager.get_filtered_stream(move |stream_message| {
+            match stream_message {
+                zoe_wire_protocol::StreamMessage::MessageReceived { message, .. } => {
+                    // Check if this is a PQXDH message
+                    Self::is_pqxdh_message(message)
+                }
+                zoe_wire_protocol::StreamMessage::StreamHeightUpdate(_) => false,
+            }
+        });
         
-        // Note: This is a simplified version - the actual subscription logic
-        // would need to be more sophisticated to handle the privacy-preserving tags
+        tracing::info!("PQXDH: Started listening for client connections");
         
-        Ok(())
+        Ok(pqxdh_stream)
+    }
+    
+    /// Check if a message is a PQXDH protocol message
+    /// 
+    /// This is a helper function to identify PQXDH messages based on their content
+    /// or other characteristics. For now, it's a placeholder that returns true.
+    fn is_pqxdh_message(_message: &zoe_wire_protocol::MessageFull) -> bool {
+        // TODO: Implement proper PQXDH message detection
+        // This might involve:
+        // - Checking message content type
+        // - Looking for PQXDH-specific headers or metadata
+        // - Validating message structure
+        true
     }
 }
 
@@ -520,4 +601,113 @@ pub fn create_pqxdh_prekey_bundle_with_private_keys(
     let mut rng = rand::thread_rng();
     generate_pqxdh_prekeys(identity_keypair, num_one_time_keys, &mut rng)
         .map_err(|e| anyhow::anyhow!("Failed to generate PQXDH prekeys: {}", e))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use zoe_wire_protocol::KeyPair;
+
+    #[test]
+    fn test_pqxdh_session_serialization() {
+        // Create a test session
+        let shared_secret = PqxdhSharedSecret {
+            shared_key: [42u8; 32],
+            consumed_one_time_key_ids: vec!["key1".to_string(), "key2".to_string()],
+        };
+        let session_channel_id = [1u8; 32];
+        
+        let session = PqxdhSession::from_shared_secret(shared_secret, session_channel_id);
+        
+        // Test serialization round-trip
+        let serialized = postcard::to_stdvec(&session).expect("Failed to serialize session");
+        let deserialized: PqxdhSession = postcard::from_bytes(&serialized)
+            .expect("Failed to deserialize session");
+        
+        // Verify the data is preserved
+        assert_eq!(session.shared_secret.shared_key, deserialized.shared_secret.shared_key);
+        assert_eq!(session.shared_secret.consumed_one_time_key_ids, deserialized.shared_secret.consumed_one_time_key_ids);
+        assert_eq!(session.sequence_number, deserialized.sequence_number);
+        assert_eq!(session.session_channel_id, deserialized.session_channel_id);
+    }
+
+    #[test]
+    fn test_pqxdh_protocol_state_serialization() {
+        let protocol = PqxdhInboxProtocol::EchoService;
+        let mut state = PqxdhProtocolState::new(protocol.clone());
+        
+        // Add some test data
+        state.inbox_subscription_id = Some("sub_123".to_string());
+        
+        let target_id = vec![1, 2, 3, 4];
+        let shared_secret = PqxdhSharedSecret {
+            shared_key: [99u8; 32],
+            consumed_one_time_key_ids: vec!["consumed_key".to_string()],
+        };
+        let session = PqxdhSession::from_shared_secret(shared_secret, [5u8; 32]);
+        state.sessions.insert(target_id.clone(), session);
+        state.session_subscriptions.insert(target_id.clone(), "session_sub_456".to_string());
+        
+        // Test serialization round-trip
+        let serialized = postcard::to_stdvec(&state).expect("Failed to serialize state");
+        let deserialized: PqxdhProtocolState = postcard::from_bytes(&serialized)
+            .expect("Failed to deserialize state");
+        
+        // Verify the data is preserved
+        assert_eq!(state.protocol, deserialized.protocol);
+        assert_eq!(state.inbox_subscription_id, deserialized.inbox_subscription_id);
+        assert_eq!(state.sessions.len(), deserialized.sessions.len());
+        assert_eq!(state.session_subscriptions, deserialized.session_subscriptions);
+        
+        // Verify session data
+        let original_session = &state.sessions[&target_id];
+        let deserialized_session = &deserialized.sessions[&target_id];
+        assert_eq!(original_session.shared_secret.shared_key, deserialized_session.shared_secret.shared_key);
+        assert_eq!(original_session.sequence_number, deserialized_session.sequence_number);
+        assert_eq!(original_session.session_channel_id, deserialized_session.session_channel_id);
+    }
+
+    #[test]
+    fn test_pqxdh_private_keys_serialization() -> Result<()> {
+        // Generate test keypair with random data
+        let mut rng = rand::thread_rng();
+        let keypair = KeyPair::generate(&mut rng);
+        
+        // Generate prekey bundle with private keys (creates random keys)
+        let (_prekey_bundle, private_keys) = create_pqxdh_prekey_bundle_with_private_keys(&keypair, 3)?;
+        
+        // Test serialization round-trip
+        let serialized = postcard::to_stdvec(&private_keys)?;
+        let deserialized: zoe_wire_protocol::inbox::pqxdh::PqxdhPrivateKeys = 
+            postcard::from_bytes(&serialized)?;
+        
+        // Verify the data is preserved by comparing the keys directly (now that serde works)
+        // We can't use PartialEq on StaticSecret, so we compare the bytes
+        assert_eq!(
+            private_keys.signed_prekey_private.to_bytes(),
+            deserialized.signed_prekey_private.to_bytes()
+        );
+        assert_eq!(
+            private_keys.one_time_prekey_privates.len(),
+            deserialized.one_time_prekey_privates.len()
+        );
+        assert_eq!(private_keys.pq_signed_prekey_private, deserialized.pq_signed_prekey_private);
+        assert_eq!(private_keys.pq_one_time_prekey_privates, deserialized.pq_one_time_prekey_privates);
+        
+        // Verify one-time keys (should be random and different each time)
+        for (key_id, original_key) in &private_keys.one_time_prekey_privates {
+            let deserialized_key = &deserialized.one_time_prekey_privates[key_id];
+            assert_eq!(original_key.to_bytes(), deserialized_key.to_bytes());
+        }
+        
+        // Verify that keys are actually random by generating another set
+        let (_prekey_bundle2, private_keys2) = create_pqxdh_prekey_bundle_with_private_keys(&keypair, 3)?;
+        assert_ne!(
+            private_keys.signed_prekey_private.to_bytes(),
+            private_keys2.signed_prekey_private.to_bytes(),
+            "Keys should be randomly generated and different"
+        );
+        
+        Ok(())
+    }
 }
