@@ -18,10 +18,10 @@ use std::collections::BTreeMap;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::time::timeout;
 use tracing::{debug, info, warn};
-use zoe_client::services::MessagesManager;
+use zoe_client::services::{MessagesManager, MessagesManagerBuilder};
 use zoe_client::{
-    PqxdhSession, PqxdhProtocolHandler, create_pqxdh_prekey_bundle_with_private_keys,
-    publish_pqxdh_inbox, fetch_pqxdh_inbox, send_pqxdh_initial_message,
+    PqxdhProtocolHandler, PqxdhSession, create_pqxdh_prekey_bundle_with_private_keys,
+    fetch_pqxdh_inbox, publish_pqxdh_inbox, send_pqxdh_initial_message,
 };
 use zoe_wire_protocol::{
     Content, Filter, KeyPair, Kind, Message, MessageFilters, MessageFull, PqxdhInboxProtocol,
@@ -107,8 +107,7 @@ async fn test_pqxdh_types_and_serialization() -> Result<()> {
 
     // Test 2: Create and serialize PQXDH inbox
     info!("📋 Test 2: Creating and serializing PQXDH inbox");
-    let echo_inbox =
-        PqxdhInbox::new(InboxType::Public, prekey_bundle.clone(), Some(1024), None);
+    let echo_inbox = PqxdhInbox::new(InboxType::Public, prekey_bundle.clone(), Some(1024), None);
 
     let serialized_inbox =
         postcard::to_stdvec(&echo_inbox).context("Failed to serialize PQXDH inbox")?;
@@ -360,12 +359,12 @@ async fn test_pqxdh_inbox_echo_service_e2e() -> Result<()> {
     );
 
     // Connect both clients to message service
-    let (alice_messages, mut alice_stream) = alice
+    let (alice_messages, (mut alice_stream, _alice_catch_up_stream)) = alice
         .connect_message_service()
         .await
         .context("Failed to connect Alice to message service")?;
 
-    let (bob_messages, mut bob_stream) = bob
+    let (bob_messages, (mut bob_stream, _bob_catch_up_stream)) = bob
         .connect_message_service()
         .await
         .context("Failed to connect Bob to message service")?;
@@ -583,15 +582,12 @@ async fn test_pqxdh_inbox_echo_service_e2e() -> Result<()> {
         limit: None,
     };
 
-    let alice_rpc_subscription_id = alice_messages
+    alice_messages
         .subscribe(alice_rpc_config)
         .await
         .context("Failed to subscribe Alice to RPC messages")?;
 
-    info!(
-        "📬 Alice subscribed to RPC messages with ID: {}",
-        alice_rpc_subscription_id
-    );
+    info!("📬 Alice subscribed to RPC messages");
 
     // Wait for subscription to be processed
     tokio::time::sleep(Duration::from_millis(200)).await;
@@ -737,15 +733,12 @@ async fn test_pqxdh_inbox_echo_service_e2e() -> Result<()> {
         limit: None,
     };
 
-    let bob_response_subscription_id = bob_messages
+    bob_messages
         .subscribe(bob_response_config)
         .await
         .context("Failed to subscribe Bob to response messages")?;
 
-    info!(
-        "📬 Bob subscribed to responses with ID: {}",
-        bob_response_subscription_id
-    );
+    info!("📬 Bob subscribed to responses");
 
     // Wait for subscription and message processing
     tokio::time::sleep(Duration::from_millis(500)).await;
@@ -957,31 +950,18 @@ async fn test_pqxdh_inbox_privacy_preserving_e2e() -> Result<()> {
     );
 
     // Connect both clients to message service - reuse connections
-    let (alice_messages, mut alice_stream) = alice
-        .connect_message_service()
+    let alice_manager = MessagesManagerBuilder::new()
+        .build(alice.connection())
         .await
         .context("Failed to connect Alice to message service")?;
 
-    let (bob_messages, mut bob_stream) = bob
-        .connect_message_service()
+    let bob_manager = MessagesManagerBuilder::new()
+        .build(bob.connection())
         .await
         .context("Failed to connect Bob to message service")?;
 
     info!("📡 Both clients connected to message service");
 
-    // ========================================================================
-    // STEP 1: Alice creates protocol handler and publishes inbox
-    // ========================================================================
-
-    info!("📤 Step 1: Alice creating protocol handler and publishing inbox");
-
-    // Create messages manager for Alice
-    let alice_manager = MessagesManager::new(
-        alice_messages,
-        alice_stream,
-        None,
-    );
-    
     // Create Alice's protocol handler for echo service
     let mut alice_handler = PqxdhProtocolHandler::<EchoRequest>::new(
         &alice_manager,
@@ -995,7 +975,7 @@ async fn test_pqxdh_inbox_privacy_preserving_e2e() -> Result<()> {
         timestamp: 0,
         client_id: "alice".to_string(),
     };
-    
+
     let _service_tag = alice_handler
         .publish_service(false) // Don't force overwrite
         .await
@@ -1005,7 +985,7 @@ async fn test_pqxdh_inbox_privacy_preserving_e2e() -> Result<()> {
     info!("   🎯 All session management, key handling, and subscriptions automated");
 
     // Start listening for client connections (this would handle the message processing)
-    let _alice_pqxdh_stream = alice_handler
+    alice_handler
         .start_listening_for_clients()
         .context("Failed to start listening for clients")?;
 
@@ -1019,11 +999,10 @@ async fn test_pqxdh_inbox_privacy_preserving_e2e() -> Result<()> {
     info!("🔗 Step 2: Bob creating protocol handler and connecting to Alice's service");
 
     // Create messages manager for Bob
-    let bob_manager = MessagesManager::new(
-        bob_messages,
-        bob_stream,
-        None,
-    );
+    let bob_manager = MessagesManagerBuilder::new()
+        .build(bob.connection())
+        .await
+        .context("Failed to connect Bob to message service")?;
 
     // Create Bob's protocol handler for echo service
     let mut bob_handler = PqxdhProtocolHandler::<EchoRequest>::new(

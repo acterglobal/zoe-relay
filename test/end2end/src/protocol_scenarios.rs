@@ -44,9 +44,9 @@ async fn test_group_chat_scenario() -> Result<()> {
     let mut message_streams = Vec::new();
 
     for participant in &participants {
-        let (service, stream) = participant.connect_message_service().await?;
-        let _subscription_id = participant
-            .subscribe_to_channel(&service, &chat_channel)
+        let (service, msg_stream, _catch_up_stream) = participant.connect_message_service().await?;
+        let stream = participant
+            .subscribe_to_channel(&service, msg_stream, &chat_channel)
             .await?;
         message_services.push(service);
         message_streams.push(stream);
@@ -159,13 +159,15 @@ async fn test_dynamic_membership_scenario() -> Result<()> {
     let alice = harness.create_client("alice").await?;
     let bob = harness.create_client("bob").await?;
 
-    let (service_alice, mut stream_alice) = alice.connect_message_service().await?;
-    let (service_bob, mut stream_bob) = bob.connect_message_service().await?;
+    let (service_alice, msg_stream_alice, _catch_up_alice) =
+        alice.connect_message_service().await?;
+    let (service_bob, msg_stream_bob, _catch_up_bob) = bob.connect_message_service().await?;
 
-    alice
-        .subscribe_to_channel(&service_alice, &chat_channel)
+    let mut stream_alice = alice
+        .subscribe_to_channel(&service_alice, msg_stream_alice, &chat_channel)
         .await?;
-    bob.subscribe_to_channel(&service_bob, &chat_channel)
+    let mut stream_bob = bob
+        .subscribe_to_channel(&service_bob, msg_stream_bob, &chat_channel)
         .await?;
 
     tokio::time::sleep(Duration::from_millis(300)).await;
@@ -181,9 +183,10 @@ async fn test_dynamic_membership_scenario() -> Result<()> {
 
     // Phase 2: Charlie joins mid-conversation
     let charlie = harness.create_client("charlie").await?;
-    let (service_charlie, mut stream_charlie) = charlie.connect_message_service().await?;
-    charlie
-        .subscribe_to_channel(&service_charlie, &chat_channel)
+    let (service_charlie, msg_stream_charlie, _catch_up_charlie) =
+        charlie.connect_message_service().await?;
+    let mut stream_charlie = charlie
+        .subscribe_to_channel(&service_charlie, msg_stream_charlie, &chat_channel)
         .await?;
 
     tokio::time::sleep(Duration::from_millis(200)).await;
@@ -203,9 +206,10 @@ async fn test_dynamic_membership_scenario() -> Result<()> {
 
     // Phase 3: Diana joins as well
     let diana = harness.create_client("diana").await?;
-    let (service_diana, mut stream_diana) = diana.connect_message_service().await?;
-    diana
-        .subscribe_to_channel(&service_diana, &chat_channel)
+    let (service_diana, msg_stream_diana, _catch_up_diana) =
+        diana.connect_message_service().await?;
+    let mut stream_diana = diana
+        .subscribe_to_channel(&service_diana, msg_stream_diana, &chat_channel)
         .await?;
 
     tokio::time::sleep(Duration::from_millis(200)).await;
@@ -280,8 +284,10 @@ async fn test_high_frequency_messaging_scenario() -> Result<()> {
 
     // Setup all clients
     for client in &clients {
-        let (service, stream) = client.connect_message_service().await?;
-        client.subscribe_to_channel(&service, &busy_channel).await?;
+        let (service, msg_stream, _catch_up_stream) = client.connect_message_service().await?;
+        let stream = client
+            .subscribe_to_channel(&service, msg_stream, &busy_channel)
+            .await?;
         services.push(service);
         streams.push(stream);
     }
@@ -494,8 +500,10 @@ async fn test_server_resilience_under_load_scenario() -> Result<()> {
 
         // Setup all clients for messaging
         for client in &clients {
-            let (service, stream) = client.connect_message_service().await?;
-            client.subscribe_to_channel(&service, &load_channel).await?;
+            let (service, msg_stream, _catch_up_stream) = client.connect_message_service().await?;
+            let stream = client
+                .subscribe_to_channel(&service, msg_stream, &load_channel)
+                .await?;
             services.push(service);
             streams.push(stream);
         }

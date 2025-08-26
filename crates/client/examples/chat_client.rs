@@ -134,7 +134,7 @@ impl ChatClient {
             RelayClient::new(config.client_keypair, config.server_key, config.server_addr).await?;
 
         // Connect to message service
-        let (mut messages_service, mut messages_stream) =
+        let (mut messages_service, (mut messages_stream, _)) =
             relay_client.connect_message_service().await?;
 
         // Subscribe to the channel
@@ -239,7 +239,7 @@ impl ChatClient {
                         }
                         None => {
                             warn!("📡 Message stream ended. Restarting...");
-                            (messages_service, messages_stream) = relay_client.connect_message_service().await?;
+                            (messages_service, (messages_stream, _)) = relay_client.connect_message_service().await?;
                             Self::subscribe_to_channel(&messages_service, channel.clone()).await?;
                             continue;
                         }

@@ -10,12 +10,13 @@ use tokio::{
     task::JoinHandle,
 };
 use zoe_wire_protocol::{
-    CatchUpRequest, FilterUpdateRequest, MessageServiceClient, MessageServiceResponseWrap,
-    MessagesServiceRequestWrap, StreamMessage, SubscriptionConfig, ZoeServices,
-    stream_pair::create_postcard_streams,
+    CatchUpRequest, CatchUpResponse, FilterUpdateRequest, MessageServiceClient,
+    MessageServiceResponseWrap, MessagesServiceRequestWrap, StreamMessage, SubscriptionConfig,
+    ZoeServices, stream_pair::create_postcard_streams,
 };
 
 pub type MessagesStream = UnboundedReceiver<StreamMessage>;
+pub type CatchUpStream = UnboundedReceiver<CatchUpResponse>;
 
 pub struct MessagesService {
     rpc_client: MessageServiceClient,
@@ -30,7 +31,9 @@ impl Deref for MessagesService {
 }
 
 impl MessagesService {
-    pub async fn connect(connection: &Connection) -> Result<(Self, MessagesStream)> {
+    pub async fn connect(
+        connection: &Connection,
+    ) -> Result<(Self, (MessagesStream, CatchUpStream))> {
         // Open bidirectional stream
         let (mut send, mut recv) = connection.open_bi().await?;
 
@@ -49,6 +52,7 @@ impl MessagesService {
             MessagesServiceRequestWrap,
         >(recv, send);
         let (incoming_tx, incoming_rx) = unbounded_channel::<StreamMessage>();
+        let (catch_up_tx, catch_up_rx) = unbounded_channel::<CatchUpResponse>();
 
         let (client_transport, mut server_transport) = tarpc::transport::channel::unbounded();
         let rpc_client = MessageServiceClient::new(Default::default(), client_transport).spawn();
@@ -59,45 +63,52 @@ impl MessagesService {
                     // Receive messages from server and forward to client
                     message_result = stream.next() => {
                         let Some(incoming_message) = message_result else {
-                            tracing::info!("Stream ended");
+                            tracing::info!("Stream ended - server closed connection");
                             break;
                         };
-                        match incoming_message {
-                            Ok(MessageServiceResponseWrap::StreamMessage(message)) => {
-                                if let Err(e) = incoming_tx.send(message) {
-                                    return Err(ClientError::Generic(format!("Send error: {e}")));
-                                }
-                            }
-                                        Ok(MessageServiceResponseWrap::RpcResponse(response)) => {
-                if let Err(e) = server_transport.send(*response).await {
-                                    return Err(ClientError::Generic(format!("Send error: {e}")));
-                                }
-                            }
-                            Ok(MessageServiceResponseWrap::CatchUpResponse(catch_up_response)) => {
-                                // Log catch-up response for now - could be forwarded to a specific handler
-                                tracing::trace!(
-                                    "Received catch-up response: request_id={}, filter={:?}, message_count={}",
-                                    catch_up_response.request_id,
-                                    catch_up_response.filter,
-                                    catch_up_response.messages.len()
-                                );
-                                // TODO: Forward to a catch-up response handler if needed
-                            }
-                            // FilterUpdateAck is now handled as RPC responses, not streaming messages
+                        let inner = match incoming_message {
+                            Ok(msg) => msg,
                             Err(e) => {
-                                return Err(ClientError::Generic(format!("Stream error: {e}")));
+                                tracing::warn!("Stream error (connection may be closing): {e}");
+                                // Don't return error immediately - let the loop continue to handle graceful shutdown
+                                continue;
+                            }
+                        };
+                        match inner {
+                            MessageServiceResponseWrap::StreamMessage(message) => {
+                                if let Err(e) = incoming_tx.send(message) {
+                                    return Err(ClientError::Generic(format!("Stream Message Send error: {e}")));
+                                }
+                            }
+                            MessageServiceResponseWrap::RpcResponse(response) => {
+                                if let Err(e) = server_transport.send(*response).await {
+                                    return Err(ClientError::Generic(format!("RPC Response Send error: {e}")));
+                                }
+                            }
+                            MessageServiceResponseWrap::CatchUpResponse(catch_up_response) => {
+                                if let Err(e) = catch_up_tx.send(catch_up_response) {
+                                    return Err(ClientError::Generic(format!("Catch Up Response Send error: {e}")));
+                                }
                             }
                         }
                     }
                     // Poll for messages from rpc client
                     rpc_message = server_transport.next() => {
-                        let Some(Ok(rpc_message)) = rpc_message else {
+                        let Some(rpc_message) = rpc_message else {
                             tracing::trace!("RPC client closed");
                             break;
                         };
+                        let rpc_message = match rpc_message {
+                            Ok(msg) => msg,
+                            Err(e) => {
+                                tracing::warn!("RPC client error: {e}");
+                                continue;
+                            }
+                        };
                         // Send RPC message directly since MessagesServiceRequestWrap is now just ClientMessage
                         if let Err(e) = sink.send(rpc_message).await {
-                            return Err(ClientError::Generic(format!("Send error: {e}")));
+                            tracing::warn!("Failed to send RPC message (connection may be closing): {e}");
+                            break;
                         }
                     }
                 }
@@ -105,10 +116,10 @@ impl MessagesService {
             Ok(())
         });
 
-        Ok((Self { rpc_client, handle }, incoming_rx))
+        Ok((Self { rpc_client, handle }, (incoming_rx, catch_up_rx)))
     }
 
-    pub async fn subscribe(&self, filters: SubscriptionConfig) -> Result<String> {
+    pub async fn subscribe(&self, filters: SubscriptionConfig) -> Result<()> {
         // Use RPC client directly for subscription - returns subscription ID
         self.rpc_client
             .subscribe(tarpc::context::current(), filters)
@@ -117,19 +128,15 @@ impl MessagesService {
             .map_err(|e| ClientError::Generic(format!("Subscription error: {e}")))
     }
 
-    pub async fn update_filters(
-        &self,
-        subscription_id: String,
-        request: FilterUpdateRequest,
-    ) -> Result<()> {
+    pub async fn update_filters(&self, request: FilterUpdateRequest) -> Result<SubscriptionConfig> {
         self.rpc_client
-            .update_filters(tarpc::context::current(), subscription_id, request)
+            .update_filters(tarpc::context::current(), request)
             .await
             .map_err(|e| ClientError::Generic(format!("Update filters failed: {e}")))?
             .map_err(|e| ClientError::Generic(format!("Update filters error: {e}")))
     }
 
-    pub async fn catch_up(&self, request: CatchUpRequest) -> Result<String> {
+    pub async fn catch_up(&self, request: CatchUpRequest) -> Result<SubscriptionConfig> {
         self.rpc_client
             .catch_up(tarpc::context::current(), request)
             .await

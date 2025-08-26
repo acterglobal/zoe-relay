@@ -7,7 +7,10 @@ use crate::infra::TestInfrastructure;
 use anyhow::{Context, Result};
 use std::time::Duration;
 use tracing::info;
-use zoe_client::PqxdhProtocolHandler;
+use zoe_client::{
+    PqxdhProtocolHandler,
+    services::{MessagesManager, MessagesManagerBuilder},
+};
 use zoe_wire_protocol::PqxdhInboxProtocol;
 
 /// Test PQXDH echo service using the new PqxdhProtocolHandler
@@ -23,9 +26,15 @@ async fn test_pqxdh_helpers_simple_demo() -> Result<()> {
     let charlie = infra.create_client().await?;
 
     info!("👥 Created three clients for PQXDH test");
-    info!("🔑 Alice (service): {}", hex::encode(alice.public_key().id()));
+    info!(
+        "🔑 Alice (service): {}",
+        hex::encode(alice.public_key().id())
+    );
     info!("🔑 Bob (client v0): {}", hex::encode(bob.public_key().id()));
-    info!("🔑 Charlie (client v1): {}", hex::encode(charlie.public_key().id()));
+    info!(
+        "🔑 Charlie (client v1): {}",
+        hex::encode(charlie.public_key().id())
+    );
 
     // ========================================================================
     // STEP 1: Alice sets up service using PqxdhProtocolHandler
@@ -33,18 +42,28 @@ async fn test_pqxdh_helpers_simple_demo() -> Result<()> {
 
     info!("📤 Step 1: Alice setting up echo service using protocol handler");
 
+    // Connect Alice to message service
+    let alice_manager = MessagesManagerBuilder::new()
+        .build(alice.connection())
+        .await
+        .context("Failed to connect Alice to message service")?;
+
+    // Create messages manager for Alice
+    let alice_manager = MessagesManagerBuilder::new()
+        .build(alice.connection())
+        .await
+        .context("Failed to connect Alice to message service")?;
+
     // Create Alice's protocol handler - handles all complexity internally
     let mut alice_handler = PqxdhProtocolHandler::<String>::new(
-        &alice,
+        &alice_manager,
+        alice.keypair(),
         PqxdhInboxProtocol::EchoService,
-    )
-    .await
-    .context("Failed to create Alice's protocol handler")?;
+    );
 
     // Publish service - one simple call!
-    let service_ready_message = "Echo service ready".to_string();
     let _service_tag = alice_handler
-        .publish_service(&service_ready_message)
+        .publish_service(false) // Don't force overwrite
         .await
         .context("Failed to publish PQXDH service")?;
 
@@ -53,7 +72,6 @@ async fn test_pqxdh_helpers_simple_demo() -> Result<()> {
     // Start listening for clients - automatic subscription management
     alice_handler
         .start_listening_for_clients()
-        .await
         .context("Failed to start listening for clients")?;
 
     info!("✅ Alice started listening for client connections");
@@ -65,14 +83,25 @@ async fn test_pqxdh_helpers_simple_demo() -> Result<()> {
 
     info!("🔗 Step 2: Bob connecting to Alice's service as a client");
 
+    // Connect Bob to message service
+    let bob_manager = MessagesManagerBuilder::new()
+        .build(bob.connection())
+        .await
+        .context("Failed to connect Bob to message service")?;
+
+    // Create messages manager for Bob
+    let bob_manager = MessagesManagerBuilder::new()
+        .build(bob.connection())
+        .await
+        .context("Failed to connect Bob to message service")?;
+
     // Bob is a CLIENT - he doesn't need to publish an inbox, just connect to Alice's service
     // Create Bob's protocol handler for connecting to the echo service
     let mut bob_handler = PqxdhProtocolHandler::<String>::new(
-        &bob,
+        &bob_manager,
+        bob.keypair(),
         PqxdhInboxProtocol::EchoService,
-    )
-    .await
-    .context("Failed to create Bob's protocol handler")?;
+    );
 
     // Connect to Alice's service - handles discovery, session establishment, subscriptions
     let bob_echo_request = "Hello from Bob via PqxdhProtocolHandler!".to_string();
@@ -89,14 +118,19 @@ async fn test_pqxdh_helpers_simple_demo() -> Result<()> {
 
     info!("🔗 Step 3: Charlie connecting to Alice's service as a client");
 
+    // Connect Charlie to message service
+    let charlie_manager = MessagesManagerBuilder::new()
+        .build(charlie.connection())
+        .await
+        .context("Failed to connect Charlie to message service")?;
+
     // Charlie is also a CLIENT - he doesn't need to publish an inbox either
     // Create Charlie's protocol handler for connecting to the echo service
     let mut charlie_handler = PqxdhProtocolHandler::<String>::new(
-        &charlie,
+        &charlie_manager,
+        charlie.keypair(),
         PqxdhInboxProtocol::EchoService,
-    )
-    .await
-    .context("Failed to create Charlie's protocol handler")?;
+    );
 
     // Connect to Alice's service - same simple call!
     let charlie_echo_request = "Hello from Charlie via PqxdhProtocolHandler!".to_string();

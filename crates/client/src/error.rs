@@ -1,3 +1,5 @@
+use zoe_wire_protocol::MessageError;
+
 #[derive(thiserror::Error, Debug)]
 pub enum ClientError {
     #[error("Generic error: {0}")]
@@ -26,6 +28,10 @@ pub enum ClientError {
     Challenge(#[from] anyhow::Error),
     #[error("Protocol error: {0}")]
     ProtocolError(String),
+    #[error("Message Rpc error: {0}")]
+    Message(#[from] MessageError),
+    #[error("RPC error: {0}")]
+    RpcError(#[from] tarpc::client::RpcError),
 }
 
 pub type Result<T> = std::result::Result<T, ClientError>;

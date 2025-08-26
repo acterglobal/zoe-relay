@@ -9114,6 +9114,7 @@ name = "zoe-client"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-stream",
  "async-trait",
  "bip39",
  "blake3",
@@ -9140,6 +9141,7 @@ dependencies = [
  "thiserror 2.0.16",
  "tls_codec",
  "tokio",
+ "tokio-stream",
  "tokio-test",
  "tokio-util",
  "tracing",
@@ -9185,6 +9187,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "ed25519-dalek",
+ "env_logger 0.11.8",
  "forward-compatible-enum",
  "futures",
  "hex",

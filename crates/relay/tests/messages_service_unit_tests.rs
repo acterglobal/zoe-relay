@@ -143,11 +143,11 @@ async fn test_catch_up_request_with_unified_filter() {
         filter: Filter::Channel(channel_id.to_vec()),
         since: None,
         max_messages: Some(10),
-        request_id: "test_request_123".to_string(),
+        request_id: 123,
     };
 
     // Verify the request was created correctly
-    assert_eq!(catch_up_request.request_id, "test_request_123");
+    assert_eq!(catch_up_request.request_id, 123);
     assert_eq!(catch_up_request.max_messages, Some(10));
     assert_eq!(catch_up_request.since, None);
 
@@ -168,7 +168,7 @@ async fn test_filter_update_request() {
     let operations = vec![
         FilterOperation::add_channels(vec![b"general".to_vec(), b"tech".to_vec()]),
         FilterOperation::add_authors(vec![*alice_key.id()]),
-        FilterOperation::add_events(vec![b"important".to_vec()]),
+        FilterOperation::add_events(vec![zoe_wire_protocol::hash(b"important")]),
     ];
 
     let filter_request = FilterUpdateRequest { operations };
@@ -183,7 +183,7 @@ async fn test_filter_update_request() {
         assert!(filter_list.contains(&Filter::Channel(b"general".to_vec())));
         assert!(filter_list.contains(&Filter::Channel(b"tech".to_vec())));
         assert!(filter_list.contains(&Filter::Author(*alice_key.id())));
-        assert!(filter_list.contains(&Filter::Event(b"important".to_vec())));
+        assert!(filter_list.contains(&Filter::Event(zoe_wire_protocol::hash(b"important"))));
     } else {
         panic!("Expected filters to be Some");
     }

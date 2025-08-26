@@ -28,6 +28,7 @@ flutter_rust_bridge = { version = "=2.11.1", optional = true }
 # Async runtime
 tokio = { workspace = true, features = ["io-util"] }
 tokio-util = { workspace = true }
+tokio-stream = { workspace = true }
 futures = { workspace = true }
 rand = { workspace = true }
 
@@ -48,6 +49,7 @@ blake3 = { workspace = true }
 # Additional utilities
 hex = { workspace = true }
 async-trait = { workspace = true }
+async-stream = { workspace = true }
 
 # MLS dependencies for encrypted messaging
 openmls = { version = "0.7", optional = true }
@@ -86,6 +88,8 @@ required-features = ["mls"]
 [[example]]
 name = "simple_bot_service"
 path = "examples/simple_bot_service.rs"
+
+
 
 
 [dev-dependencies]

@@ -247,7 +247,7 @@ async fn main() -> Result<()> {
     };
 
     // Run the echo test
-    let (messages_service, messages_stream) = client.connect_message_service().await?;
+    let (messages_service, (messages_stream, _)) = client.connect_message_service().await?;
     let client_public_key = client.public_key();
     let client_keypair = client.keypair();
     run_echo_test(

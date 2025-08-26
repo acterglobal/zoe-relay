@@ -13,7 +13,8 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::time::timeout;
 use tracing::{debug, info, warn};
 use zoe_wire_protocol::{
-    Algorithm, Content, Filter, KeyPair, Kind, Message, MessageFilters, MessageFull, StoreKey, StreamMessage, SubscriptionConfig, Tag, VerifyingKey
+    Algorithm, Content, Filter, KeyPair, Kind, Message, MessageFilters, MessageFull, StoreKey,
+    StreamMessage, SubscriptionConfig, Tag, VerifyingKey,
 };
 
 /// Test message posting and retrieval functionality
@@ -23,7 +24,7 @@ async fn test_message_posting_and_retrieval() -> Result<()> {
     let client = infra.create_client().await?;
 
     // Connect to message service
-    let (messages_service, mut messages_stream) = client
+    let (messages_service, (mut messages_stream, _)) = client
         .connect_message_service()
         .await
         .context("Failed to connect to message service")?;
@@ -42,15 +43,12 @@ async fn test_message_posting_and_retrieval() -> Result<()> {
         limit: None,
     };
 
-    let subscription_id = messages_service
+    messages_service
         .subscribe(subscription_config)
         .await
         .context("Failed to subscribe to test channel")?;
 
-    info!(
-        "📬 Subscribed to channel '{}' with ID: {}",
-        test_channel, subscription_id
-    );
+    info!("📬 Subscribed to channel '{test_channel}'");
 
     // Wait for subscription to be processed
     tokio::time::sleep(Duration::from_millis(200)).await;
@@ -129,7 +127,7 @@ async fn test_user_data_storage_and_lookup() -> Result<()> {
     let infra = TestInfrastructure::setup().await?;
     let client = infra.create_client().await?;
 
-    let (messages_service, mut messages_stream) = client
+    let (messages_service, (mut messages_stream, _)) = client
         .connect_message_service()
         .await
         .context("Failed to connect to message service")?;
@@ -145,15 +143,12 @@ async fn test_user_data_storage_and_lookup() -> Result<()> {
         limit: None,
     };
 
-    let user_subscription_id = messages_service
+    messages_service
         .subscribe(user_subscription_config)
         .await
         .context("Failed to subscribe to user data messages")?;
 
-    info!(
-        "📬 Subscribed to user data with ID: {}",
-        user_subscription_id
-    );
+    info!("📬 Subscribed to user data");
 
     // Wait for subscription to be processed
     tokio::time::sleep(Duration::from_millis(200)).await;
@@ -252,7 +247,7 @@ async fn test_subscription_unsubscription_functionality() -> Result<()> {
     let infra = TestInfrastructure::setup().await?;
     let client = infra.create_client().await?;
 
-    let (messages_service, mut messages_stream) = client
+    let (messages_service, (mut messages_stream, _)) = client
         .connect_message_service()
         .await
         .context("Failed to connect to message service")?;
@@ -271,15 +266,12 @@ async fn test_subscription_unsubscription_functionality() -> Result<()> {
         limit: None,
     };
 
-    let subscription_id = messages_service
+    messages_service
         .subscribe(subscription_config)
         .await
         .context("Failed to subscribe to test channel")?;
 
-    info!(
-        "📬 Subscribed to channel '{}' with ID: {}",
-        test_channel, subscription_id
-    );
+    info!("📬 Subscribed to channel '{test_channel}'");
 
     // Wait for subscription to be processed
     tokio::time::sleep(Duration::from_millis(200)).await;
@@ -312,23 +304,6 @@ async fn test_subscription_unsubscription_functionality() -> Result<()> {
         "📤 Published message while subscribed: {:?}",
         publish_result
     );
-
-    // Step 3: Test unsubscription functionality
-    let unsubscribe_result = messages_service
-        .unsubscribe(tarpc::context::current(), subscription_id.clone())
-        .await;
-
-    match unsubscribe_result {
-        Ok(_) => {
-            info!(
-                "📭 Successfully unsubscribed from channel '{}'",
-                test_channel
-            );
-        }
-        Err(e) => {
-            info!("📭 Unsubscribe returned error (may be expected): {}", e);
-        }
-    }
 
     // Step 4: Verify basic message flow still works
     tokio::time::sleep(Duration::from_millis(300)).await;
@@ -380,10 +355,18 @@ async fn test_all_signature_types_e2e() -> Result<()> {
     let infra = TestInfrastructure::setup().await?;
 
     // Create clients with different signature types
-    let ed25519_client = infra.create_client_for_algorithm(Algorithm::Ed25519).await?;
-    let ml_dsa_44_client = infra.create_client_for_algorithm(Algorithm::MlDsa44).await?;
-    let ml_dsa_65_client = infra.create_client_for_algorithm(Algorithm::MlDsa65).await?;
-    let ml_dsa_87_client = infra.create_client_for_algorithm(Algorithm::MlDsa87).await?;
+    let ed25519_client = infra
+        .create_client_for_algorithm(Algorithm::Ed25519)
+        .await?;
+    let ml_dsa_44_client = infra
+        .create_client_for_algorithm(Algorithm::MlDsa44)
+        .await?;
+    let ml_dsa_65_client = infra
+        .create_client_for_algorithm(Algorithm::MlDsa65)
+        .await?;
+    let ml_dsa_87_client = infra
+        .create_client_for_algorithm(Algorithm::MlDsa87)
+        .await?;
 
     info!("🔑 Created clients with all signature types");
 
@@ -391,22 +374,22 @@ async fn test_all_signature_types_e2e() -> Result<()> {
     let test_channel = format!("signature_types_e2e_{}", rand::thread_rng().next_u32());
 
     // Connect all clients to message service
-    let (ed25519_service, mut ed25519_stream) = ed25519_client
+    let (ed25519_service, (mut ed25519_stream, _)) = ed25519_client
         .connect_message_service()
         .await
         .context("Failed to connect Ed25519 client to message service")?;
 
-    let (ml_dsa_44_service, mut ml_dsa_44_stream) = ml_dsa_44_client
+    let (ml_dsa_44_service, (mut ml_dsa_44_stream, _)) = ml_dsa_44_client
         .connect_message_service()
         .await
         .context("Failed to connect ML-DSA-44 client to message service")?;
 
-    let (ml_dsa_65_service, mut ml_dsa_65_stream) = ml_dsa_65_client
+    let (ml_dsa_65_service, (mut ml_dsa_65_stream, _)) = ml_dsa_65_client
         .connect_message_service()
         .await
         .context("Failed to connect ML-DSA-65 client to message service")?;
 
-    let (ml_dsa_87_service, mut ml_dsa_87_stream) = ml_dsa_87_client
+    let (ml_dsa_87_service, (mut ml_dsa_87_stream, _)) = ml_dsa_87_client
         .connect_message_service()
         .await
         .context("Failed to connect ML-DSA-87 client to message service")?;
@@ -422,31 +405,27 @@ async fn test_all_signature_types_e2e() -> Result<()> {
         limit: None,
     };
 
-    let ed25519_sub_id = ed25519_service
+    ed25519_service
         .subscribe(subscription_config.clone())
         .await
         .context("Failed to subscribe Ed25519 client")?;
 
-    let ml_dsa_44_sub_id = ml_dsa_44_service
+    ml_dsa_44_service
         .subscribe(subscription_config.clone())
         .await
         .context("Failed to subscribe ML-DSA-44 client")?;
 
-    let ml_dsa_65_sub_id = ml_dsa_65_service
+    ml_dsa_65_service
         .subscribe(subscription_config.clone())
         .await
         .context("Failed to subscribe ML-DSA-65 client")?;
 
-    let ml_dsa_87_sub_id = ml_dsa_87_service
+    ml_dsa_87_service
         .subscribe(subscription_config)
         .await
         .context("Failed to subscribe ML-DSA-87 client")?;
 
     info!("📬 All clients subscribed to channel '{}'", test_channel);
-    info!("   📝 Ed25519 subscription ID: {}", ed25519_sub_id);
-    info!("   📝 ML-DSA-44 subscription ID: {}", ml_dsa_44_sub_id);
-    info!("   📝 ML-DSA-65 subscription ID: {}", ml_dsa_65_sub_id);
-    info!("   📝 ML-DSA-87 subscription ID: {}", ml_dsa_87_sub_id);
 
     // Wait for subscriptions to be processed
     tokio::time::sleep(Duration::from_millis(300)).await;
@@ -649,20 +628,24 @@ async fn test_signature_type_interoperability_e2e() -> Result<()> {
     let infra = TestInfrastructure::setup().await?;
 
     // Create two clients with different signature types
-    let ed25519_client = infra.create_client_for_algorithm(Algorithm::Ed25519).await?;
-    let ml_dsa_65_client = infra.create_client_for_algorithm(Algorithm::MlDsa65).await?;
+    let ed25519_client = infra
+        .create_client_for_algorithm(Algorithm::Ed25519)
+        .await?;
+    let ml_dsa_65_client = infra
+        .create_client_for_algorithm(Algorithm::MlDsa65)
+        .await?;
 
     info!("🔑 Created Ed25519 and ML-DSA-65 clients for interoperability test");
 
     let test_channel = format!("interop_test_{}", rand::thread_rng().next_u32());
 
     // Connect both clients to message service
-    let (ed25519_service, mut ed25519_stream) = ed25519_client
+    let (ed25519_service, (mut ed25519_stream, _)) = ed25519_client
         .connect_message_service()
         .await
         .context("Failed to connect Ed25519 client")?;
 
-    let (ml_dsa_65_service, mut ml_dsa_65_stream) = ml_dsa_65_client
+    let (ml_dsa_65_service, (mut ml_dsa_65_stream, _)) = ml_dsa_65_client
         .connect_message_service()
         .await
         .context("Failed to connect ML-DSA-65 client")?;

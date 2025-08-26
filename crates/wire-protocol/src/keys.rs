@@ -85,7 +85,7 @@ use std::fmt;
 pub type Id = [u8; 32];
 
 /// Cryptographic algorithm identifier
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Algorithm {
     /// Ed25519 elliptic curve signatures
     Ed25519,
@@ -719,7 +719,10 @@ impl KeyPair {
         KeyPair::generate_ml_dsa65(rng)
     }
 
-    pub fn generate_for_algorithm<R: rand::CryptoRng + rand::RngCore>(algorithm: Algorithm, rng: &mut R) -> KeyPair {
+    pub fn generate_for_algorithm<R: rand::CryptoRng + rand::RngCore>(
+        algorithm: Algorithm,
+        rng: &mut R,
+    ) -> KeyPair {
         match algorithm {
             Algorithm::Ed25519 => KeyPair::generate_ed25519(rng),
             Algorithm::MlDsa44 => KeyPair::generate_ml_dsa44(rng),

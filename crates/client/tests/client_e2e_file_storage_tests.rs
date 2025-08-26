@@ -4,8 +4,7 @@
 //! operations across multiple clients connected to a real relay server.
 
 use anyhow::{Context, Result};
-use rand::{Rng, thread_rng};
-use std::net::SocketAddr;
+use std::net::{Ipv6Addr, SocketAddr, SocketAddrV6};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tempfile::TempDir;
 
@@ -38,9 +37,6 @@ struct TestInfrastructure {
 impl TestInfrastructure {
     /// Set up test infrastructure with relay server
     async fn setup() -> Result<Self> {
-        // Find a free port for the relay server
-        let server_addr = find_free_port().await?;
-
         // Generate server key (default to Ed25519)
         let server_keypair = KeyPair::generate_ed25519(&mut rand::thread_rng()); // Ed25519 for transport
         let server_public_key = server_keypair.public_key();
@@ -75,8 +71,15 @@ impl TestInfrastructure {
         let router = RelayServiceRouter::new(blob_service, message_service);
 
         // Create relay server
-        let relay_server = RelayServer::new(server_addr, server_keypair, router)
-            .context("Failed to create relay server")?;
+        let relay_server = RelayServer::new(
+            SocketAddr::V6(SocketAddrV6::new(Ipv6Addr::LOCALHOST, 0, 0, 0)),
+            server_keypair,
+            router,
+        )
+        .context("Failed to create relay server")?;
+        let server_addr = relay_server
+            .local_addr()
+            .context("Failed to get relay server address")?;
 
         // Spawn server in background
         info!("🌐 Starting relay server on {}", server_addr);
@@ -132,22 +135,6 @@ impl TestInfrastructure {
         info!("✅ Cleanup complete");
         Ok(())
     }
-}
-
-/// Find a free port for testing
-async fn find_free_port() -> Result<SocketAddr> {
-    for _ in 0..10 {
-        let port: u16 = thread_rng().gen_range(10000..65000);
-        let addr = SocketAddr::from(([127, 0, 0, 1], port));
-
-        // Try to bind to check if port is available
-        if let Ok(listener) = tokio::net::TcpListener::bind(addr).await {
-            drop(listener);
-            return Ok(addr);
-        }
-    }
-
-    anyhow::bail!("Could not find a free port after 10 attempts");
 }
 
 #[tokio::test(flavor = "multi_thread")]

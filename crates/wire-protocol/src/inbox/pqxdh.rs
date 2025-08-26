@@ -153,7 +153,7 @@ pub struct PqxdhSharedSecret {
 }
 
 /// Initial payload structure for PQXDH sessions
-/// 
+///
 /// This structure is encrypted inside the PqxdhInitialMessage and contains
 /// both the user's initial payload and a randomized channel ID for subsequent
 /// session messages to provide unlinkability.
@@ -299,8 +299,6 @@ pub fn respond_pqxdh(
     Err(PqxdhError::CryptoError("Not yet implemented".to_string()))
 }
 
-
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -427,10 +425,10 @@ mod tests {
     #[test]
     fn test_pqxdh_private_keys_random_serialization() {
         use rand::RngCore;
-        
+
         // Generate random private keys
         let mut rng = rand::thread_rng();
-        
+
         // Create random X25519 keys
         let signed_prekey_private = x25519_dalek::StaticSecret::random_from_rng(&mut rng);
         let mut one_time_prekey_privates = BTreeMap::new();
@@ -439,11 +437,11 @@ mod tests {
             let private_key = x25519_dalek::StaticSecret::random_from_rng(&mut rng);
             one_time_prekey_privates.insert(key_id, private_key);
         }
-        
+
         // Create random ML-KEM keys (just random bytes for testing)
         let mut pq_signed_prekey_private = vec![0u8; 2400]; // ML-KEM 768 private key size
         rng.fill_bytes(&mut pq_signed_prekey_private);
-        
+
         let mut pq_one_time_prekey_privates = BTreeMap::new();
         for i in 0..2 {
             let key_id = format!("pq_otk_{}", i);
@@ -451,18 +449,18 @@ mod tests {
             rng.fill_bytes(&mut private_key);
             pq_one_time_prekey_privates.insert(key_id, private_key);
         }
-        
+
         let private_keys = PqxdhPrivateKeys {
             signed_prekey_private,
             one_time_prekey_privates,
             pq_signed_prekey_private,
             pq_one_time_prekey_privates,
         };
-        
+
         // Test serialization round-trip
         let serialized = postcard::to_stdvec(&private_keys).unwrap();
         let deserialized: PqxdhPrivateKeys = postcard::from_bytes(&serialized).unwrap();
-        
+
         // Verify the data is preserved
         assert_eq!(
             private_keys.signed_prekey_private.to_bytes(),
@@ -472,15 +470,21 @@ mod tests {
             private_keys.one_time_prekey_privates.len(),
             deserialized.one_time_prekey_privates.len()
         );
-        assert_eq!(private_keys.pq_signed_prekey_private, deserialized.pq_signed_prekey_private);
-        assert_eq!(private_keys.pq_one_time_prekey_privates, deserialized.pq_one_time_prekey_privates);
-        
+        assert_eq!(
+            private_keys.pq_signed_prekey_private,
+            deserialized.pq_signed_prekey_private
+        );
+        assert_eq!(
+            private_keys.pq_one_time_prekey_privates,
+            deserialized.pq_one_time_prekey_privates
+        );
+
         // Verify one-time keys
         for (key_id, original_key) in &private_keys.one_time_prekey_privates {
             let deserialized_key = &deserialized.one_time_prekey_privates[key_id];
             assert_eq!(original_key.to_bytes(), deserialized_key.to_bytes());
         }
-        
+
         // Test that we can generate different random keys
         let signed_prekey_private2 = x25519_dalek::StaticSecret::random_from_rng(&mut rng);
         assert_ne!(

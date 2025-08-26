@@ -1,8 +1,7 @@
-use blake3::Hash;
 use serde::{Deserialize, Serialize};
 use tarpc::{ClientMessage, Response};
 
-use crate::{keys::Id as KeyId, MessageFull, StoreKey};
+use crate::{keys::Id as KeyId, Hash, MessageFull, StoreKey, Tag};
 
 /// Unified filter type for different kinds of message filtering
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -12,9 +11,57 @@ pub enum Filter {
     /// Filter by channel ID
     Channel(Vec<u8>),
     /// Filter by event ID
-    Event(Vec<u8>),
+    Event(Hash),
     /// Filter by user key (for user-targeted messages)
     User(KeyId),
+}
+
+impl Filter {
+    pub fn matches(&self, message: &MessageFull) -> bool {
+        if let Filter::Author(author) = self {
+            return message.author().id() == author;
+        }
+        for t in message.tags() {
+            match (t, &self) {
+                (Tag::Channel { id, .. }, Filter::Channel(channel)) => {
+                    if id == channel {
+                        return true;
+                    }
+                }
+                (Tag::Event { id, .. }, Filter::Event(event)) => {
+                    if id == event {
+                        return true;
+                    }
+                }
+                (Tag::User { id, .. }, Filter::User(user)) => {
+                    if id == user {
+                        return true;
+                    }
+                }
+                _ => {}
+            }
+        }
+        false
+    }
+}
+
+impl From<&Tag> for Filter {
+    fn from(tag: &Tag) -> Self {
+        match tag {
+            Tag::Channel { id, .. } => Filter::Channel(id.clone()),
+            Tag::Event { id, .. } => Filter::Event(*id),
+            Tag::User { id, .. } => Filter::User(*id),
+            Tag::Protected => {
+                unreachable!("There is no filtering for protected tags. Programmer Error.")
+            }
+        }
+    }
+}
+
+impl From<Tag> for Filter {
+    fn from(tag: Tag) -> Self {
+        Filter::from(&tag)
+    }
 }
 
 /// Message filtering criteria for querying stored messages
@@ -58,12 +105,12 @@ impl FilterOperation {
     }
 
     /// Add events to the filter
-    pub fn add_events(events: Vec<Vec<u8>>) -> Self {
+    pub fn add_events(events: Vec<Hash>) -> Self {
         Self::Add(events.into_iter().map(Filter::Event).collect())
     }
 
     /// Remove events from the filter
-    pub fn remove_events(events: Vec<Vec<u8>>) -> Self {
+    pub fn remove_events(events: Vec<Hash>) -> Self {
         Self::Remove(events.into_iter().map(Filter::Event).collect())
     }
 
@@ -144,18 +191,23 @@ pub enum StreamMessage {
     StreamHeightUpdate(String),
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct SubscriptionConfig {
     pub filters: MessageFilters,
     pub since: Option<String>,
     pub limit: Option<usize>,
 }
+
 /// Message store service for message interaction operations
 #[tarpc::service]
 pub trait MessageService {
     // Core message operations
     async fn publish(message: MessageFull) -> Result<PublishResult, MessageError>;
+
+    /// Retrieve a specific message by its ID
     async fn message(id: Hash) -> Result<Option<MessageFull>, MessageError>;
+
+    /// Retrieve a specific user's data by their key and storage key
     async fn user_data(
         author: KeyId,
         storage_key: StoreKey,
@@ -168,14 +220,16 @@ pub trait MessageService {
     /// - `None` means the server doesn't have this message yet
     async fn check_messages(message_ids: Vec<Hash>) -> Result<Vec<Option<String>>, MessageError>;
 
-    // Subscription management - now RPC calls with direct acknowledgment
-    async fn subscribe(config: SubscriptionConfig) -> Result<String, MessageError>; // Returns subscription_id
+    /// Start the subscription
+    async fn subscribe(config: SubscriptionConfig) -> Result<(), MessageError>; // Returns nothing
+
+    /// Update the running subscription filters with the actions. Returns the now final subscription config.
     async fn update_filters(
-        subscription_id: String,
         request: FilterUpdateRequest,
-    ) -> Result<(), MessageError>;
-    async fn catch_up(request: CatchUpRequest) -> Result<String, MessageError>; // Returns catch_up_id for tracking
-    async fn unsubscribe(subscription_id: String) -> Result<(), MessageError>;
+    ) -> Result<SubscriptionConfig, MessageError>;
+
+    /// Update the internal subscription and catch up to the latest stream height for the given filter
+    async fn catch_up(request: CatchUpRequest) -> Result<SubscriptionConfig, MessageError>; // Returns catch_up_id for tracking
 }
 
 /// Result type for message operations
@@ -242,7 +296,7 @@ pub struct CatchUpRequest {
     pub filter: Filter,
     pub since: Option<String>,
     pub max_messages: Option<usize>,
-    pub request_id: String,
+    pub request_id: u32,
 }
 
 impl CatchUpRequest {
@@ -251,7 +305,7 @@ impl CatchUpRequest {
         channel_id: Vec<u8>,
         since: Option<String>,
         max_messages: Option<usize>,
-        request_id: String,
+        request_id: u32,
     ) -> Self {
         Self {
             filter: Filter::Channel(channel_id),
@@ -266,7 +320,7 @@ impl CatchUpRequest {
         author_key: KeyId,
         since: Option<String>,
         max_messages: Option<usize>,
-        request_id: String,
+        request_id: u32,
     ) -> Self {
         Self {
             filter: Filter::Author(author_key),
@@ -278,10 +332,10 @@ impl CatchUpRequest {
 
     /// Convenience constructor for event catch-up
     pub fn for_event(
-        event_id: Vec<u8>,
+        event_id: Hash,
         since: Option<String>,
         max_messages: Option<usize>,
-        request_id: String,
+        request_id: u32,
     ) -> Self {
         Self {
             filter: Filter::Event(event_id),
@@ -296,7 +350,7 @@ impl CatchUpRequest {
         user_key: KeyId,
         since: Option<String>,
         max_messages: Option<usize>,
-        request_id: String,
+        request_id: u32,
     ) -> Self {
         Self {
             filter: Filter::User(user_key),
@@ -310,7 +364,7 @@ impl CatchUpRequest {
 /// Catch-up response with historical messages
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CatchUpResponse {
-    pub request_id: String,
+    pub request_id: u32,
     pub filter: Filter, // What filter was requested
     pub messages: Vec<MessageFull>,
     pub is_complete: bool,          // False if more batches coming
@@ -359,7 +413,7 @@ mod tests {
         // Test that Filter variants work correctly
         let author = Filter::Author(create_test_verifying_key_id(b"alice"));
         let channel = Filter::Channel(b"general".to_vec());
-        let event = Filter::Event(b"important".to_vec());
+        let event = Filter::Event(blake3::hash(b"important"));
         let user = Filter::User(create_test_verifying_key_id(b"bob"));
 
         // Test Debug formatting works
@@ -478,16 +532,15 @@ mod tests {
             b"general".to_vec(),
             Some("0-0".to_string()),
             Some(100),
-            "test_id".to_string(),
+            123,
         );
         assert_eq!(channel_request.filter, Filter::Channel(b"general".to_vec()));
-        assert_eq!(channel_request.request_id, "test_id");
+        assert_eq!(channel_request.request_id, 123);
 
         // Test author catch-up request
         let author_key = create_test_verifying_key_id(b"alice");
-        let author_request =
-            CatchUpRequest::for_author(author_key, None, None, "test_id_2".to_string());
+        let author_request = CatchUpRequest::for_author(author_key, None, None, 456);
         assert_eq!(author_request.filter, Filter::Author(author_key));
-        assert_eq!(author_request.request_id, "test_id_2");
+        assert_eq!(author_request.request_id, 456);
     }
 }

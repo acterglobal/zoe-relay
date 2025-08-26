@@ -3,12 +3,10 @@ use async_trait::async_trait;
 use futures::{SinkExt, StreamExt};
 use std::sync::Arc;
 use tarpc::server::{BaseChannel, Channel};
-use tokio::sync::mpsc;
 use tracing::{debug, error, info};
 use zoe_message_store::{MessageStoreError, MessagesRpcService, RedisMessageStorage};
 use zoe_wire_protocol::{
-    MessageService as _, MessageServiceResponseWrap, MessagesServiceRequestWrap, StreamMessage,
-    StreamPair,
+    MessageService as _, MessageServiceResponseWrap, MessagesServiceRequestWrap, StreamPair,
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -26,7 +24,6 @@ pub enum MessagesServiceError {
 pub struct MessagesService {
     streams: StreamPair,
     store: Arc<RedisMessageStorage>,
-    service: MessagesRpcService,
 }
 
 impl MessagesService {
@@ -35,7 +32,6 @@ impl MessagesService {
         Self {
             streams,
             store: store.clone(),
-            service: MessagesRpcService::new(store),
         }
     }
 }
@@ -50,29 +46,18 @@ impl Service for MessagesService {
 
     async fn run(self) -> Result<(), Self::Error> {
         info!("Starting MessagesService");
-        let Self {
-            mut streams,
-            store: _store,
-            service,
-        } = self;
+        let Self { mut streams, store } = self;
         streams.send_ack().await?;
         let (mut incoming, mut sink) =
             streams.unpack_transports::<MessagesServiceRequestWrap, MessageServiceResponseWrap>();
 
-        // Channels for receiving messages from background tasks
-        let (sub_sender, mut sub_receiver) = mpsc::unbounded_channel::<StreamMessage>();
-        let (response_sender, mut response_receiver) =
-            mpsc::unbounded_channel::<MessageServiceResponseWrap>();
-
         let (mut client_transport, server_transport) = tarpc::transport::channel::unbounded();
-
-        // Configure the RPC service with communication channels
-        let enhanced_service = service.with_channels(sub_sender, response_sender);
+        let (mut msg_recv, mut catchup_recv, rpc) = MessagesRpcService::new(store);
 
         let server = BaseChannel::with_defaults(server_transport);
         let rpc_spawn = tokio::spawn(
             server
-                .execute(enhanced_service.serve())
+                .execute(rpc.serve())
                 // Handle all requests concurrently.
                 .for_each(|response| async move {
                     tokio::spawn(response);
@@ -102,24 +87,7 @@ impl Service for MessagesService {
                     }
                 }
 
-                // Poll for messages from subscription task
-                stream_message = sub_receiver.recv() => {
-                    match stream_message {
-                        Some(message) => {
-                            // Forward message to client
-                            if let Err(e) = sink.send(MessageServiceResponseWrap::StreamMessage(message)).await {
-                                error!("Failed to send response to client: {}", e);
-                                break;
-                            }
-                        }
-                        None => {
-                            debug!("Subscription channel closed");
-                            // Continue running - this can happen when subscription task ends
-                        }
-                    }
-                }
-
-                // Poll from rpc task
+                // Poll from rpc responses
                 rpc_message = client_transport.next() => {
                     match rpc_message {
                         Some(Ok(message)) => {
@@ -140,12 +108,29 @@ impl Service for MessagesService {
                     }
                 }
 
+                // Poll for messages from subscription task
+                stream_message = msg_recv.recv() => {
+                    match stream_message {
+                        Some(message) => {
+                            // Forward message to client
+                            if let Err(e) = sink.send(MessageServiceResponseWrap::StreamMessage(message)).await {
+                                error!("Failed to send response to client: {}", e);
+                                break;
+                            }
+                        }
+                        None => {
+                            debug!("Subscription channel closed");
+                            // Continue running - this can happen when subscription task ends
+                        }
+                    }
+                }
+
                 // Poll for responses from catch-up tasks
-                response_message = response_receiver.recv() => {
+                response_message = catchup_recv.recv() => {
                     match response_message {
                         Some(response) => {
                             // Forward response to client
-                            if let Err(e) = sink.send(response).await {
+                            if let Err(e) = sink.send(MessageServiceResponseWrap::CatchUpResponse(response)).await {
                                 error!("Failed to send response to client: {}", e);
                                 break;
                             }

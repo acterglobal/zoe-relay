@@ -15,8 +15,8 @@ pub use client::{Client, ClientBuilder};
 pub use error::ClientError;
 pub use file_storage::FileStorage;
 pub use pqxdh::{
-    PqxdhSession, PqxdhProtocolHandler, create_pqxdh_prekey_bundle_with_private_keys,
-    publish_pqxdh_inbox, fetch_pqxdh_inbox, send_pqxdh_initial_message,
+    PqxdhProtocolHandler, PqxdhSession, create_pqxdh_prekey_bundle_with_private_keys,
+    fetch_pqxdh_inbox, publish_pqxdh_inbox, send_pqxdh_initial_message,
 };
 pub use relay_client::RelayClient;
 pub use rpc_transport::{RpcMessageListener, TarpcOverMessagesClient, TarpcOverMessagesServer};
