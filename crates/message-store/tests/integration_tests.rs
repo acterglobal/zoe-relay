@@ -111,13 +111,14 @@ async fn test_generic_filter_operations() {
     }
 
     // Test Add events
-    let add_events = FilterOperation::add_events(vec![b"important".to_vec(), b"urgent".to_vec()]);
+    let add_events =
+        FilterOperation::add_events(vec![blake3::hash(b"important"), blake3::hash(b"urgent")]);
     filters.apply_operation(&add_events);
 
     // Check that events were added
     if let Some(filter_list) = &filters.filters {
-        assert!(filter_list.contains(&Filter::Event(b"important".to_vec())));
-        assert!(filter_list.contains(&Filter::Event(b"urgent".to_vec())));
+        assert!(filter_list.contains(&Filter::Event(blake3::hash(b"important"))));
+        assert!(filter_list.contains(&Filter::Event(blake3::hash(b"urgent"))));
     }
 
     // Test Clear operation
@@ -147,7 +148,7 @@ async fn test_atomic_multi_field_operations() {
     let operations = vec![
         FilterOperation::add_channels(vec![b"general".to_vec(), b"tech".to_vec()]),
         FilterOperation::add_authors(vec![alice_key]),
-        FilterOperation::add_events(vec![b"important".to_vec()]),
+        FilterOperation::add_events(vec![blake3::hash(b"important")]),
         FilterOperation::add_users(vec![user1_key]),
     ];
 
@@ -161,7 +162,7 @@ async fn test_atomic_multi_field_operations() {
         assert!(filter_list.contains(&Filter::Channel(b"general".to_vec())));
         assert!(filter_list.contains(&Filter::Channel(b"tech".to_vec())));
         assert!(filter_list.contains(&Filter::Author(alice_key)));
-        assert!(filter_list.contains(&Filter::Event(b"important".to_vec())));
+        assert!(filter_list.contains(&Filter::Event(blake3::hash(b"important"))));
         assert!(filter_list.contains(&Filter::User(user1_key)));
     } else {
         panic!("Expected filters to be Some");
@@ -296,7 +297,7 @@ async fn test_filter_update_request() {
     let operations = vec![
         FilterOperation::add_channels(vec![b"general".to_vec(), b"tech".to_vec()]),
         FilterOperation::remove_authors(vec![create_test_verifying_key_id(b"spammer")]),
-        FilterOperation::add_events(vec![b"important".to_vec()]),
+        FilterOperation::add_events(vec![blake3::hash(b"important")]),
     ];
 
     let filter_request = FilterUpdateRequest { operations };
@@ -313,7 +314,7 @@ async fn test_filter_update_request() {
     if let Some(filter_list) = &filters.filters {
         assert!(filter_list.contains(&Filter::Channel(b"general".to_vec())));
         assert!(filter_list.contains(&Filter::Channel(b"tech".to_vec())));
-        assert!(filter_list.contains(&Filter::Event(b"important".to_vec())));
+        assert!(filter_list.contains(&Filter::Event(blake3::hash(b"important"))));
         // Authors should not contain the "spammer" we tried to remove
         assert!(!filter_list.iter().any(|f| matches!(f, Filter::Author(_))));
     } else {

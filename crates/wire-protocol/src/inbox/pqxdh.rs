@@ -72,12 +72,10 @@ pub struct PqxdhPrekeyBundle {
     pub pq_one_time_signatures: BTreeMap<String, Signature>,
 }
 
-/// PQXDH echo service inbox for testing and connectivity verification
+/// PQXDH inbox for connecting to a user
 ///
-/// This inbox type is used for simple echo/ping services that test
-/// PQXDH connectivity and measure round-trip times.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
-pub struct PqxdhEchoServiceInbox {
+pub struct PqxdhInbox {
     /// Access control and responsiveness expectations
     pub inbox_type: InboxType,
     /// PQXDH prekeys for key agreement (always present)
@@ -92,7 +90,7 @@ pub struct PqxdhEchoServiceInbox {
 ///
 /// This contains the private keys corresponding to a PqxdhPrekeyBundle.
 /// It should be stored securely and zeroized when no longer needed.
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct PqxdhPrivateKeys {
     /// Private key for the signed X25519 prekey
     pub signed_prekey_private: x25519_dalek::StaticSecret,
@@ -146,12 +144,26 @@ pub struct PqxdhSessionMessage {
 }
 
 /// Result of PQXDH key agreement
-#[derive(Debug, Clone, Zeroize, ZeroizeOnDrop)]
+#[derive(Debug, Clone, Zeroize, ZeroizeOnDrop, Serialize, Deserialize)]
 pub struct PqxdhSharedSecret {
     /// 32-byte shared secret derived from PQXDH
     pub shared_key: [u8; 32],
     /// IDs of consumed one-time keys (to be deleted)
     pub consumed_one_time_key_ids: Vec<String>,
+}
+
+/// Initial payload structure for PQXDH sessions
+///
+/// This structure is encrypted inside the PqxdhInitialMessage and contains
+/// both the user's initial payload and a randomized channel ID for subsequent
+/// session messages to provide unlinkability.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct PqxdhInitialPayload {
+    /// The actual user payload (e.g., RPC request)
+    pub user_payload: Vec<u8>,
+    /// Randomized channel ID for subsequent session messages (32 bytes)
+    /// This provides unlinkability - observers cannot correlate session messages
+    pub session_channel_id: [u8; 32],
 }
 
 /// Errors that can occur during PQXDH operations
@@ -200,7 +212,7 @@ impl PqxdhPrekeyBundle {
     }
 }
 
-impl PqxdhEchoServiceInbox {
+impl PqxdhInbox {
     /// Create a new echo service inbox
     pub fn new(
         inbox_type: InboxType,
@@ -328,7 +340,7 @@ mod tests {
             pq_one_time_signatures: BTreeMap::new(),
         };
 
-        let inbox = PqxdhEchoServiceInbox::new(
+        let inbox = PqxdhInbox::new(
             InboxType::Public,
             prekey_bundle,
             Some(1024),
@@ -401,12 +413,84 @@ mod tests {
             pq_one_time_signatures: BTreeMap::new(),
         };
 
-        let inbox = PqxdhEchoServiceInbox::new(InboxType::Private, prekey_bundle, None, None);
+        let inbox = PqxdhInbox::new(InboxType::Private, prekey_bundle, None, None);
 
         // Test serialization round-trip
         let serialized = postcard::to_stdvec(&inbox).unwrap();
-        let deserialized: PqxdhEchoServiceInbox = postcard::from_bytes(&serialized).unwrap();
+        let deserialized: PqxdhInbox = postcard::from_bytes(&serialized).unwrap();
 
         assert_eq!(inbox, deserialized);
+    }
+
+    #[test]
+    fn test_pqxdh_private_keys_random_serialization() {
+        use rand::RngCore;
+
+        // Generate random private keys
+        let mut rng = rand::thread_rng();
+
+        // Create random X25519 keys
+        let signed_prekey_private = x25519_dalek::StaticSecret::random_from_rng(&mut rng);
+        let mut one_time_prekey_privates = BTreeMap::new();
+        for i in 0..3 {
+            let key_id = format!("otk_{}", i);
+            let private_key = x25519_dalek::StaticSecret::random_from_rng(&mut rng);
+            one_time_prekey_privates.insert(key_id, private_key);
+        }
+
+        // Create random ML-KEM keys (just random bytes for testing)
+        let mut pq_signed_prekey_private = vec![0u8; 2400]; // ML-KEM 768 private key size
+        rng.fill_bytes(&mut pq_signed_prekey_private);
+
+        let mut pq_one_time_prekey_privates = BTreeMap::new();
+        for i in 0..2 {
+            let key_id = format!("pq_otk_{}", i);
+            let mut private_key = vec![0u8; 2400];
+            rng.fill_bytes(&mut private_key);
+            pq_one_time_prekey_privates.insert(key_id, private_key);
+        }
+
+        let private_keys = PqxdhPrivateKeys {
+            signed_prekey_private,
+            one_time_prekey_privates,
+            pq_signed_prekey_private,
+            pq_one_time_prekey_privates,
+        };
+
+        // Test serialization round-trip
+        let serialized = postcard::to_stdvec(&private_keys).unwrap();
+        let deserialized: PqxdhPrivateKeys = postcard::from_bytes(&serialized).unwrap();
+
+        // Verify the data is preserved
+        assert_eq!(
+            private_keys.signed_prekey_private.to_bytes(),
+            deserialized.signed_prekey_private.to_bytes()
+        );
+        assert_eq!(
+            private_keys.one_time_prekey_privates.len(),
+            deserialized.one_time_prekey_privates.len()
+        );
+        assert_eq!(
+            private_keys.pq_signed_prekey_private,
+            deserialized.pq_signed_prekey_private
+        );
+        assert_eq!(
+            private_keys.pq_one_time_prekey_privates,
+            deserialized.pq_one_time_prekey_privates
+        );
+
+        // Verify one-time keys
+        for (key_id, original_key) in &private_keys.one_time_prekey_privates {
+            let deserialized_key = &deserialized.one_time_prekey_privates[key_id];
+            assert_eq!(original_key.to_bytes(), deserialized_key.to_bytes());
+        }
+
+        // Test that we can generate different random keys
+        let signed_prekey_private2 = x25519_dalek::StaticSecret::random_from_rng(&mut rng);
+        assert_ne!(
+            private_keys.signed_prekey_private.to_bytes(),
+            signed_prekey_private2.to_bytes(),
+            "Random keys should be different"
+        );
     }
 }

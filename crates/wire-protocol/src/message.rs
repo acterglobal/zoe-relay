@@ -35,6 +35,15 @@ pub enum Tag {
     },
 }
 
+impl From<&MessageFull> for Tag {
+    fn from(message: &MessageFull) -> Self {
+        Tag::Event {
+            id: *message.id(),
+            relays: vec![],
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub enum Kind {
     /// This is a regular event, that should be stored and made available to query for afterwards

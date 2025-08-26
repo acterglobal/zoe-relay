@@ -36,6 +36,7 @@ rustls = { workspace = true }
 quinn = { workspace = true }
 x25519-dalek = { version = "2.0", features = ["static_secrets", "serde"] }
 ed25519-dalek = { workspace = true }
+env_logger = { version = "0.11" }
 
 # Redis client for message store tests
 redis = { version = "0.24", features = ["tokio-comp"] }

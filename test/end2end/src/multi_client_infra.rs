@@ -69,6 +69,7 @@ use tokio::sync::RwLock;
 use tokio::time::timeout;
 use tracing::{debug, info, warn};
 use zoe_client::RelayClient;
+use zoe_client::services::messages_manager::MessagesManager;
 use zoe_wire_protocol::{
     Content, Filter, KeyPair, Kind, Message, MessageFilters, MessageFull, StreamMessage,
     SubscriptionConfig, Tag, VerifyingKey,
@@ -260,14 +261,16 @@ impl TestClient {
         self.client.keypair()
     }
 
-    /// Connect to the message service and return both service and stream
+    /// Connect to the message service and return service and streams
     pub async fn connect_message_service(
         &self,
     ) -> Result<(
         zoe_client::services::messages::MessagesService,
         zoe_client::services::messages::MessagesStream,
+        zoe_client::services::messages::CatchUpStream,
     )> {
-        self.client
+        let (service, (msg_stream, catch_up_stream)) = self
+            .client
             .connect_message_service()
             .await
             .with_context(|| {
@@ -275,7 +278,9 @@ impl TestClient {
                     "Failed to connect message service for client '{}'",
                     self.name
                 )
-            })
+            })?;
+
+        Ok((service, msg_stream, catch_up_stream))
     }
 
     /// Create and publish a message to a specific channel
@@ -315,12 +320,13 @@ impl TestClient {
         Ok(())
     }
 
-    /// Subscribe to a specific channel and return the subscription ID
+    /// Subscribe to a specific channel and return a filtered stream
     pub async fn subscribe_to_channel(
         &self,
         message_service: &zoe_client::services::messages::MessagesService,
+        message_stream: zoe_client::services::messages::MessagesStream,
         channel: &str,
-    ) -> Result<String> {
+    ) -> Result<zoe_client::services::messages::MessagesStream> {
         let subscription_config = SubscriptionConfig {
             filters: MessageFilters {
                 filters: Some(vec![Filter::Channel(channel.as_bytes().to_vec())]),
@@ -329,7 +335,7 @@ impl TestClient {
             limit: None,
         };
 
-        let subscription_id = message_service
+        message_service
             .subscribe(subscription_config)
             .await
             .with_context(|| {
@@ -340,10 +346,10 @@ impl TestClient {
             })?;
 
         info!(
-            "📬 Client '{}' subscribed to channel '{}' with ID: {}",
-            self.name, channel, subscription_id
+            "📬 Client '{}' subscribed to channel '{}'",
+            self.name, channel
         );
-        Ok(subscription_id)
+        Ok(message_stream)
     }
 }
 
@@ -461,16 +467,16 @@ impl MultiClientTestHarness {
 
         let mut message_services = Vec::new();
         let mut message_streams = Vec::new();
-        let mut subscription_ids = Vec::new();
 
         // Connect all clients to message service and subscribe to test channel
         for client in clients {
-            let (service, stream) = client.connect_message_service().await?;
-            let subscription_id = client.subscribe_to_channel(&service, &test_channel).await?;
+            let (service, msg_stream, _catch_up_stream) = client.connect_message_service().await?;
+            let stream = client
+                .subscribe_to_channel(&service, msg_stream, &test_channel)
+                .await?;
 
             message_services.push(service);
             message_streams.push(stream);
-            subscription_ids.push(subscription_id);
         }
 
         // Wait for subscriptions to be processed
@@ -561,15 +567,15 @@ impl MultiClientTestHarness {
         );
 
         // Connect both clients to message service
-        let (service_a, mut stream_a) = client_a.connect_message_service().await?;
-        let (service_b, mut stream_b) = client_b.connect_message_service().await?;
+        let (service_a, msg_stream_a, _catch_up_a) = client_a.connect_message_service().await?;
+        let (service_b, msg_stream_b, _catch_up_b) = client_b.connect_message_service().await?;
 
         // Both clients subscribe to the test channel
-        let _sub_a = client_a
-            .subscribe_to_channel(&service_a, &test_channel)
+        let mut stream_a = client_a
+            .subscribe_to_channel(&service_a, msg_stream_a, &test_channel)
             .await?;
-        let _sub_b = client_b
-            .subscribe_to_channel(&service_b, &test_channel)
+        let mut stream_b = client_b
+            .subscribe_to_channel(&service_b, msg_stream_b, &test_channel)
             .await?;
 
         // Wait for subscriptions

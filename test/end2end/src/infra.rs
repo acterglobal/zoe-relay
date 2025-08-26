@@ -5,6 +5,8 @@
 //! to test the complete system integration.
 
 use anyhow::{Context, Result};
+use futures::StreamExt;
+use futures::pin_mut;
 use rand::{Rng, thread_rng};
 use std::net::SocketAddr;
 use std::sync::Once;
@@ -16,7 +18,9 @@ use zoe_blob_store::BlobServiceImpl;
 use zoe_client::RelayClient;
 use zoe_message_store::RedisMessageStorage;
 use zoe_relay::{RelayServer, RelayServiceRouter};
-use zoe_wire_protocol::{KeyPair, Kind, Message, MessageFilters, MessageFull, Tag, VerifyingKey};
+use zoe_wire_protocol::{
+    Algorithm, KeyPair, Kind, Message, MessageFilters, MessageFull, Tag, VerifyingKey,
+};
 
 // Initialize crypto provider for Rustls
 fn init_crypto_provider() {
@@ -51,10 +55,6 @@ impl TestInfrastructure {
 
         info!("🚀 Setting up end-to-end test infrastructure");
 
-        // Find a random available port
-        let server_addr = find_free_port().await?;
-        info!("📡 Using server address: {}", server_addr);
-
         // Create temporary directories for blob storage
         let blob_temp_dir = TempDir::new().context("Failed to create blob temp directory")?;
         let blob_dir = blob_temp_dir.path().to_path_buf();
@@ -69,9 +69,8 @@ impl TestInfrastructure {
         );
 
         // Create blob service
-        let blob_service = BlobServiceImpl::new(blob_dir.clone())
-            .await
-            .context("Failed to create blob service")?;
+        let blob_service = BlobServiceImpl::new(blob_dir.clone()).await?;
+        info!("✅ Connected to blob service");
 
         // For now, we'll create a mock message service since the current API has issues
         // TODO: Re-enable proper Redis message service when API is stabilized
@@ -97,8 +96,10 @@ impl TestInfrastructure {
         let router = RelayServiceRouter::new(blob_service, message_service);
 
         // Create relay server
-        let relay_server = RelayServer::new(server_addr, server_keypair, router)
-            .context("Failed to create relay server")?;
+        let relay_server =
+            RelayServer::new("127.0.0.1:0".parse().unwrap(), server_keypair, router)?;
+
+        let server_addr = relay_server.local_addr()?;
 
         // Spawn server in background
         info!("🌐 Starting relay server on {}", server_addr);
@@ -124,40 +125,24 @@ impl TestInfrastructure {
 
     /// Create a new relay client connected to the test server
     pub async fn create_client(&self) -> Result<RelayClient> {
-        self.create_client_with_signature_type("MlDsa65").await
+        self.create_client_for_algorithm(Algorithm::MlDsa65).await
     }
 
     /// Create a new relay client with a specific signature type
-    pub async fn create_client_with_signature_type(
-        &self,
-        signature_type: &str,
-    ) -> Result<RelayClient> {
-        info!("👤 Creating relay client with {} signature", signature_type);
+    pub async fn create_client_for_algorithm(&self, algorithm: Algorithm) -> Result<RelayClient> {
+        info!("👤 Creating relay client with {} signature", algorithm);
 
-        let keypair = match signature_type {
-            "Ed25519" => KeyPair::generate_ed25519(&mut rand::thread_rng()),
-            "MlDsa44" => KeyPair::generate_ml_dsa44(&mut rand::thread_rng()),
-            "MlDsa65" => KeyPair::generate_ml_dsa65(&mut rand::thread_rng()),
-            "MlDsa87" => KeyPair::generate_ml_dsa87(&mut rand::thread_rng()),
-            _ => {
-                return Err(anyhow::anyhow!(
-                    "Unsupported signature type: {}",
-                    signature_type
-                ));
-            }
-        };
+        let keypair = KeyPair::generate_for_algorithm(algorithm, &mut rand::thread_rng());
 
         let client = timeout(
             Duration::from_secs(5),
             RelayClient::new(keypair, self.server_public_key.clone(), self.server_addr),
         )
-        .await
-        .context("Timeout connecting to relay server")?
-        .context("Failed to create relay client")?;
+        .await??;
 
         info!(
             "✅ Relay client with {} signature connected successfully",
-            signature_type
+            algorithm
         );
         Ok(client)
     }
@@ -178,27 +163,11 @@ impl TestInfrastructure {
     }
 }
 
-/// Find a free port for testing
-async fn find_free_port() -> Result<SocketAddr> {
-    for _ in 0..10 {
-        let port: u16 = thread_rng().gen_range(10000..65000);
-        let addr = SocketAddr::from(([127, 0, 0, 1], port));
-
-        // Try to bind to check if port is available
-        if let Ok(listener) = tokio::net::TcpListener::bind(addr).await {
-            drop(listener);
-            debug!("Found free port: {}", port);
-            return Ok(addr);
-        }
-    }
-
-    anyhow::bail!("Could not find a free port after 10 attempts");
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use serial_test::serial;
+    use zoe_client::services::MessagesManager;
 
     #[tokio::test]
     #[serial] // Run tests sequentially to avoid port conflicts
@@ -376,23 +345,19 @@ mod tests {
 
         info!("👥 Created two clients for message communication test");
         info!(
-            "🔑 Client 1 public key: {}",
-            hex::encode(client1.public_key().encode())
+            "🔑 Client 1 public key id: {}",
+            hex::encode(client1.public_key().id())
         );
         info!(
-            "🔑 Client 2 public key: {}",
-            hex::encode(client2.public_key().encode())
+            "🔑 Client 2 public key id: {}",
+            hex::encode(client2.public_key().id())
         );
 
         // Connect both clients to message service
-        let (messages_service1, mut messages_stream1) = client1
-            .connect_message_service()
-            .await
-            .context("Failed to connect client 1 to message service")?;
-        let (messages_service2, mut messages_stream2) = client2
-            .connect_message_service()
-            .await
-            .context("Failed to connect client 2 to message service")?;
+        let (messages_service1, (mut messages_stream1, _)) =
+            client1.connect_message_service().await?;
+        let (messages_service2, (mut messages_stream2, _)) =
+            client2.connect_message_service().await?;
 
         info!("📡 Both clients connected to message service");
 
@@ -413,17 +378,8 @@ mod tests {
         let subscription_config2 = subscription_config1.clone();
 
         // Subscribe both clients to the channel
-        let sub_id1 = messages_service1
-            .subscribe(subscription_config1)
-            .await
-            .context("Client 1 failed to subscribe")?;
-        let sub_id2 = messages_service2
-            .subscribe(subscription_config2)
-            .await
-            .context("Client 2 failed to subscribe")?;
-
-        info!("📬 Client 1 subscribed with ID: {}", sub_id1);
-        info!("📬 Client 2 subscribed with ID: {}", sub_id2);
+        messages_service1.subscribe(subscription_config1).await?;
+        messages_service2.subscribe(subscription_config2).await?;
 
         // Give a moment for subscriptions to be processed
         tokio::time::sleep(Duration::from_millis(200)).await;
@@ -478,9 +434,7 @@ mod tests {
         info!("📤 Client 1 publishing message...");
         let publish_result1 = messages_service1
             .publish(tarpc::context::current(), message1_full)
-            .await
-            .context("Client 1 failed to publish message")?
-            .context("Client 1 publish returned error")?;
+            .await?;
         info!("✅ Client 1 message published: {:?}", publish_result1);
 
         tokio::time::sleep(Duration::from_millis(100)).await;
@@ -488,9 +442,7 @@ mod tests {
         info!("📤 Client 2 publishing message...");
         let publish_result2 = messages_service2
             .publish(tarpc::context::current(), message2_full)
-            .await
-            .context("Client 2 failed to publish message")?
-            .context("Client 2 publish returned error")?;
+            .await??;
         info!("✅ Client 2 message published: {:?}", publish_result2);
 
         // Wait for messages to be processed and distributed
@@ -576,42 +528,30 @@ mod tests {
 
         info!("👥 Created two clients for file storage test");
         info!(
-            "🔑 Client 1 public key: {}",
-            hex::encode(client1.public_key().encode())
+            "🔑 Client 1 public key id: {}",
+            hex::encode(client1.public_key().id())
         );
         info!(
-            "🔑 Client 2 public key: {}",
-            hex::encode(client2.public_key().encode())
+            "🔑 Client 2 public key id: {}",
+            hex::encode(client2.public_key().id())
         );
 
         // Connect both clients to blob service for FileStorage
-        let blob_service1 = client1
-            .connect_blob_service()
-            .await
-            .context("Failed to connect client 1 to blob service")?;
-        let blob_service2 = client2
-            .connect_blob_service()
-            .await
-            .context("Failed to connect client 2 to blob service")?;
+        let blob_service1 = client1.connect_blob_service().await?;
+        let blob_service2 = client2.connect_blob_service().await?;
 
         info!("📡 Both clients connected to blob service");
 
         // Create temporary directories for each client's local storage
-        let temp_dir1 =
-            tempfile::TempDir::new().context("Failed to create temp dir for client 1")?;
-        let temp_dir2 =
-            tempfile::TempDir::new().context("Failed to create temp dir for client 2")?;
+        let temp_dir1 = tempfile::TempDir::new()?;
+        let temp_dir2 = tempfile::TempDir::new()?;
 
         // Create FileStorage instances with remote blob service support
         let file_storage1 =
-            zoe_client::FileStorage::new_with_remote(temp_dir1.path(), blob_service1)
-                .await
-                .context("Failed to create FileStorage for client 1")?;
+            zoe_client::FileStorage::new_with_remote(temp_dir1.path(), blob_service1).await?;
 
         let file_storage2 =
-            zoe_client::FileStorage::new_with_remote(temp_dir2.path(), blob_service2)
-                .await
-                .context("Failed to create FileStorage for client 2")?;
+            zoe_client::FileStorage::new_with_remote(temp_dir2.path(), blob_service2).await?;
 
         info!("💾 Created FileStorage instances with remote blob service support");
 
@@ -625,8 +565,8 @@ mod tests {
              🌟 Local storage + Remote blob service + File retrieval = ✨ Magic! ✨\n\
              🎯 Testing hybrid storage architecture with convergent encryption.\n",
             SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(),
-            hex::encode(client1.public_key().encode()),
-            hex::encode(client2.public_key().encode())
+            hex::encode(client1.public_key().id()),
+            hex::encode(client2.public_key().id())
         );
         let test_bytes = test_content.as_bytes();
 
@@ -645,8 +585,7 @@ mod tests {
                 "e2e_test_file.txt",
                 Some("text/plain".to_string()),
             )
-            .await
-            .context("Client 1 failed to store file")?;
+            .await?;
 
         info!("✅ Client 1 stored file with:");
         info!("   📋 Blob hash: {}", stored_file_ref.blob_hash);
@@ -662,10 +601,7 @@ mod tests {
 
         // Verify Client 1 can retrieve its own file (should come from local storage)
         info!("🔍 Client 1 verifying local retrieval...");
-        let client1_retrieved = file_storage1
-            .retrieve_file(&stored_file_ref)
-            .await
-            .context("Client 1 failed to retrieve its own file")?;
+        let client1_retrieved = file_storage1.retrieve_file(&stored_file_ref).await?;
 
         assert_eq!(
             client1_retrieved, test_bytes,
@@ -682,17 +618,11 @@ mod tests {
         info!("   📋 Looking for blob hash: {}", stored_file_ref.blob_hash);
 
         // First verify Client 2 doesn't have it locally
-        let has_local = file_storage2
-            .has_file(&stored_file_ref)
-            .await
-            .context("Failed to check if Client 2 has file locally")?;
+        let has_local = file_storage2.has_file(&stored_file_ref).await?;
         info!("   💾 Client 2 local storage has file: {}", has_local);
 
         // Now retrieve the file - should fetch from remote and cache locally
-        let client2_retrieved = file_storage2
-            .retrieve_file(&stored_file_ref)
-            .await
-            .context("Client 2 failed to retrieve file from remote")?;
+        let client2_retrieved = file_storage2.retrieve_file(&stored_file_ref).await?;
 
         info!("✅ Client 2 successfully retrieved file from remote");
         info!("   📊 Retrieved {} bytes", client2_retrieved.len());
@@ -713,10 +643,7 @@ mod tests {
         );
 
         // Now Client 2 should have it cached locally
-        let has_local_after = file_storage2
-            .has_file(&stored_file_ref)
-            .await
-            .context("Failed to check if Client 2 has file locally after retrieval")?;
+        let has_local_after = file_storage2.has_file(&stored_file_ref).await?;
         info!(
             "   💾 Client 2 local cache after retrieval: {}",
             has_local_after
@@ -724,10 +651,7 @@ mod tests {
 
         // Test retrieving again (should now come from local cache)
         info!("🔍 Client 2 testing local cache retrieval...");
-        let client2_cached = file_storage2
-            .retrieve_file(&stored_file_ref)
-            .await
-            .context("Client 2 failed to retrieve file from local cache")?;
+        let client2_cached = file_storage2.retrieve_file(&stored_file_ref).await?;
 
         assert_eq!(
             client2_cached, test_bytes,
@@ -743,8 +667,7 @@ mod tests {
                 "duplicate_file.txt",
                 Some("text/plain".to_string()),
             )
-            .await
-            .context("Failed to store duplicate content")?;
+            .await?;
 
         assert_eq!(
             stored_file_ref.blob_hash, duplicate_ref.blob_hash,
@@ -769,8 +692,7 @@ mod tests {
             .await??
         };
 
-        let temp_dir3 =
-            tempfile::TempDir::new().context("Failed to create temp dir for client 3")?;
+        let temp_dir3 = tempfile::TempDir::new()?;
         let blob_service3 = client3.connect_blob_service().await?;
         let file_storage3 =
             zoe_client::FileStorage::new_with_remote(temp_dir3.path(), blob_service3).await?;
@@ -834,23 +756,19 @@ mod tests {
 
         info!("👥 Created two clients for group creation and sharing test");
         info!(
-            "🔑 Client 1 public key: {}",
-            hex::encode(client1.public_key().encode())
+            "🔑 Client 1 public key id: {}",
+            hex::encode(client1.public_key().id())
         );
         info!(
-            "🔑 Client 2 public key: {}",
-            hex::encode(client2.public_key().encode())
+            "🔑 Client 2 public key id: {}",
+            hex::encode(client2.public_key().id())
         );
 
         // Connect both clients to message service
-        let (messages_service1, mut messages_stream1) = client1
-            .connect_message_service()
-            .await
-            .context("Failed to connect client 1 to message service")?;
-        let (messages_service2, mut messages_stream2) = client2
-            .connect_message_service()
-            .await
-            .context("Failed to connect client 2 to message service")?;
+        let (messages_service1, (mut messages_stream1, _)) =
+            client1.connect_message_service().await?;
+        let (messages_service2, (mut messages_stream2, _)) =
+            client2.connect_message_service().await?;
 
         info!("📡 Both clients connected to message service");
 
@@ -918,9 +836,7 @@ mod tests {
                 tarpc::context::current(),
                 create_group_result.message.clone(),
             )
-            .await
-            .context("Client 1 failed to publish group creation message")?
-            .context("Client 1 publish returned error")?;
+            .await?;
 
         info!(
             "✅ Client 1 published group creation event: {:?}",
@@ -966,15 +882,9 @@ mod tests {
             limit: Some(10),
         };
 
-        let sub_id2 = messages_service2
-            .subscribe(subscription_config)
-            .await
-            .context("Client 2 failed to subscribe to group events")?;
+        messages_service2.subscribe(subscription_config).await?;
 
-        info!(
-            "📬 Client 2 subscribed to client 1's messages with ID: {}",
-            sub_id2
-        );
+        info!("📬 Client 2 subscribed to client 1's messages");
 
         // Give time for subscription processing
         tokio::time::sleep(Duration::from_millis(300)).await;
@@ -1101,7 +1011,11 @@ mod tests {
     #[tokio::test]
     #[serial]
     async fn test_message_catch_up_and_live_subscription() -> Result<()> {
+        let _ = env_logger::try_init();
+        use rand::RngCore;
         let infra = TestInfrastructure::setup().await?;
+
+        info!("🔍 Starting catch-up and live subscription test");
 
         // Create two different clients with different keys
         let client1 = infra.create_client().await?;
@@ -1119,52 +1033,36 @@ mod tests {
 
         info!("👥 Created two clients for catch-up and subscription test");
         info!(
-            "🔑 Client 1 public key: {}",
-            hex::encode(client1.public_key().encode())
+            "🔑 Client 1 public key id: {}",
+            hex::encode(client1.public_key().id())
         );
         info!(
-            "🔑 Client 2 public key: {}",
-            hex::encode(client2.public_key().encode())
+            "🔑 Client 2 public key id: {}",
+            hex::encode(client2.public_key().id())
         );
 
+        let general_channel = format!("general_channel_{}", rand::thread_rng().next_u32());
+        let new_channel = format!("custom_channel_{}", rand::thread_rng().next_u32());
+
         // Connect both clients to message service
-        let (messages_service1, mut messages_stream1) = client1
-            .connect_message_service()
-            .await
-            .context("Failed to connect client 1 to message service")?;
-        let (messages_service2, mut _messages_stream2) = client2
-            .connect_message_service()
-            .await
-            .context("Failed to connect client 2 to message service")?;
-
-        info!("📡 Both clients connected to message service");
-
-        // Define test channels
-        let general_channel = "general";
-        let new_channel = "catch_up_test_channel";
-
-        // Step 1: Client 1 subscribes to an existing channel filter (but no messages there yet)
-        let initial_subscription_config = zoe_wire_protocol::SubscriptionConfig {
-            filters: zoe_wire_protocol::MessageFilters {
+        // Client 1 initially subscribes to general channel, will later catch up on new_channel
+        let messages_manager1 = MessagesManager::builder()
+            .with_filters(zoe_wire_protocol::MessageFilters {
                 filters: Some(vec![zoe_wire_protocol::Filter::Channel(
                     general_channel.as_bytes().to_vec(),
                 )]),
-            },
-            since: None,
-            limit: Some(10),
-        };
+            })
+            .build(client1.connection())
+            .await?;
 
-        let sub_id1 = messages_service1
-            .subscribe(initial_subscription_config)
-            .await
-            .context("Client 1 failed to subscribe to initial filter")?;
+        info!("📬 Client 1 subscribed to '{general_channel}' channel");
 
-        info!(
-            "📬 Client 1 subscribed to '{}' channel with ID: {}",
-            general_channel, sub_id1
-        );
+        // Connect Client 2 to message service with no initial filters
+        let messages_manager2 = MessagesManager::builder()
+            .build(client2.connection())
+            .await?;
 
-        // Give a moment for subscription to be processed
+        // Give a moment for subscriptions to be processed
         tokio::time::sleep(Duration::from_millis(200)).await;
 
         // Step 2: Client 2 goes online and uploads a range of messages to the new channel
@@ -1176,6 +1074,8 @@ mod tests {
 
         let num_historical_messages = 5usize;
         let mut expected_historical_messages = Vec::new();
+
+        // Client 2 is already connected via messages_manager2 created above
 
         info!(
             "📤 Client 2 publishing {} historical messages to '{}'",
@@ -1203,11 +1103,7 @@ mod tests {
                 timestamp: message_timestamp,
             });
 
-            let publish_result = messages_service2
-                .publish(tarpc::context::current(), message_full)
-                .await
-                .context("Client 2 failed to publish historical message")?
-                .context("Client 2 publish returned error")?;
+            let publish_result = messages_manager2.publish(message_full).await?;
 
             info!("✅ Published message {}: {:?}", i + 1, publish_result);
 
@@ -1226,22 +1122,16 @@ mod tests {
         // Step 3: Test the catch-up API functionality
         info!("🔍 Client 1 testing catch-up API for '{}'", new_channel);
 
-        let catch_up_request = zoe_wire_protocol::CatchUpRequest {
-            filter: zoe_wire_protocol::Filter::Channel(new_channel.as_bytes().to_vec()),
-            since: None,            // Get all messages since beginning
-            max_messages: Some(10), // Max 10 messages
-            request_id: format!("catchup_{timestamp_base}"),
-        };
+        // Get the stream from catch_up_and_subscribe
+        let mut original_stream = messages_manager1
+            .catch_up_and_subscribe(
+                zoe_wire_protocol::Filter::Channel(new_channel.as_bytes().to_vec()),
+                None,
+            )
+            .await?;
 
-        let catch_up_id = messages_service1
-            .catch_up(catch_up_request)
-            .await
-            .context("Client 1 failed to initiate catch-up")?;
-
-        info!("📥 Client 1 initiated catch-up with ID: {}", catch_up_id);
-        info!(
-            "ℹ️ Note: Catch-up responses are handled separately and logged (not in message stream)"
-        );
+        // Pin the original stream
+        pin_mut!(original_stream);
 
         // Wait a bit for catch-up processing
         tokio::time::sleep(Duration::from_millis(500)).await;
@@ -1251,17 +1141,6 @@ mod tests {
             "🔄 Client 1 updating subscription to include '{}'",
             new_channel
         );
-
-        let filter_update_request = zoe_wire_protocol::FilterUpdateRequest {
-            operations: vec![zoe_wire_protocol::FilterOperation::add_channels(vec![
-                new_channel.as_bytes().to_vec(),
-            ])],
-        };
-
-        messages_service1
-            .update_filters(sub_id1.clone(), filter_update_request)
-            .await
-            .context("Client 1 failed to update filters")?;
 
         info!("✅ Client 1 updated subscription filters");
 
@@ -1295,11 +1174,7 @@ mod tests {
                 timestamp: message_timestamp,
             });
 
-            let publish_result = messages_service2
-                .publish(tarpc::context::current(), message_full)
-                .await
-                .context("Client 2 failed to publish live message")?
-                .context("Client 2 publish returned error")?;
+            let publish_result = messages_manager2.publish(message_full).await?;
 
             info!("✅ Published live message {}: {:?}", i + 1, publish_result);
 
@@ -1313,32 +1188,27 @@ mod tests {
 
         info!("👂 Waiting for live messages...");
 
+        pin_mut!(original_stream);
+
         let start_time = std::time::Instant::now();
         while start_time.elapsed() < live_timeout {
-            match timeout(Duration::from_millis(500), messages_stream1.recv()).await {
-                Ok(Some(stream_msg)) => {
-                    match &stream_msg {
-                        zoe_wire_protocol::StreamMessage::MessageReceived { message, .. } => {
-                            // Check if this is one of our expected live messages
-                            let expected_ids: Vec<zoe_wire_protocol::Hash> = expected_live_messages
-                                .iter()
-                                .filter_map(|m| m.message_id)
-                                .collect();
-                            if expected_ids.contains(message.id()) {
-                                let empty_vec = vec![];
-                                let raw_content = message.raw_content().unwrap_or(&empty_vec);
-                                let content = String::from_utf8_lossy(raw_content);
-                                received_live_messages.push(TestMessage {
-                                    content: content.to_string(),
-                                    message_id: Some(*message.id()),
-                                    timestamp: *message.when(),
-                                });
-                                info!("📥 Received live message: {}", content);
-                            }
-                        }
-                        zoe_wire_protocol::StreamMessage::StreamHeightUpdate(_) => {
-                            // Height update, continue waiting
-                        }
+            match timeout(Duration::from_millis(500), original_stream.next()).await {
+                Ok(Some(message)) => {
+                    // Check if this is one of our expected live messages
+                    let expected_ids: Vec<zoe_wire_protocol::Hash> = expected_live_messages
+                        .iter()
+                        .filter_map(|m| m.message_id)
+                        .collect();
+                    if expected_ids.contains(message.id()) {
+                        let empty_vec = vec![];
+                        let raw_content = message.raw_content().unwrap_or(&empty_vec);
+                        let content = String::from_utf8_lossy(raw_content);
+                        received_live_messages.push(TestMessage {
+                            content: content.to_string(),
+                            message_id: Some(*message.id()),
+                            timestamp: *message.when(),
+                        });
+                        info!("📥 Received live message: {}", content);
                     }
                 }
                 Ok(None) => break,  // Stream closed

@@ -1,7 +1,7 @@
 // Remove unused clap imports since they're not needed in this file
 use crate::challenge::perform_client_challenge_handshake;
 use crate::error::{ClientError, Result};
-use crate::{BlobService, MessagesService, MessagesStream};
+use crate::services::{BlobService, CatchUpStream, MessagesService, MessagesStream};
 use quinn::Connection;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -76,13 +76,13 @@ impl RelayClient {
             client_keypair_tls.algorithm()
         );
         info!(
-            "🔑 Client inner public key: {}",
-            hex::encode(client_keypair_inner.public_key().encode())
+            "🔑 Client inner public key id: {}",
+            hex::encode(client_keypair_inner.public_key().id())
         );
         info!("🌐 Connecting to server: {}", server_addr);
         info!(
             "🔐 Server public key: {} ({})",
-            server_public_key,
+            hex::encode(server_public_key.id()),
             server_public_key.algorithm()
         );
 
@@ -134,7 +134,9 @@ impl RelayClient {
         Ok(connection)
     }
 
-    pub async fn connect_message_service(&self) -> Result<(MessagesService, MessagesStream)> {
+    pub async fn connect_message_service(
+        &self,
+    ) -> Result<(MessagesService, (MessagesStream, CatchUpStream))> {
         MessagesService::connect(&self.inner.connection).await
     }
 
@@ -155,5 +157,9 @@ impl RelayClient {
     /// Get the client's TLS public key (Ed25519 or ML-DSA-44)
     pub fn tls_public_key(&self) -> VerifyingKey {
         self.inner.client_keypair_tls.public_key()
+    }
+
+    pub fn connection(&self) -> &Connection {
+        &self.inner.connection
     }
 }

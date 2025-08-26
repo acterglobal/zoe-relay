@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use futures_util::Stream;
 use redis::{aio::ConnectionManager, AsyncCommands, SetOptions};
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info, trace, warn};
 use zoe_wire_protocol::{
     Filter, Hash, Id as KeyId, MessageFilters, MessageFull, PublishResult, StoreKey, Tag,
 };
@@ -179,11 +179,15 @@ type RedisStreamResult = Vec<(String, Vec<(String, Vec<(Vec<u8>, Vec<u8>)>)>)>;
 impl RedisMessageStorage {
     /// Create a new Redis storage instance
     pub async fn new(redis_url: String) -> Result<Self> {
+        debug!("Connecting to Redis at {}", redis_url);
         let client = redis::Client::open(redis_url).map_err(MessageStoreError::Redis)?;
+        trace!("Starting connection manager");
 
         let conn_manager = ConnectionManager::new(client.clone())
             .await
             .map_err(MessageStoreError::Redis)?;
+
+        trace!("Connection manager started");
 
         Ok(Self {
             conn: Arc::new(tokio::sync::Mutex::new(conn_manager)),
@@ -474,7 +478,7 @@ impl RedisMessageStorage {
     ) -> Result<impl Stream<Item = Result<CatchUpItem>> + 'a> {
         let channel_stream = match filter {
             Filter::Channel(channel_id) => format!("channel:{}:stream", hex::encode(channel_id)),
-            Filter::Event(event_id) => format!("event:{}:stream", hex::encode(event_id)),
+            Filter::Event(event_id) => format!("event:{}:stream", hex::encode(event_id.as_bytes())),
             Filter::User(user_id) => format!("user:{}:stream", hex::encode(user_id)),
             Filter::Author(author_id) => format!("author:{}:stream", hex::encode(author_id)),
         };
@@ -508,6 +512,7 @@ impl RedisMessageStorage {
                 let stream_result = match read.query_async(&mut conn).await {
                     Ok(stream_result) => stream_result,
                     Err(e) => {
+                        error!(error=?e, "Error reading messages at catch up");
                         yield Err(MessageStoreError::Redis(e));
                         break;
                     }
@@ -517,6 +522,7 @@ impl RedisMessageStorage {
                 let rows: RedisStreamResult = match redis::from_redis_value(&stream_result) {
                     Ok(rows) => rows,
                     Err(e) => {
+                        error!(error=?e, "Error parsing messages at catch up");
                         yield Err(MessageStoreError::Redis(e));
                         break;
                     }
@@ -549,14 +555,14 @@ impl RedisMessageStorage {
                                     let expiration_time = match value.try_into().map(u64::from_le_bytes) {
                                         Ok(expiration_time) => expiration_time,
                                         Err(e) => {
-                                            error!("Message has a bad expiration time: {:?}", e);
+                                            error!(error=?e, "Message has a bad expiration time");
                                             continue 'meta;
                                         }
                                     };
                                     let current_time = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_secs();
                                     if expiration_time < current_time {
                                         // the message is expired, we don't yield it
-                                        debug!("Message is expired, ignoring to yield");
+                                        debug!("Message is expired, ignoring to yield in catch up");
                                         continue 'messages;
                                     }
 
@@ -573,14 +579,14 @@ impl RedisMessageStorage {
 
                         // Now decide whether to yield based on collected info
                         let Some(msg_id) = id else {
-                            error!("Message ID not found in stream info");
+                            error!("Message ID not found in stream info at catch up");
                             continue 'messages;
                         };
 
 
                         let Some(msg_full) = Self::get_message_full(&mut fetch_con, &msg_id).await? else {
                             // we need to fetch the message
-                            error!("Message not found in storage. odd");
+                            error!("Message not found in storage at catch up. odd...");
                             continue 'messages;
                         };
                         yield Ok((msg_full, (stream_height.clone().unwrap_or_else(|| "0-0".to_string()), height.clone())));
@@ -641,9 +647,12 @@ impl RedisMessageStorage {
                     read.arg("0-0"); // default is to start at 0
                 }
 
+                debug!("redis listening for messages with filters: {:?}", filters);
+
                 let stream_result = match read.query_async(&mut conn).await {
                     Ok(stream_result) => stream_result,
                     Err(e) => {
+                        error!("Error reading messages: {:?}", e);
                         yield Err(MessageStoreError::Redis(e));
                         break;
                     }
@@ -653,6 +662,7 @@ impl RedisMessageStorage {
                 let rows: RedisStreamResult = match redis::from_redis_value(&stream_result) {
                     Ok(rows) => rows,
                     Err(e) => {
+                        error!("Error parsing messages: {:?}", e);
                         yield Err(MessageStoreError::Redis(e));
                         break;
                     }
@@ -706,7 +716,7 @@ impl RedisMessageStorage {
                                     let current_time = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_secs();
                                     if expiration_time < current_time {
                                         // the message is expired, we don't yield it
-                                        debug!("Message is expired, ignoring to yield");
+                                        debug!("Message is expired, ignoring to yield in regular listen");
                                         continue 'messages;
                                     }
 
@@ -717,7 +727,7 @@ impl RedisMessageStorage {
                                     if let Some(filter_list) = &filters.filters {
                                         for filter in filter_list {
                                             if let Filter::Event(event_id) = filter {
-                                                if value == event_id.as_slice() {
+                                                if value == event_id.as_bytes() {
                                                     should_yield = true;
                                                     break 'meta;
                                                 }
