@@ -10,6 +10,7 @@ use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::time::{SystemTime, UNIX_EPOCH};
+use zoe_wire_protocol::Filter;
 use zoe_wire_protocol::{
     Kind, Message, MessageFull, PqxdhInboxProtocol, StoreKey, Tag, VerifyingKey,
     inbox::pqxdh::{
@@ -304,7 +305,7 @@ pub async fn send_pqxdh_initial_message(
         .map_err(|e| anyhow::anyhow!("Failed to create message: {}", e))?;
 
     // Get the derived tag that recipients should listen for
-    let derived_tag = Tag::from(&message_full);
+    let derived_tag = message_full.ref_tag();
 
     messages_service
         .publish(tarpc::context::current(), message_full)
@@ -544,52 +545,19 @@ where
             .await
     }
 
-    /// Start listening for client connections (SERVICE PROVIDERS ONLY)
-    ///
-    /// Call this after `publish_service()` to begin accepting client connections.
-    /// This returns a stream of PQXDH messages that should be processed.
-    ///
-    /// # Returns
-    /// A stream of PQXDH messages that the caller should process
-    pub fn start_listening_for_clients(&self) -> Result<()> {
-        // ) -> Result<impl futures::Stream<Item = zoe_wire_protocol::StreamMessage>> {
-        todo!();
-        // if self.state.private_keys.is_none() {
-        //     anyhow::bail!("Must call publish_service() before listening for clients");
-        // }
+    /// A stream of messages that arrive to our inbox
+    pub fn inbox_stream(&self) -> Result<impl futures::Stream<Item = Box<MessageFull>>> {
+        if self.state.private_keys.is_none() {
+            anyhow::bail!("Must call publish_service() before listening for clients");
+        }
 
-        // let Some(_subscription_id) = &self.state.inbox_subscription_id else {
-        //     anyhow::bail!("No inbox subscription found - did you call publish_service()?");
-        // };
+        let Some(inbox_tag) = &self.state.inbox_tag else {
+            anyhow::bail!("No inbox subscription found - did you call publish_service()?");
+        };
 
-        // Get a filtered stream for PQXDH messages
-        // The subscription was already created in publish_service()
-        // let pqxdh_stream = self.messages_manager.filtered_stream_fn(move |stream_message| {
-        //     match stream_message {
-        //         zoe_wire_protocol::StreamMessage::MessageReceived { message, .. } => {
-        //             // Check if this is a PQXDH message
-        //             Self::is_pqxdh_message(message)
-        //         }
-        //         zoe_wire_protocol::StreamMessage::StreamHeightUpdate(_) => false,
-        //     }
-        // });
-
-        // tracing::info!("PQXDH: Started listening for client connections");
-
-        // Ok(pqxdh_stream)
-    }
-
-    /// Check if a message is a PQXDH protocol message
-    ///
-    /// This is a helper function to identify PQXDH messages based on their content
-    /// or other characteristics. For now, it's a placeholder that returns true.
-    fn is_pqxdh_message(_message: &zoe_wire_protocol::MessageFull) -> bool {
-        // TODO: Implement proper PQXDH message detection
-        // This might involve:
-        // - Checking message content type
-        // - Looking for PQXDH-specific headers or metadata
-        // - Validating message structure
-        true
+        Ok(self
+            .messages_manager
+            .filtered_messages_stream(Filter::from(inbox_tag)))
     }
 }
 

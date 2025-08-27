@@ -872,7 +872,7 @@ impl MessageFull {
             return Err("Signature does not match sender message".into());
         }
         let mut hasher = Hasher::new();
-        hasher.update(&message_bytes);
+        hasher.update(message_bytes);
         Ok(Self {
             id: hasher.finalize(),
             message,
@@ -890,6 +890,13 @@ impl MessageFull {
 
     pub fn signature(&self) -> &Signature {
         &self.signature
+    }
+
+    pub fn ref_tag(&self) -> Tag {
+        Tag::Event {
+            id: *self.id(),
+            relays: vec![],
+        }
     }
 
     /// The value this message is stored under in the storage

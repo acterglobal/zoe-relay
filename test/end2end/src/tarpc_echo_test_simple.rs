@@ -71,7 +71,7 @@ async fn test_pqxdh_helpers_simple_demo() -> Result<()> {
 
     // Start listening for clients - automatic subscription management
     alice_handler
-        .start_listening_for_clients()
+        .inbox_stream()
         .context("Failed to start listening for clients")?;
 
     info!("✅ Alice started listening for client connections");

@@ -986,7 +986,7 @@ async fn test_pqxdh_inbox_privacy_preserving_e2e() -> Result<()> {
 
     // Start listening for client connections (this would handle the message processing)
     alice_handler
-        .start_listening_for_clients()
+        .inbox_stream()
         .context("Failed to start listening for clients")?;
 
     info!("✅ Alice started listening for client connections");
@@ -1068,7 +1068,7 @@ async fn test_pqxdh_inbox_privacy_preserving_e2e() -> Result<()> {
 
     info!("🎯 Protocol Handler Verification Complete!");
     info!("   ✅ Alice: Single call to publish_service() - no manual key management");
-    info!("   ✅ Alice: Single call to start_listening_for_clients() - no manual subscriptions");
+    info!("   ✅ Alice: Single call to inbox_stream() - no manual subscriptions");
     info!("   ✅ Bob: Single call to connect_to_service() - no manual discovery/session setup");
     info!("   ✅ Bob: Multiple send_message() calls - session automatically reused");
     info!("   🔒 Privacy-preserving tags handled automatically (derived + randomized channels)");
