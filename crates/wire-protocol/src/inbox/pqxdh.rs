@@ -239,66 +239,6 @@ impl PqxdhInbox {
     }
 }
 
-/// Generate a new PQXDH prekey bundle
-///
-/// This creates a complete prekey bundle with the specified number of one-time keys.
-/// The bundle is signed with the provided identity key.
-pub fn generate_prekey_bundle(
-    _identity_key: &crate::SigningKey,
-    _num_one_time_keys: usize,
-) -> std::result::Result<(PqxdhPrekeyBundle, PqxdhPrivateKeys), PqxdhError> {
-    // TODO: Implement prekey bundle generation
-    // This would:
-    // 1. Generate X25519 signed prekey + signature
-    // 2. Generate X25519 one-time prekeys
-    // 3. Generate ML-KEM signed prekey + signature
-    // 4. Generate ML-KEM one-time prekeys + signatures
-    // 5. Return both public bundle and private keys
-
-    Err(PqxdhError::CryptoError("Not yet implemented".to_string()))
-}
-
-/// Initiate PQXDH key agreement
-///
-/// This performs the initiator side of PQXDH, consuming one-time keys from the
-/// prekey bundle and generating the initial message with encrypted payload.
-pub fn initiate_pqxdh(
-    _initiator_identity: &crate::SigningKey,
-    _prekey_bundle: &PqxdhPrekeyBundle,
-    _initial_payload: &[u8],
-) -> std::result::Result<(PqxdhInitialMessage, PqxdhSharedSecret), PqxdhError> {
-    // TODO: Implement PQXDH initiation
-    // This would:
-    // 1. Verify prekey bundle signatures
-    // 2. Generate ephemeral X25519 key pair
-    // 3. Perform ECDH operations (DH1, DH2, DH3, optionally DH4)
-    // 4. Perform ML-KEM encapsulation
-    // 5. Derive shared secret using KDF
-    // 6. Encrypt initial payload
-    // 7. Return initial message and shared secret
-
-    Err(PqxdhError::CryptoError("Not yet implemented".to_string()))
-}
-
-/// Respond to PQXDH key agreement
-///
-/// This performs the responder side of PQXDH, using private keys to derive
-/// the same shared secret and decrypt the initial payload.
-pub fn respond_pqxdh(
-    _private_keys: &PqxdhPrivateKeys,
-    _initial_message: &PqxdhInitialMessage,
-) -> std::result::Result<(PqxdhSharedSecret, Vec<u8>), PqxdhError> {
-    // TODO: Implement PQXDH response
-    // This would:
-    // 1. Perform ECDH operations using private keys
-    // 2. Perform ML-KEM decapsulation
-    // 3. Derive shared secret using KDF
-    // 4. Decrypt initial payload
-    // 5. Return shared secret and decrypted payload
-
-    Err(PqxdhError::CryptoError("Not yet implemented".to_string()))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

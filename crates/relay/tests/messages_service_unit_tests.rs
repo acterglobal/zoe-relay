@@ -90,7 +90,7 @@ async fn test_catch_up_with_new_api() {
         relays: vec![],
     }];
 
-    let message = Message::new_v0(
+    let message = Message::new_v0_raw(
         b"Test message content".to_vec(),
         keypair.public_key(),
         std::time::SystemTime::now()

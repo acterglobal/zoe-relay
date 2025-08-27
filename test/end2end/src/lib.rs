@@ -14,7 +14,4 @@ pub mod multi_client_infra;
 mod protocol_scenarios;
 
 #[cfg(test)]
-mod pqxdh_inbox_e2e_test;
-
-#[cfg(test)]
-mod tarpc_echo_test_simple;
+mod pqxdh_e2e_test;

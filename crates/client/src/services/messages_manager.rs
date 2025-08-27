@@ -10,8 +10,7 @@ use tokio::{
 use tokio_stream::wrappers::{BroadcastStream, errors::BroadcastStreamRecvError};
 use tracing::warn;
 use zoe_wire_protocol::{
-    CatchUpRequest, CatchUpResponse, Filter, MessageFilters, MessageFull, PublishResult,
-    StreamMessage, SubscriptionConfig,
+    CatchUpRequest, CatchUpResponse, Filter, FilterOperation, FilterUpdateRequest, MessageFilters, MessageFull, PublishResult, StreamMessage, SubscriptionConfig
 };
 
 use super::messages::{CatchUpStream, MessagesService, MessagesStream};
@@ -107,11 +106,12 @@ impl From<&SubscriptionState> for SubscriptionConfig {
 /// ```rust,no_run
 /// # use zoe_client::services::{MessagesManagerBuilder, SubscriptionState};
 /// # async fn example(connection: &quinn::Connection) -> zoe_client::error::Result<()> {
+/// # let saved_bytes: Vec<u8> = vec![];
 /// // Create with previous state
-/// let previous_state = SubscriptionState::from_bytes(&saved_bytes)?;
+/// let previous_state = SubscriptionState::new();
 /// let manager = MessagesManagerBuilder::new()
-///     .with_state(previous_state)
-///     .with_buffer_size(2000)
+///     .state(previous_state)
+///     .buffer_size(2000)
 ///     .build(connection)
 ///     .await?;
 ///
@@ -128,6 +128,8 @@ pub struct MessagesManagerBuilder {
     state: SubscriptionState,
     /// Buffer size for the broadcast channel
     buffer_size: Option<usize>,
+    /// whether to automatically issue the subscribe command at start
+    autosubscribe: bool,
 }
 
 impl Default for MessagesManagerBuilder {
@@ -142,6 +144,7 @@ impl MessagesManagerBuilder {
         Self {
             state: SubscriptionState::new(),
             buffer_size: None,
+            autosubscribe: false,
         }
     }
 
@@ -162,6 +165,11 @@ impl MessagesManagerBuilder {
         self
     }
 
+    pub fn autosubscribe(mut self, autosubscribe: bool) -> Self {
+        self.autosubscribe = autosubscribe;
+        self
+    }
+
     /// Build the MessagesManager by connecting to the service
     ///
     /// This will:
@@ -173,8 +181,11 @@ impl MessagesManagerBuilder {
         // Create the messages service and stream
         let (messages_service, (messages_stream, catch_up_stream)) =
             MessagesService::connect(connection).await?;
-        let MessagesManagerBuilder { state, buffer_size } = self;
-        messages_service.subscribe((&state).into()).await?;
+        let MessagesManagerBuilder {
+            state,
+            buffer_size,
+            autosubscribe,
+        } = self;
 
         // Create the manager
         let manager = MessagesManager::new_with_state(
@@ -184,6 +195,10 @@ impl MessagesManagerBuilder {
             state,
             buffer_size,
         );
+
+        if autosubscribe {
+            manager.subscribe().await?;
+        }
 
         Ok(manager)
     }
@@ -298,6 +313,24 @@ impl MessagesManager {
         }
     }
 
+    pub async fn subscribe(&self) -> Result<()> {
+        self.messages_service
+            .subscribe((&self.state.read().await.clone()).into())
+            .await
+    }
+
+    pub async fn ensure_contains_filter(&self, filter: Filter) -> Result<()> {
+        let new_filters = self.messages_service
+            .update_filters(FilterUpdateRequest {
+                operations: vec![FilterOperation::Add(vec![filter])],
+            })
+            .await?;
+
+        let mut state = self.state.write().await;
+        state.current_filters = new_filters.filters;
+        Ok(())
+    }
+
     pub async fn catch_up_and_subscribe<'a>(
         &'a self,
         filter: Filter,
@@ -373,8 +406,10 @@ impl MessagesManager {
                 return None;
             };
             if filter.matches(&message) {
+                tracing::trace!("Message matched filter: {:?}, {:?}", filter, message);
                 Some(message)
             } else {
+                tracing::trace!("Message did not match filter: {:?}, {:?}", filter, message);
                 None
             }
         })
@@ -445,7 +480,7 @@ impl MessagesManager {
     /// Get access to the underlying messages service for direct RPC operations.
     ///
     /// Most users should prefer the higher-level methods on MessagesManager.
-    pub fn messages_service(&self) -> &MessagesService {
+    pub(crate) fn messages_service(&self) -> &MessagesService {
         &self.messages_service
     }
 

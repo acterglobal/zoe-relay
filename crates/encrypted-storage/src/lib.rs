@@ -21,7 +21,7 @@
 //! ## Usage Example
 //!
 //! ```rust
-//! use zoey_encrypted_storage::{ConvergentEncryption, CompressionConfig};
+//! use zoe_encrypted_storage::{ConvergentEncryption, CompressionConfig};
 //!
 //! // Basic encryption with default settings
 //! let content = b"Hello, world!";
@@ -256,7 +256,7 @@ impl ConvergentEncryption {
     /// # Example
     ///
     /// ```rust
-    /// use zoey_encrypted_storage::{ConvergentEncryption, CompressionConfig};
+    /// use zoe_encrypted_storage::{ConvergentEncryption, CompressionConfig};
     ///
     /// let content = b"Hello, world!";
     ///
@@ -316,7 +316,7 @@ impl ConvergentEncryption {
     /// # Example
     ///
     /// ```rust
-    /// use zoey_encrypted_storage::ConvergentEncryption;
+    /// use zoe_encrypted_storage::ConvergentEncryption;
     ///
     /// let content = b"Hello, world!";
     /// let (encrypted, info) = ConvergentEncryption::encrypt(content).unwrap();
@@ -358,7 +358,7 @@ impl ConvergentEncryption {
     /// # Example
     ///
     /// ```rust
-    /// use zoey_encrypted_storage::ConvergentEncryption;
+    /// use zoe_encrypted_storage::ConvergentEncryption;
     ///
     /// let content = b"Hello, world!";
     /// let (encrypted, info) = ConvergentEncryption::encrypt(content).unwrap();

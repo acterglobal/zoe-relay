@@ -29,10 +29,11 @@
 //! use zoe_relay::{RelayServer, ServiceRouter};
 //! use ed25519_dalek::SigningKey;
 //! use std::net::SocketAddr;
+//! use zoe_wire_protocol::KeyPair;
 //!
 //! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
 //! let addr: SocketAddr = "127.0.0.1:4433".parse()?;
-//! let server_keypair = generate_ml_dsa_44_keypair_for_tls();
+//! let server_keypair = KeyPair::generate_ml_dsa44(&mut rand::rngs::OsRng);
 //! let router = MyServiceRouter; // Your ServiceRouter implementation
 //!
 //! let server = RelayServer::new(addr, server_keypair, router)?;
@@ -54,7 +55,7 @@
 //! #     type ServiceId = u8;
 //! #     type Service = MyService;
 //! #     async fn parse_service_id(&self, service_id: u8) -> Result<Self::ServiceId, Self::Error> { Ok(service_id) }
-//! #     async fn create_service(&self, _: &Self::ServiceId, _: &zoe_relay::ConnectionInfo, _: zoe_relay::StreamPair) -> Result<Self::Service, Self::Error> { Ok(MyService) }
+//! #     async fn create_service(&self, _: &Self::ServiceId, _: &zoe_relay::ConnectionInfo, _: zoe_wire_protocol::StreamPair) -> Result<Self::Service, Self::Error> { Ok(MyService) }
 //! # }
 //! # #[async_trait]
 //! # impl zoe_relay::Service for MyService {

@@ -265,7 +265,7 @@ impl ChatClient {
                                     id: channel.as_bytes().to_vec(),
                                     relays: vec![],
                                 };
-                                let message = Message::new_v0(
+                                let message = Message::new_v0_raw(
                                     trimmed.as_bytes().to_vec(),
                                     relay_client.public_key(),
                                     timestamp,
@@ -342,7 +342,7 @@ impl ChatClient {
             relays: vec![],
         };
 
-        let message = Message::new_v0(
+        let message = Message::new_v0_raw(
             content.as_bytes().to_vec(),
             relay_client.public_key(),
             timestamp,

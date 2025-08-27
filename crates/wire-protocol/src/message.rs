@@ -12,7 +12,7 @@ use forward_compatible_enum::ForwardCompatibleEnum;
 mod store_key;
 pub use store_key::{PqxdhInboxProtocol, StoreKey};
 
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Clone, PartialEq, Eq)]
 pub enum Tag {
     Protected, // may not be forwarded, unless the other end is authenticated as the author, may it be accepted
     Event {
@@ -40,6 +40,17 @@ impl From<&MessageFull> for Tag {
         Tag::Event {
             id: *message.id(),
             relays: vec![],
+        }
+    }
+}
+
+impl std::fmt::Debug for Tag {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Tag::Protected => write!(f, "Protected"),
+            Tag::Event { id, .. } => write!(f, "Event(#{})", hex::encode(id.as_bytes())),
+            Tag::User { id, .. } => write!(f, "User(#{})", hex::encode(id)),
+            Tag::Channel { id, .. } => write!(f, "Channel(#{})", hex::encode(id)),
         }
     }
 }
@@ -128,7 +139,7 @@ pub enum Kind {
 /// let typed_content = Content::raw_typed(&MyData { value: 42 })?;
 /// # Ok::<(), postcard::Error>(())
 /// ```
-#[derive(Debug, Clone, PartialEq, ForwardCompatibleEnum)]
+#[derive(Clone, PartialEq, ForwardCompatibleEnum)]
 pub enum Content {
     /// Raw byte content without encryption.
     ///
@@ -204,6 +215,20 @@ pub enum Content {
     /// This variant is used when the content type is unknown or not supported.
     /// It contains the discriminant and the raw data.
     Unknown { discriminant: u32, data: Vec<u8> },
+}
+
+impl std::fmt::Debug for Content {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Content::Raw(data) => write!(f, "Raw([u8; {}])", data.len()),
+            Content::ChaCha20Poly1305(..) => write!(f, "ChaCha20Poly1305(#redacted#)"),
+            Content::Ed25519SelfEncrypted(..) => write!(f, "Ed25519SelfEncrypted(#redacted#)"),
+            Content::MlDsaSelfEncrypted(..) => write!(f, "MlDsaSelfEncrypted(#redacted#)"),
+            Content::PqxdhEncrypted(..) => write!(f, "PqxdhEncrypted(#redacted#)"),
+            Content::EphemeralEcdh(..) => write!(f, "EphemeralEcdh(#redacted#)"),
+            Content::Unknown { discriminant, data } => write!(f, "Unknown({:?}, {:?})", discriminant, data.len()),
+        }
+    }
 }
 
 impl Content {
@@ -422,6 +447,24 @@ impl Message {
     }
 
     pub fn new_v0(
+        content: Content,
+        sender: VerifyingKey,
+        when: u64,
+        kind: Kind,
+        tags: Vec<Tag>,
+    ) -> Self {
+        Message::MessageV0(MessageV0 {
+            header: MessageV0Header {
+                sender,
+                when,
+                kind,
+                tags,
+            },
+            content,
+        })
+    }
+
+    pub fn new_v0_raw(
         content: Vec<u8>,
         sender: VerifyingKey,
         when: u64,
@@ -457,60 +500,7 @@ impl Message {
         })
     }
 
-    pub fn new_v0_ed25519_self_encrypted(
-        content: Ed25519SelfEncryptedContent,
-        sender: VerifyingKey,
-        when: u64,
-        kind: Kind,
-        tags: Vec<Tag>,
-    ) -> Self {
-        Message::MessageV0(MessageV0 {
-            header: MessageV0Header {
-                sender,
-                when,
-                kind,
-                tags,
-            },
-            content: Content::Ed25519SelfEncrypted(content),
-        })
-    }
-
-    pub fn new_v0_ml_dsa_self_encrypted(
-        content: MlDsaSelfEncryptedContent,
-        sender: VerifyingKey,
-        when: u64,
-        kind: Kind,
-        tags: Vec<Tag>,
-    ) -> Self {
-        Message::MessageV0(MessageV0 {
-            header: MessageV0Header {
-                sender,
-                when,
-                kind,
-                tags,
-            },
-            content: Content::MlDsaSelfEncrypted(content),
-        })
-    }
-
-    pub fn new_v0_ephemeral_ecdh(
-        content: EphemeralEcdhContent,
-        sender: VerifyingKey,
-        when: u64,
-        kind: Kind,
-        tags: Vec<Tag>,
-    ) -> Self {
-        Message::MessageV0(MessageV0 {
-            header: MessageV0Header {
-                sender,
-                when,
-                kind,
-                tags,
-            },
-            content: Content::EphemeralEcdh(content),
-        })
-    }
-
+    #[deprecated(note = "use new_v0 instead")]
     pub fn new_typed<T>(
         content: T,
         sender: VerifyingKey,
@@ -529,31 +519,6 @@ impl Message {
                 tags,
             },
             content: Content::Raw(postcard::to_stdvec(&content)?),
-        }))
-    }
-
-    pub fn new_typed_encrypted<T>(
-        content: T,
-        encryption_key: &crate::crypto::EncryptionKey,
-        sender: VerifyingKey,
-        when: u64,
-        kind: Kind,
-        tags: Vec<Tag>,
-    ) -> Result<Self, Box<dyn std::error::Error>>
-    where
-        T: Serialize,
-    {
-        let plaintext = postcard::to_stdvec(&content)?;
-        let encrypted_content = encryption_key.encrypt_content(&plaintext)?;
-
-        Ok(Message::MessageV0(MessageV0 {
-            header: MessageV0Header {
-                sender,
-                when,
-                kind,
-                tags,
-            },
-            content: Content::ChaCha20Poly1305(encrypted_content),
         }))
     }
 }
@@ -814,7 +779,7 @@ pub struct MessageFull {
     #[serde(skip_serializing)]
     id: Hash, // FIXNE we could and should compute this on the fly and caceh it
 
-    /// ML-DSA digital signature over the serialized message.
+    /// Cryptographic signature over the serialized message.
     ///
     /// Created by signing `postcard::serialize(message)` with the sender's private key.
     /// Recipients verify this signature using the public key in `message.sender`.

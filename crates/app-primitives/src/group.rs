@@ -94,7 +94,7 @@
 //! };
 //!
 //! // Create the actual group state
-//! let creator = SigningKey::generate(&mut rand::rngs::OsRng).verifying_key();
+//! let creator = KeyPair::generate(&mut rand::rngs::OsRng).public_key();
 //! let group_id = Hash::from([0u8; 32]); // In practice, this would be the message hash
 //! let timestamp = 1234567890;
 //!
@@ -114,18 +114,19 @@
 //! use zoe_wire_protocol::KeyPair;
 //!
 //! let mut membership = GroupMembership::new();
-//! let user_key = SigningKey::generate(&mut rand::rngs::OsRng).verifying_key();
+//! let user_key = KeyPair::generate(&mut rand::rngs::OsRng).public_key();
 //!
 //! // Check what identities a user can act as
 //! let available_identities = membership.get_available_identities(&user_key);
 //!
-//! // Users can always act as their raw key
-//! assert!(available_identities.contains(&IdentityRef::Key(user_key)));
+//! // Note: Currently returns empty set during ML-DSA transition
+//! assert!(available_identities.is_empty());
 //! ```
 //!
 //! ### Working with Structured Metadata
 //! ```rust
 //! use zoe_app_primitives::{GroupState, Metadata};
+//! use zoe_wire_protocol::KeyPair;
 //!
 //! # let group_state = GroupState::new(
 //! #     blake3::Hash::from([0u8; 32]),

@@ -58,7 +58,7 @@ fn create_test_message(channel_id: &[u8], author_keypair: &KeyPair, content: &st
         relays: vec![],
     }];
 
-    let message = Message::new_v0(
+    let message = Message::new_v0_raw(
         content.as_bytes().to_vec(),
         author_keypair.public_key(),
         now,
@@ -877,7 +877,7 @@ async fn test_signature_type_ordering() {
     }];
 
     // Create messages with identical timestamps but different signature types
-    let ed25519_message = Message::new_v0(
+    let ed25519_message = Message::new_v0_raw(
         b"Ed25519 message".to_vec(),
         ed25519_keypair.public_key(),
         timestamp,
@@ -887,7 +887,7 @@ async fn test_signature_type_ordering() {
     let ed25519_full = MessageFull::new(ed25519_message, &ed25519_keypair)
         .expect("Failed to create Ed25519 MessageFull");
 
-    let ml_dsa_44_message = Message::new_v0(
+    let ml_dsa_44_message = Message::new_v0_raw(
         b"ML-DSA-44 message".to_vec(),
         ml_dsa_44_keypair.public_key(),
         timestamp,
@@ -897,7 +897,7 @@ async fn test_signature_type_ordering() {
     let ml_dsa_44_full = MessageFull::new(ml_dsa_44_message, &ml_dsa_44_keypair)
         .expect("Failed to create ML-DSA-44 MessageFull");
 
-    let ml_dsa_65_message = Message::new_v0(
+    let ml_dsa_65_message = Message::new_v0_raw(
         b"ML-DSA-65 message".to_vec(),
         ml_dsa_65_keypair.public_key(),
         timestamp,
@@ -907,7 +907,7 @@ async fn test_signature_type_ordering() {
     let ml_dsa_65_full = MessageFull::new(ml_dsa_65_message, &ml_dsa_65_keypair)
         .expect("Failed to create ML-DSA-65 MessageFull");
 
-    let ml_dsa_87_message = Message::new_v0(
+    let ml_dsa_87_message = Message::new_v0_raw(
         b"ML-DSA-87 message".to_vec(),
         ml_dsa_87_keypair.public_key(),
         timestamp,

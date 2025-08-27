@@ -18,7 +18,8 @@
 //! ## Example
 //!
 //! ```rust
-//! use zoe_relay::{ServiceRouter, Service, ConnectionInfo, StreamPair};
+//! use zoe_relay::{ServiceRouter, Service, ConnectionInfo};
+//! use zoe_wire_protocol::StreamPair;
 //! use async_trait::async_trait;
 //!
 //! #[derive(Debug, Clone, PartialEq)]

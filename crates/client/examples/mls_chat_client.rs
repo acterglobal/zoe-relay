@@ -571,7 +571,7 @@ impl MLSChatClient {
 
         let timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
 
-        let message = Message::new_v0(
+        let message = Message::new_v0_raw(
             commit_bytes,
             self.config.client_key.verifying_key(),
             timestamp,
@@ -623,7 +623,7 @@ impl MLSChatClient {
 
         let timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
 
-        let message = Message::new_v0(
+        let message = Message::new_v0_raw(
             welcome_bytes,
             self.config.client_key.verifying_key(),
             timestamp,
@@ -1424,7 +1424,7 @@ impl MLSChatClient {
             relays: vec![],
         };
 
-        let message = Message::new_v0(
+        let message = Message::new_v0_raw(
             mls_message_bytes,
             self.config.client_key.verifying_key(),
             timestamp,

@@ -14,10 +14,7 @@ pub use frb_api::*;
 pub use client::{Client, ClientBuilder};
 pub use error::ClientError;
 pub use file_storage::FileStorage;
-pub use pqxdh::{
-    PqxdhProtocolHandler, PqxdhSession, create_pqxdh_prekey_bundle_with_private_keys,
-    fetch_pqxdh_inbox, publish_pqxdh_inbox, send_pqxdh_initial_message,
-};
+pub use pqxdh::PqxdhProtocolHandler;
 pub use relay_client::RelayClient;
 pub use rpc_transport::{RpcMessageListener, TarpcOverMessagesClient, TarpcOverMessagesServer};
 pub use services::{BlobService, MessagesService, MessagesStream};

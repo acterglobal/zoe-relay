@@ -60,7 +60,7 @@ async fn test_message_posting_and_retrieval() -> Result<()> {
         relays: vec![],
     };
 
-    let message = Message::new_v0(
+    let message = Message::new_v0_raw(
         "Test message for posting and retrieval".as_bytes().to_vec(),
         client.public_key(),
         timestamp,
@@ -159,7 +159,7 @@ async fn test_user_data_storage_and_lookup() -> Result<()> {
         r#"{{"name": "Test User", "email": "test@example.com", "timestamp": {timestamp}}}"#
     );
 
-    let message = Message::new_v0(
+    let message = Message::new_v0_raw(
         user_data.as_bytes().to_vec(),
         client.public_key(),
         timestamp,
@@ -283,7 +283,7 @@ async fn test_subscription_unsubscription_functionality() -> Result<()> {
         relays: vec![],
     };
 
-    let subscribed_message = Message::new_v0(
+    let subscribed_message = Message::new_v0_raw(
         "Test message while subscribed".as_bytes().to_vec(),
         client.public_key(),
         timestamp,
@@ -438,7 +438,7 @@ async fn test_all_signature_types_e2e() -> Result<()> {
     };
 
     // Ed25519 message
-    let ed25519_message = Message::new_v0(
+    let ed25519_message = Message::new_v0_raw(
         "Ed25519 E2E test message".as_bytes().to_vec(),
         ed25519_client.public_key(),
         timestamp,
@@ -449,7 +449,7 @@ async fn test_all_signature_types_e2e() -> Result<()> {
         .map_err(|e| anyhow::anyhow!("Failed to create Ed25519 MessageFull: {}", e))?;
 
     // ML-DSA-44 message
-    let ml_dsa_44_message = Message::new_v0(
+    let ml_dsa_44_message = Message::new_v0_raw(
         "ML-DSA-44 E2E test message".as_bytes().to_vec(),
         ml_dsa_44_client.public_key(),
         timestamp + 1,
@@ -460,7 +460,7 @@ async fn test_all_signature_types_e2e() -> Result<()> {
         .map_err(|e| anyhow::anyhow!("Failed to create ML-DSA-44 MessageFull: {}", e))?;
 
     // ML-DSA-65 message
-    let ml_dsa_65_message = Message::new_v0(
+    let ml_dsa_65_message = Message::new_v0_raw(
         "ML-DSA-65 E2E test message".as_bytes().to_vec(),
         ml_dsa_65_client.public_key(),
         timestamp + 2,
@@ -471,7 +471,7 @@ async fn test_all_signature_types_e2e() -> Result<()> {
         .map_err(|e| anyhow::anyhow!("Failed to create ML-DSA-65 MessageFull: {}", e))?;
 
     // ML-DSA-87 message
-    let ml_dsa_87_message = Message::new_v0(
+    let ml_dsa_87_message = Message::new_v0_raw(
         "ML-DSA-87 E2E test message".as_bytes().to_vec(),
         ml_dsa_87_client.public_key(),
         timestamp + 3,
@@ -673,7 +673,7 @@ async fn test_signature_type_interoperability_e2e() -> Result<()> {
         relays: vec![],
     };
 
-    let ed25519_to_ml_dsa_message = Message::new_v0(
+    let ed25519_to_ml_dsa_message = Message::new_v0_raw(
         "Hello from Ed25519 to ML-DSA-65!".as_bytes().to_vec(),
         ed25519_client.public_key(),
         timestamp,
@@ -684,7 +684,7 @@ async fn test_signature_type_interoperability_e2e() -> Result<()> {
         .map_err(|e| anyhow::anyhow!("Failed to create Ed25519 MessageFull: {}", e))?;
 
     // ML-DSA-65 client sends message to Ed25519 client
-    let ml_dsa_to_ed25519_message = Message::new_v0(
+    let ml_dsa_to_ed25519_message = Message::new_v0_raw(
         "Hello from ML-DSA-65 to Ed25519!".as_bytes().to_vec(),
         ml_dsa_65_client.public_key(),
         timestamp + 1,

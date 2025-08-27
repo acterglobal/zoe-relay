@@ -4,7 +4,7 @@ use tarpc::{ClientMessage, Response};
 use crate::{keys::Id as KeyId, Hash, MessageFull, StoreKey, Tag};
 
 /// Unified filter type for different kinds of message filtering
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Filter {
     /// Filter by message author
     Author(KeyId),
@@ -14,6 +14,17 @@ pub enum Filter {
     Event(Hash),
     /// Filter by user key (for user-targeted messages)
     User(KeyId),
+}
+
+impl std::fmt::Debug for Filter {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Filter::Author(id) => write!(f, "Author(#{})", hex::encode(id)),
+            Filter::Channel(id) => write!(f, "Channel(#{})", hex::encode(id)),
+            Filter::Event(id) => write!(f, "Event(#{})", hex::encode(id.as_bytes())),
+            Filter::User(id) => write!(f, "User(#{})", hex::encode(id)),
+        }
+    }
 }
 
 impl Filter {

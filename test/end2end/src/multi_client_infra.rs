@@ -296,7 +296,7 @@ impl TestClient {
             relays: vec![],
         };
 
-        let message = Message::new_v0(
+        let message = Message::new_v0_raw(
             content.as_bytes().to_vec(),
             self.public_key(),
             timestamp,
@@ -415,9 +415,8 @@ impl MultiClientTestHarness {
         let test_client = TestClient::new(name.to_string(), client);
 
         info!(
-            "✅ Client '{}' connected successfully (ID: {})",
-            name,
-            test_client.id()
+            "✅ Client '{}' connected successfully ({:?})",
+            name, test_client.public_key()
         );
 
         Ok(test_client)

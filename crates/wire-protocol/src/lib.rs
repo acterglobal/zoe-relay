@@ -43,7 +43,7 @@
 //! };
 //!
 //! // Create versioned message
-//! let message = Message::new_v0(
+//! let message = Message::new_v0_raw(
 //!     content.as_raw().unwrap().clone(),
 //!     verifying_key,
 //!     header.when,

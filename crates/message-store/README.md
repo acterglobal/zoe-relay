@@ -69,7 +69,7 @@ pub enum MessageContent {
 
 // Store a message
 let content = MessageContent::Text { text: "Hello, World!".to_string() };
-let message = Message::new_v0(
+let message = Message::new_v0_raw(
     content,
     signing_key.verifying_key(),
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_secs(),

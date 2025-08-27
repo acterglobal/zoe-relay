@@ -54,7 +54,7 @@ async fn run_echo_test(
         .map_err(|e| ClientError::Generic(e.to_string()))?
         .as_secs();
 
-    let message = Message::new_v0(
+    let message = Message::new_v0_raw(
         echo_content.clone(),
         client_public_key.clone(),
         timestamp,

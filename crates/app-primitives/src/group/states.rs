@@ -124,11 +124,11 @@ use crate::{IdentityInfo, IdentityRef, IdentityType, Metadata, Permission};
 /// // In practice, these would be set via GroupManagementEvent::SetIdentity
 /// // Here we simulate the result of processing those events
 /// membership.identity_info.insert(
-///     (alice_key, IdentityType::Main),
+///     IdentityRef::Key(alice_key.clone()),
 ///     main_identity,
 /// );
 /// membership.identity_info.insert(
-///     (alice_key, IdentityType::Alias { alias_id: "anon".to_string() }),
+///     IdentityRef::Alias { key: alice_key, alias: "anon".to_string() },
 ///     anon_identity,
 /// );
 /// ```
@@ -141,12 +141,12 @@ use crate::{IdentityInfo, IdentityRef, IdentityType, Metadata, Permission};
 /// # let alice_key = KeyPair::generate(&mut rand::rngs::OsRng).public_key();
 ///
 /// // Check if Alice can act as her main identity (always true)
-/// let main_ref = IdentityRef::Key(alice_key);
+/// let main_ref = IdentityRef::Key(alice_key.clone());
 /// assert!(membership.is_authorized(&alice_key, &main_ref));
 ///
 /// // Check if Alice can act as her anonymous alias
 /// let alias_ref = IdentityRef::Alias {
-///     key: alice_key,
+///     key: alice_key.clone(),
 ///     alias: "anon".to_string(),
 /// };
 /// assert!(membership.is_authorized(&alice_key, &alias_ref));
@@ -169,7 +169,7 @@ use crate::{IdentityInfo, IdentityRef, IdentityType, Metadata, Permission};
 /// # let alice_key = KeyPair::generate(&mut rand::rngs::OsRng).public_key();
 ///
 /// // Assign admin role to Alice's main identity
-/// let main_ref = IdentityRef::Key(alice_key);
+/// let main_ref = IdentityRef::Key(alice_key.clone());
 /// membership.identity_roles.insert(main_ref.clone(), GroupRole::Admin);
 ///
 /// // Assign member role to Alice's anonymous alias
@@ -358,7 +358,7 @@ pub type GroupStateResult<T> = Result<T, GroupStateError>;
 ///
 /// ### Role-Based Member Management
 /// ```rust
-/// # use zoe_app_primitives::{GroupMember, events::roles::GroupRole};
+/// # use zoe_app_primitives::{GroupMember, IdentityRef, events::roles::GroupRole};
 /// # use zoe_wire_protocol::KeyPair;
 /// # use std::collections::BTreeMap;
 /// # let member_key = KeyPair::generate(&mut rand::rngs::OsRng).public_key();
@@ -520,13 +520,13 @@ pub struct GroupMember {
 ///     "Dev Team".to_string(),
 ///     GroupSettings::default(),
 ///     metadata,
-///     creator_key.verifying_key(),
+///     creator_key.public_key(),
 ///     1234567890,
 /// );
 ///
 /// // Creator is automatically added as Owner
 /// assert_eq!(group_state.members.len(), 1);
-/// assert!(group_state.is_member(&creator_key.verifying_key()));
+/// assert!(group_state.is_member(&creator_key.public_key()));
 /// ```
 ///
 /// ### Processing Member Activity
@@ -546,12 +546,12 @@ pub struct GroupMember {
 /// group_state.apply_event(
 ///     &activity_event,
 ///     Hash::from([2u8; 32]),
-///     new_member.verifying_key(),
+///     new_member.public_key(),
 ///     1234567891,
 /// ).unwrap();
 ///
 /// // They're now tracked as an active member
-/// assert!(group_state.is_member(&new_member.verifying_key()));
+/// assert!(group_state.is_member(&new_member.public_key()));
 /// ```
 ///
 /// ### Working with Metadata
@@ -645,7 +645,7 @@ impl GroupState {
     ///     "Engineering Team".to_string(),
     ///     GroupSettings::default(),
     ///     metadata,
-    ///     creator_key.verifying_key(),
+    ///     creator_key.public_key(),
     ///     1640995200, // 2022-01-01 00:00:00 UTC
     /// );
     ///
@@ -653,9 +653,9 @@ impl GroupState {
     /// assert_eq!(group_state.name, "Engineering Team");
     /// assert_eq!(group_state.members.len(), 1);
     /// assert_eq!(group_state.version, 1);
-    /// assert!(group_state.is_member(&creator_key.verifying_key()));
+    /// assert!(group_state.is_member(&creator_key.public_key()));
     /// assert_eq!(
-    ///     group_state.get_member_role(&creator_key.verifying_key()),
+    ///     group_state.get_member_role(&creator_key.public_key()),
     ///     Some(&GroupRole::Owner)
     /// );
     /// ```
@@ -771,7 +771,7 @@ impl GroupState {
     ///     "Test Group".to_string(),
     ///     GroupSettings::default(),
     ///     vec![],
-    ///     creator_key.verifying_key(),
+    ///     creator_key.public_key(),
     ///     1000,
     /// );
     ///
@@ -782,12 +782,12 @@ impl GroupState {
     /// group_state.apply_event(
     ///     &activity_event,
     ///     event_id,
-    ///     new_member_key.verifying_key(),
+    ///     new_member_key.public_key(),
     ///     1001, // Must be after creation timestamp
     /// ).unwrap();
     ///
     /// // Member is now tracked in the group
-    /// assert!(group_state.is_member(&new_member_key.verifying_key()));
+    /// assert!(group_state.is_member(&new_member_key.public_key()));
     /// assert_eq!(group_state.members.len(), 2); // Creator + new member
     /// assert_eq!(group_state.version, 2); // Version incremented
     /// assert_eq!(group_state.event_history.len(), 2); // Event recorded
@@ -1036,7 +1036,7 @@ impl GroupState {
     ///     "Team Chat".to_string(),
     ///     GroupSettings::default(),
     ///     metadata_with_desc,
-    ///     creator_key.verifying_key(),
+    ///     creator_key.public_key(),
     ///     1000,
     /// );
     ///
@@ -1055,7 +1055,7 @@ impl GroupState {
     ///     "Another Group".to_string(),
     ///     GroupSettings::default(),
     ///     metadata_no_desc,
-    ///     creator_key.verifying_key(),
+    ///     creator_key.public_key(),
     ///     1000,
     /// );
     ///
@@ -1107,7 +1107,7 @@ impl GroupState {
     ///     "Engineering Team".to_string(),
     ///     GroupSettings::default(),
     ///     metadata,
-    ///     creator_key.verifying_key(),
+    ///     creator_key.public_key(),
     ///     1000,
     /// );
     ///

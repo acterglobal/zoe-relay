@@ -394,7 +394,7 @@ mod tests {
             relays: vec![],
         };
 
-        let message1 = zoe_wire_protocol::Message::new_v0(
+        let message1 = zoe_wire_protocol::Message::new_v0_raw(
             message1_content.clone(),
             client1.public_key(),
             timestamp,
@@ -413,7 +413,7 @@ mod tests {
 
         // Message from Client 2 to the channel
         let message2_content = "Hello back from Client 2! 🚀".as_bytes().to_vec();
-        let message2 = zoe_wire_protocol::Message::new_v0(
+        let message2 = zoe_wire_protocol::Message::new_v0_raw(
             message2_content.clone(),
             client2.public_key(),
             timestamp + 1, // Slightly later timestamp
@@ -1052,6 +1052,7 @@ mod tests {
                     general_channel.as_bytes().to_vec(),
                 )]),
             })
+            .autosubscribe(true)
             .build(client1.connection())
             .await?;
 
@@ -1085,7 +1086,7 @@ mod tests {
         for i in 0..num_historical_messages {
             let message_content = format!("Historical message {} from Client 2", i + 1);
             let message_timestamp = timestamp_base + i as u64;
-            let message = zoe_wire_protocol::Message::new_v0(
+            let message = zoe_wire_protocol::Message::new_v0_raw(
                 message_content.as_bytes().to_vec(),
                 client2.public_key(),
                 message_timestamp,
@@ -1156,7 +1157,7 @@ mod tests {
         for i in 0..num_live_messages {
             let message_content = format!("Live message {} from Client 2", i + 1);
             let message_timestamp = timestamp_base + num_historical_messages as u64 + i as u64 + 10; // Later timestamp
-            let message = zoe_wire_protocol::Message::new_v0(
+            let message = zoe_wire_protocol::Message::new_v0_raw(
                 message_content.as_bytes().to_vec(),
                 client2.public_key(),
                 message_timestamp,

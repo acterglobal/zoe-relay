@@ -179,7 +179,7 @@ SADD channel:<id> message:<id>
 
 1. **Client Creates Message**
    ```rust
-   let message = Message::new_v0(content, author, timestamp, Kind::Regular, tags);
+   let message = Message::new_v0_raw(content, author, timestamp, Kind::Regular, tags);
    let signed_message = MessageFull::new(message, &signing_key)?;
    ```
 

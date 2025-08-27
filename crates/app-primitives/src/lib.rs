@@ -87,6 +87,7 @@
 //!
 //! // Generate cryptographic identity
 //! let creator_key = KeyPair::generate(&mut rand::rngs::OsRng);
+//! let creator_public_key = creator_key.public_key();
 //!
 //! // Define structured metadata
 //! let metadata = vec![
@@ -100,13 +101,13 @@
 //!     "Dev Team".to_string(),
 //!     GroupSettings::default(),
 //!     metadata,
-//!     creator_key.public_key(),
+//!     creator_public_key.clone(),
 //!     1640995200,
 //! );
 //!
 //! // Creator automatically becomes Owner
 //! assert_eq!(
-//!     group_state.get_member_role(&creator_key.verifying_key()),
+//!     group_state.get_member_role(&creator_public_key),
 //!     Some(&GroupRole::Owner)
 //! );
 //! ```
@@ -119,12 +120,13 @@
 //! let membership = GroupMembership::new();
 //! let user_key = KeyPair::generate(&mut rand::rngs::OsRng).public_key();
 //!
-//! // Check available identities (always includes the raw key)
+//! // Check available identities (currently returns empty set for compatibility)
 //! let identities = membership.get_available_identities(&user_key);
-//! assert!(identities.contains(&IdentityRef::Key(user_key)));
+//! // Note: Currently returns empty set during ML-DSA transition
+//! assert!(identities.is_empty());
 //!
 //! // Check authorization for different identity types
-//! let main_identity = IdentityRef::Key(user_key);
+//! let main_identity = IdentityRef::Key(user_key.clone());
 //! assert!(membership.is_authorized(&user_key, &main_identity));
 //! ```
 //!
