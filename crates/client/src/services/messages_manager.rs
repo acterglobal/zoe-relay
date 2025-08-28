@@ -667,7 +667,7 @@ mod tests {
         let filter: Filter = tag.into();
 
         // Test adding filters
-        state.add_filters(&[filter.clone()]);
+        state.add_filters(std::slice::from_ref(&filter));
         assert!(state.has_active_filters());
         assert_eq!(state.current_filters.filters.as_ref().unwrap().len(), 1);
 

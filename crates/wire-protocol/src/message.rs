@@ -501,28 +501,6 @@ impl Message {
             content: Content::ChaCha20Poly1305(content),
         })
     }
-
-    #[deprecated(note = "use new_v0 instead")]
-    pub fn new_typed<T>(
-        content: T,
-        sender: VerifyingKey,
-        when: u64,
-        kind: Kind,
-        tags: Vec<Tag>,
-    ) -> Result<Self, postcard::Error>
-    where
-        T: Serialize,
-    {
-        Ok(Message::MessageV0(MessageV0 {
-            header: MessageV0Header {
-                sender,
-                when,
-                kind,
-                tags,
-            },
-            content: Content::Raw(postcard::to_stdvec(&content)?),
-        }))
-    }
 }
 
 /// Header information for MessageV0 containing metadata and routing information.
@@ -1153,14 +1131,13 @@ mod tests {
     fn test_message_sign_and_verify() {
         let (sk, pk) = make_keys();
         let content = DummyContent { value: 42 };
-        let core = Message::new_typed(
-            content.clone(),
+        let core = Message::new_v0(
+            Content::Raw(postcard::to_stdvec(&content).unwrap()),
             pk,
             1714857600,
             Kind::Regular,
             vec![Tag::Protected],
-        )
-        .unwrap();
+        );
         let msg_full = MessageFull::new(core.clone(), &sk).unwrap();
         let mut tampered: MessageFullWire = msg_full.clone().into();
         // Tamper with the message by modifying the content
@@ -1177,14 +1154,13 @@ mod tests {
         let (sk1, pk1) = make_keys();
         let (sk2, _pk2) = make_keys();
         let content = DummyContent { value: 7 };
-        let core = Message::new_typed(
-            content.clone(),
+        let core = Message::new_v0(
+            Content::Raw(postcard::to_stdvec(&content).unwrap()),
             pk1,
             1714857600,
             Kind::Regular,
             vec![Tag::Protected],
-        )
-        .unwrap();
+        );
         let msg_full = MessageFull::new(core, &sk1).unwrap();
         let mut tampered: MessageFullWire = msg_full.clone().into();
         // Replace signature with one from a different key
@@ -1197,14 +1173,13 @@ mod tests {
     #[test]
     fn test_empty_content() {
         let (sk, pk) = make_keys();
-        let core = Message::new_typed(
-            DummyContent { value: 0 },
+        let core = Message::new_v0(
+            Content::Raw(postcard::to_stdvec(&DummyContent { value: 0 }).unwrap()),
             pk,
             1714857600,
             Kind::Regular,
             vec![Tag::Protected],
-        )
-        .unwrap();
+        );
         let _msg_full = MessageFull::new(core, &sk).unwrap();
         // MessageFull only exists in verified state, so creation success implies verification
     }
@@ -1217,8 +1192,8 @@ mod tests {
             DummyContent { value: 2 },
             DummyContent { value: 3 },
         ];
-        let core = Message::new_typed(
-            contents[0].clone(),
+        let core = Message::new_v0(
+            Content::Raw(postcard::to_stdvec(&contents[0]).unwrap()),
             pk,
             1714857600,
             Kind::Regular,
@@ -1229,8 +1204,7 @@ mod tests {
                     relays: vec!["relay1".to_string()],
                 },
             ],
-        )
-        .unwrap();
+        );
 
         let _msg_full = MessageFull::new(core, &sk).unwrap();
         // MessageFull only exists in verified state, so creation success implies verification
@@ -1244,8 +1218,8 @@ mod tests {
             numbers: vec![1, 2, 3, 4, 5],
             flag: true,
         };
-        let core = Message::new_typed(
-            complex_content.clone(),
+        let core = Message::new_v0(
+            Content::Raw(postcard::to_stdvec(&complex_content).unwrap()),
             pk,
             1714857600,
             Kind::Regular,
@@ -1253,9 +1227,7 @@ mod tests {
                 id: [1u8; 32],
                 relays: vec!["relay1".to_string()],
             }],
-        )
-        .unwrap();
-
+        );
         let msg_full = MessageFull::new(core, &sk).unwrap();
         // MessageFull only exists in verified state, so creation success implies verification
         // Serialize and deserialize
@@ -1278,8 +1250,8 @@ mod tests {
             numbers: vec![1, 2, 3, 4, 5],
             flag: true,
         };
-        let core = Message::new_typed(
-            complex_content.clone(),
+        let core = Message::new_v0(
+            Content::Raw(postcard::to_stdvec(&complex_content).unwrap()),
             pk,
             1714857600,
             Kind::Regular,
@@ -1287,8 +1259,7 @@ mod tests {
                 id: [1u8; 32],
                 relays: vec!["relay1".to_string()],
             }],
-        )
-        .unwrap();
+        );
 
         let msg_full = MessageFull::new(core, &sk).unwrap();
         // Serialize and deserialize
@@ -1311,14 +1282,13 @@ mod tests {
             numbers: vec![1, 2, 3, 4, 5],
             flag: true,
         };
-        let core = Message::new_typed(
-            complex_content.clone(),
+        let core = Message::new_v0(
+            Content::Raw(postcard::to_stdvec(&complex_content).unwrap()),
             pk,
             1714857600,
             Kind::Regular,
             vec![],
-        )
-        .unwrap();
+        );
 
         let msg_full = MessageFull::new(core, &sk).unwrap();
         // MessageFull only exists in verified state, so creation success implies verification
@@ -1355,14 +1325,13 @@ mod tests {
         ];
 
         for tag in tags {
-            let core = Message::new_typed(
-                content.clone(),
+            let core = Message::new_v0(
+                Content::Raw(postcard::to_stdvec(&content).unwrap()),
                 pk.clone(),
                 1714857600,
                 Kind::Regular,
                 vec![tag.clone()],
-            )
-            .unwrap();
+            );
 
             let msg_full = MessageFull::new(core, &sk).unwrap();
             // MessageFull only exists in verified state, so creation success implies verification
@@ -1384,14 +1353,13 @@ mod tests {
             numbers: vec![1, 2, 3, 4, 5],
             flag: true,
         };
-        let core = Message::new_typed(
-            complex_content.clone(),
+        let core = Message::new_v0(
+            Content::Raw(postcard::to_stdvec(&complex_content).unwrap()),
             pk,
             1714857600,
             Kind::Emphemeral(10),
             vec![],
-        )
-        .unwrap();
+        );
 
         let msg_full = MessageFull::new(core, &sk).unwrap();
         // MessageFull only exists in verified state, so creation success implies verification
@@ -1432,8 +1400,8 @@ mod tests {
                 relays: Vec::new(),
             });
 
-            let message = Message::new_typed(
-                content.clone(),
+            let message = Message::new_v0(
+                Content::Raw(postcard::to_stdvec(&content).unwrap()),
                 verifying_key.clone(),
                 std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
@@ -1441,8 +1409,7 @@ mod tests {
                     .as_secs(),
                 Kind::Regular,
                 tags,
-            )
-            .unwrap();
+            );
 
             let msg_full = MessageFull::new(message, &signing_key).unwrap();
             // MessageFull only exists in verified state, so creation success implies verification
@@ -1465,14 +1432,13 @@ mod tests {
             numbers: vec![1, 2, 3, 4, 5],
             flag: true,
         };
-        let core = Message::new_typed(
-            complex_content.clone(),
+        let core = Message::new_v0(
+            Content::Raw(postcard::to_stdvec(&complex_content).unwrap()),
             pk,
             1714857600,
             Kind::Store(StoreKey::CustomKey(10)),
             vec![],
-        )
-        .unwrap();
+        );
 
         let msg_full = MessageFull::new(core, &sk).unwrap();
         // MessageFull only exists in verified state, so creation success implies verification
@@ -1490,14 +1456,13 @@ mod tests {
     fn test_wire_format_roundtrip() {
         let (sk, pk) = make_keys();
         let content = DummyContent { value: 42 };
-        let core = Message::new_typed(
-            content.clone(),
+        let core = Message::new_v0(
+            Content::Raw(postcard::to_stdvec(&content).unwrap()),
             pk,
             1714857600,
             Kind::Regular,
             vec![Tag::Protected],
-        )
-        .unwrap();
+        );
         let msg_full = MessageFull::new(core, &sk).unwrap();
         let original_id = *msg_full.id();
 
@@ -1515,14 +1480,13 @@ mod tests {
         let (sk, pk) = make_keys();
         let (wrong_sk, _) = make_keys();
         let content = DummyContent { value: 42 };
-        let core = Message::new_typed(
-            content.clone(),
+        let core = Message::new_v0(
+            Content::Raw(postcard::to_stdvec(&content).unwrap()),
             pk,
             1714857600,
             Kind::Regular,
             vec![Tag::Protected],
-        )
-        .unwrap();
+        );
         let msg_full = MessageFull::new(core.clone(), &sk).unwrap();
         let mut tampered_wire: MessageFullWire = msg_full.into();
 
@@ -1539,14 +1503,13 @@ mod tests {
     fn test_message_tampering_wire() {
         let (sk, pk) = make_keys();
         let content = DummyContent { value: 42 };
-        let core = Message::new_typed(
-            content.clone(),
+        let core = Message::new_v0(
+            Content::Raw(postcard::to_stdvec(&content).unwrap()),
             pk,
             1714857600,
             Kind::Regular,
             vec![Tag::Protected],
-        )
-        .unwrap();
+        );
         let msg_full = MessageFull::new(core.clone(), &sk).unwrap();
         let mut tampered_wire: MessageFullWire = msg_full.into();
 
@@ -1566,14 +1529,13 @@ mod tests {
     fn test_signature_tampering_wire() {
         let (sk, pk) = make_keys();
         let content = DummyContent { value: 42 };
-        let core = Message::new_typed(
-            content.clone(),
+        let core = Message::new_v0(
+            Content::Raw(postcard::to_stdvec(&content).unwrap()),
             pk,
             1714857600,
             Kind::Regular,
             vec![Tag::Protected],
-        )
-        .unwrap();
+        );
         let msg_full = MessageFull::new(core.clone(), &sk).unwrap();
         let mut tampered_wire: MessageFullWire = msg_full.into();
 
@@ -1595,8 +1557,8 @@ mod tests {
             numbers: vec![1, 2, 3, 4, 5],
             flag: true,
         };
-        let core = Message::new_typed(
-            content.clone(),
+        let core = Message::new_v0(
+            Content::Raw(postcard::to_stdvec(&content).unwrap()),
             pk,
             1714857600,
             Kind::Regular,
@@ -1607,8 +1569,7 @@ mod tests {
                     relays: vec!["relay1".to_string()],
                 },
             ],
-        )
-        .unwrap();
+        );
 
         let msg_full = MessageFull::new(core, &sk).unwrap();
 
@@ -1626,8 +1587,8 @@ mod tests {
     fn test_multiple_tags() {
         let (sk, pk) = make_keys();
         let content = DummyContent { value: 42 };
-        let core = Message::new_typed(
-            content.clone(),
+        let core = Message::new_v0(
+            Content::Raw(postcard::to_stdvec(&content).unwrap()),
             pk,
             1714857600,
             Kind::Regular,
@@ -1642,8 +1603,7 @@ mod tests {
                     relays: vec!["relay2".to_string()],
                 },
             ],
-        )
-        .unwrap();
+        );
         let _msg_full = MessageFull::new(core, &sk).unwrap();
         // MessageFull only exists in verified state, so creation success implies verification
     }
@@ -1656,8 +1616,8 @@ mod tests {
             numbers: (0..1000).collect(), // Large vector
             flag: false,
         };
-        let core = Message::new_typed(
-            large_content.clone(),
+        let core = Message::new_v0(
+            Content::Raw(postcard::to_stdvec(&large_content).unwrap()),
             pk,
             1714857600,
             Kind::Regular,
@@ -1665,8 +1625,7 @@ mod tests {
                 id: vec![1],
                 relays: vec!["relay1".to_string()],
             }],
-        )
-        .unwrap();
+        );
         let _msg_full = MessageFull::new(core, &sk).unwrap();
         // MessageFull only exists in verified state, so creation success implies verification
     }
@@ -1677,22 +1636,20 @@ mod tests {
         let content1 = DummyContent { value: 1 };
         let content2 = DummyContent { value: 2 };
 
-        let core1 = Message::new_typed(
-            content1.clone(),
+        let core1 = Message::new_v0(
+            Content::Raw(postcard::to_stdvec(&content1).unwrap()),
             pk.clone(),
             1714857600,
             Kind::Regular,
             vec![Tag::Protected],
-        )
-        .unwrap();
-        let core2 = Message::new_typed(
-            content2.clone(),
+        );
+        let core2 = Message::new_v0(
+            Content::Raw(postcard::to_stdvec(&content2).unwrap()),
             pk.clone(),
             1714857600,
             Kind::Regular,
             vec![Tag::Protected],
-        )
-        .unwrap();
+        );
 
         let msg_full1 = MessageFull::new(core1, &sk).unwrap();
         let msg_full2 = MessageFull::new(core2, &sk).unwrap();
@@ -1706,22 +1663,20 @@ mod tests {
         let (sk, pk) = make_keys();
         let content = DummyContent { value: 42 };
 
-        let core1 = Message::new_typed(
-            content.clone(),
+        let core1 = Message::new_v0(
+            Content::Raw(postcard::to_stdvec(&content).unwrap()),
             pk.clone(),
             1714857600,
             Kind::Regular,
             vec![Tag::Protected],
-        )
-        .unwrap();
-        let core2 = Message::new_typed(
-            content.clone(),
+        );
+        let core2 = Message::new_v0(
+            Content::Raw(postcard::to_stdvec(&content).unwrap()),
             pk.clone(),
             1714857600,
             Kind::Regular,
             vec![Tag::Protected],
-        )
-        .unwrap();
+        );
 
         let msg_full1 = MessageFull::new(core1, &sk).unwrap();
         let msg_full2 = MessageFull::new(core2, &sk).unwrap();

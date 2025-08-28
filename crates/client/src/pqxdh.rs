@@ -382,9 +382,9 @@ impl PqxdhSession {
             vec![self.publish_channel_tag()],
         );
 
-        Ok(MessageFull::new(message, client_keypair).map_err(|e| {
+        MessageFull::new(message, client_keypair).map_err(|e| {
             PqxdhError::MessageCreation(format!("Failed to create session message: {}", e))
-        })?)
+        })
     }
 
     /// Creates a PQXDH session from an established shared secret and channel ID (for responders)
@@ -739,15 +739,11 @@ impl<'a> PqxdhProtocolHandler<'a> {
             )
             .await?;
 
-        let my_session_id = session.my_session_channel_id.clone();
+        let my_session_id = session.my_session_channel_id;
 
         {
             let mut state = self.state.write().await;
-            if state
-                .sessions
-                .insert(my_session_id.clone(), session)
-                .is_some()
-            {
+            if state.sessions.insert(my_session_id, session).is_some() {
                 warn!("overwriting existing pqxdh session. Shouldn't happen");
             }
         }
@@ -795,7 +791,7 @@ impl<'a> PqxdhProtocolHandler<'a> {
 
         Ok(stream.filter_map(move |message_full| {
             let state = state.clone();
-            let my_session_id = my_session_id.clone();
+            let my_session_id = my_session_id;
             async move {
                 tracing::debug!(
                     "🔄 PQXDH handler received message: {}",
@@ -973,14 +969,14 @@ impl PqxdhProtocolHandler<'_> {
         let their_session_channel_id = {
             let mut hasher = blake3::Hasher::new();
             hasher.update(&session_channel_id_prefix);
-            hasher.update(&target_public_key.id().as_ref());
+            hasher.update(target_public_key.id().as_ref());
             hasher.finalize()
         };
 
         let my_session_channel_id = {
             let mut hasher = blake3::Hasher::new();
             hasher.update(&session_channel_id_prefix);
-            hasher.update(&self.client_keypair.public_key().id().as_ref());
+            hasher.update(self.client_keypair.public_key().id().as_ref());
             hasher.finalize()
         };
 
