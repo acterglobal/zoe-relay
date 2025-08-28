@@ -1,13 +1,88 @@
 use anyhow::Result;
-use clap::{Arg, Command};
-use std::net::SocketAddr;
-use std::path::PathBuf;
+use clap::{Parser, Subcommand};
+use std::{
+    net::{IpAddr, SocketAddr},
+    path::PathBuf,
+};
 use tracing::info;
-use zoe_blob_store::BlobServiceImpl;
-use zoe_message_store::RedisMessageStorage;
-// Import will be conditional based on features
+use zoe_relay::ZoeRelayServer;
+use zoe_wire_protocol::{Algorithm, KeyPair};
 
-use zoe_relay::{RelayConfig, RelayServer, RelayServiceRouter};
+/// Zoe Relay Server - QUIC relay with ed25519 authentication
+#[derive(Parser)]
+#[command(name = "zoe-relay")]
+#[command(version = env!("CARGO_PKG_VERSION"))]
+#[command(about = "Zoe Relay Server")]
+struct Cli {
+    /// Server bind interface
+    #[arg(
+        short = 'i',
+        long = "interface",
+        env = "ZOERELAY_INTERFACE",
+        default_value = "127.0.0.1"
+    )]
+    interface: String,
+
+    /// Server bind port
+    #[arg(
+        short = 'p',
+        long = "port",
+        env = "ZOERELAY_PORT",
+        default_value = "13908"
+    )]
+    port: u16,
+
+    /// Blob storage directory
+    #[arg(
+        short = 'b',
+        long = "blob-dir",
+        env = "ZOERELAY_BLOB_DIR",
+        default_value = "./blob-store-data"
+    )]
+    blob_dir: PathBuf,
+
+    /// Redis URL
+    #[arg(
+        long = "redis-url",
+        env = "ZOERELAY_REDIS_URL",
+        default_value = "redis://127.0.0.1:6379"
+    )]
+    redis_url: String,
+
+    /// Private key for the server (PEM format)
+    #[arg(short = 'k', long = "private-key", env = "ZOERELAY_PRIVATE_KEY")]
+    private_key: Option<String>,
+
+    /// Show the server key
+    #[arg(long = "show-key")]
+    show_key: bool,
+
+    #[command(subcommand)]
+    command: Option<Commands>,
+}
+
+#[derive(Subcommand)]
+enum Commands {
+    /// Generate a new server key and exit
+    GenerateKey {
+        /// Algorithm to use for the key
+        #[arg(short = 'a', long = "algorithm", env = "ZOERELAY_KEY_ALGORITHM", default_value = "ed25519", value_parser = parse_algorithm)]
+        algorithm: Algorithm,
+    },
+}
+
+fn parse_algorithm(s: &str) -> Result<Algorithm, String> {
+    match s.to_lowercase().as_str() {
+        "ed25519" | "ed-25519" => Ok(Algorithm::Ed25519),
+        // "ml-dsa-44" => Ok(Algorithm::MlDsa44),
+        // "ml-dsa-65" | "ml-dsa" => Ok(Algorithm::MlDsa65),
+        // "ml-dsa-87"  => Ok(Algorithm::MlDsa87),
+        _ => Err(format!(
+            "Invalid algorithm: {}. We only support Ed25519 at the moment.",
+            s
+        )),
+    }
+}
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -19,121 +94,90 @@ async fn main() -> Result<()> {
         )
         .init();
 
-    let app = Command::new("zoe-relay")
-        .version(env!("CARGO_PKG_VERSION"))
-        .about("Zoe Relay Server - QUIC relay with ed25519 authentication")
-        .arg(
-            Arg::new("address")
-                .short('a')
-                .long("address")
-                .value_name("ADDRESS")
-                .help("Server bind address")
-                .default_value("127.0.0.1:4433"),
-        )
-        .arg(
-            Arg::new("config")
-                .short('c')
-                .long("config")
-                .value_name("FILE")
-                .help("Configuration file path"),
-        )
-        .arg(
-            Arg::new("blob-dir")
-                .short('b')
-                .long("blob-dir")
-                .value_name("DIRECTORY")
-                .help("Blob storage directory")
-                .default_value("./blob-store-data"),
-        )
-        .arg(
-            Arg::new("private-key")
-                .short('k')
-                .long("private-key")
-                .value_name("PRIVATE_KEY")
-                .help("Private key for the server"),
-        )
-        .arg(
-            Arg::new("generate-key")
-                .long("generate-key")
-                .help("Generate a new server key and exit")
-                .action(clap::ArgAction::SetTrue),
-        );
+    let cli = Cli::parse();
 
-    let matches = app.get_matches();
+    // Handle subcommands
+    if let Some(command) = cli.command {
+        match command {
+            Commands::GenerateKey { algorithm } => {
+                let server_keypair =
+                    KeyPair::generate_for_algorithm(algorithm, &mut rand::thread_rng());
+                let pem_string = server_keypair
+                    .to_pem()
+                    .map_err(|e| anyhow::anyhow!("Failed to encode keypair to PEM: {}", e))?;
 
-    // Handle key generation
-    if matches.get_flag("generate-key") {
-        use zoe_wire_protocol::KeyPair;
-        let server_keypair = KeyPair::generate_ed25519(&mut rand::thread_rng()); // Generates Ed25519 for transport
-        println!("Generated server keypair: {}", server_keypair.public_key());
-        println!(
-            "You can use this key in your configuration file or set it via environment variable."
-        );
-        return Ok(());
+                println!("Generated server keypair ({}):", algorithm);
+                println!(
+                    "Public key ID: {}",
+                    hex::encode(server_keypair.public_key().id())
+                );
+                println!("\nPrivate key (PEM format):");
+                println!("{}", pem_string);
+                println!("\nTo use this key, set the ZOERELAY_PRIVATE_KEY environment variable:");
+                println!(
+                    "export ZOERELAY_PRIVATE_KEY='{}'",
+                    pem_string.replace('\n', "\\n")
+                );
+
+                return Ok(());
+            }
+        }
     }
 
-    // Parse address
-    let address: SocketAddr = matches
-        .get_one::<String>("address")
-        .unwrap()
-        .parse()
-        .map_err(|e| anyhow::anyhow!("Invalid address: {}", e))?;
+    let address = SocketAddr::from((cli.interface.parse::<IpAddr>()?, cli.port));
 
-    // Load or create configuration
-    let config = if let Some(config_path) = matches.get_one::<String>("config") {
-        load_config(config_path)?
+    // Load or generate server keypair
+    let server_keypair = if let Some(private_key_pem) = cli.private_key {
+        // Load keypair from PEM string (from environment variable or command line)
+        KeyPair::from_pem(&private_key_pem)
+            .map_err(|e| anyhow::anyhow!("Failed to parse private key PEM: {}", e))?
     } else {
-        // Create default config with CLI overrides
-        let mut config = RelayConfig::new_with_new_ed25519_tls_key();
-
-        // Override blob directory if provided
-        if let Some(blob_dir) = matches.get_one::<String>("blob-dir") {
-            config.blob_config.data_dir = PathBuf::from(blob_dir);
+        // Generate a new Ed25519 keypair if no key is provided
+        info!("No private key provided, generating new Ed25519 keypair");
+        let server_keypair = KeyPair::generate_ed25519(&mut rand::thread_rng());
+        if cli.show_key {
+            println!("Generated server keypair ({}):", Algorithm::Ed25519);
+            println!(
+                "Public key ID: {}",
+                hex::encode(server_keypair.public_key().id())
+            );
+            println!("\nPrivate key (PEM format):");
+            println!(
+                "{}",
+                server_keypair
+                    .to_pem()
+                    .expect("Failed to encode keypair to PEM")
+            );
         }
-
-        if let Some(private_key) = matches.get_one::<String>("private-key") {
-            let _private_key_bytes: [u8; 32] =
-                hex::decode(private_key).unwrap().try_into().unwrap();
-            // TODO: Implement proper key loading from bytes
-            // For now, just use default Ed25519 generation
-            use zoe_wire_protocol::KeyPair;
-            config.server_keypair = KeyPair::generate_ed25519(&mut rand::thread_rng());
-        }
-
-        config
+        server_keypair
     };
 
     info!("Starting Zoe Relay Server");
-    info!("Server address: {}", address);
+
+    let relay_server = ZoeRelayServer::builder()
+        .server_keypair(server_keypair)
+        .address(address)
+        .redis_url(cli.redis_url.clone())
+        .blob_dir(cli.blob_dir.clone())
+        .build()
+        .await?;
+
+    let local_address = relay_server.local_addr()?;
+    let public_key = relay_server.public_key();
+
+    info!("Server address: {}", local_address);
     info!(
-        "Server identity: {} ({})",
-        config.server_keypair.public_key(),
-        config.server_keypair.public_key().algorithm()
+        "Server identity: #{} ({})",
+        hex::encode(public_key.encode()),
+        public_key.algorithm()
     );
-    info!("Blob storage directory: {:?}", config.blob_config.data_dir);
-
-    // Create blob service implementation
-    let blob_service = BlobServiceImpl::new(config.blob_config.data_dir.clone()).await?;
-
-    // Create message service implementation (assumes Redis at localhost:6379 for now)
-    let message_service = RedisMessageStorage::new("redis://127.0.0.1:6379".to_string())
-        .await
-        .map_err(|e| anyhow::anyhow!("Failed to connect to Redis: {}", e))?;
-
-    // Create service router
-    let router = RelayServiceRouter::new(blob_service, message_service);
-
-    // Create and start relay server
-    let server = RelayServer::new(address, config.server_keypair, router)?;
-
-    info!("🚀 Zoe Relay Server running on {}", address);
     info!("Press Ctrl+C to stop the server");
 
     // Handle graceful shutdown
     let shutdown_signal = tokio::signal::ctrl_c();
 
     tokio::select! {
-        result = server.run() => {
+        result = relay_server.run() => {
             if let Err(e) = result {
                 tracing::error!("Server error: {}", e);
                 return Err(e);
@@ -148,66 +192,17 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-fn load_config(config_path: &str) -> Result<RelayConfig> {
-    let config_content = std::fs::read_to_string(config_path)
-        .map_err(|e| anyhow::anyhow!("Failed to read config file '{}': {}", config_path, e))?;
-
-    // For now, we only load the blob config from TOML since KeyPair doesn't support serde
-    #[derive(serde::Deserialize)]
-    struct ConfigFile {
-        blob_config: zoe_relay::BlobConfig,
-    }
-
-    let config_file: ConfigFile = toml::from_str(&config_content)
-        .map_err(|e| anyhow::anyhow!("Failed to parse config file '{}': {}", config_path, e))?;
-
-    // Create RelayConfig with default Ed25519 keypair and loaded blob config
-    let mut config = RelayConfig::new_with_new_ed25519_tls_key();
-    config.blob_config = config_file.blob_config;
-
-    info!("Loaded configuration from: {}", config_path);
-    Ok(config)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::fs;
-    use tempfile::TempDir;
 
     #[test]
-    fn test_load_config() {
-        let temp_dir = TempDir::new().unwrap();
-        let config_path = temp_dir.path().join("test_config.toml");
+    fn test_parse_algorithm() {
+        assert_eq!(parse_algorithm("ed25519").unwrap(), Algorithm::Ed25519);
+        assert_eq!(parse_algorithm("ed-25519").unwrap(), Algorithm::Ed25519);
+        assert_eq!(parse_algorithm("ED25519").unwrap(), Algorithm::Ed25519);
 
-        // Create a test config file with just the blob config (since KeyPair doesn't support serde)
-        #[derive(serde::Serialize)]
-        struct TestConfigFile {
-            blob_config: zoe_relay::BlobConfig,
-        }
-
-        let test_config_file = TestConfigFile {
-            blob_config: zoe_relay::BlobConfig {
-                data_dir: PathBuf::from("/test/path"),
-            },
-        };
-
-        let config_toml = toml::to_string(&test_config_file).unwrap();
-        fs::write(&config_path, config_toml).unwrap();
-
-        let loaded_config = load_config(config_path.to_str().unwrap()).unwrap();
-        assert_eq!(
-            loaded_config.blob_config.data_dir,
-            PathBuf::from("/test/path")
-        );
-    }
-
-    #[test]
-    fn test_default_config() {
-        let config = RelayConfig::new_with_new_ed25519_tls_key();
-        assert_eq!(
-            config.blob_config.data_dir,
-            PathBuf::from("./blob-store-data")
-        );
+        assert!(parse_algorithm("invalid").is_err());
+        assert!(parse_algorithm("ml-dsa-65").is_err()); // Not supported yet
     }
 }

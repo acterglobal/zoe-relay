@@ -8,8 +8,6 @@ use tracing::info;
 use quinn::ServerConfig;
 use std::sync::Arc;
 
-#[cfg(feature = "tls-ml-dsa-44")]
-use super::ml_dsa::{create_ml_dsa_44_server_config, create_ml_dsa_44_server_config_with_alpn};
 
 /// Create a QUIC server endpoint with TLS certificate (Ed25519 or ML-DSA-44)
 pub fn create_server_endpoint(
@@ -45,40 +43,21 @@ pub fn create_server_endpoint_with_protocols(
             })?
         }
 
-        #[cfg(feature = "tls-ml-dsa-44")]
-        KeyPair::MlDsa44(keypair, _) => {
-            info!(
-                "🔑 Server ML-DSA-44 public key: {}",
-                hex::encode(keypair.verifying_key().encode())
-            );
-
-            // Create ML-DSA-44 server configuration with ALPN
-            create_ml_dsa_44_server_config_with_alpn(
-                keypair,
-                "localhost",
-                protocol_negotiation.clone(),
-            )
-            .map_err(|e| {
-                CryptoError::TlsError(format!("Failed to create ML-DSA-44 server config: {e}"))
-            })?
+        KeyPair::MlDsa44(_, _) => {
+            return Err(CryptoError::TlsError(
+                "ML-DSA-44 is not supported for TLS transport security yet. Use Ed25519.".to_string(),
+            ));
         }
 
         // ML-DSA-65 and ML-DSA-87 are not supported for TLS yet
         KeyPair::MlDsa65(_, _) => {
             return Err(CryptoError::TlsError(
-                "ML-DSA-65 is not supported for TLS transport security yet. Use Ed25519 or ML-DSA-44.".to_string(),
+                "ML-DSA-65 is not supported for TLS transport security yet. Use Ed25519.".to_string(),
             ));
         }
         KeyPair::MlDsa87(_, _) => {
             return Err(CryptoError::TlsError(
-                "ML-DSA-87 is not supported for TLS transport security yet. Use Ed25519 or ML-DSA-44.".to_string(),
-            ));
-        }
-
-        #[cfg(not(feature = "tls-ml-dsa-44"))]
-        KeyPair::MlDsa44(_, _) => {
-            return Err(CryptoError::TlsError(
-                "ML-DSA-44 TLS support is not enabled. Enable the 'tls-ml-dsa-44' feature or use Ed25519.".to_string(),
+                "ML-DSA-87 is not supported for TLS transport security yet. Use Ed25519.".to_string(),
             ));
         }
     };

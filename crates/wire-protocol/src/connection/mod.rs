@@ -186,6 +186,3 @@ pub mod client;
 pub mod server;
 
 pub mod ed25519;
-
-#[cfg(feature = "tls-ml-dsa-44")]
-pub(super) mod ml_dsa;

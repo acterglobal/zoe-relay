@@ -9,10 +9,8 @@ license = "MIT OR Apache-2.0"
 name = "zoe-relay"
 path = "src/main.rs"
 
-
 [features]
 default = []
-tls-ml-dsa-44 = ["zoe-wire-protocol/tls-ml-dsa-44"]  # Enable ML-DSA-44 transport security
 
 [dependencies]
 # Wire protocol for crypto utilities

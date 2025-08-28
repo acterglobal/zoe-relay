@@ -100,17 +100,17 @@
 
 use anyhow::Result;
 use quinn::{Connection, Endpoint};
-use std::net::SocketAddr;
 use std::sync::Arc;
+use std::{net::SocketAddr, path::PathBuf};
+use zoe_blob_store::{BlobServiceImpl, BlobStoreError};
+use zoe_message_store::RedisMessageStorage;
+use zoe_wire_protocol::{CryptoError, VerifyingKey};
 
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tracing::{error, info};
 use zoe_wire_protocol::{connection::server::create_server_endpoint, KeyPair, StreamPair};
-// ML-DSA-44 imports (only available with tls-ml-dsa-44 feature)
-#[cfg(feature = "tls-ml-dsa-44")]
-use ml_dsa::VerifyingKey;
 
-use crate::{Service, ServiceError, ServiceRouter};
+use crate::{RelayServiceRouter, Service, ServiceError, ServiceRouter};
 
 /// Information about an authenticated connection
 #[derive(Debug, Clone)]
@@ -135,6 +135,95 @@ impl ConnectionInfo {
     }
 }
 
+#[derive(Debug, thiserror::Error)]
+pub enum RelayServerBuilderError {
+    #[error("Blob directory not set")]
+    BlobDirNotSet,
+
+    #[error("Blob service error: {0}")]
+    BlobServiceError(BlobStoreError),
+
+    #[error("Redis URL not set")]
+    RedisUrlNotSet,
+
+    #[error("Redis message storage error: {0}")]
+    RedisMessageStorageError(zoe_message_store::MessageStoreError),
+
+    #[error("Relay server error: {0}")]
+    RelayServerError(RelayServerError),
+}
+
+#[derive(Default)]
+pub struct RelayServerBuilder {
+    server_keypair: Option<KeyPair>,
+    address: Option<SocketAddr>,
+    redis_url: Option<String>,
+    blob_dir: Option<PathBuf>,
+}
+
+impl RelayServerBuilder {
+    pub fn server_keypair(mut self, server_keypair: KeyPair) -> Self {
+        self.server_keypair = Some(server_keypair);
+        self
+    }
+
+    pub fn address(mut self, address: SocketAddr) -> Self {
+        self.address = Some(address);
+        self
+    }
+
+    pub fn redis_url(mut self, redis_url: String) -> Self {
+        self.redis_url = Some(redis_url);
+        self
+    }
+
+    pub fn blob_dir(mut self, blob_dir: PathBuf) -> Self {
+        self.blob_dir = Some(blob_dir);
+        self
+    }
+
+    async fn create_default_router(&self) -> Result<RelayServiceRouter, RelayServerBuilderError> {
+        let Some(blob_dir) = &self.blob_dir else {
+            return Err(RelayServerBuilderError::BlobDirNotSet);
+        };
+        let Some(redis_url) = &self.redis_url else {
+            return Err(RelayServerBuilderError::RedisUrlNotSet);
+        };
+
+        let blob_service = BlobServiceImpl::new(blob_dir.clone())
+            .await
+            .map_err(RelayServerBuilderError::BlobServiceError)?;
+        let message_service = RedisMessageStorage::new(redis_url.clone())
+            .await
+            .map_err(RelayServerBuilderError::RedisMessageStorageError)?;
+        Ok(RelayServiceRouter::new(blob_service, message_service))
+    }
+
+    pub async fn build(self) -> Result<RelayServer<RelayServiceRouter>, RelayServerBuilderError> {
+        let router = self.create_default_router().await?;
+        self.build_with_router(router).await
+    }
+
+    pub async fn build_with_router<R: ServiceRouter + Send + Sync + 'static>(
+        self,
+        router: R,
+    ) -> Result<RelayServer<R>, RelayServerBuilderError> {
+        let address = self.address.unwrap_or(SocketAddr::from(([0, 0, 0, 0], 0)));
+        let server_keypair = self
+            .server_keypair
+            .unwrap_or(KeyPair::generate_ed25519(&mut rand::rngs::OsRng));
+
+        RelayServer::new(address, server_keypair, router)
+            .map_err(RelayServerBuilderError::RelayServerError)
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum RelayServerError {
+    #[error("Crypto error: {0}")]
+    CryptoError(CryptoError),
+}
+
 /// Main relay server that accepts QUIC connections with transport authentication
 pub struct RelayServer<R: ServiceRouter> {
     pub endpoint: Endpoint,
@@ -143,15 +232,28 @@ pub struct RelayServer<R: ServiceRouter> {
 }
 
 impl<R: ServiceRouter + 'static> RelayServer<R> {
+    pub fn builder() -> RelayServerBuilder {
+        RelayServerBuilder::default()
+    }
+
+    pub fn public_key(&self) -> VerifyingKey {
+        self.server_keypair.public_key()
+    }
+
     /// Create a new relay server
     ///
     /// # Arguments
     /// * `addr` - The address to bind the server to
     /// * `server_keypair` - The server keypair for transport security (Ed25519 or ML-DSA-44)
     /// * `router` - The service router implementation
-    pub fn new(addr: SocketAddr, server_keypair: KeyPair, router: R) -> Result<Self> {
+    pub fn new(
+        addr: SocketAddr,
+        server_keypair: KeyPair,
+        router: R,
+    ) -> Result<Self, RelayServerError> {
         let server_keypair = Arc::new(server_keypair);
-        let endpoint = create_server_endpoint(addr, &server_keypair)?;
+        let endpoint =
+            create_server_endpoint(addr, &server_keypair).map_err(RelayServerError::CryptoError)?;
 
         Ok(Self {
             endpoint,
@@ -293,3 +395,5 @@ impl<R: ServiceRouter + 'static> RelayServer<R> {
         Ok(())
     }
 }
+
+pub type FullRelayServer = RelayServer<RelayServiceRouter>;

@@ -278,13 +278,6 @@ let ed25519_key = ed25519_dalek::SigningKey::generate(&mut OsRng);
 let certs = generate_ed25519_cert_for_tls(&ed25519_key, "example.com")?;
 let extracted_key = extract_ed25519_public_key_from_cert(&certs[0])?;
 
-// ML-DSA-44 certificates (post-quantum, feature-gated)
-#[cfg(feature = "tls-ml-dsa-44")]
-{
-    let ml_dsa_key = ml_dsa::KeyGen::keygen(&mut OsRng);
-    let certs = generate_ml_dsa_44_cert_for_tls(&ml_dsa_key, "example.com")?;
-    let extracted_key = extract_ml_dsa_44_public_key_from_cert(&certs[0])?;
-}
 ```
 
 ### QUIC Transport Configuration
@@ -489,16 +482,12 @@ match service_id {
 # Run all tests
 cargo nextest run -p zoe-wire-protocol
 
-# Run with specific features
-cargo test -p zoe-wire-protocol --features tls-ml-dsa-44
-
 # Check documentation examples
 cargo test -p zoe-wire-protocol --doc
 ```
 
 ## Feature Flags
 
-- `tls-ml-dsa-44` - Enable ML-DSA-44 TLS certificate support (experimental)
 - `client` - Client-side functionality (deprecated, always enabled)
 - `server` - Server-side functionality (deprecated, always enabled)
 

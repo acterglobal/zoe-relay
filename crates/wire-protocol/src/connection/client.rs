@@ -105,10 +105,6 @@ pub fn create_client_endpoint_with_protocols(
         VerifyingKey::Ed25519(verifying_key) => {
             ed25519::AcceptSpecificEd25519ServerCertVerifier::new(**verifying_key)
         }
-        #[cfg(feature = "tls-ml-dsa-44")]
-        VerifyingKey::MlDsa44((ml_dsa_key, _)) => {
-            AcceptSpecificServerCertVerifier::new(ml_dsa_key.as_ref().clone())
-        }
         _ => {
             return Err(CryptoError::TlsError(
                 "Server certificate type not supported for TLS".to_string(),

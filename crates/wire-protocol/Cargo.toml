@@ -10,8 +10,6 @@ license = "MIT OR Apache-2.0"
 default = []
 client = []
 server = []
-tls-ml-dsa-44 = []  # Enable ML-DSA-44 post-quantum transport security
-
 
 [dependencies]
 # Async runtime
@@ -28,6 +26,8 @@ semver = { version = "1.0", features = ["serde"] }
 # Cryptography
 libcrux-ml-dsa = { workspace = true }
 libcrux-ml-kem = { version = "0.0.3", features = ["mlkem768"] }  # Formally verified ML-KEM for PQXDH
+base64 = { workspace = true }
+pem = "3.0"
 ed25519-dalek = { workspace = true }  # Still needed for TLS certificate compatibility
 signature = { workspace = true }
 x25519-dalek = { version = "2.0", features = ["static_secrets", "serde"] }
@@ -67,8 +67,7 @@ const-oid = "0.9"
 hex = { workspace = true }
 uuid = { workspace = true }
 
-# Encoding
-base64 = "0.21"
+# Encoding (using workspace version)
 
 # Logging
 tracing = { workspace = true }

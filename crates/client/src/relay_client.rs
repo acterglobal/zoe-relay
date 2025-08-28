@@ -51,17 +51,6 @@ impl RelayClient {
         })
     }
 
-    /// Create a new relay client with ML-DSA key support (deprecated - use new() instead)
-    #[cfg(feature = "tls-ml-dsa-44")]
-    pub async fn new_with_ml_dsa_keys(
-        client_keypair_inner: ml_dsa::KeyPair<ml_dsa::MlDsa65>,
-        server_public_key: ml_dsa::VerifyingKey<ml_dsa::MlDsa44>,
-        server_addr: SocketAddr,
-    ) -> Result<Self> {
-        let server_key = VerifyingKey::from(server_public_key);
-        Self::new(client_keypair_inner, server_key, server_addr).await
-    }
-
     /// Connect to relay server with transport keys and return the connection
     pub async fn connect_with_transport_keys(
         client_keypair_tls: &KeyPair, // For TLS certificates (Ed25519 or ML-DSA-44)

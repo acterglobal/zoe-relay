@@ -4,7 +4,7 @@ pub mod error;
 pub mod relay;
 pub mod router;
 pub mod services;
-pub use config::{BlobConfig, RelayConfig};
+pub use config::BlobConfig;
 pub use error::ServiceError;
 pub use relay::{ConnectionInfo, RelayServer};
 pub use router::{Service, ServiceRouter};

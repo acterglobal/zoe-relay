@@ -1,7 +1,10 @@
 use std::sync::Arc;
 
 use futures_util::Stream;
-use redis::{aio::ConnectionManager, AsyncCommands, SetOptions};
+use redis::{
+    aio::{ConnectionManager, ConnectionManagerConfig},
+    AsyncCommands, SetOptions,
+};
 use tracing::{debug, error, info, trace, warn};
 use zoe_wire_protocol::{
     Filter, Hash, Id as KeyId, MessageFilters, MessageFull, PublishResult, StoreKey, Tag,
@@ -183,9 +186,16 @@ impl RedisMessageStorage {
         let client = redis::Client::open(redis_url).map_err(MessageStoreError::Redis)?;
         trace!("Starting connection manager");
 
-        let conn_manager = ConnectionManager::new(client.clone())
-            .await
-            .map_err(MessageStoreError::Redis)?;
+        let mut conn_manager = ConnectionManager::new_with_config(
+            client.clone(),
+            ConnectionManagerConfig::default()
+                .set_connection_timeout(std::time::Duration::from_secs(5)),
+        )
+        .await
+        .map_err(MessageStoreError::Redis)?;
+
+        // tyr to reach the server
+        conn_manager.ping::<()>().await?;
 
         trace!("Connection manager started");
 

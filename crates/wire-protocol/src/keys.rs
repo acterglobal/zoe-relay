@@ -76,6 +76,7 @@ use libcrux_ml_dsa::{
     ml_dsa_87::{MLDSA87KeyPair, MLDSA87Signature, MLDSA87SigningKey, MLDSA87VerificationKey},
     KEY_GENERATION_RANDOMNESS_SIZE, SIGNING_RANDOMNESS_SIZE,
 };
+use pem::{encode, parse_many, Pem};
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use signature::{Signer, Verifier};
@@ -83,6 +84,21 @@ use std::fmt;
 
 // A short hand hash or content of the inner signature or key
 pub type Id = [u8; 32];
+
+/// Error type for KeyPair serialization and deserialization operations
+#[derive(Debug, thiserror::Error)]
+pub enum KeyPairError {
+    #[error("Failed to serialize KeyPair: {0}")]
+    Serialization(#[from] postcard::Error),
+    #[error("Failed to deserialize KeyPair: {0}")]
+    Deserialization(postcard::Error),
+    #[error("Failed to decode base64: {0}")]
+    Base64Decode(#[from] base64::DecodeError),
+    #[error("Invalid key data: {0}")]
+    InvalidKeyData(String),
+}
+
+
 
 /// Cryptographic algorithm identifier
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -733,6 +749,218 @@ impl KeyPair {
 
     pub fn generate_ed25519<R: rand::CryptoRng + rand::RngCore>(rng: &mut R) -> KeyPair {
         KeyPair::Ed25519(Box::new(ed25519_dalek::SigningKey::generate(rng)))
+    }
+
+    /// Encode the KeyPair to a PEM string suitable for environment variables or file storage.
+    ///
+    /// This method creates PEM blocks containing:
+    /// - For Ed25519: Only the private key (public key can be derived)
+    /// - For ML-DSA: Both private and public keys in separate PEM blocks (hash is derived from public key)
+    ///
+    /// All PEM blocks are prefixed with "ZOE" to identify them as Zoe-specific formats.
+    ///
+    /// # Returns
+    ///
+    /// A PEM-formatted string containing the key data.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use zoe_wire_protocol::KeyPair;
+    /// use rand::rngs::OsRng;
+    ///
+    /// let keypair = KeyPair::generate_ed25519(&mut OsRng);
+    /// let pem_string = keypair.to_pem().unwrap();
+    /// 
+    /// // Store in environment variable or file
+    /// std::env::set_var("MY_PRIVATE_KEY", &pem_string);
+    /// ```
+    pub fn to_pem(&self) -> Result<String, KeyPairError> {
+        match self {
+            KeyPair::Ed25519(signing_key) => {
+                // For Ed25519, we only need the private key
+                let private_key_bytes = signing_key.to_bytes();
+                let pem = Pem::new("ZOE ED25519 PRIVATE KEY", private_key_bytes.to_vec());
+                Ok(encode(&pem))
+            }
+            KeyPair::MlDsa44(keypair, _hash) => {
+                // For ML-DSA, create separate PEM blocks for private and public keys
+                let private_pem = Pem::new("ZOE ML-DSA-44 PRIVATE KEY", keypair.signing_key.as_slice().to_vec());
+                let public_pem = Pem::new("ZOE ML-DSA-44 PUBLIC KEY", keypair.verification_key.as_slice().to_vec());
+                
+                Ok(format!("{}\n{}", encode(&private_pem), encode(&public_pem)))
+            }
+            KeyPair::MlDsa65(keypair, _hash) => {
+                // For ML-DSA, create separate PEM blocks for private and public keys
+                let private_pem = Pem::new("ZOE ML-DSA-65 PRIVATE KEY", keypair.signing_key.as_slice().to_vec());
+                let public_pem = Pem::new("ZOE ML-DSA-65 PUBLIC KEY", keypair.verification_key.as_slice().to_vec());
+                
+                Ok(format!("{}\n{}", encode(&private_pem), encode(&public_pem)))
+            }
+            KeyPair::MlDsa87(keypair, _hash) => {
+                // For ML-DSA, create separate PEM blocks for private and public keys
+                let private_pem = Pem::new("ZOE ML-DSA-87 PRIVATE KEY", keypair.signing_key.as_slice().to_vec());
+                let public_pem = Pem::new("ZOE ML-DSA-87 PUBLIC KEY", keypair.verification_key.as_slice().to_vec());
+                
+                Ok(format!("{}\n{}", encode(&private_pem), encode(&public_pem)))
+            }
+        }
+    }
+
+    /// Decode a KeyPair from a PEM string.
+    ///
+    /// This method can parse PEM files created by `to_pem()`, using `parse_many` to
+    /// read multiple PEM blocks and automatically detecting the key type from the
+    /// PEM labels to reconstruct the appropriate KeyPair.
+    ///
+    /// # Arguments
+    ///
+    /// * `pem_string` - The PEM-formatted string containing key data
+    ///
+    /// # Returns
+    ///
+    /// A `KeyPair` instance reconstructed from the PEM data.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use zoe_wire_protocol::KeyPair;
+    /// use rand::rngs::OsRng;
+    ///
+    /// let original = KeyPair::generate_ed25519(&mut OsRng);
+    /// let pem_string = original.to_pem().unwrap();
+    /// let restored = KeyPair::from_pem(&pem_string).unwrap();
+    /// 
+    /// assert_eq!(original.public_key(), restored.public_key());
+    /// ```
+    pub fn from_pem(pem_string: &str) -> Result<KeyPair, KeyPairError> {
+        let pems = parse_many(pem_string)
+            .map_err(|e| KeyPairError::InvalidKeyData(format!("Invalid PEM format: {}", e)))?;
+
+        if pems.is_empty() {
+            return Err(KeyPairError::InvalidKeyData("No PEM blocks found".to_string()));
+        }
+
+        // Check for Ed25519 (single block)
+        if pems.len() == 1 && pems[0].tag() == "ZOE ED25519 PRIVATE KEY" {
+            if pems[0].contents().len() != 32 {
+                return Err(KeyPairError::InvalidKeyData(
+                    "Invalid Ed25519 private key length".to_string(),
+                ));
+            }
+            let mut key_bytes = [0u8; 32];
+            key_bytes.copy_from_slice(pems[0].contents());
+            let signing_key = ed25519_dalek::SigningKey::from_bytes(&key_bytes);
+            return Ok(KeyPair::Ed25519(Box::new(signing_key)));
+        }
+
+        // Check for ML-DSA (two blocks: private, public)
+        if pems.len() == 2 {
+            let mut private_key_bytes: Option<Vec<u8>> = None;
+            let mut public_key_bytes: Option<Vec<u8>> = None;
+            let mut algorithm: Option<&str> = None;
+
+            for pem in &pems {
+                match pem.tag() {
+                    "ZOE ML-DSA-44 PRIVATE KEY" => {
+                        private_key_bytes = Some(pem.contents().to_vec());
+                        algorithm = Some("ML-DSA-44");
+                    }
+                    "ZOE ML-DSA-44 PUBLIC KEY" => {
+                        public_key_bytes = Some(pem.contents().to_vec());
+                    }
+                    "ZOE ML-DSA-65 PRIVATE KEY" => {
+                        private_key_bytes = Some(pem.contents().to_vec());
+                        algorithm = Some("ML-DSA-65");
+                    }
+                    "ZOE ML-DSA-65 PUBLIC KEY" => {
+                        public_key_bytes = Some(pem.contents().to_vec());
+                    }
+                    "ZOE ML-DSA-87 PRIVATE KEY" => {
+                        private_key_bytes = Some(pem.contents().to_vec());
+                        algorithm = Some("ML-DSA-87");
+                    }
+                    "ZOE ML-DSA-87 PUBLIC KEY" => {
+                        public_key_bytes = Some(pem.contents().to_vec());
+                    }
+                    _ => {
+                        return Err(KeyPairError::InvalidKeyData(format!(
+                            "Unsupported PEM key type: {}",
+                            pem.tag()
+                        )));
+                    }
+                }
+            }
+
+            // Reconstruct the keypair based on the algorithm
+            match (algorithm, private_key_bytes, public_key_bytes) {
+                (Some("ML-DSA-44"), Some(private_bytes), Some(public_bytes)) => {
+                    let signing_key = MLDSA44SigningKey::new(
+                        private_bytes.try_into().map_err(|_| {
+                            KeyPairError::InvalidKeyData("Invalid ML-DSA-44 signing key size".to_string())
+                        })?,
+                    );
+                    let verification_key = MLDSA44VerificationKey::new(
+                        public_bytes.try_into().map_err(|_| {
+                            KeyPairError::InvalidKeyData("Invalid ML-DSA-44 verification key size".to_string())
+                        })?,
+                    );
+                    let keypair = MLDSA44KeyPair {
+                        signing_key,
+                        verification_key,
+                    };
+                    // Generate hash from public key
+                    let hash = blake3::hash(keypair.verification_key.as_slice());
+                    Ok(KeyPair::MlDsa44(Box::new(keypair), hash))
+                }
+                (Some("ML-DSA-65"), Some(private_bytes), Some(public_bytes)) => {
+                    let signing_key = MLDSA65SigningKey::new(
+                        private_bytes.try_into().map_err(|_| {
+                            KeyPairError::InvalidKeyData("Invalid ML-DSA-65 signing key size".to_string())
+                        })?,
+                    );
+                    let verification_key = MLDSA65VerificationKey::new(
+                        public_bytes.try_into().map_err(|_| {
+                            KeyPairError::InvalidKeyData("Invalid ML-DSA-65 verification key size".to_string())
+                        })?,
+                    );
+                    let keypair = MLDSA65KeyPair {
+                        signing_key,
+                        verification_key,
+                    };
+                    // Generate hash from public key
+                    let hash = blake3::hash(keypair.verification_key.as_slice());
+                    Ok(KeyPair::MlDsa65(Box::new(keypair), hash))
+                }
+                (Some("ML-DSA-87"), Some(private_bytes), Some(public_bytes)) => {
+                    let signing_key = MLDSA87SigningKey::new(
+                        private_bytes.try_into().map_err(|_| {
+                            KeyPairError::InvalidKeyData("Invalid ML-DSA-87 signing key size".to_string())
+                        })?,
+                    );
+                    let verification_key = MLDSA87VerificationKey::new(
+                        public_bytes.try_into().map_err(|_| {
+                            KeyPairError::InvalidKeyData("Invalid ML-DSA-87 verification key size".to_string())
+                        })?,
+                    );
+                    let keypair = MLDSA87KeyPair {
+                        signing_key,
+                        verification_key,
+                    };
+                    // Generate hash from public key
+                    let hash = blake3::hash(keypair.verification_key.as_slice());
+                    Ok(KeyPair::MlDsa87(Box::new(keypair), hash))
+                }
+                _ => Err(KeyPairError::InvalidKeyData(
+                    "Incomplete or mismatched ML-DSA key blocks".to_string(),
+                )),
+            }
+        } else {
+            Err(KeyPairError::InvalidKeyData(format!(
+                "Expected 1 PEM block for Ed25519 or 2 blocks for ML-DSA, found {}",
+                pems.len()
+            )))
+        }
     }
 }
 
@@ -1671,5 +1899,207 @@ mod tests {
                 "Different encoding methods should produce same result"
             );
         }
+    }
+
+    #[test]
+    fn test_keypair_pem_round_trip() {
+        let keypairs = create_test_keypairs();
+
+        for original_keypair in keypairs {
+            // Test PEM encoding/decoding
+            let pem_string = original_keypair
+                .to_pem()
+                .expect("Should encode to PEM");
+
+            // Verify it's valid PEM format
+            assert!(
+                pem_string.contains("-----BEGIN"),
+                "Should contain PEM begin marker"
+            );
+            assert!(
+                pem_string.contains("-----END"),
+                "Should contain PEM end marker"
+            );
+
+            let restored_keypair = KeyPair::from_pem(&pem_string)
+                .expect("Should decode from PEM");
+
+            // Verify the keypairs are functionally equivalent
+            assert_eq!(
+                original_keypair.public_key(),
+                restored_keypair.public_key(),
+                "Public keys should be identical after PEM round trip"
+            );
+
+            assert_eq!(
+                original_keypair.algorithm(),
+                restored_keypair.algorithm(),
+                "Algorithms should be identical after PEM round trip"
+            );
+
+            // Test signing functionality is preserved
+            let message = b"test message for PEM round trip";
+            let original_signature = original_keypair.sign(message);
+            let restored_signature = restored_keypair.sign(message);
+
+            // Both signatures should verify with the public key
+            let public_key = original_keypair.public_key();
+            assert!(
+                public_key.verify(message, &original_signature).unwrap(),
+                "Original signature should verify after PEM round trip"
+            );
+            assert!(
+                public_key.verify(message, &restored_signature).unwrap(),
+                "Restored signature should verify after PEM round trip"
+            );
+        }
+    }
+
+    #[test]
+    fn test_keypair_pem_environment_variable_simulation() {
+        let keypairs = create_test_keypairs();
+
+        for (i, keypair) in keypairs.iter().enumerate() {
+            // Simulate storing in environment variable
+            let env_value = keypair
+                .to_pem()
+                .expect("Should encode for environment variable");
+
+            // Simulate reading from environment variable
+            let restored_keypair = KeyPair::from_pem(&env_value)
+                .expect("Should decode from environment variable");
+
+            // Verify functionality
+            assert_eq!(
+                keypair.public_key(),
+                restored_keypair.public_key(),
+                "Keypair {} should survive environment variable round trip",
+                i
+            );
+
+            // Test that we can sign and verify
+            let message = format!("Environment variable test message {}", i);
+            let signature = restored_keypair.sign(message.as_bytes());
+            assert!(
+                restored_keypair.public_key().verify(message.as_bytes(), &signature).unwrap(),
+                "Should be able to sign and verify after environment variable round trip"
+            );
+        }
+    }
+
+    #[test]
+    fn test_keypair_pem_deterministic() {
+        let mut rng = OsRng;
+        let keypair = KeyPair::generate_ed25519(&mut rng);
+
+        // Multiple serializations should produce identical results
+        let pem_1 = keypair.to_pem().unwrap();
+        let pem_2 = keypair.to_pem().unwrap();
+        let pem_3 = keypair.to_pem().unwrap();
+
+        assert_eq!(pem_1, pem_2, "PEM serialization should be deterministic");
+        assert_eq!(pem_2, pem_3, "PEM serialization should be deterministic");
+    }
+
+    #[test]
+    fn test_keypair_pem_error_handling() {
+        // Test invalid PEM format
+        let invalid_pem = "not a valid PEM file";
+        let result = KeyPair::from_pem(invalid_pem);
+        assert!(result.is_err(), "Should fail on invalid PEM format");
+        assert!(matches!(result.unwrap_err(), KeyPairError::InvalidKeyData(_)));
+
+        // Test unsupported PEM type
+        let unsupported_pem = "-----BEGIN CERTIFICATE-----\nVGVzdCBjZXJ0aWZpY2F0ZQ==\n-----END CERTIFICATE-----";
+        let result = KeyPair::from_pem(unsupported_pem);
+        assert!(result.is_err(), "Should fail on unsupported PEM type");
+        assert!(matches!(result.unwrap_err(), KeyPairError::InvalidKeyData(_)));
+
+        // Test Ed25519 key with wrong length
+        let wrong_length_pem = "-----BEGIN PRIVATE KEY-----\nVGVzdA==\n-----END PRIVATE KEY-----";
+        let result = KeyPair::from_pem(wrong_length_pem);
+        assert!(result.is_err(), "Should fail on wrong key length");
+        assert!(matches!(result.unwrap_err(), KeyPairError::InvalidKeyData(_)));
+    }
+
+    #[test]
+    fn test_all_keypair_types_pem_compatibility() {
+        let mut rng = OsRng;
+        
+        let test_cases = vec![
+            ("Ed25519", KeyPair::generate_ed25519(&mut rng)),
+            ("ML-DSA-44", KeyPair::generate_ml_dsa44(&mut rng)),
+            ("ML-DSA-65", KeyPair::generate_ml_dsa65(&mut rng)),
+            ("ML-DSA-87", KeyPair::generate_ml_dsa87(&mut rng)),
+        ];
+
+        for (name, keypair) in test_cases {
+            // Test PEM round trip
+            let pem_string = keypair.to_pem()
+                .unwrap_or_else(|_| panic!("{} should encode to PEM", name));
+            let restored = KeyPair::from_pem(&pem_string)
+                .unwrap_or_else(|_| panic!("{} should decode from PEM", name));
+            
+            assert_eq!(
+                keypair.public_key(), 
+                restored.public_key(),
+                "{} public key should match after PEM round trip", 
+                name
+            );
+
+            // Verify signing still works
+            let message = format!("Test message for {}", name);
+            let signature = restored.sign(message.as_bytes());
+            assert!(
+                restored.public_key().verify(message.as_bytes(), &signature).unwrap(),
+                "{} should be able to sign and verify after PEM serialization", 
+                name
+            );
+
+            // Verify PEM format contains expected labels
+            match name {
+                "Ed25519" => assert!(pem_string.contains("ZOE ED25519 PRIVATE KEY")),
+                "ML-DSA-44" => {
+                    assert!(pem_string.contains("ZOE ML-DSA-44 PRIVATE KEY"));
+                    assert!(pem_string.contains("ZOE ML-DSA-44 PUBLIC KEY"));
+                }
+                "ML-DSA-65" => {
+                    assert!(pem_string.contains("ZOE ML-DSA-65 PRIVATE KEY"));
+                    assert!(pem_string.contains("ZOE ML-DSA-65 PUBLIC KEY"));
+                }
+                "ML-DSA-87" => {
+                    assert!(pem_string.contains("ZOE ML-DSA-87 PRIVATE KEY"));
+                    assert!(pem_string.contains("ZOE ML-DSA-87 PUBLIC KEY"));
+                }
+                _ => panic!("Unexpected key type"),
+            }
+        }
+    }
+
+    #[test]
+    fn test_pem_format_structure() {
+        let mut rng = OsRng;
+        
+        // Test Ed25519 PEM structure
+        let ed25519_keypair = KeyPair::generate_ed25519(&mut rng);
+        let ed25519_pem = ed25519_keypair.to_pem().unwrap();
+        
+        assert!(ed25519_pem.contains("-----BEGIN ZOE ED25519 PRIVATE KEY-----"));
+        assert!(ed25519_pem.contains("-----END ZOE ED25519 PRIVATE KEY-----"));
+        
+        // Test ML-DSA PEM structure
+        let ml_dsa_keypair = KeyPair::generate_ml_dsa65(&mut rng);
+        let ml_dsa_pem = ml_dsa_keypair.to_pem().unwrap();
+        
+        assert!(ml_dsa_pem.contains("-----BEGIN ZOE ML-DSA-65 PRIVATE KEY-----"));
+        assert!(ml_dsa_pem.contains("-----END ZOE ML-DSA-65 PRIVATE KEY-----"));
+        assert!(ml_dsa_pem.contains("-----BEGIN ZOE ML-DSA-65 PUBLIC KEY-----"));
+        assert!(ml_dsa_pem.contains("-----END ZOE ML-DSA-65 PUBLIC KEY-----"));
+        
+        // Verify the PEM files are different (Ed25519 is smaller)
+        assert!(
+            ed25519_pem.len() < ml_dsa_pem.len(),
+            "Ed25519 PEM should be smaller than ML-DSA PEM"
+        );
     }
 }
