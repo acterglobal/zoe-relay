@@ -293,10 +293,6 @@ pub fn encrypt_pqxdh_session_message<R: CryptoRng + RngCore>(
     counter: u64,
     rng: &mut R,
 ) -> Result<PqxdhSessionMessage> {
-    // Generate session ID (16 bytes)
-    let mut session_id = [0u8; 16];
-    rng.fill_bytes(&mut session_id);
-
     // Encrypt payload
     let encrypted_payload =
         encrypt_with_shared_secret(&shared_secret.shared_key, payload, &mut *rng)?;
@@ -306,7 +302,6 @@ pub fn encrypt_pqxdh_session_message<R: CryptoRng + RngCore>(
     rng.fill_bytes(&mut auth_tag);
 
     Ok(PqxdhSessionMessage {
-        session_id,
         sequence_number: counter,
         encrypted_payload,
         auth_tag,

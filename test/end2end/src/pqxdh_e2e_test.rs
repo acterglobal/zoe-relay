@@ -18,18 +18,11 @@ use zoe_client::pqxdh::{PqxdhError, PqxdhProtocolHandler};
 use zoe_client::services::messages_manager::MessagesManager;
 use zoe_wire_protocol::PqxdhInboxProtocol;
 
-/// Test complete PQXDH protocol flow between two clients
-///
-/// This test demonstrates a complete PQXDH session establishment and message exchange:
-/// 1. **Service Setup**: Alice publishes a PQXDH inbox for the EchoService protocol
-/// 2. **Client Connection**: Bob discovers Alice's inbox and establishes a secure session
-/// 3. **Message Exchange**: Bob sends "Hello Alice!" and Alice echoes it back
-/// 4. **Verification**: Bob receives and verifies the echoed message
 #[tokio::test]
 #[serial]
-async fn test_pqxdh_echo_service_e2e() -> Result<()> {
+async fn test_pqxdh_simple_echo_e2e() -> Result<()> {
     let _ = tracing_subscriber::fmt::try_init();
-    let _ =env_logger::try_init();
+    let _ = env_logger::try_init();
     info!("🚀 Starting PQXDH echo service end-to-end test");
 
     // Setup test infrastructure with two clients
@@ -53,10 +46,7 @@ async fn test_pqxdh_echo_service_e2e() -> Result<()> {
     );
 
     // Alice publishes her service inbox
-    let inbox_tag = alice_handler
-        .publish_service(false)
-        .await
-        .context("Alice failed to publish PQXDH service")?;
+    let inbox_tag = alice_handler.publish_service(false).await?;
 
     info!("📮 Alice published PQXDH inbox with tag: {:?}", inbox_tag);
 
@@ -71,12 +61,10 @@ async fn test_pqxdh_echo_service_e2e() -> Result<()> {
 
     // Bob connects to Alice's service
     let initial_message = "Hello Alice!".to_string();
-    let mut bob_response_stream = Box::pin(
-        bob_handler
-            .connect_to_service::<String, String>(&alice.public_key(), &initial_message)
-            .await
-            .context("Bob failed to connect to Alice's service")?,
-    );
+    let (bob_session_id, mut bob_responses) = bob_handler
+        .connect_to_service::<String, String>(&alice.public_key(), &initial_message)
+        .await?;
+    let mut bob_response_stream = Box::pin(bob_responses);
 
     info!(
         "🤝 Bob connected to Alice's service and sent: '{}'",
@@ -84,14 +72,15 @@ async fn test_pqxdh_echo_service_e2e() -> Result<()> {
     );
 
     // Alice receives Bob's initial message
-    let (session_id, received_message) = timeout(Duration::from_secs(5), alice_inbox_stream.next())
-        .await
-        .context("Timeout waiting for Alice to receive Bob's message")?
-        .context("Alice's inbox stream ended unexpectedly")?;
+    let (alice_session_id, received_message) =
+        timeout(Duration::from_secs(5), alice_inbox_stream.next())
+            .await
+            .unwrap()
+            .unwrap();
 
     info!(
         "📨 Alice received message from session {:?}: '{}'",
-        session_id, received_message
+        alice_session_id, received_message
     );
 
     // Verify Alice received the correct message
@@ -106,17 +95,17 @@ async fn test_pqxdh_echo_service_e2e() -> Result<()> {
     // Alice echoes the message back
     let echo_message = format!("Echo: {}", received_message);
     alice_handler
-        .send_message(&session_id, &echo_message)
+        .send_message(&alice_session_id, &echo_message)
         .await
-        .context("Alice failed to send echo message")?;
+        .unwrap();
 
     info!("📤 Alice sent echo message: '{}'", echo_message);
 
     // Bob receives Alice's echo response
     let response = timeout(Duration::from_secs(5), bob_response_stream.next())
         .await
-        .context("Timeout waiting for Bob to receive Alice's response")?
-        .context("Bob's response stream ended unexpectedly")?;
+        .unwrap()
+        .unwrap();
 
     info!("📨 Bob received response: '{}'", response);
 
@@ -129,39 +118,27 @@ async fn test_pqxdh_echo_service_e2e() -> Result<()> {
     // Test additional message exchange
     let follow_up_message = "How are you?".to_string();
 
-    // Get the session ID from Bob's handler for sending follow-up messages
-    // We need to extract this from the established session
-    let bob_session_id = {
-        // For this test, we'll use the same session_id that Alice received
-        // In a real scenario, Bob would track his own session IDs
-        session_id
-    };
-
     bob_handler
         .send_message(&bob_session_id, &follow_up_message)
         .await
-        .context("Bob failed to send follow-up message")?;
+        .unwrap();
 
     info!("📤 Bob sent follow-up message: '{}'", follow_up_message);
 
+    let mut alice_listen_stream = Box::pin(
+        alice_handler
+            .listen_for_messages::<String>(alice_session_id, true)
+            .await?,
+    );
 
     // Alice receives the follow-up message
-    let (session_id_2, received_follow_up) =
-        timeout(Duration::from_secs(5), alice_inbox_stream.next())
-            .await
-            .context("Timeout waiting for Alice to receive Bob's follow-up message")?
-            .context("Alice's inbox stream ended unexpectedly")?;
+    let received_follow_up = timeout(Duration::from_secs(5), alice_listen_stream.next())
+        .await
+        .unwrap()
+        .unwrap();
 
-    info!(
-        "📨 Alice received follow-up from session {:?}: '{}'",
-        session_id_2, received_follow_up
-    );
+    info!("📨 Alice received follow-up '{}'", received_follow_up);
 
-    // Verify session IDs match and message is correct
-    assert_eq!(
-        session_id, session_id_2,
-        "Session IDs should match for the same session"
-    );
     assert_eq!(
         received_follow_up, follow_up_message,
         "Alice should receive Bob's follow-up message"
@@ -170,17 +147,17 @@ async fn test_pqxdh_echo_service_e2e() -> Result<()> {
     // Alice echoes the follow-up message
     let echo_follow_up = format!("Echo: {}", received_follow_up);
     alice_handler
-        .send_message(&session_id, &echo_follow_up)
+        .send_message(&alice_session_id, &echo_follow_up)
         .await
-        .context("Alice failed to send follow-up echo")?;
+        .unwrap();
 
     info!("📤 Alice sent follow-up echo: '{}'", echo_follow_up);
 
     // Bob receives the follow-up echo
     let follow_up_response = timeout(Duration::from_secs(5), bob_response_stream.next())
         .await
-        .context("Timeout waiting for Bob to receive Alice's follow-up response")?
-        .context("Bob's response stream ended unexpectedly")?;
+        .unwrap()
+        .unwrap();
 
     info!(
         "📨 Bob received follow-up response: '{}'",

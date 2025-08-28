@@ -293,7 +293,7 @@ type PqxdhSessionId = [u8; 32];
 /// ## Key Features
 /// - **Shared Secret**: Cryptographic material derived from PQXDH key exchange
 /// - **Sequence Numbers**: Monotonic counter for replay protection
-/// - **Channel ID**: Randomized identifier for unlinkable communication
+/// - **Session Channel IDs**: A hash of the session channel id prefix and the target key, provides unlinkability
 /// - **Serializable**: Can be persisted and restored across application restarts
 ///
 /// ## Security Properties
@@ -306,109 +306,29 @@ struct PqxdhSession {
     shared_secret: PqxdhSharedSecret,
     /// Current sequence number for this session (stored as u64 for serialization)
     sequence_number: u64,
-    /// Randomized channel ID for session messages (provides unlinkability)
-    session_channel_id: PqxdhSessionId,
+    /// The channel Id we are listening for, derived from the session channel id prefix
+    my_session_channel_id: PqxdhSessionId,
+    /// The session id channel they will be listening to, derived from the session channel id prefix
+    their_session_channel_id: PqxdhSessionId,
     /// The key of the sender of the messages
-    sender_key: VerifyingKey,
+    their_key: VerifyingKey,
 }
 
 impl PqxdhSession {
-    /// Get the channel tag for this session (for subscribing to session messages)
-    pub fn channel_tag(&self) -> Tag {
+    /// Get the channel they are listening for
+    pub fn publish_channel_tag(&self) -> Tag {
         Tag::Channel {
-            id: self.session_channel_id.to_vec(),
+            id: self.their_session_channel_id.to_vec(),
             relays: vec![],
         }
     }
 
-    /// Get the channel ID as bytes (for filtering)
-    pub fn channel_id(&self) -> &PqxdhSessionId {
-        &self.session_channel_id
-    }
-
-    /// Initiates a PQXDH session with a target user using an already loaded inbox
-    ///
-    /// This method performs the PQXDH key exchange protocol to establish a secure
-    /// session with another party. It generates emphemeral keys, performs the key
-    /// exchange, and sends the initial message to the target.
-    ///
-    /// # Arguments
-    /// * `messages_service` - The messages service for publishing the initial message
-    /// * `client_keypair` - The initiator's keypair for authentication
-    /// * `inbox` - The target's PQXDH inbox containing prekey bundles
-    /// * `target_tags` - Tags to route the initial message to the target
-    /// * `initial_payload` - User data to include in the initial message
-    ///
-    /// # Returns
-    /// Returns the established PQXDH session ready for secure communication.
-    ///
-    /// # Security Notes
-    /// - Uses randomized channel IDs for unlinkable communication
-    /// - Provides forward secrecy through emphemeral key material
-    /// - Includes replay protection via sequence numbering
-    pub async fn initiate<T: Serialize>(
-        messages_service: &MessagesService,
-        client_keypair: &zoe_wire_protocol::KeyPair,
-        inbox: &PqxdhInbox,
-        target_tags: Vec<Tag>,
-        initial_payload: &T,
-    ) -> Result<Self> {
-        // Extract the prekey bundle from the inbox
-        let prekey_bundle = &inbox.pqxdh_prekeys;
-
-        // Generate randomized channel ID for session messages
-        let mut rng = rand::thread_rng();
-        let mut session_channel_id = PqxdhSessionId::default();
-        rng.fill_bytes(&mut session_channel_id);
-
-        // Serialize the initial payload
-        let user_payload_bytes = postcard::to_stdvec(initial_payload)?;
-
-        // Create the combined initial payload with channel ID
-        let initial_payload_struct = PqxdhInitialPayload {
-            user_payload: user_payload_bytes,
-            session_channel_id,
-        };
-
-        let combined_payload_bytes = postcard::to_stdvec(&initial_payload_struct)?;
-
-        // Initiate PQXDH
-        let (initial_message, shared_secret) = pqxdh_initiate(
-            client_keypair,
-            prekey_bundle,
-            &combined_payload_bytes,
-            &mut rng,
-        )
-        .map_err(|e| PqxdhError::Crypto(e.to_string()))?;
-
-        let pqxdh_content = zoe_wire_protocol::PqxdhEncryptedContent::Initial(initial_message);
-
-        let timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
-        let message = Message::new_v0(
-            Content::PqxdhEncrypted(pqxdh_content),
-            client_keypair.public_key(),
-            timestamp,
-            Kind::Emphemeral(0),
-            target_tags,
-        );
-
-        let message_full = MessageFull::new(message, client_keypair).map_err(|e| {
-            PqxdhError::MessageCreation(format!("Failed to create initial message: {}", e))
-        })?;
-
-        // The initial message will be routed using its derived tag (Tag::Event with message ID)
-        // This is automatically created by Tag::from(&MessageFull)
-
-        messages_service
-            .publish(tarpc::context::current(), message_full)
-            .await??;
-
-        Ok(Self {
-            shared_secret,
-            sequence_number: 1,
-            session_channel_id,
-            sender_key: client_keypair.public_key().clone(),
-        })
+    /// Get the channel tag we want to be listening for
+    pub fn listening_channel_tag(&self) -> Tag {
+        Tag::Channel {
+            id: self.my_session_channel_id.to_vec(),
+            relays: vec![],
+        }
     }
 
     /// Get the next sequence number and increment the internal counter
@@ -434,14 +354,12 @@ impl PqxdhSession {
     /// - Sequence numbers prevent replay attacks
     /// - Messages are sent to the session's private channel ID
     /// - Each message uses fresh randomness for encryption
-    pub async fn send_message<T: Serialize>(
+    pub fn gen_next_message<T: Serialize>(
         &mut self,
-        messages_service: &MessagesService,
         client_keypair: &zoe_wire_protocol::KeyPair,
         payload: &T,
         kind: Kind,
-    ) -> Result<()> {
-
+    ) -> Result<MessageFull> {
         // Serialize the payload
         let payload_bytes = postcard::to_stdvec(payload)?;
 
@@ -461,77 +379,12 @@ impl PqxdhSession {
             client_keypair.public_key(),
             timestamp,
             kind,
-            vec![Tag::Channel {
-                id: self.session_channel_id.to_vec(),
-                relays: vec![],
-            }],
+            vec![self.publish_channel_tag()],
         );
 
-        let message_full = MessageFull::new(message, client_keypair).map_err(|e| {
+        Ok(MessageFull::new(message, client_keypair).map_err(|e| {
             PqxdhError::MessageCreation(format!("Failed to create session message: {}", e))
-        })?;
-
-        messages_service
-            .publish(tarpc::context::current(), message_full)
-            .await??;
-
-        Ok(())
-    }
-    
-
-
-    /// Sends a message in an established PQXDH session
-    ///
-    /// This method encrypts and sends a message over an already established PQXDH session.
-    /// The message is encrypted using the session's shared secret and includes sequence
-    /// numbering for replay protection.
-    ///
-    /// # Arguments
-    /// * `messages_service` - The messages service for publishing the encrypted message
-    /// * `client_keypair` - The sender's keypair for message authentication
-    /// * `payload` - The user data to encrypt and send
-    ///
-    /// # Security Features
-    /// - Messages are encrypted with the session's shared secret
-    /// - Sequence numbers prevent replay attacks
-    /// - Messages are sent to the session's private channel ID
-    /// - Each message uses fresh randomness for encryption
-    pub async fn send_emphemeral_message<T: Serialize>(
-        &mut self,
-        messages_service: &MessagesService,
-        client_keypair: &zoe_wire_protocol::KeyPair,
-        payload: &T,
-        timeout: u32
-    ) -> Result<()> {
-        self.send_message(messages_service, client_keypair, payload, Kind::Emphemeral(timeout)).await
-    }
-
-    /// Extracts user payload from a PQXDH initial message (for responders)
-    ///
-    /// This helper function extracts the actual user payload from the decrypted initial
-    /// message. The initial message contains both the user data and the session channel ID
-    /// wrapped in a `PqxdhInitialPayload` structure.
-    ///
-    /// # Arguments
-    /// * `decrypted_payload` - The decrypted bytes from the initial PQXDH message
-    ///
-    /// # Returns
-    /// Returns a tuple of `(user_payload, session_channel_id)` where:
-    /// - `user_payload` is the deserialized user data
-    /// - `session_channel_id` is the randomized channel ID for the session
-    ///
-    /// # Usage
-    /// This is typically called by service providers after decrypting an initial
-    /// PQXDH message to extract both the user's data and the channel ID needed
-    /// for ongoing session communication.
-    pub fn extract_initial_payload<R: for<'de> Deserialize<'de>>(
-        decrypted_payload: &[u8],
-    ) -> Result<(R, PqxdhSessionId)> {
-        // Deserialize the PqxdhInitialPayload structure
-        let initial_payload: PqxdhInitialPayload = postcard::from_bytes(decrypted_payload)?;
-        // Deserialize the user payload
-        let user_payload: R = postcard::from_bytes(&initial_payload.user_payload)?;
-        Ok((user_payload, initial_payload.session_channel_id))
+        })?)
     }
 
     /// Creates a PQXDH session from an established shared secret and channel ID (for responders)
@@ -542,7 +395,9 @@ impl PqxdhSession {
     ///
     /// # Arguments
     /// * `shared_secret` - The cryptographic material derived from PQXDH key exchange
-    /// * `session_channel_id` - The randomized channel ID for this session
+    /// * `my_session_channel_id` - The channel ID we are listening for
+    /// * `their_session_channel_id` - The channel ID they are listening for
+    /// * `sender_key` - The public key of the sender of the initial message
     ///
     /// # Returns
     /// Returns a new `PqxdhSession` ready for encrypting and decrypting messages
@@ -552,14 +407,16 @@ impl PqxdhSession {
     /// that can be used for ongoing communication with the client.
     pub fn from_shared_secret(
         shared_secret: PqxdhSharedSecret,
-        session_channel_id: PqxdhSessionId,
-        sender_key: VerifyingKey,
+        my_session_channel_id: PqxdhSessionId,
+        their_session_channel_id: PqxdhSessionId,
+        their_key: VerifyingKey,
     ) -> Self {
         Self {
             shared_secret,
             sequence_number: 1,
-            session_channel_id,
-            sender_key,
+            my_session_channel_id,
+            their_session_channel_id,
+            their_key,
         }
     }
 }
@@ -855,7 +712,7 @@ impl<'a> PqxdhProtocolHandler<'a> {
         &mut self,
         target_service_key: &VerifyingKey,
         initial_message: &O,
-    ) -> Result<impl futures::Stream<Item = I> + 'a>
+    ) -> Result<(PqxdhSessionId, impl futures::Stream<Item = I> + 'a)>
     where
         O: serde::Serialize + for<'de> serde::Deserialize<'de> + Clone,
         I: serde::Serialize + for<'de> serde::Deserialize<'de> + Clone,
@@ -873,53 +730,94 @@ impl<'a> PqxdhProtocolHandler<'a> {
         .await?;
 
         // Establish session
-        let session = PqxdhSession::initiate(
-            self.messages_manager.messages_service(),
-            self.client_keypair,
-            &inbox,
-            vec![inbox_tag],
-            initial_message,
-        )
-        .await?;
+        let session = self
+            .initiate_session(
+                target_service_key.clone(),
+                &inbox,
+                vec![inbox_tag],
+                initial_message,
+            )
+            .await?;
 
-        // Store session
-        let session_id = *session.channel_id();
-        let channel_tag = Tag::Channel {
-            id: session_id.to_vec(),
-            relays: vec![],
-        };
+        let my_session_id = session.my_session_channel_id.clone();
 
         {
             let mut state = self.state.write().await;
-            if state.sessions.insert(session_id, session).is_some() {
+            if state
+                .sessions
+                .insert(my_session_id.clone(), session)
+                .is_some()
+            {
                 warn!("overwriting existing pqxdh session. Shouldn't happen");
             }
         }
 
+        Ok((
+            my_session_id,
+            self.listen_for_messages(my_session_id, true).await?,
+        ))
+    }
+
+    pub async fn listen_for_messages<I>(
+        &self,
+        my_session_id: PqxdhSessionId,
+        catch_up: bool,
+    ) -> Result<impl futures::Stream<Item = I> + 'a>
+    where
+        I: serde::Serialize + for<'de> serde::Deserialize<'de> + Clone,
+    {
+        let listening_tag = {
+            let state = self.state.read().await;
+            let Some(session) = state.sessions.get(&my_session_id) else {
+                return Err(PqxdhError::SessionNotFound);
+            };
+            session.listening_channel_tag()
+        };
         let state = self.state.clone();
 
         // Subscribe to the session channel for responses
+        let stream: std::pin::Pin<Box<dyn futures::Stream<Item = Box<MessageFull>> + Send>> =
+            if catch_up {
+                Box::pin(
+                    self.messages_manager
+                        .catch_up_and_subscribe((&listening_tag).into(), None)
+                        .await?,
+                )
+            } else {
+                self.messages_manager
+                    .ensure_contains_filter(Filter::from(listening_tag.clone()))
+                    .await?;
+                Box::pin(
+                    self.messages_manager
+                        .filtered_messages_stream(Filter::from(listening_tag)),
+                )
+            };
 
-        let stream = self
-            .messages_manager
-            .catch_up_and_subscribe((&channel_tag).into(), None)
-            .await?
-            .filter_map(move |message_full| {
-                let state = state.clone();
-                async move {
-                    Self::on_regular_message::<I>(&state, &message_full, &session_id)
-                        .await
-                        .inspect_err(|e| {
-                            error!(
-                                msg_id = hex::encode(message_full.id().as_bytes()),
-                                "error processing inbox message: {e}"
-                            );
-                        })
-                        .ok()
-                }
-            });
-
-        Ok(stream)
+        Ok(stream.filter_map(move |message_full| {
+            let state = state.clone();
+            let my_session_id = my_session_id.clone();
+            async move {
+                tracing::debug!(
+                    "🔄 PQXDH handler received message: {}",
+                    hex::encode(message_full.id().as_bytes())
+                );
+                Self::on_regular_message::<I>(&state, &message_full, &my_session_id)
+                    .await
+                    .inspect_err(|e| {
+                        error!(
+                            msg_id = hex::encode(message_full.id().as_bytes()),
+                            "error processing inbox message: {e}"
+                        );
+                    })
+                    .inspect(|_result| {
+                        tracing::debug!(
+                            "✅ PQXDH handler successfully processed message: {}",
+                            hex::encode(message_full.id().as_bytes())
+                        );
+                    })
+                    .ok()
+            }
+        }))
     }
 
     /// Sends a message to an established session (CLIENTS ONLY)
@@ -955,37 +853,20 @@ impl<'a> PqxdhProtocolHandler<'a> {
     where
         T: serde::Serialize + for<'de> serde::Deserialize<'de> + Clone,
     {
-        let mut state = self.state.write().await;
-        let Some(session) = state.sessions.get_mut(session_id) else {
-            return Err(PqxdhError::SessionNotFound);
-        };
-
-        session
-            .send_message(
-                self.messages_manager.messages_service(),
-                self.client_keypair,
-                message,
-                Kind::Regular,
-            )
+        self.send_message_inner(session_id, message, Kind::Regular)
             .await
     }
 
-    pub async fn send_emphemeral_message<T>(&self, session_id: &PqxdhSessionId, message: &T, timeout: u32) -> Result<()>
+    pub async fn send_emphemeral_message<T>(
+        &self,
+        session_id: &PqxdhSessionId,
+        message: &T,
+        timeout: u32,
+    ) -> Result<()>
     where
         T: serde::Serialize + for<'de> serde::Deserialize<'de> + Clone,
     {
-        let mut state = self.state.write().await;
-        let Some(session) = state.sessions.get_mut(session_id) else {
-            return Err(PqxdhError::SessionNotFound);
-        };
-
-        session
-            .send_emphemeral_message(
-                self.messages_manager.messages_service(),
-                self.client_keypair,
-                message,
-                timeout,
-            )
+        self.send_message_inner(session_id, message, Kind::Emphemeral(timeout))
             .await
     }
 
@@ -1039,19 +920,22 @@ impl<'a> PqxdhProtocolHandler<'a> {
             inbox_tag.clone()
         };
 
-        self.messages_manager.ensure_contains_filter(Filter::from(inbox_tag.clone())).await?;
+        self.messages_manager
+            .ensure_contains_filter(Filter::from(inbox_tag.clone()))
+            .await?;
 
         let stream = self
             .messages_manager
             .filtered_messages_stream(Filter::from(inbox_tag));
 
         let state = self.state.clone();
-        
+        let my_public_key = self.client_keypair.public_key().clone();
 
         let stream = stream.filter_map(move |message_full| {
             let state = state.clone();
+            let my_public_key = my_public_key.clone();
             async move {
-                Self::on_incoming_inbox_message::<T>(&state, &message_full)
+                Self::on_incoming_inbox_message::<T>(&state, &my_public_key, &message_full)
                     .await
                     .inspect_err(|e| {
                         error!(
@@ -1067,9 +951,88 @@ impl<'a> PqxdhProtocolHandler<'a> {
     }
 }
 
+// Internal functions
+
 impl PqxdhProtocolHandler<'_> {
+    /// Initiates a PQXDH session with a target user using an already loaded inbox
+    async fn initiate_session<T: Serialize>(
+        &self,
+        target_public_key: VerifyingKey,
+        inbox: &PqxdhInbox,
+        target_tags: Vec<Tag>,
+        initial_payload: &T,
+    ) -> Result<PqxdhSession> {
+        // Extract the prekey bundle from the inbox
+        let prekey_bundle = &inbox.pqxdh_prekeys;
+
+        // Generate randomized channel ID for session messages
+        let mut rng = rand::thread_rng();
+        let mut session_channel_id_prefix = PqxdhSessionId::default();
+        rng.fill_bytes(&mut session_channel_id_prefix);
+
+        let their_session_channel_id = {
+            let mut hasher = blake3::Hasher::new();
+            hasher.update(&session_channel_id_prefix);
+            hasher.update(&target_public_key.id().as_ref());
+            hasher.finalize()
+        };
+
+        let my_session_channel_id = {
+            let mut hasher = blake3::Hasher::new();
+            hasher.update(&session_channel_id_prefix);
+            hasher.update(&self.client_keypair.public_key().id().as_ref());
+            hasher.finalize()
+        };
+
+        // Create the combined initial payload with channel ID
+        let initial_payload_struct = PqxdhInitialPayload {
+            user_payload: initial_payload,
+            session_channel_id_prefix,
+        };
+
+        let combined_payload_bytes = postcard::to_stdvec(&initial_payload_struct)?;
+
+        // Initiate PQXDH
+        let (initial_message, shared_secret) = pqxdh_initiate(
+            self.client_keypair,
+            prekey_bundle,
+            &combined_payload_bytes,
+            &mut rng,
+        )
+        .map_err(|e| PqxdhError::Crypto(e.to_string()))?;
+
+        let pqxdh_content = zoe_wire_protocol::PqxdhEncryptedContent::Initial(initial_message);
+
+        let timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
+        let message = Message::new_v0(
+            Content::PqxdhEncrypted(pqxdh_content),
+            self.client_keypair.public_key(),
+            timestamp,
+            Kind::Emphemeral(0),
+            target_tags,
+        );
+
+        let message_full = MessageFull::new(message, self.client_keypair).map_err(|e| {
+            PqxdhError::MessageCreation(format!("Failed to create initial message: {}", e))
+        })?;
+
+        // The initial message will be routed using its derived tag (Tag::Event with message ID)
+        // This is automatically created by Tag::from(&MessageFull)
+
+        self.messages_manager.publish(message_full).await?;
+
+        Ok(PqxdhSession {
+            shared_secret,
+            sequence_number: 1,
+            my_session_channel_id: my_session_channel_id.into(),
+            their_session_channel_id: their_session_channel_id.into(),
+            their_key: target_public_key,
+        })
+    }
+
     async fn on_incoming_inbox_message<T>(
         state: &Arc<RwLock<PqxdhProtocolState>>,
+        my_public_key: &VerifyingKey,
         message_full: &MessageFull,
     ) -> Result<(PqxdhSessionId, T)>
     where
@@ -1117,25 +1080,48 @@ impl PqxdhProtocolHandler<'_> {
             )
             .map_err(|e| PqxdhError::Crypto(e.to_string()))?;
 
-        // Extract user payload
-        let (user_request, session_channel_id) =
-            PqxdhSession::extract_initial_payload::<T>(&decrypted_payload)?;
+        // Deserialize the PqxdhInitialPayload structure with the user payload type
+        let initial_payload: PqxdhInitialPayload<T> = postcard::from_bytes(&decrypted_payload)?;
+
+        let PqxdhInitialPayload {
+            user_payload: user_message,
+            session_channel_id_prefix,
+        } = initial_payload;
+
+        let my_session_channel_id = {
+            let mut hasher = blake3::Hasher::new();
+            hasher.update(&session_channel_id_prefix);
+            hasher.update(my_public_key.id().as_ref());
+            hasher.finalize().into()
+        };
+
+        let their_session_channel_id = {
+            let mut hasher = blake3::Hasher::new();
+            hasher.update(&session_channel_id_prefix);
+            hasher.update(message_full.author().id().as_ref());
+            hasher.finalize().into()
+        };
 
         // Create session
         let session = PqxdhSession::from_shared_secret(
             shared_secret,
-            session_channel_id,
+            my_session_channel_id,
+            their_session_channel_id,
             message_full.author().clone(),
         );
 
         {
             let mut state = state.write().await;
-            if state.sessions.insert(session_channel_id, session).is_some() {
+            if state
+                .sessions
+                .insert(my_session_channel_id, session)
+                .is_some()
+            {
                 warn!("overwriting existing pqxdh session. Shouldn't happen");
             }
         }
 
-        Ok((session_channel_id, user_request))
+        Ok((my_session_channel_id, user_message))
     }
 
     async fn on_regular_message<T>(
@@ -1146,16 +1132,16 @@ impl PqxdhProtocolHandler<'_> {
     where
         T: serde::Serialize + for<'de> serde::Deserialize<'de> + Clone,
     {
-        let (author_id, shared_secret) = {
+        let shared_secret = {
             let state = state.read().await;
             let Some(session) = state.sessions.get(session_id) else {
                 return Err(PqxdhError::SessionNotFound);
             };
-            (session.sender_key.clone(), session.shared_secret.clone())
-        };
 
-        if &author_id != message_full.author() {
-            return Err(PqxdhError::InvalidSender);
+            if &session.their_key != message_full.author() {
+                return Err(PqxdhError::InvalidSender);
+            };
+            session.shared_secret.clone()
         };
 
         let Some(PqxdhEncryptedContent::Session(pqxdh_content)) =
@@ -1171,6 +1157,29 @@ impl PqxdhProtocolHandler<'_> {
             )
             .map_err(|e| PqxdhError::Crypto(e.to_string()))?;
         Ok(postcard::from_bytes(&decrypted_bytes)?)
+    }
+
+    async fn send_message_inner<T>(
+        &self,
+        session_id: &PqxdhSessionId,
+        message: &T,
+        kind: Kind,
+    ) -> Result<()>
+    where
+        T: serde::Serialize + for<'de> serde::Deserialize<'de> + Clone,
+    {
+        let full_msg = {
+            let mut state = self.state.write().await;
+            let Some(session) = state.sessions.get_mut(session_id) else {
+                return Err(PqxdhError::SessionNotFound);
+            };
+
+            session.gen_next_message(self.client_keypair, message, kind)?
+        }; // drop the lock
+
+        self.messages_manager.publish(full_msg).await?;
+
+        Ok(())
     }
 }
 
@@ -1204,6 +1213,7 @@ mod tests {
         let session = PqxdhSession::from_shared_secret(
             shared_secret,
             session_channel_id,
+            session_channel_id, // their_session_channel_id
             keypair.public_key(),
         );
 
@@ -1222,7 +1232,10 @@ mod tests {
             deserialized.shared_secret.consumed_one_time_key_ids
         );
         assert_eq!(session.sequence_number, deserialized.sequence_number);
-        assert_eq!(session.session_channel_id, deserialized.session_channel_id);
+        assert_eq!(
+            session.my_session_channel_id,
+            deserialized.my_session_channel_id
+        );
     }
 
     #[test]
@@ -1242,8 +1255,12 @@ mod tests {
             consumed_one_time_key_ids: vec!["consumed_key".to_string()],
         };
         let keypair = KeyPair::generate(&mut rand::thread_rng());
-        let session =
-            PqxdhSession::from_shared_secret(shared_secret, [5u8; 32], keypair.public_key());
+        let session = PqxdhSession::from_shared_secret(
+            shared_secret,
+            [5u8; 32],
+            [6u8; 32], // their_session_channel_id
+            keypair.public_key(),
+        );
         state.sessions.insert(target_id, session);
 
         // Test serialization round-trip
@@ -1268,8 +1285,8 @@ mod tests {
             deserialized_session.sequence_number
         );
         assert_eq!(
-            original_session.session_channel_id,
-            deserialized_session.session_channel_id
+            original_session.my_session_channel_id,
+            deserialized_session.my_session_channel_id
         );
     }
 

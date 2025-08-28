@@ -416,7 +416,8 @@ impl MultiClientTestHarness {
 
         info!(
             "✅ Client '{}' connected successfully ({:?})",
-            name, test_client.public_key()
+            name,
+            test_client.public_key()
         );
 
         Ok(test_client)

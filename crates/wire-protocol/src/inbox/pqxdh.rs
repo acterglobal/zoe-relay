@@ -133,8 +133,6 @@ pub struct PqxdhInitialMessage {
 /// shared secret for AEAD encryption. This provides efficient ongoing communication.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct PqxdhSessionMessage {
-    /// Session identifier (derived from initial handshake)
-    pub session_id: [u8; 16],
     /// Message sequence number (for replay protection)
     pub sequence_number: u64,
     /// AEAD encrypted payload using session keys
@@ -158,12 +156,11 @@ pub struct PqxdhSharedSecret {
 /// both the user's initial payload and a randomized channel ID for subsequent
 /// session messages to provide unlinkability.
 #[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct PqxdhInitialPayload {
+pub struct PqxdhInitialPayload<T> {
     /// The actual user payload (e.g., RPC request)
-    pub user_payload: Vec<u8>,
-    /// Randomized channel ID for subsequent session messages (32 bytes)
-    /// This provides unlinkability - observers cannot correlate session messages
-    pub session_channel_id: [u8; 32],
+    pub user_payload: T,
+    /// randomized session id prefix to take and generate the target tags to listen for
+    pub session_channel_id_prefix: [u8; 32],
 }
 
 /// Errors that can occur during PQXDH operations

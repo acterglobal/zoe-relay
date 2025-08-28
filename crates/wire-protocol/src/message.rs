@@ -226,7 +226,9 @@ impl std::fmt::Debug for Content {
             Content::MlDsaSelfEncrypted(..) => write!(f, "MlDsaSelfEncrypted(#redacted#)"),
             Content::PqxdhEncrypted(..) => write!(f, "PqxdhEncrypted(#redacted#)"),
             Content::EphemeralEcdh(..) => write!(f, "EphemeralEcdh(#redacted#)"),
-            Content::Unknown { discriminant, data } => write!(f, "Unknown({:?}, {:?})", discriminant, data.len()),
+            Content::Unknown { discriminant, data } => {
+                write!(f, "Unknown({:?}, {:?})", discriminant, data.len())
+            }
         }
     }
 }
@@ -1755,7 +1757,6 @@ mod tests {
 
         // Create a mock PQXDH session message
         let pqxdh_session = PqxdhSessionMessage {
-            session_id: [4u8; 16],
             sequence_number: 42,
             encrypted_payload: vec![5u8; 30],
             auth_tag: [6u8; 16],

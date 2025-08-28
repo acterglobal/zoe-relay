@@ -97,7 +97,11 @@ async fn subscription_task(
     subscription: Arc<RwLock<SubscriptionConfig>>,
     sender: mpsc::UnboundedSender<StreamMessage>,
 ) -> Result<(), crate::MessageStoreError> {
-    info!("Starting subscription task with filters: {:?}", filters);
+    let task_id = format!("{:p}", &sender);
+    info!(
+        "🔄 Starting subscription task {} with filters: {:?}",
+        task_id, filters
+    );
 
     let stream = service.listen_for_messages(&filters, since, limit).await?;
     info!("Subscription stream created, starting to listen for messages");
@@ -107,10 +111,17 @@ async fn subscription_task(
 
     while let Some(result) = stream.next().await {
         let to_client = match result {
-            Ok((Some(message), height)) => StreamMessage::MessageReceived {
-                message: Box::new(message),
-                stream_height: height,
-            },
+            Ok((Some(message), height)) => {
+                tracing::debug!(
+                    "📤 Subscription task {} yielding message to client: {}",
+                    task_id,
+                    hex::encode(message.id().as_bytes())
+                );
+                StreamMessage::MessageReceived {
+                    message: Box::new(message),
+                    stream_height: height,
+                }
+            }
             Ok((None, height)) => {
                 // Empty batch - just a stream height update
                 StreamMessage::StreamHeightUpdate(height)
@@ -188,23 +199,21 @@ async fn handle_catch_up_request(
         }
     }
 
-    // Send any remaining messages
-    if !messages.is_empty() {
-        let response = CatchUpResponse {
-            request_id: request.request_id,
-            filter: request.filter.clone(),
-            messages,
-            is_complete: true,
-            next_since: None,
-        };
+    // Always send a completion response, even if there are no messages
+    let response = CatchUpResponse {
+        request_id: request.request_id,
+        filter: request.filter.clone(),
+        messages,
+        is_complete: true,
+        next_since: None,
+    };
 
-        if let Err(e) = sender.send(response) {
-            warn!("Relay service closed during final catch-up send: {}", e);
-            return Err(crate::MessageStoreError::Internal(format!(
-                "Relay service closed during final catch-up send: {}",
-                e
-            )));
-        }
+    if let Err(e) = sender.send(response) {
+        warn!("Relay service closed during final catch-up send: {}", e);
+        return Err(crate::MessageStoreError::Internal(format!(
+            "Relay service closed during final catch-up send: {}",
+            e
+        )));
     }
 
     info!(

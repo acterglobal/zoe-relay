@@ -45,7 +45,8 @@ impl Service for MessagesService {
     type Error = MessagesServiceError;
 
     async fn run(self) -> Result<(), Self::Error> {
-        info!("Starting MessagesService");
+        let service_id = format!("{:p}", &self.store);
+        info!("🚀 Starting MessagesService {}", service_id);
         let Self { mut streams, store } = self;
         streams.send_ack().await?;
         let (mut incoming, mut sink) =
@@ -112,10 +113,13 @@ impl Service for MessagesService {
                 stream_message = msg_recv.recv() => {
                     match stream_message {
                         Some(message) => {
+                            debug!("🔄 MessagesService {} received stream message from subscription task: {:?}", service_id, message);
                             // Forward message to client
                             if let Err(e) = sink.send(MessageServiceResponseWrap::StreamMessage(message)).await {
                                 error!("Failed to send response to client: {}", e);
                                 break;
+                            } else {
+                                debug!("✅ MessagesService {} successfully sent stream message to client", service_id);
                             }
                         }
                         None => {

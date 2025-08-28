@@ -10,7 +10,8 @@ use tokio::{
 use tokio_stream::wrappers::{BroadcastStream, errors::BroadcastStreamRecvError};
 use tracing::warn;
 use zoe_wire_protocol::{
-    CatchUpRequest, CatchUpResponse, Filter, FilterOperation, FilterUpdateRequest, MessageFilters, MessageFull, PublishResult, StreamMessage, SubscriptionConfig
+    CatchUpRequest, CatchUpResponse, Filter, FilterOperation, FilterUpdateRequest, MessageFilters,
+    MessageFull, PublishResult, StreamMessage, SubscriptionConfig,
 };
 
 use super::messages::{CatchUpStream, MessagesService, MessagesStream};
@@ -282,6 +283,7 @@ impl MessagesManager {
 
                         // Forward message to all subscribers
                         // If no subscribers are listening, the message is dropped (which is fine)
+                        tracing::debug!("MessagesManager forwarding message to broadcast channel: {:?}", message);
                         if let Err(e) = tx_clone.send(message) {
                             warn!("No subscribers listening for messages: {e}");
                             // Don't return error - this is expected when no one is subscribed
@@ -289,8 +291,10 @@ impl MessagesManager {
                     }
                     catch_up_response = c_stream.recv() => {
                         let Some(catch_up_response) = catch_up_response else {
+                            tracing::debug!("📪 Catch-up stream ended");
                             break;
                         };
+                        tracing::debug!("📨 MessagesManager received catch-up response: {:?}", catch_up_response);
                         if let Err(e) = catch_up_tx_clone.send(catch_up_response) {
                             warn!("No subscribers listening for catch-up responses: {e}");
                             // Don't return error - this is expected when no one is subscribed
@@ -320,7 +324,8 @@ impl MessagesManager {
     }
 
     pub async fn ensure_contains_filter(&self, filter: Filter) -> Result<()> {
-        let new_filters = self.messages_service
+        let new_filters = self
+            .messages_service
             .update_filters(FilterUpdateRequest {
                 operations: vec![FilterOperation::Add(vec![filter])],
             })
@@ -331,17 +336,21 @@ impl MessagesManager {
         Ok(())
     }
 
-    pub async fn catch_up_and_subscribe<'a>(
-        &'a self,
+    pub async fn catch_up_and_subscribe(
+        &self,
         filter: Filter,
         since: Option<String>,
-    ) -> Result<impl Stream<Item = Box<MessageFull>> + 'a> {
+    ) -> Result<impl Stream<Item = Box<MessageFull>>> {
         // Enure if the underlying service is still alive
         if self.messages_service.is_closed() {
             return Err(ClientError::Generic(
                 "Messages service connection is closed".to_string(),
             ));
         }
+
+        // First, ensure the filter is added to the server-side subscription
+        // This is crucial so that future messages matching this filter will be delivered
+        self.ensure_contains_filter(filter.clone()).await?;
 
         let request_id = self
             .catch_up_request_id
@@ -385,14 +394,18 @@ impl MessagesManager {
 
             stream! {
                 pin_mut!(catch_up_rcv);
+                tracing::debug!("🔄 Catch-up stream starting for request_id: {}", request.request_id);
                 while let Some((messages, is_complete)) = catch_up_rcv.next().await {
+                    tracing::debug!("📦 Catch-up received {} messages, is_complete: {}", messages.len(), is_complete);
                     for message in messages {
                         yield Box::new(message);
                     }
                     if is_complete {
+                        tracing::debug!("✅ Catch-up stream completed for request_id: {}", request.request_id);
                         break;
                     }
                 }
+                tracing::debug!("🏁 Catch-up stream ended for request_id: {}", request.request_id);
             }
         };
 
@@ -406,10 +419,18 @@ impl MessagesManager {
                 return None;
             };
             if filter.matches(&message) {
-                tracing::trace!("Message matched filter: {:?}, {:?}", filter, message);
+                tracing::debug!(
+                    "✅ Message matched filter: {:?}, message_id: {}",
+                    filter,
+                    hex::encode(message.id().as_bytes())
+                );
                 Some(message)
             } else {
-                tracing::trace!("Message did not match filter: {:?}, {:?}", filter, message);
+                tracing::debug!(
+                    "❌ Message did not match filter: {:?}, message_id: {}",
+                    filter,
+                    hex::encode(message.id().as_bytes())
+                );
                 None
             }
         })
@@ -517,7 +538,7 @@ impl Drop for MessagesManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use zoe_wire_protocol::Tag;
+    use zoe_wire_protocol::{Filter, Tag};
 
     #[tokio::test]
     async fn test_filtered_stream_logic() {
@@ -662,5 +683,98 @@ mod tests {
         let bytes = postcard::to_stdvec(&state).unwrap();
         let restored: SubscriptionState = postcard::from_bytes(&bytes).unwrap();
         assert_eq!(state, restored);
+    }
+
+    #[tokio::test]
+    async fn test_filter_matching_logic() {
+        use rand::rngs::OsRng;
+        use zoe_wire_protocol::{
+            Content, KeyPair, Kind, Message, MessageFull, MessageV0, MessageV0Header,
+        };
+
+        // Create test keypair
+        let keypair = KeyPair::generate(&mut OsRng);
+
+        // Test Channel filter matching
+        let channel_id = b"test-channel-123".to_vec();
+        let channel_filter = Filter::Channel(channel_id.clone());
+
+        // Create message with matching channel tag
+        let message_with_channel = MessageV0 {
+            header: MessageV0Header {
+                sender: keypair.public_key(),
+                when: 1640995200,
+                kind: Kind::Regular,
+                tags: vec![Tag::Channel {
+                    id: channel_id.clone(),
+                    relays: vec![],
+                }],
+            },
+            content: Content::Raw(b"test message".to_vec()),
+        };
+        let message = Message::MessageV0(message_with_channel);
+        let full_message = MessageFull::new(message, &keypair).unwrap();
+
+        // Test that channel filter matches
+        assert!(
+            channel_filter.matches(&full_message),
+            "Channel filter should match message with same channel tag"
+        );
+
+        // Test with different channel ID
+        let different_channel_filter = Filter::Channel(b"different-channel".to_vec());
+        assert!(
+            !different_channel_filter.matches(&full_message),
+            "Channel filter should not match message with different channel tag"
+        );
+
+        // Create message with Event tag
+        let event_id = *full_message.id();
+        let message_with_event = MessageV0 {
+            header: MessageV0Header {
+                sender: keypair.public_key(),
+                when: 1640995200,
+                kind: Kind::Regular,
+                tags: vec![Tag::Event {
+                    id: event_id,
+                    relays: vec![],
+                }],
+            },
+            content: Content::Raw(b"test message".to_vec()),
+        };
+        let message = Message::MessageV0(message_with_event);
+        let full_message_with_event = MessageFull::new(message, &keypair).unwrap();
+
+        // Test Event filter matching
+        let event_filter = Filter::Event(event_id);
+        assert!(
+            event_filter.matches(&full_message_with_event),
+            "Event filter should match message with same event tag"
+        );
+
+        // Test that channel filter doesn't match event message
+        assert!(
+            !channel_filter.matches(&full_message_with_event),
+            "Channel filter should not match message with event tag"
+        );
+
+        // Test Author filter matching
+        let author_filter = Filter::Author(*keypair.public_key().id());
+        assert!(
+            author_filter.matches(&full_message),
+            "Author filter should match message from same author"
+        );
+        assert!(
+            author_filter.matches(&full_message_with_event),
+            "Author filter should match any message from same author"
+        );
+
+        // Test with different author
+        let different_keypair = KeyPair::generate(&mut OsRng);
+        let different_author_filter = Filter::Author(*different_keypair.public_key().id());
+        assert!(
+            !different_author_filter.matches(&full_message),
+            "Author filter should not match message from different author"
+        );
     }
 }
