@@ -102,6 +102,29 @@ pub struct PqxdhPrivateKeys {
     pub pq_one_time_prekey_privates: BTreeMap<String, Vec<u8>>, // ML-KEM 768 private key bytes (2400 bytes each)
 }
 
+impl PartialEq for PqxdhPrivateKeys {
+    fn eq(&self, other: &Self) -> bool {
+        // For security reasons, we don't compare the actual private key values.
+        // Instead, we compare the structure (key IDs) to determine if they represent
+        // the same set of keys without exposing the private key material.
+        self.one_time_prekey_privates
+            .keys()
+            .collect::<std::collections::BTreeSet<_>>()
+            == other
+                .one_time_prekey_privates
+                .keys()
+                .collect::<std::collections::BTreeSet<_>>()
+            && self
+                .pq_one_time_prekey_privates
+                .keys()
+                .collect::<std::collections::BTreeSet<_>>()
+                == other
+                    .pq_one_time_prekey_privates
+                    .keys()
+                    .collect::<std::collections::BTreeSet<_>>()
+    }
+}
+
 /// PQXDH initial message sent to establish secure communication (Phase 2)
 ///
 /// This message contains the initiator's ephemeral key, KEM ciphertext,

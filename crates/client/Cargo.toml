@@ -7,7 +7,6 @@ edition = "2024"
 default = ["frb-api"]
 mls = ["dep:openmls", "dep:openmls_rust_crypto", "dep:openmls_basic_credential", "dep:openmls_memory_storage"]
 frb-api = ["dep:flutter_rust_bridge"]
-mock = ["dep:mockall", "zoe-client-storage/mock"]
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(frb_expand)'] }
@@ -50,6 +49,8 @@ blake3 = { workspace = true }
 hex = { workspace = true }
 async-trait = { workspace = true }
 async-stream = { workspace = true }
+eyeball = { version = "0.8", features = ["async-lock"] }
+
 
 # Mock support for testing
 mockall = { workspace = true, optional = true }

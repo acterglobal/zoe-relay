@@ -25,7 +25,6 @@
 //! - **Persistence**: Serializable state for application restarts
 //! - **Session Tracking**: Automatic management of multiple concurrent sessions
 //! - **Key Management**: Secure handling of private keys and prekey bundles
-//!
 //! ## Usage Patterns
 //!
 //! ### Service Provider Pattern
@@ -134,14 +133,16 @@
 //! architecture and optimal network efficiency.
 
 use crate::MessagesService;
+use eyeball::{AsyncLock, ObservableWriteGuard, SharedObservable};
 use futures::StreamExt;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
+
 use std::collections::BTreeMap;
-use std::sync::Arc;
+
 use std::time::{SystemTime, UNIX_EPOCH};
 use thiserror::Error;
-use tokio::sync::RwLock;
+
 use tracing::{error, warn};
 use zoe_wire_protocol::{Content, Filter, PqxdhEncryptedContent};
 use zoe_wire_protocol::{
@@ -257,31 +258,6 @@ pub enum PqxdhError {
 /// Result type for PQXDH protocol operations
 pub type Result<T> = std::result::Result<T, PqxdhError>;
 
-async fn fetch_pqxdh_inbox<T: for<'de> Deserialize<'de>>(
-    messages_service: &MessagesService,
-    provider_key: &VerifyingKey,
-    protocol: PqxdhInboxProtocol,
-) -> Result<(T, Tag)> {
-    let provider_user_id = *provider_key.id();
-    let store_key = StoreKey::PqxdhInbox(protocol);
-
-    let user_data_result = messages_service
-        .user_data(tarpc::context::current(), provider_user_id, store_key)
-        .await?;
-
-    let Some(message_full) = user_data_result? else {
-        return Err(PqxdhError::InboxNotFound);
-    };
-
-    let Some(content_bytes) = message_full.raw_content() else {
-        return Err(PqxdhError::NoContent);
-    };
-
-    let inbox_data: T = postcard::from_bytes(content_bytes)?;
-
-    Ok((inbox_data, Tag::from(&message_full)))
-}
-
 type PqxdhSessionId = [u8; 32];
 
 /// A PQXDH session for secure communication
@@ -301,7 +277,7 @@ type PqxdhSessionId = [u8; 32];
 /// - Replay protection via sequence numbering
 /// - Unlinkability through randomized channel identifiers
 /// - Post-quantum resistance via CRYSTALS-Kyber
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 struct PqxdhSession {
     shared_secret: PqxdhSharedSecret,
     /// Current sequence number for this session (stored as u64 for serialization)
@@ -438,7 +414,7 @@ impl PqxdhSession {
 /// - **Sessions**: Active sessions keyed by target user ID
 /// - **Inbox Tag**: The published inbox tag (for service providers)
 /// - **Private Keys**: Cryptographic keys for responding to initial messages
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct PqxdhProtocolState {
     /// The PQXDH protocol variant being used
     protocol: PqxdhInboxProtocol,
@@ -489,6 +465,7 @@ impl PqxdhProtocolState {
 ///
 /// ## Key Features
 /// - **State Persistence**: All state can be serialized and restored across restarts
+/// - **State Observation**: Observable state changes via broadcast channels for reactive programming
 /// - **Automatic Subscriptions**: Handles message routing and channel management
 /// - **Session Management**: Tracks multiple concurrent sessions by user ID
 /// - **Privacy Preserving**: Uses randomized channel IDs and derived tags
@@ -496,8 +473,8 @@ impl PqxdhProtocolState {
 pub struct PqxdhProtocolHandler<'a, T: crate::services::MessagesManagerTrait> {
     messages_manager: &'a T,
     client_keypair: &'a zoe_wire_protocol::KeyPair,
-    /// Persistent state that can be serialized and restored
-    state: Arc<RwLock<PqxdhProtocolState>>,
+    /// Observable state that can be subscribed to for reactive programming
+    state: SharedObservable<PqxdhProtocolState, AsyncLock>,
 }
 
 impl<'a, T: crate::services::MessagesManagerTrait> PqxdhProtocolHandler<'a, T> {
@@ -532,10 +509,13 @@ impl<'a, T: crate::services::MessagesManagerTrait> PqxdhProtocolHandler<'a, T> {
         client_keypair: &'a zoe_wire_protocol::KeyPair,
         protocol: PqxdhInboxProtocol,
     ) -> Self {
+        let initial_state = PqxdhProtocolState::new(protocol);
+        let state = SharedObservable::new_async(initial_state);
+
         Self {
             messages_manager,
             client_keypair,
-            state: Arc::new(RwLock::new(PqxdhProtocolState::new(protocol))),
+            state,
         }
     }
 
@@ -575,11 +555,48 @@ impl<'a, T: crate::services::MessagesManagerTrait> PqxdhProtocolHandler<'a, T> {
         client_keypair: &'a zoe_wire_protocol::KeyPair,
         state: PqxdhProtocolState,
     ) -> Self {
+        let state = SharedObservable::new_async(state);
+
         Self {
             messages_manager,
             client_keypair,
-            state: Arc::new(RwLock::new(state)),
+            state,
         }
+    }
+
+    /// Subscribe to state changes for reactive programming
+    ///
+    /// This method returns a broadcast receiver that can be used to observe changes to the
+    /// protocol handler's internal state. This is useful for building reactive UIs
+    /// or implementing state-dependent logic that needs to respond to changes in
+    /// session state, inbox status, or other protocol state.
+    ///
+    /// # Returns
+    /// Returns a `broadcast::Receiver<PqxdhProtocolState>` that receives state updates
+    ///
+    /// # Example
+    /// ```rust,no_run
+    /// # use zoe_client::pqxdh::*;
+    /// # use futures::StreamExt;
+    /// # async fn example() -> Result<()> {
+    /// # let handler: PqxdhProtocolHandler = todo!();
+    /// // Subscribe to state changes
+    /// let mut state_receiver = handler.subscribe_to_state();
+    ///
+    /// // Get current state
+    /// let current_state = handler.current_state();
+    /// println!("Current sessions: {}", current_state.sessions.len());
+    ///
+    /// // Watch for state changes
+    /// let mut state_stream = state_receiver.subscribe();
+    /// while let Some(new_state) = state_stream.next().await {
+    ///     println!("State updated! Sessions: {}", new_state.sessions.len());
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn subscribe_to_state(&self) -> eyeball::Subscriber<PqxdhProtocolState, AsyncLock> {
+        self.state.subscribe().await
     }
 
     /// Publishes a service inbox for this protocol (SERVICE PROVIDERS ONLY)
@@ -618,8 +635,11 @@ impl<'a, T: crate::services::MessagesManagerTrait> PqxdhProtocolHandler<'a, T> {
     /// ```
     pub async fn publish_service(&mut self, force_overwrite: bool) -> Result<Tag> {
         let (inbox_tag, protocol) = {
-            let state = self.state.read().await;
-            (state.inbox_tag.clone(), state.protocol.clone())
+            let current_state = self.state.get().await;
+            (
+                current_state.inbox_tag.clone(),
+                current_state.protocol.clone(),
+            )
         };
 
         if inbox_tag.is_some() && !force_overwrite {
@@ -662,11 +682,14 @@ impl<'a, T: crate::services::MessagesManagerTrait> PqxdhProtocolHandler<'a, T> {
         // Publish the inbox
         self.messages_manager.publish(inbox_message_full).await?;
 
+        // Update state and notify observers
         {
             let mut state = self.state.write().await;
-            state.private_keys = Some(private_keys);
-            state.inbox_tag = Some(target_tag.clone());
-            state.inbox = Some(inbox);
+            ObservableWriteGuard::update(&mut state, |state| {
+                state.private_keys = Some(private_keys);
+                state.inbox_tag = Some(target_tag.clone());
+                state.inbox = Some(inbox);
+            });
         }
 
         Ok(target_tag)
@@ -717,13 +740,10 @@ impl<'a, T: crate::services::MessagesManagerTrait> PqxdhProtocolHandler<'a, T> {
         O: serde::Serialize + for<'de> serde::Deserialize<'de> + Clone,
         I: serde::Serialize + for<'de> serde::Deserialize<'de> + Clone,
     {
-        let protocol = {
-            let state = self.state.read().await;
-            state.protocol.clone()
-        };
+        let protocol = self.state.get().await.protocol.clone();
         // Discover inbox
         let (inbox, inbox_tag) = self
-            .fetch_pqxdh_inbox_trait(target_service_key, protocol)
+            .fetch_pqxdh_inbox(target_service_key, protocol)
             .await?;
 
         // Establish session
@@ -738,11 +758,14 @@ impl<'a, T: crate::services::MessagesManagerTrait> PqxdhProtocolHandler<'a, T> {
 
         let my_session_id = session.my_session_channel_id;
 
+        // Update state and notify observers
         {
             let mut state = self.state.write().await;
-            if state.sessions.insert(my_session_id, session).is_some() {
-                warn!("overwriting existing pqxdh session. Shouldn't happen");
-            }
+            ObservableWriteGuard::update(&mut state, |state| {
+                if state.sessions.insert(my_session_id, session).is_some() {
+                    warn!("overwriting existing pqxdh session. Shouldn't happen");
+                }
+            });
         }
 
         Ok((
@@ -760,13 +783,12 @@ impl<'a, T: crate::services::MessagesManagerTrait> PqxdhProtocolHandler<'a, T> {
         I: serde::Serialize + for<'de> serde::Deserialize<'de> + Clone,
     {
         let listening_tag = {
-            let state = self.state.read().await;
+            let state = self.state.get().await;
             let Some(session) = state.sessions.get(&my_session_id) else {
                 return Err(PqxdhError::SessionNotFound);
             };
             session.listening_channel_tag()
         };
-        let state = self.state.clone();
 
         // Subscribe to the session channel for responses
         let stream: std::pin::Pin<Box<dyn futures::Stream<Item = Box<MessageFull>> + Send>> =
@@ -782,9 +804,11 @@ impl<'a, T: crate::services::MessagesManagerTrait> PqxdhProtocolHandler<'a, T> {
                     .filtered_messages_stream(Filter::from(listening_tag))
             };
 
+        let state_for_stream = self.state.clone();
+
         Ok(stream.filter_map(move |message_full| {
-            let state = state.clone();
             let my_session_id = my_session_id;
+            let state = state_for_stream.clone();
             async move {
                 tracing::debug!(
                     "🔄 PQXDH handler received message: {}",
@@ -898,12 +922,12 @@ impl<'a, T: crate::services::MessagesManagerTrait> PqxdhProtocolHandler<'a, T> {
         U: serde::Serialize + for<'de> serde::Deserialize<'de> + Clone,
     {
         let inbox_tag = {
-            let state = self.state.read().await;
-            if state.private_keys.is_none() {
+            let current_state = self.state.get().await;
+            if current_state.private_keys.is_none() {
                 return Err(PqxdhError::ServiceNotPublished);
-            }
+            };
 
-            let Some(inbox_tag) = &state.inbox_tag else {
+            let Some(inbox_tag) = &current_state.inbox_tag else {
                 return Err(PqxdhError::NoInboxSubscription);
             };
             inbox_tag.clone()
@@ -944,7 +968,7 @@ impl<'a, T: crate::services::MessagesManagerTrait> PqxdhProtocolHandler<'a, T> {
 
 impl<T: crate::services::MessagesManagerTrait> PqxdhProtocolHandler<'_, T> {
     /// Fetch a PQXDH inbox using the trait method
-    async fn fetch_pqxdh_inbox_trait<U: for<'de> Deserialize<'de>>(
+    async fn fetch_pqxdh_inbox<U: for<'de> Deserialize<'de>>(
         &self,
         provider_key: &VerifyingKey,
         protocol: PqxdhInboxProtocol,
@@ -1046,7 +1070,7 @@ impl<T: crate::services::MessagesManagerTrait> PqxdhProtocolHandler<'_, T> {
     }
 
     async fn on_incoming_inbox_message<U>(
-        state: &Arc<RwLock<PqxdhProtocolState>>,
+        state: &SharedObservable<PqxdhProtocolState, AsyncLock>,
         my_public_key: &VerifyingKey,
         message_full: &MessageFull,
     ) -> Result<(PqxdhSessionId, U)>
@@ -1063,17 +1087,16 @@ impl<T: crate::services::MessagesManagerTrait> PqxdhProtocolHandler<'_, T> {
         };
 
         let (private_keys, prekey_bundle) = {
-            let state = state.read().await;
-
-            let Some(private_keys) = state.private_keys.clone() else {
+            let current_state = state.get().await;
+            let Some(private_keys) = current_state.private_keys else {
                 error!(msg_id = msg_id_hex, "no private keys");
                 return Err(PqxdhError::NoPrivateKeys);
             };
-            let Some(ref inbox) = state.inbox else {
+            let Some(ref inbox) = current_state.inbox else {
                 error!(msg_id = msg_id_hex, "no inbox");
                 return Err(PqxdhError::NoInbox);
             };
-            (private_keys, inbox.pqxdh_prekeys.clone())
+            (private_keys.clone(), inbox.pqxdh_prekeys.clone())
         };
 
         let initial_msg = match pqxdh_content {
@@ -1125,22 +1148,23 @@ impl<T: crate::services::MessagesManagerTrait> PqxdhProtocolHandler<'_, T> {
             message_full.author().clone(),
         );
 
-        {
-            let mut state = state.write().await;
+        // Update state
+        let mut current_state = state.write().await;
+        ObservableWriteGuard::update(&mut current_state, |state| {
             if state
                 .sessions
                 .insert(my_session_channel_id, session)
                 .is_some()
             {
-                warn!("overwriting existing pqxdh session. Shouldn't happen");
+                error!("overwriting existing pqxdh session. Shouldn't happen");
             }
-        }
+        });
 
         Ok((my_session_channel_id, user_message))
     }
 
     async fn on_regular_message<U>(
-        state: &Arc<RwLock<PqxdhProtocolState>>,
+        state: &SharedObservable<PqxdhProtocolState, AsyncLock>,
         message_full: &MessageFull,
         session_id: &PqxdhSessionId,
     ) -> Result<U>
@@ -1148,8 +1172,8 @@ impl<T: crate::services::MessagesManagerTrait> PqxdhProtocolHandler<'_, T> {
         U: serde::Serialize + for<'de> serde::Deserialize<'de> + Clone,
     {
         let shared_secret = {
-            let state = state.read().await;
-            let Some(session) = state.sessions.get(session_id) else {
+            let current_state = state.get().await;
+            let Some(session) = current_state.sessions.get(session_id) else {
                 return Err(PqxdhError::SessionNotFound);
             };
 
@@ -1184,13 +1208,19 @@ impl<T: crate::services::MessagesManagerTrait> PqxdhProtocolHandler<'_, T> {
         U: serde::Serialize + for<'de> serde::Deserialize<'de> + Clone,
     {
         let full_msg = {
-            let mut state = self.state.write().await;
-            let Some(session) = state.sessions.get_mut(session_id) else {
+            let mut current_state = self.state.write().await;
+            let Some(mut session) = current_state.sessions.get(session_id).cloned() else {
                 return Err(PqxdhError::SessionNotFound);
             };
 
-            session.gen_next_message(self.client_keypair, message, kind)?
-        }; // drop the lock
+            let msg = session.gen_next_message(self.client_keypair, message, kind)?;
+
+            ObservableWriteGuard::update(&mut current_state, |state: &mut PqxdhProtocolState| {
+                state.sessions.insert(session_id.clone(), session); // re-add the changed session
+            });
+
+            msg
+        };
 
         self.messages_manager.publish(full_msg).await?;
 
@@ -1213,18 +1243,14 @@ pub(crate) fn create_pqxdh_prekey_bundle_with_private_keys(
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[cfg(any(feature = "mock", test))]
     use crate::services::messages_manager::MockMessagesManagerTrait;
-    #[cfg(any(feature = "mock", test))]
     use futures::stream;
-    #[cfg(any(feature = "mock", test))]
     use mockall::predicate::*;
 
     use zoe_wire_protocol::{
         Content, KeyPair, Kind, Message, MessageFull,
         inbox::pqxdh::{InboxType, PqxdhInbox},
     };
-    #[cfg(any(feature = "mock", test))]
     use zoe_wire_protocol::{PublishResult, StoreKey, Tag};
 
     #[test]
@@ -1395,12 +1421,8 @@ mod tests {
         MessageFull::new(message, author).unwrap()
     }
 
-    #[cfg(any(feature = "mock", test))]
     type TestPqxdhHandler<'a> = PqxdhProtocolHandler<'a, MockMessagesManagerTrait>;
 
-    /// Test service provider publish_service functionality
-    #[cfg(any(feature = "mock", test))]
-    #[cfg(any(feature = "mock", test))]
     #[tokio::test]
     async fn test_publish_service_success() {
         let mut mock_manager = MockMessagesManagerTrait::new();
@@ -1427,8 +1449,6 @@ mod tests {
     }
 
     /// Test service provider publish_service with already published inbox
-    #[cfg(any(feature = "mock", test))]
-    #[cfg(any(feature = "mock", test))]
     #[tokio::test]
     async fn test_publish_service_already_published() {
         let mock_manager = MockMessagesManagerTrait::new();
@@ -1438,21 +1458,23 @@ mod tests {
             TestPqxdhHandler::new(&mock_manager, &keypair, PqxdhInboxProtocol::EchoService);
 
         // Manually set inbox_tag to simulate already published state
-        {
-            let mut state = handler.state.write().await;
-            state.inbox_tag = Some(Tag::Channel {
-                id: vec![1, 2, 3],
-                relays: vec![],
-            });
-        }
+
+        SharedObservable::<_, AsyncLock>::update(
+            &handler.state,
+            |state: &mut PqxdhProtocolState| {
+                state.inbox_tag = Some(Tag::Channel {
+                    id: vec![1, 2, 3],
+                    relays: vec![],
+                });
+            },
+        )
+        .await;
 
         let result = handler.publish_service(false).await;
         assert!(matches!(result, Err(PqxdhError::InboxAlreadyPublished)));
     }
 
     /// Test service provider publish_service with force overwrite
-    #[cfg(any(feature = "mock", test))]
-    #[cfg(any(feature = "mock", test))]
     #[tokio::test]
     async fn test_publish_service_force_overwrite() {
         let mut mock_manager = MockMessagesManagerTrait::new();
@@ -1469,21 +1491,23 @@ mod tests {
             TestPqxdhHandler::new(&mock_manager, &keypair, PqxdhInboxProtocol::EchoService);
 
         // Manually set inbox_tag to simulate already published state
-        {
-            let mut state = handler.state.write().await;
-            state.inbox_tag = Some(Tag::Channel {
-                id: vec![1, 2, 3],
-                relays: vec![],
-            });
-        }
+
+        SharedObservable::<_, AsyncLock>::update(
+            &handler.state,
+            |state: &mut PqxdhProtocolState| {
+                state.inbox_tag = Some(Tag::Channel {
+                    id: vec![1, 2, 3],
+                    relays: vec![],
+                });
+            },
+        )
+        .await;
 
         let result = handler.publish_service(true).await;
         assert!(result.is_ok());
     }
 
     /// Test client connect_to_service functionality
-    #[cfg(any(feature = "mock", test))]
-    #[cfg(any(feature = "mock", test))]
     #[tokio::test]
     async fn test_connect_to_service_success() {
         let mut mock_manager = MockMessagesManagerTrait::new();
@@ -1540,7 +1564,6 @@ mod tests {
     }
 
     /// Test client connect_to_service with inbox not found
-    #[cfg(any(feature = "mock", test))]
     #[tokio::test]
     async fn test_connect_to_service_inbox_not_found() {
         let mut mock_manager = MockMessagesManagerTrait::new();
@@ -1573,7 +1596,6 @@ mod tests {
     }
 
     /// Test send_message functionality
-    #[cfg(any(feature = "mock", test))]
     #[tokio::test]
     async fn test_send_message_success() {
         let mut mock_manager = MockMessagesManagerTrait::new();
@@ -1603,10 +1625,14 @@ mod tests {
         );
 
         // Add session to state
-        {
-            let mut state = handler.state.write().await;
-            state.sessions.insert(session_id, test_session);
-        }
+
+        SharedObservable::<_, AsyncLock>::update(
+            &handler.state,
+            |state: &mut PqxdhProtocolState| {
+                state.sessions.insert(session_id, test_session);
+            },
+        )
+        .await;
 
         let message = "Test message".to_string();
         let result = handler.send_message(&session_id, &message).await;
@@ -1615,7 +1641,6 @@ mod tests {
     }
 
     /// Test send_message with session not found
-    #[cfg(any(feature = "mock", test))]
     #[tokio::test]
     async fn test_send_message_session_not_found() {
         let mock_manager = MockMessagesManagerTrait::new();
@@ -1632,7 +1657,6 @@ mod tests {
     }
 
     /// Test inbox_stream functionality for service providers
-    #[cfg(any(feature = "mock", test))]
     #[tokio::test]
     async fn test_inbox_stream_success() {
         let mut mock_manager = MockMessagesManagerTrait::new();
@@ -1653,24 +1677,27 @@ mod tests {
             TestPqxdhHandler::new(&mock_manager, &keypair, PqxdhInboxProtocol::EchoService);
 
         // Set up service provider state
-        {
-            let mut state = handler.state.write().await;
-            state.inbox_tag = Some(Tag::Channel {
-                id: vec![1, 2, 3],
-                relays: vec![],
-            });
-            let (_, private_keys) =
-                create_pqxdh_prekey_bundle_with_private_keys(&keypair, 3).unwrap();
-            state.private_keys = Some(private_keys);
-            state.inbox = Some(create_test_inbox());
-        }
+
+        SharedObservable::<_, AsyncLock>::update(
+            &handler.state,
+            |state: &mut PqxdhProtocolState| {
+                state.inbox_tag = Some(Tag::Channel {
+                    id: vec![1, 2, 3],
+                    relays: vec![],
+                });
+                let (_, private_keys) =
+                    create_pqxdh_prekey_bundle_with_private_keys(&keypair, 3).unwrap();
+                state.private_keys = Some(private_keys);
+                state.inbox = Some(create_test_inbox());
+            },
+        )
+        .await;
 
         let result = handler.inbox_stream::<String>().await;
         assert!(result.is_ok());
     }
 
     /// Test inbox_stream without published service
-    #[cfg(any(feature = "mock", test))]
     #[tokio::test]
     async fn test_inbox_stream_service_not_published() {
         let mock_manager = MockMessagesManagerTrait::new();
@@ -1684,7 +1711,6 @@ mod tests {
     }
 
     /// Test state serialization and restoration
-    #[cfg(any(feature = "mock", test))]
     #[tokio::test]
     async fn test_state_persistence() {
         let mock_manager = MockMessagesManagerTrait::new();
@@ -1707,14 +1733,17 @@ mod tests {
             keypair.public_key(),
         );
 
-        {
-            let mut state = original_handler.state.write().await;
-            state.sessions.insert(session_id, test_session);
-            state.inbox_tag = Some(Tag::Channel {
-                id: vec![4, 5, 6],
-                relays: vec![],
-            });
-        }
+        SharedObservable::<_, AsyncLock>::update(
+            &original_handler.state,
+            |state: &mut PqxdhProtocolState| {
+                state.sessions.insert(session_id, test_session);
+                state.inbox_tag = Some(Tag::Channel {
+                    id: vec![4, 5, 6],
+                    relays: vec![],
+                });
+            },
+        )
+        .await;
 
         // Serialize state
         let serialized_state = {
@@ -1741,7 +1770,6 @@ mod tests {
     }
 
     /// Test error handling for various scenarios
-    #[cfg(any(feature = "mock", test))]
     #[tokio::test]
     async fn test_error_handling_scenarios() {
         let mut mock_manager = MockMessagesManagerTrait::new();
@@ -1761,7 +1789,6 @@ mod tests {
     }
 
     /// Test session management with multiple sessions
-    #[cfg(any(feature = "mock", test))]
     #[tokio::test]
     async fn test_multiple_session_management() {
         let mock_manager = MockMessagesManagerTrait::new();
@@ -1785,8 +1812,13 @@ mod tests {
                 keypair.public_key(),
             );
 
-            let mut state = handler.state.write().await;
-            state.sessions.insert(*session_id, test_session);
+            SharedObservable::<_, AsyncLock>::update(
+                &handler.state,
+                |state: &mut PqxdhProtocolState| {
+                    state.sessions.insert(*session_id, test_session);
+                },
+            )
+            .await;
         }
 
         // Verify all sessions are tracked
@@ -1798,7 +1830,6 @@ mod tests {
     }
 
     /// Test emphemeral message functionality
-    #[cfg(any(feature = "mock", test))]
     #[tokio::test]
     async fn test_send_emphemeral_message() {
         let mut mock_manager = MockMessagesManagerTrait::new();
@@ -1828,10 +1859,14 @@ mod tests {
         );
 
         // Add session to state
-        {
-            let mut state = handler.state.write().await;
-            state.sessions.insert(session_id, test_session);
-        }
+
+        SharedObservable::<_, AsyncLock>::update(
+            &handler.state,
+            |state: &mut PqxdhProtocolState| {
+                state.sessions.insert(session_id, test_session);
+            },
+        )
+        .await;
 
         let message = "Emphemeral message".to_string();
         let result = handler
@@ -1842,7 +1877,6 @@ mod tests {
     }
 
     /// Test listen_for_messages functionality
-    #[cfg(any(feature = "mock", test))]
     #[tokio::test]
     async fn test_listen_for_messages() {
         let mut mock_manager = MockMessagesManagerTrait::new();
@@ -1871,10 +1905,18 @@ mod tests {
         );
 
         // Add session to state
-        {
-            let mut state = handler.state.write().await;
-            state.sessions.insert(session_id, test_session);
-        }
+
+        SharedObservable::<_, AsyncLock>::update(
+            &handler.state,
+            |state: &mut PqxdhProtocolState| {
+                state.sessions.insert(session_id, test_session);
+                state.inbox_tag = Some(Tag::Channel {
+                    id: vec![1, 2, 3],
+                    relays: vec![],
+                });
+            },
+        )
+        .await;
 
         let result = handler
             .listen_for_messages::<String>(session_id, true)
@@ -1883,7 +1925,6 @@ mod tests {
     }
 
     /// Test listen_for_messages with session not found
-    #[cfg(any(feature = "mock", test))]
     #[tokio::test]
     async fn test_listen_for_messages_session_not_found() {
         let mock_manager = MockMessagesManagerTrait::new();

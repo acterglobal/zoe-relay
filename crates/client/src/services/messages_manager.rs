@@ -1,37 +1,52 @@
 use crate::error::{ClientError, Result};
 use async_trait::async_trait;
+use eyeball::{AsyncLock, ObservableWriteGuard, SharedObservable};
 use futures::{Stream, StreamExt, pin_mut};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use tokio::{
-    select,
-    sync::{RwLock, broadcast},
-    task::JoinHandle,
-};
+use tokio::{select, sync::broadcast, task::JoinHandle};
 use tokio_stream::wrappers::{BroadcastStream, errors::BroadcastStreamRecvError};
 use tracing::warn;
 use zoe_client_storage::SubscriptionState;
 use zoe_wire_protocol::{
-    CatchUpRequest, CatchUpResponse, Filter, FilterOperation, FilterUpdateRequest, Hash,
-    MessageFilters, MessageFull, PublishResult, StreamMessage, SubscriptionConfig,
+    CatchUpRequest, CatchUpResponse, Filter, FilterOperation, FilterUpdateRequest, MessageFilters,
+    MessageFull, PublishResult, StreamMessage, SubscriptionConfig,
 };
 
 use super::messages::{CatchUpStream, MessagesService, MessagesStream};
 use async_stream::stream;
 use std::sync::atomic::AtomicU32;
 
-#[cfg(any(feature = "mock", test))]
+#[cfg(test)]
 use mockall::automock;
 
 /// Trait abstraction for MessagesManager to enable mocking in tests
-#[cfg_attr(any(feature = "mock", test), automock)]
+#[cfg_attr(test, automock)]
 #[async_trait]
 pub trait MessagesManagerTrait: Send + Sync {
     /// Get a stream of all message events for persistence and monitoring
     fn message_events_stream(&self) -> BroadcastStream<MessageEvent>;
 
-    /// Get the current subscription state
-    fn subscription_state(&self) -> Arc<RwLock<SubscriptionState>>;
+    /// Subscribe to subscription state changes for reactive programming
+    ///
+    /// This returns an eyeball::Subscriber that can be used to observe changes to the
+    /// subscription state reactively. The subscriber will be notified whenever:
+    /// - Stream height is updated
+    /// - Filters are added or removed
+    /// - Any other subscription state changes occur
+    ///
+    /// # Example
+    /// ```rust,no_run
+    /// # use zoe_client::services::MessagesManagerTrait;
+    /// # async fn example(manager: &impl MessagesManagerTrait) {
+    /// let subscriber = manager.subscribe_to_subscription_state();
+    /// let current_state = subscriber.get();
+    /// println!("Current stream height: {:?}", current_state.latest_stream_height);
+    /// # }
+    /// ```
+    async fn get_subscription_state_updates(
+        &self,
+    ) -> eyeball::Subscriber<SubscriptionState, AsyncLock>;
 
     /// Subscribe to messages with current filters
     async fn subscribe(&self) -> Result<()>;
@@ -94,16 +109,6 @@ pub enum MessageEvent {
     StreamHeightUpdate { height: String },
     /// Catch-up completed
     CatchUpCompleted { request_id: u32 },
-    /// Subscription filters updated
-    FiltersUpdated {
-        filters: MessageFilters,
-        relay_id: Option<Hash>,
-    },
-    /// Subscription state updated (combines filters and height)
-    SubscriptionStateUpdated {
-        state: SubscriptionState,
-        relay_id: Option<Hash>,
-    },
 }
 
 /// Configuration for catching up on historical messages
@@ -253,7 +258,7 @@ pub struct MessagesManager {
     /// Broadcast sender for all message events (for persistence and monitoring)
     message_events_tx: broadcast::Sender<MessageEvent>,
     /// Current subscription state (persistent across reconnections)
-    state: Arc<RwLock<SubscriptionState>>,
+    state: SharedObservable<SubscriptionState, AsyncLock>,
     /// Background task handle for syncing with the server
     sync_handler: JoinHandle<Result<()>>,
     /// Catch-up request ID counter
@@ -286,14 +291,14 @@ impl MessagesManager {
         let (catch_up_tx, _) = broadcast::channel(buffer_size);
         let (message_events_tx, _) = broadcast::channel(buffer_size);
 
-        // Clone state for the background task
-        let state_for_task = Arc::new(RwLock::new(state.clone()));
-        let state_clone = state_for_task.clone();
+        // Create observable state
+        let state = SharedObservable::new_async(state);
 
         // Start background task to forward messages from stream to broadcast channel
         let tx_clone = broadcast_tx.clone();
         let catch_up_tx_clone = catch_up_tx.clone();
         let message_events_tx_clone = message_events_tx.clone();
+        let state_clone = state.clone();
         let sync_handler = tokio::spawn(async move {
             let mut m_stream = messages_stream;
             let mut c_stream = catch_up_stream;
@@ -307,9 +312,13 @@ impl MessagesManager {
 
                         match &message {
                             StreamMessage::StreamHeightUpdate(height) => {
-                                let mut state = state_clone.write().await;
-                                state.set_stream_height(height.clone());
-
+                                // Update both the internal state and the observable
+                                {
+                                    let mut state = state_clone.write().await;
+                                    ObservableWriteGuard::update(&mut state, |state: &mut SubscriptionState| {
+                                        state.set_stream_height(height.clone());
+                                    });
+                                }
                                 // Emit height update event
                                 let event = MessageEvent::StreamHeightUpdate { height: height.clone() };
                                 if let Err(e) = message_events_tx_clone.send(event) {
@@ -317,8 +326,13 @@ impl MessagesManager {
                                 }
                             },
                             StreamMessage::MessageReceived { message: msg, stream_height } => {
-                                let mut state = state_clone.write().await;
-                                state.set_stream_height(stream_height.clone());
+                                // Update both the internal state and the observable
+                                {
+                                    let mut state = state_clone.write().await;
+                                    ObservableWriteGuard::update(&mut state, |state: &mut SubscriptionState| {
+                                        state.set_stream_height(stream_height.clone());
+                                    });
+                                }
 
                                 // Emit message received event
                                 let event = MessageEvent::MessageReceived {
@@ -382,7 +396,7 @@ impl MessagesManager {
             broadcast_tx,
             catch_up_tx,
             message_events_tx,
-            state: state_for_task,
+            state,
             sync_handler,
             catch_up_request_id: AtomicU32::new(0),
         }
@@ -403,8 +417,14 @@ impl MessagesManager {
             })
             .await?;
 
-        let mut state = self.state.write().await;
-        state.current_filters = new_filters.filters;
+        // Update both the internal state and the observable
+        {
+            let mut state = self.state.write().await;
+            ObservableWriteGuard::update(&mut state, |state: &mut SubscriptionState| {
+                state.current_filters = new_filters.filters;
+            });
+        }
+
         Ok(())
     }
 
@@ -572,7 +592,7 @@ impl MessagesManager {
 
         // Emit the sent message event
         let event = MessageEvent::MessageSent {
-            message: message,
+            message,
             publish_result: result.clone(),
         };
 
@@ -581,13 +601,6 @@ impl MessagesManager {
         }
 
         Ok(result)
-    }
-
-    /// Get access to the underlying messages service for direct RPC operations.
-    ///
-    /// Most users should prefer the higher-level methods on MessagesManager.
-    pub(crate) fn messages_service(&self) -> &MessagesService {
-        &self.messages_service
     }
 
     /// Get the current subscription state for persistence.
@@ -656,8 +669,10 @@ impl MessagesManagerTrait for MessagesManager {
         BroadcastStream::new(self.message_events_tx.subscribe())
     }
 
-    fn subscription_state(&self) -> Arc<RwLock<SubscriptionState>> {
-        Arc::clone(&self.state)
+    async fn get_subscription_state_updates(
+        &self,
+    ) -> eyeball::Subscriber<SubscriptionState, AsyncLock> {
+        self.state.subscribe().await
     }
 
     async fn subscribe(&self) -> Result<()> {
@@ -858,6 +873,31 @@ mod tests {
         let bytes = postcard::to_stdvec(&state).unwrap();
         let restored: SubscriptionState = postcard::from_bytes(&bytes).unwrap();
         assert_eq!(state, restored);
+    }
+
+    #[tokio::test]
+    async fn test_subscription_state_observable() {
+        // Create a test subscription state
+        let initial_state = SubscriptionState::new();
+
+        // Create a SharedObservable directly to test the API
+        let state_observable = SharedObservable::new(initial_state.clone());
+
+        // Test subscription
+        let subscriber = state_observable.subscribe();
+        let current_state = subscriber.get();
+        assert_eq!(current_state, initial_state);
+
+        // Test state update
+        let mut updated_state = initial_state.clone();
+        updated_state.set_stream_height("123".to_string());
+
+        state_observable.set_if_not_eq(updated_state.clone());
+
+        // Verify the subscriber sees the update
+        let observed_state = subscriber.get();
+        assert_eq!(observed_state.latest_stream_height, Some("123".to_string()));
+        assert_eq!(observed_state, updated_state);
     }
 
     #[tokio::test]
