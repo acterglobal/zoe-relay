@@ -9149,6 +9149,7 @@ dependencies = [
  "uuid",
  "zoe-app-primitives",
  "zoe-blob-store",
+ "zoe-client-storage",
  "zoe-encrypted-storage",
  "zoe-message-store",
  "zoe-relay",

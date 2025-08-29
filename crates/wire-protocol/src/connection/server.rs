@@ -8,7 +8,6 @@ use tracing::info;
 use quinn::ServerConfig;
 use std::sync::Arc;
 
-
 /// Create a QUIC server endpoint with TLS certificate (Ed25519 or ML-DSA-44)
 pub fn create_server_endpoint(
     addr: SocketAddr,
@@ -45,19 +44,22 @@ pub fn create_server_endpoint_with_protocols(
 
         KeyPair::MlDsa44(_, _) => {
             return Err(CryptoError::TlsError(
-                "ML-DSA-44 is not supported for TLS transport security yet. Use Ed25519.".to_string(),
+                "ML-DSA-44 is not supported for TLS transport security yet. Use Ed25519."
+                    .to_string(),
             ));
         }
 
         // ML-DSA-65 and ML-DSA-87 are not supported for TLS yet
         KeyPair::MlDsa65(_, _) => {
             return Err(CryptoError::TlsError(
-                "ML-DSA-65 is not supported for TLS transport security yet. Use Ed25519.".to_string(),
+                "ML-DSA-65 is not supported for TLS transport security yet. Use Ed25519."
+                    .to_string(),
             ));
         }
         KeyPair::MlDsa87(_, _) => {
             return Err(CryptoError::TlsError(
-                "ML-DSA-87 is not supported for TLS transport security yet. Use Ed25519.".to_string(),
+                "ML-DSA-87 is not supported for TLS transport security yet. Use Ed25519."
+                    .to_string(),
             ));
         }
     };

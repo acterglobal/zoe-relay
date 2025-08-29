@@ -19,6 +19,7 @@ zoe-wire-protocol = { path = "../wire-protocol", features = ["client"] }
 zoe-encrypted-storage = { path = "../encrypted-storage" }
 zoe-blob-store = { path = "../blob-store" }
 zoe-app-primitives = { path = "../app-primitives" }
+zoe-client-storage = { path = "../client-storage" }
 
 # Flutter Rust Bridge (optional)
 flutter_rust_bridge = { version = "=2.11.1", optional = true }

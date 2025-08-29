@@ -18,6 +18,33 @@ use super::messages::{CatchUpStream, MessagesService, MessagesStream};
 use async_stream::stream;
 use std::sync::atomic::AtomicU32;
 
+/// Comprehensive message event that covers all message flows for persistence and monitoring.
+///
+/// This enum captures every type of message activity in the MessagesManager,
+/// enabling complete message persistence and audit trails.
+#[derive(Debug, Clone)]
+pub enum MessageEvent {
+    /// Message received from subscription stream
+    MessageReceived {
+        message: MessageFull,
+        stream_height: String,
+    },
+    /// Message sent by this client
+    MessageSent {
+        message: MessageFull,
+        publish_result: PublishResult,
+    },
+    /// Historical message from catch-up
+    CatchUpMessage {
+        message: MessageFull,
+        request_id: u32,
+    },
+    /// Stream height update
+    StreamHeightUpdate { height: String },
+    /// Catch-up completed
+    CatchUpCompleted { request_id: u32 },
+}
+
 /// Serializable subscription state that can be persisted and restored.
 ///
 /// This state contains all the information needed to restore a MessagesManager
@@ -223,6 +250,8 @@ pub struct MessagesManager {
     broadcast_tx: broadcast::Sender<StreamMessage>,
     /// Broadcast sender for distributing catch-up responses to subscribers
     catch_up_tx: broadcast::Sender<CatchUpResponse>,
+    /// Broadcast sender for all message events (for persistence and monitoring)
+    message_events_tx: broadcast::Sender<MessageEvent>,
     /// Current subscription state (persistent across reconnections)
     state: Arc<RwLock<SubscriptionState>>,
     /// Background task handle for syncing with the server
@@ -255,6 +284,7 @@ impl MessagesManager {
         let buffer_size = buffer_size.unwrap_or(1000);
         let (broadcast_tx, _) = broadcast::channel(buffer_size);
         let (catch_up_tx, _) = broadcast::channel(buffer_size);
+        let (message_events_tx, _) = broadcast::channel(buffer_size);
 
         // Clone state for the background task
         let state_for_task = Arc::new(RwLock::new(state.clone()));
@@ -263,6 +293,7 @@ impl MessagesManager {
         // Start background task to forward messages from stream to broadcast channel
         let tx_clone = broadcast_tx.clone();
         let catch_up_tx_clone = catch_up_tx.clone();
+        let message_events_tx_clone = message_events_tx.clone();
         let sync_handler = tokio::spawn(async move {
             let mut m_stream = messages_stream;
             let mut c_stream = catch_up_stream;
@@ -270,15 +301,34 @@ impl MessagesManager {
                 select! {
                     message = m_stream.recv() => {
                         let Some(message) = message else {
+                            tracing::debug!("📪 Subscriptions stream ended");
                             break;
                         };
-                        // Update stream height in state
-                        if let StreamMessage::StreamHeightUpdate(height) = &message {
-                            let mut state = state_clone.write().await;
-                            state.set_stream_height(height.clone());
-                        } else if let StreamMessage::MessageReceived { stream_height, .. } = &message {
-                            let mut state = state_clone.write().await;
-                            state.set_stream_height(stream_height.clone());
+
+                        match &message {
+                            StreamMessage::StreamHeightUpdate(height) => {
+                                let mut state = state_clone.write().await;
+                                state.set_stream_height(height.clone());
+
+                                // Emit height update event
+                                let event = MessageEvent::StreamHeightUpdate { height: height.clone() };
+                                if let Err(e) = message_events_tx_clone.send(event) {
+                                    warn!("No subscribers listening for message events: {e}");
+                                }
+                            },
+                            StreamMessage::MessageReceived { message: msg, stream_height } => {
+                                let mut state = state_clone.write().await;
+                                state.set_stream_height(stream_height.clone());
+
+                                // Emit message received event
+                                let event = MessageEvent::MessageReceived {
+                                    message: (**msg).clone(),
+                                    stream_height: stream_height.clone()
+                                };
+                                if let Err(e) = message_events_tx_clone.send(event) {
+                                    warn!("No subscribers listening for message events: {e}");
+                                }
+                            }
                         }
 
                         // Forward message to all subscribers
@@ -295,11 +345,31 @@ impl MessagesManager {
                             break;
                         };
                         tracing::debug!("📨 MessagesManager received catch-up response: {:?}", catch_up_response);
+
+                        // Emit catch-up message events
+                        for message in &catch_up_response.messages {
+                            let event = MessageEvent::CatchUpMessage {
+                                message: message.clone(),
+                                request_id: catch_up_response.request_id
+                            };
+                            if let Err(e) = message_events_tx_clone.send(event) {
+                                warn!("No subscribers listening for message events: {e}");
+                            }
+                        }
+
+                        if catch_up_response.is_complete {
+                            let event = MessageEvent::CatchUpCompleted {
+                                request_id: catch_up_response.request_id
+                            };
+                            if let Err(e) = message_events_tx_clone.send(event) {
+                                warn!("No subscribers listening for message events: {e}");
+                            }
+                        }
+
                         if let Err(e) = catch_up_tx_clone.send(catch_up_response) {
                             warn!("No subscribers listening for catch-up responses: {e}");
                             // Don't return error - this is expected when no one is subscribed
                         }
-                        // Handle catch-up response
                     }
                 }
             }
@@ -311,6 +381,7 @@ impl MessagesManager {
             messages_service: Arc::new(messages_service),
             broadcast_tx,
             catch_up_tx,
+            message_events_tx,
             state: state_for_task,
             sync_handler,
             catch_up_request_id: AtomicU32::new(0),
@@ -492,10 +563,23 @@ impl MessagesManager {
     }
 
     pub async fn publish(&self, message: MessageFull) -> Result<PublishResult> {
-        Ok(self
+        // Publish to network
+        let result = self
             .messages_service
-            .publish(tarpc::context::current(), message)
-            .await??)
+            .publish(tarpc::context::current(), message.clone())
+            .await??;
+
+        // Emit the sent message event
+        let event = MessageEvent::MessageSent {
+            message: message,
+            publish_result: result.clone(),
+        };
+
+        if let Err(e) = self.message_events_tx.send(event) {
+            warn!("No subscribers listening for message events: {e}");
+        }
+
+        Ok(result)
     }
 
     /// Get access to the underlying messages service for direct RPC operations.
@@ -526,6 +610,36 @@ impl MessagesManager {
     /// This shows all the filters that are currently active in the subscription.
     pub async fn get_current_filters(&self) -> MessageFilters {
         self.state.read().await.current_filters.clone()
+    }
+
+    /// Get a stream of all message events for persistence and monitoring.
+    ///
+    /// This stream captures every message activity including:
+    /// - Messages received from subscriptions
+    /// - Messages sent by this client
+    /// - Historical messages from catch-up requests
+    /// - Stream height updates
+    /// - Catch-up completion notifications
+    ///
+    /// This is primarily intended for persistence services and audit logging.
+    ///
+    /// # Returns
+    /// A stream of `MessageEvent` that captures all message activities
+    pub fn message_events_stream(&self) -> impl Stream<Item = MessageEvent> + use<> {
+        let receiver = self.message_events_tx.subscribe();
+
+        BroadcastStream::new(receiver).filter_map(|result| async move {
+            match result {
+                Ok(event) => Some(event),
+                Err(BroadcastStreamRecvError::Lagged(skipped)) => {
+                    warn!(
+                        "Message events subscriber lagged, skipped {} events",
+                        skipped
+                    );
+                    None
+                }
+            }
+        })
     }
 }
 
