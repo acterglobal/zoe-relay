@@ -1,4 +1,5 @@
 use crate::error::{ClientError, Result};
+use async_trait::async_trait;
 use futures::{Stream, StreamExt, pin_mut};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -18,6 +19,55 @@ use zoe_wire_protocol::{
 use super::messages::{CatchUpStream, MessagesService, MessagesStream};
 use async_stream::stream;
 use std::sync::atomic::AtomicU32;
+
+#[cfg(any(feature = "mock", test))]
+use mockall::automock;
+
+/// Trait abstraction for MessagesManager to enable mocking in tests
+#[cfg_attr(any(feature = "mock", test), automock)]
+#[async_trait]
+pub trait MessagesManagerTrait: Send + Sync {
+    /// Get a stream of all message events for persistence and monitoring
+    fn message_events_stream(&self) -> BroadcastStream<MessageEvent>;
+
+    /// Get the current subscription state
+    fn subscription_state(&self) -> Arc<RwLock<SubscriptionState>>;
+
+    /// Subscribe to messages with current filters
+    async fn subscribe(&self) -> Result<()>;
+
+    /// Publish a message
+    async fn publish(&self, message: MessageFull) -> Result<PublishResult>;
+
+    /// Ensure a filter is included in the subscription
+    async fn ensure_contains_filter(&self, filter: Filter) -> Result<()>;
+
+    /// Get a stream of incoming messages
+    fn messages_stream(&self) -> BroadcastStream<StreamMessage>;
+
+    /// Get a stream of catch-up responses
+    fn catch_up_stream(&self) -> BroadcastStream<CatchUpResponse>;
+
+    /// Get a filtered stream of messages matching the given filter
+    fn filtered_messages_stream<'a>(
+        &'a self,
+        filter: Filter,
+    ) -> std::pin::Pin<Box<dyn Stream<Item = Box<MessageFull>> + Send + 'a>>;
+
+    /// Catch up to historical messages and subscribe to new ones for a filter
+    async fn catch_up_and_subscribe<'a>(
+        &'a self,
+        filter: Filter,
+        since: Option<String>,
+    ) -> Result<std::pin::Pin<Box<dyn Stream<Item = Box<MessageFull>> + Send + 'a>>>;
+
+    /// Get user data by author and storage key (for PQXDH inbox fetching)
+    async fn user_data(
+        &self,
+        author: zoe_wire_protocol::keys::Id,
+        storage_key: zoe_wire_protocol::StoreKey,
+    ) -> Result<Option<MessageFull>>;
+}
 
 /// Comprehensive message event that covers all message flows for persistence and monitoring.
 ///
@@ -597,6 +647,66 @@ impl MessagesManager {
 impl Drop for MessagesManager {
     fn drop(&mut self) {
         self.sync_handler.abort();
+    }
+}
+
+#[async_trait]
+impl MessagesManagerTrait for MessagesManager {
+    fn message_events_stream(&self) -> BroadcastStream<MessageEvent> {
+        BroadcastStream::new(self.message_events_tx.subscribe())
+    }
+
+    fn subscription_state(&self) -> Arc<RwLock<SubscriptionState>> {
+        Arc::clone(&self.state)
+    }
+
+    async fn subscribe(&self) -> Result<()> {
+        MessagesManager::subscribe(self).await
+    }
+
+    async fn publish(&self, message: MessageFull) -> Result<PublishResult> {
+        MessagesManager::publish(self, message).await
+    }
+
+    async fn ensure_contains_filter(&self, filter: Filter) -> Result<()> {
+        MessagesManager::ensure_contains_filter(self, filter).await
+    }
+
+    fn messages_stream(&self) -> BroadcastStream<StreamMessage> {
+        BroadcastStream::new(self.broadcast_tx.subscribe())
+    }
+
+    fn catch_up_stream(&self) -> BroadcastStream<CatchUpResponse> {
+        BroadcastStream::new(self.catch_up_tx.subscribe())
+    }
+
+    fn filtered_messages_stream<'a>(
+        &'a self,
+        filter: Filter,
+    ) -> std::pin::Pin<Box<dyn Stream<Item = Box<MessageFull>> + Send + 'a>> {
+        Box::pin(MessagesManager::filtered_messages_stream(self, filter))
+    }
+
+    async fn catch_up_and_subscribe<'a>(
+        &'a self,
+        filter: Filter,
+        since: Option<String>,
+    ) -> Result<std::pin::Pin<Box<dyn Stream<Item = Box<MessageFull>> + Send + 'a>>> {
+        let stream = MessagesManager::catch_up_and_subscribe(self, filter, since).await?;
+        Ok(Box::pin(stream))
+    }
+
+    async fn user_data(
+        &self,
+        author: zoe_wire_protocol::keys::Id,
+        storage_key: zoe_wire_protocol::StoreKey,
+    ) -> Result<Option<MessageFull>> {
+        use tarpc::context;
+        let result = self
+            .messages_service
+            .user_data(context::current(), author, storage_key)
+            .await?;
+        Ok(result?)
     }
 }
 

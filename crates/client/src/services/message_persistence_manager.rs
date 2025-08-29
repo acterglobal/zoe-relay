@@ -1,12 +1,19 @@
 use crate::error::{ClientError, Result};
-use futures::StreamExt;
+use async_trait::async_trait;
+use futures::{Stream, StreamExt};
 use std::{ops::Deref, sync::Arc};
+use tokio::sync::RwLock;
 use tokio::task::JoinHandle;
+use tokio_stream::wrappers::BroadcastStream;
 use tracing::{debug, warn};
 use zoe_client_storage::{MessageStorage, StorageError, SubscriptionState};
-use zoe_wire_protocol::{Hash, VerifyingKey};
+use zoe_wire_protocol::{
+    CatchUpResponse, Filter, Hash, MessageFull, PublishResult, StreamMessage, VerifyingKey,
+};
 
-use super::messages_manager::{MessageEvent, MessagesManager, MessagesManagerBuilder};
+use super::messages_manager::{
+    MessageEvent, MessagesManager, MessagesManagerBuilder, MessagesManagerTrait,
+};
 
 /// Builder for creating MessagePersistenceManager instances.
 ///
@@ -44,14 +51,19 @@ use super::messages_manager::{MessageEvent, MessagesManager, MessagesManagerBuil
 /// # Ok(())
 /// # }
 /// ```
-pub struct MessagePersistenceManagerBuilder {
+pub struct GenericMessagePersistenceManagerBuilder<T: MessagesManagerTrait> {
     storage: Option<Arc<dyn MessageStorage<Error = StorageError>>>,
     relay_id: Option<Hash>,
     buffer_size: Option<usize>,
     autosubscribe: bool,
+    _phantom: std::marker::PhantomData<T>,
 }
 
-impl MessagePersistenceManagerBuilder {
+/// Type alias for the common case of MessagePersistenceManagerBuilder with concrete MessagesManager
+pub type MessagePersistenceManagerBuilder =
+    GenericMessagePersistenceManagerBuilder<MessagesManager>;
+
+impl<T: MessagesManagerTrait> GenericMessagePersistenceManagerBuilder<T> {
     /// Create a new builder with default settings
     pub fn new() -> Self {
         Self {
@@ -59,6 +71,7 @@ impl MessagePersistenceManagerBuilder {
             relay_id: None,
             buffer_size: None,
             autosubscribe: false,
+            _phantom: std::marker::PhantomData,
         }
     }
 
@@ -94,19 +107,22 @@ impl MessagePersistenceManagerBuilder {
 
     pub async fn build_with_messages_manager(
         self,
-        messages_manager: Arc<MessagesManager>,
-    ) -> Result<MessagePersistenceManager> {
+        messages_manager: Arc<T>,
+    ) -> Result<GenericMessagePersistenceManager<T>> {
         let storage = self
             .storage
             .ok_or_else(|| ClientError::Generic("Storage is required".to_string()))?;
 
         // Create the persistence manager
         let manager =
-            MessagePersistenceManager::new(storage, messages_manager, self.relay_id).await?;
+            GenericMessagePersistenceManager::new(storage, messages_manager, self.relay_id).await?;
 
         Ok(manager)
     }
+}
 
+// Concrete implementation for the type alias
+impl MessagePersistenceManagerBuilder {
     /// Build the MessagePersistenceManager and MessagesManager
     ///
     /// This will:
@@ -186,24 +202,23 @@ impl Default for MessagePersistenceManagerBuilder {
 ///
 /// This manager operates by subscribing to the message events stream from MessagesManager
 /// and automatically persisting all events to the configured storage backend.
-pub struct MessagePersistenceManager {
+#[derive(Debug)]
+pub struct GenericMessagePersistenceManager<T: MessagesManagerTrait> {
     /// The messages manager that this persistence manager wraps
-    messages_manager: Arc<MessagesManager>,
+    messages_manager: Arc<T>,
     /// Handle to the background persistence task
     persistence_task: JoinHandle<Result<()>>,
 }
 
-impl MessagePersistenceManager {
-    /// Create a new MessagePersistenceManager builder
-    pub fn builder() -> MessagePersistenceManagerBuilder {
-        MessagePersistenceManagerBuilder::new()
-    }
+/// Type alias for the common case of MessagePersistenceManager with concrete MessagesManager
+pub type MessagePersistenceManager = GenericMessagePersistenceManager<MessagesManager>;
 
+impl<T: MessagesManagerTrait> GenericMessagePersistenceManager<T> {
     /// Get a reference to the underlying MessagesManager
     ///
     /// This provides explicit access to the MessagesManager for cases where
     /// method discovery is important or when you need to pass it to other components.
-    pub fn messages_manager(&self) -> &Arc<MessagesManager> {
+    pub fn messages_manager(&self) -> &Arc<T> {
         &self.messages_manager
     }
 
@@ -238,7 +253,7 @@ impl MessagePersistenceManager {
     /// * `buffer_size` - Optional buffer size for the task queue
     async fn new(
         storage: Arc<dyn MessageStorage<Error = StorageError>>,
-        messages_manager: Arc<MessagesManager>,
+        messages_manager: Arc<T>,
         relay_id: Option<Hash>,
     ) -> Result<Self> {
         // Get the message events stream before spawning the task to avoid lifetime issues
@@ -250,11 +265,20 @@ impl MessagePersistenceManager {
             debug!("MessagePersistenceManager started");
 
             let mut events_stream = Box::pin(events_stream);
-            while let Some(event) = events_stream.next().await {
-                if let Err(e) = Self::handle_message_event(&*storage_clone, &event, &relay_id).await
-                {
-                    warn!("Failed to handle message event {:?}: {}", event, e);
-                    // Continue processing other events even if one fails
+            while let Some(event_result) = events_stream.next().await {
+                match event_result {
+                    Ok(event) => {
+                        if let Err(e) =
+                            Self::handle_message_event(&*storage_clone, &event, &relay_id).await
+                        {
+                            warn!("Failed to handle message event {:?}: {}", event, e);
+                            // Continue processing other events even if one fails
+                        }
+                    }
+                    Err(e) => {
+                        warn!("Failed to receive message event: {}", e);
+                        // Continue processing other events even if one fails
+                    }
                 }
             }
 
@@ -396,11 +420,86 @@ impl MessagePersistenceManager {
     }
 }
 
+// Concrete implementation for the type alias
+impl MessagePersistenceManager {
+    /// Create a new MessagePersistenceManager builder
+    pub fn builder() -> MessagePersistenceManagerBuilder {
+        MessagePersistenceManagerBuilder::new()
+    }
+
+    /// Get a reference to the inner MessagesManager for use with components
+    /// that require the concrete type (like PqxdhProtocolHandler)
+    ///
+    /// This method is only available on the concrete MessagePersistenceManager
+    /// type alias, not the generic version.
+    pub fn inner_messages_manager(&self) -> &MessagesManager {
+        &self.messages_manager
+    }
+}
+
 impl Deref for MessagePersistenceManager {
     type Target = MessagesManager;
 
     fn deref(&self) -> &Self::Target {
         &self.messages_manager
+    }
+}
+
+// Implement MessagesManagerTrait for GenericMessagePersistenceManager
+// This allows it to act as a transparent proxy to the underlying MessagesManager
+#[async_trait]
+impl<T: MessagesManagerTrait> MessagesManagerTrait for GenericMessagePersistenceManager<T> {
+    fn message_events_stream(&self) -> BroadcastStream<MessageEvent> {
+        self.messages_manager.message_events_stream()
+    }
+
+    fn subscription_state(&self) -> Arc<RwLock<SubscriptionState>> {
+        self.messages_manager.subscription_state()
+    }
+
+    async fn subscribe(&self) -> Result<()> {
+        self.messages_manager.subscribe().await
+    }
+
+    async fn publish(&self, message: MessageFull) -> Result<PublishResult> {
+        self.messages_manager.publish(message).await
+    }
+
+    async fn ensure_contains_filter(&self, filter: Filter) -> Result<()> {
+        self.messages_manager.ensure_contains_filter(filter).await
+    }
+
+    fn messages_stream(&self) -> BroadcastStream<StreamMessage> {
+        self.messages_manager.messages_stream()
+    }
+
+    fn catch_up_stream(&self) -> BroadcastStream<CatchUpResponse> {
+        self.messages_manager.catch_up_stream()
+    }
+
+    fn filtered_messages_stream<'a>(
+        &'a self,
+        filter: Filter,
+    ) -> std::pin::Pin<Box<dyn Stream<Item = Box<MessageFull>> + Send + 'a>> {
+        self.messages_manager.filtered_messages_stream(filter)
+    }
+
+    async fn catch_up_and_subscribe<'a>(
+        &'a self,
+        filter: Filter,
+        since: Option<String>,
+    ) -> Result<std::pin::Pin<Box<dyn Stream<Item = Box<MessageFull>> + Send + 'a>>> {
+        self.messages_manager
+            .catch_up_and_subscribe(filter, since)
+            .await
+    }
+
+    async fn user_data(
+        &self,
+        author: zoe_wire_protocol::keys::Id,
+        storage_key: zoe_wire_protocol::StoreKey,
+    ) -> Result<Option<MessageFull>> {
+        self.messages_manager.user_data(author, storage_key).await
     }
 }
 
@@ -410,8 +509,13 @@ mod tests {
     use mockall::predicate::*;
     use rand::rngs::OsRng;
     use std::collections::HashMap;
+
+    use tokio::sync::broadcast;
     use zoe_client_storage::storage::MockMessageStorage;
     use zoe_wire_protocol::{Content, KeyPair, Kind, MessageFilters, MessageFull, PublishResult};
+
+    #[cfg(any(feature = "mock", test))]
+    use crate::services::messages_manager::MockMessagesManagerTrait;
 
     fn create_test_message(content: &str) -> MessageFull {
         let keypair = KeyPair::generate(&mut OsRng);
@@ -887,5 +991,454 @@ mod tests {
         let mut state = SubscriptionState::default();
         state.latest_stream_height = Some(long_height.clone());
         assert_eq!(state.latest_stream_height, Some(long_height));
+    }
+
+    // ============================================================================
+    // COMPREHENSIVE WIRING AND SYNC STATUS TESTS WITH MOCKED MESSAGES MANAGER
+    // ============================================================================
+
+    #[cfg(any(feature = "mock", test))]
+    mod wiring_tests {
+        use super::*;
+
+        type TestPersistenceManager = GenericMessagePersistenceManager<MockMessagesManagerTrait>;
+        type TestPersistenceManagerBuilder =
+            GenericMessagePersistenceManagerBuilder<MockMessagesManagerTrait>;
+
+        fn create_mock_message_events_stream() -> BroadcastStream<MessageEvent> {
+            let (tx, rx) = broadcast::channel(100);
+
+            // Send some test events
+            tokio::spawn(async move {
+                let _ = tx.send(MessageEvent::MessageReceived {
+                    message: create_test_message("test message 1"),
+                    stream_height: "100".to_string(),
+                });
+                let _ = tx.send(MessageEvent::StreamHeightUpdate {
+                    height: "101".to_string(),
+                });
+                let _ = tx.send(MessageEvent::MessageSent {
+                    message: create_test_message("sent message"),
+                    publish_result: PublishResult::StoredNew {
+                        global_stream_id: "102".to_string(),
+                    },
+                });
+            });
+
+            BroadcastStream::new(rx)
+        }
+
+        #[tokio::test]
+        async fn test_generic_builder_with_mock_messages_manager() {
+            let mut mock_storage = MockMessageStorage::new();
+            let mut mock_messages_manager = MockMessagesManagerTrait::new();
+            let relay_id = Hash::from([1u8; 32]);
+
+            // Set up storage expectations
+            mock_storage.expect_store_message().returning(|_| Ok(()));
+            mock_storage
+                .expect_mark_message_synced()
+                .returning(|_, _, _| Ok(()));
+
+            // Set up messages manager expectations
+            mock_messages_manager
+                .expect_message_events_stream()
+                .times(1)
+                .returning(create_mock_message_events_stream);
+
+            // Build the persistence manager
+            let persistence_manager = TestPersistenceManagerBuilder::new()
+                .storage(Arc::new(mock_storage))
+                .relay_id(relay_id)
+                .build_with_messages_manager(Arc::new(mock_messages_manager))
+                .await;
+
+            assert!(persistence_manager.is_ok());
+            let manager = persistence_manager.unwrap();
+
+            // Verify we can access the messages manager
+            let messages_manager_ref = manager.messages_manager();
+            // Just verify we got a reference (Arc is never null)
+            assert!(Arc::strong_count(messages_manager_ref) > 0);
+
+            // Give some time for background task to process events
+            tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+        }
+
+        #[tokio::test]
+        async fn test_subscription_state_wiring_with_mock() {
+            let mut mock_storage = MockMessageStorage::new();
+            let mut mock_messages_manager = MockMessagesManagerTrait::new();
+            let relay_id = Hash::from([2u8; 32]);
+
+            // Set up initial subscription state in storage
+            let initial_state = SubscriptionState {
+                latest_stream_height: Some("50".to_string()),
+                current_filters: MessageFilters {
+                    filters: Some(vec![]),
+                },
+            };
+
+            mock_storage
+                .expect_get_subscription_state()
+                .with(eq(relay_id))
+                .times(1)
+                .returning(move |_| Ok(Some(initial_state.clone())));
+
+            mock_storage
+                .expect_store_subscription_state()
+                .returning(|_, _| Ok(()));
+
+            mock_messages_manager
+                .expect_message_events_stream()
+                .times(1)
+                .returning(|| {
+                    let (tx, rx) = broadcast::channel(10);
+                    tokio::spawn(async move {
+                        let _ = tx.send(MessageEvent::FiltersUpdated {
+                            filters: MessageFilters {
+                                filters: Some(vec![]),
+                            },
+                            relay_id: Some(Hash::from([2u8; 32])),
+                        });
+                    });
+                    BroadcastStream::new(rx)
+                });
+
+            // Test loading subscription state
+            let loaded_state =
+                TestPersistenceManager::load_subscription_state(&mock_storage, &relay_id).await;
+
+            assert!(loaded_state.is_ok());
+            let state = loaded_state.unwrap();
+            assert!(state.is_some());
+            assert_eq!(state.unwrap().latest_stream_height, Some("50".to_string()));
+
+            // Test building with the state
+            let persistence_manager = TestPersistenceManagerBuilder::new()
+                .storage(Arc::new(mock_storage))
+                .relay_id(relay_id)
+                .build_with_messages_manager(Arc::new(mock_messages_manager))
+                .await;
+
+            assert!(persistence_manager.is_ok());
+        }
+
+        #[tokio::test]
+        async fn test_message_sync_tracking_with_mock() {
+            let mut mock_storage = MockMessageStorage::new();
+            let mut mock_messages_manager = MockMessagesManagerTrait::new();
+            let relay_id = Hash::from([3u8; 32]);
+            let test_message = create_test_message("sync test message");
+            let message_id = *test_message.id();
+
+            // Set up expectations for message sync tracking
+            mock_storage
+                .expect_store_message()
+                .with(eq(test_message.clone()))
+                .times(1)
+                .returning(|_| Ok(()));
+
+            mock_storage
+                .expect_mark_message_synced()
+                .with(eq(message_id), eq(relay_id), eq("150"))
+                .times(1)
+                .returning(|_, _, _| Ok(()));
+
+            mock_messages_manager
+                .expect_message_events_stream()
+                .times(1)
+                .returning(move || {
+                    let (tx, rx) = broadcast::channel(10);
+                    let test_msg = test_message.clone();
+                    tokio::spawn(async move {
+                        let _ = tx.send(MessageEvent::MessageReceived {
+                            message: test_msg,
+                            stream_height: "150".to_string(),
+                        });
+                    });
+                    BroadcastStream::new(rx)
+                });
+
+            // Build and test the persistence manager
+            let persistence_manager = TestPersistenceManagerBuilder::new()
+                .storage(Arc::new(mock_storage))
+                .relay_id(relay_id)
+                .build_with_messages_manager(Arc::new(mock_messages_manager))
+                .await;
+
+            assert!(persistence_manager.is_ok());
+
+            // Give time for the background task to process the message
+            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+        }
+
+        #[tokio::test]
+        async fn test_multiple_relay_sync_status() {
+            let mut mock_storage = MockMessageStorage::new();
+            let relay_id1 = Hash::from([4u8; 32]);
+            let relay_id2 = Hash::from([5u8; 32]);
+
+            // Set up multiple subscription states
+            let mut all_states = HashMap::new();
+            all_states.insert(
+                relay_id1,
+                SubscriptionState {
+                    latest_stream_height: Some("100".to_string()),
+                    current_filters: MessageFilters {
+                        filters: Some(vec![]),
+                    },
+                },
+            );
+            all_states.insert(
+                relay_id2,
+                SubscriptionState {
+                    latest_stream_height: Some("200".to_string()),
+                    current_filters: MessageFilters {
+                        filters: Some(vec![]),
+                    },
+                },
+            );
+
+            mock_storage
+                .expect_get_all_subscription_states()
+                .times(1)
+                .returning(move || Ok(all_states.clone()));
+
+            // Test loading all subscription states
+            let result = TestPersistenceManager::load_all_subscription_states(&mock_storage).await;
+
+            assert!(result.is_ok());
+            let loaded_states = result.unwrap();
+            assert_eq!(loaded_states.len(), 2);
+            assert!(loaded_states.contains_key(&relay_id1));
+            assert!(loaded_states.contains_key(&relay_id2));
+            assert_eq!(
+                loaded_states.get(&relay_id1).unwrap().latest_stream_height,
+                Some("100".to_string())
+            );
+            assert_eq!(
+                loaded_states.get(&relay_id2).unwrap().latest_stream_height,
+                Some("200".to_string())
+            );
+        }
+
+        #[tokio::test]
+        async fn test_builder_error_handling_with_mock() {
+            let mock_messages_manager = MockMessagesManagerTrait::new();
+
+            // Test building without storage should fail
+            let result = TestPersistenceManagerBuilder::new()
+                .relay_id(Hash::from([6u8; 32]))
+                .build_with_messages_manager(Arc::new(mock_messages_manager))
+                .await;
+
+            assert!(result.is_err());
+            assert!(
+                result
+                    .unwrap_err()
+                    .to_string()
+                    .contains("Storage is required")
+            );
+        }
+
+        #[tokio::test]
+        async fn test_persistence_manager_deref_with_mock() {
+            let mock_storage = MockMessageStorage::new();
+            let mut mock_messages_manager = MockMessagesManagerTrait::new();
+
+            // Set up minimal expectations
+            mock_messages_manager
+                .expect_message_events_stream()
+                .times(1)
+                .returning(|| {
+                    let (_, rx) = broadcast::channel(1);
+                    BroadcastStream::new(rx)
+                });
+
+            // Build the persistence manager
+            let persistence_manager = TestPersistenceManagerBuilder::new()
+                .storage(Arc::new(mock_storage))
+                .build_with_messages_manager(Arc::new(mock_messages_manager))
+                .await
+                .unwrap();
+
+            // Test that we can access the messages manager through the persistence manager
+            let messages_manager_ref = persistence_manager.messages_manager();
+            // Just verify we got a reference (Arc is never null)
+            assert!(Arc::strong_count(messages_manager_ref) > 0);
+        }
+
+        #[tokio::test]
+        async fn test_background_task_error_resilience() {
+            let mut mock_storage = MockMessageStorage::new();
+            let mut mock_messages_manager = MockMessagesManagerTrait::new();
+            let relay_id = Hash::from([7u8; 32]);
+
+            // Set up storage to fail on first message, succeed on second
+            let mut call_count = 0;
+            mock_storage.expect_store_message().returning(move |_| {
+                call_count += 1;
+                if call_count == 1 {
+                    Err(StorageError::Internal("Simulated failure".to_string()))
+                } else {
+                    Ok(())
+                }
+            });
+
+            mock_storage
+                .expect_mark_message_synced()
+                .returning(|_, _, _| Ok(()));
+
+            mock_messages_manager
+                .expect_message_events_stream()
+                .times(1)
+                .returning(|| {
+                    let (tx, rx) = broadcast::channel(10);
+                    tokio::spawn(async move {
+                        // Send a message that will fail
+                        let _ = tx.send(MessageEvent::MessageReceived {
+                            message: create_test_message("failing message"),
+                            stream_height: "100".to_string(),
+                        });
+
+                        // Send a message that will succeed
+                        tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
+                        let _ = tx.send(MessageEvent::MessageReceived {
+                            message: create_test_message("succeeding message"),
+                            stream_height: "101".to_string(),
+                        });
+                    });
+                    BroadcastStream::new(rx)
+                });
+
+            // Build the persistence manager
+            let persistence_manager = TestPersistenceManagerBuilder::new()
+                .storage(Arc::new(mock_storage))
+                .relay_id(relay_id)
+                .build_with_messages_manager(Arc::new(mock_messages_manager))
+                .await;
+
+            assert!(persistence_manager.is_ok());
+
+            // Give time for both messages to be processed
+            tokio::time::sleep(tokio::time::Duration::from_millis(150)).await;
+
+            // The persistence manager should still be running despite the first failure
+            // This test mainly verifies that the background task continues after errors
+        }
+
+        #[tokio::test]
+        async fn test_stream_event_filtering_and_processing() {
+            let mut mock_storage = MockMessageStorage::new();
+            let mut mock_messages_manager = MockMessagesManagerTrait::new();
+            let relay_id = Hash::from([8u8; 32]);
+
+            // Set up expectations for different event types
+            mock_storage
+                .expect_store_message()
+                .times(2) // Only for MessageReceived and MessageSent
+                .returning(|_| Ok(()));
+
+            mock_storage
+                .expect_mark_message_synced()
+                .times(1) // Only for MessageReceived
+                .returning(|_, _, _| Ok(()));
+
+            mock_messages_manager
+                .expect_message_events_stream()
+                .times(1)
+                .returning(|| {
+                    let (tx, rx) = broadcast::channel(10);
+                    tokio::spawn(async move {
+                        // Send various event types
+                        let _ = tx.send(MessageEvent::MessageReceived {
+                            message: create_test_message("received message"),
+                            stream_height: "200".to_string(),
+                        });
+
+                        let _ = tx.send(MessageEvent::MessageSent {
+                            message: create_test_message("sent message"),
+                            publish_result: PublishResult::StoredNew {
+                                global_stream_id: "201".to_string(),
+                            },
+                        });
+
+                        let _ = tx.send(MessageEvent::StreamHeightUpdate {
+                            height: "202".to_string(),
+                        });
+
+                        let _ = tx.send(MessageEvent::CatchUpCompleted { request_id: 123 });
+                    });
+                    BroadcastStream::new(rx)
+                });
+
+            // Build the persistence manager
+            let persistence_manager = TestPersistenceManagerBuilder::new()
+                .storage(Arc::new(mock_storage))
+                .relay_id(relay_id)
+                .build_with_messages_manager(Arc::new(mock_messages_manager))
+                .await;
+
+            assert!(persistence_manager.is_ok());
+
+            // Give time for all events to be processed
+            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+
+            // The mock expectations will verify that the right methods were called
+            // for the right event types
+        }
+
+        #[tokio::test]
+        async fn test_trait_implementation_allows_polymorphism() {
+            let mock_storage = MockMessageStorage::new();
+            let mut mock_messages_manager = MockMessagesManagerTrait::new();
+            let relay_id = Hash::from([9u8; 32]);
+
+            // Set up minimal expectations - allow multiple calls since persistence manager
+            // may call these during initialization and the test calls them again
+            mock_messages_manager
+                .expect_message_events_stream()
+                .returning(|| {
+                    let (_, rx) = broadcast::channel(1);
+                    BroadcastStream::new(rx)
+                });
+
+            mock_messages_manager
+                .expect_subscription_state()
+                .returning(|| Arc::new(RwLock::new(SubscriptionState::default())));
+
+            mock_messages_manager
+                .expect_messages_stream()
+                .returning(|| {
+                    let (_, rx) = broadcast::channel(1);
+                    BroadcastStream::new(rx)
+                });
+
+            mock_messages_manager
+                .expect_catch_up_stream()
+                .returning(|| {
+                    let (_, rx) = broadcast::channel(1);
+                    BroadcastStream::new(rx)
+                });
+
+            // Build the persistence manager
+            let persistence_manager = TestPersistenceManagerBuilder::new()
+                .storage(Arc::new(mock_storage))
+                .relay_id(relay_id)
+                .build_with_messages_manager(Arc::new(mock_messages_manager))
+                .await
+                .unwrap();
+
+            // Test that the persistence manager implements the trait
+            fn accepts_trait<T: MessagesManagerTrait>(_manager: &T) {}
+            accepts_trait(&persistence_manager);
+
+            // Test that we can use trait methods
+            let _subscription_state = persistence_manager.subscription_state();
+            let _messages_stream = persistence_manager.messages_stream();
+            let _catch_up_stream = persistence_manager.catch_up_stream();
+            let _events_stream = persistence_manager.message_events_stream();
+        }
     }
 }

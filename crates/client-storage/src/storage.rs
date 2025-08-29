@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use zoe_wire_protocol::{Hash, MessageFilters, MessageFull, Tag, VerifyingKey};
 
-#[cfg(feature = "mock")]
+#[cfg(any(feature = "mock", test))]
 use mockall::{automock, predicate::*};
 
 /// Configuration for storage implementations
@@ -136,7 +136,7 @@ pub struct RelaySyncStatus {
 }
 
 /// Trait defining the storage interface for messages
-#[cfg_attr(feature = "mock", automock(type Error = crate::StorageError;))]
+#[cfg_attr(any(feature = "mock", test), automock(type Error = crate::StorageError;))]
 #[async_trait]
 pub trait MessageStorage: Send + Sync {
     type Error: std::error::Error + Send + Sync + 'static;
