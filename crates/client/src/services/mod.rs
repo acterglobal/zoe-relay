@@ -8,6 +8,5 @@ pub use message_persistence_manager::{
     MessagePersistenceManager, MessagePersistenceManagerBuilder,
 };
 pub use messages::{CatchUpStream, MessagesService, MessagesStream};
-pub use messages_manager::{
-    CatchUpConfig, MessageEvent, MessagesManager, MessagesManagerBuilder, SubscriptionState,
-};
+pub use messages_manager::{CatchUpConfig, MessageEvent, MessagesManager, MessagesManagerBuilder};
+pub use zoe_client_storage::SubscriptionState;

@@ -9,9 +9,10 @@ use tokio::{
 };
 use tokio_stream::wrappers::{BroadcastStream, errors::BroadcastStreamRecvError};
 use tracing::warn;
+use zoe_client_storage::SubscriptionState;
 use zoe_wire_protocol::{
-    CatchUpRequest, CatchUpResponse, Filter, FilterOperation, FilterUpdateRequest, MessageFilters,
-    MessageFull, PublishResult, StreamMessage, SubscriptionConfig,
+    CatchUpRequest, CatchUpResponse, Filter, FilterOperation, FilterUpdateRequest, Hash,
+    MessageFilters, MessageFull, PublishResult, StreamMessage, SubscriptionConfig,
 };
 
 use super::messages::{CatchUpStream, MessagesService, MessagesStream};
@@ -43,21 +44,16 @@ pub enum MessageEvent {
     StreamHeightUpdate { height: String },
     /// Catch-up completed
     CatchUpCompleted { request_id: u32 },
-}
-
-/// Serializable subscription state that can be persisted and restored.
-///
-/// This state contains all the information needed to restore a MessagesManager
-/// to its previous subscription state after a connection restart.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
-pub struct SubscriptionState {
-    /// The latest stream height we've received
-    /// Used to resume from the correct position after reconnection
-    pub latest_stream_height: Option<String>,
-
-    /// Combined subscription filters accumulated over time
-    /// This represents the union of all active subscriptions
-    pub current_filters: MessageFilters,
+    /// Subscription filters updated
+    FiltersUpdated {
+        filters: MessageFilters,
+        relay_id: Option<Hash>,
+    },
+    /// Subscription state updated (combines filters and height)
+    SubscriptionStateUpdated {
+        state: SubscriptionState,
+        relay_id: Option<Hash>,
+    },
 }
 
 /// Configuration for catching up on historical messages
@@ -69,58 +65,12 @@ pub struct CatchUpConfig {
     pub limit: Option<u32>,
 }
 
-impl SubscriptionState {
-    /// Create a new empty subscription state
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Create subscription state with initial filters
-    pub fn with_filters(filters: MessageFilters) -> Self {
-        Self {
-            latest_stream_height: None,
-            current_filters: filters,
-        }
-    }
-
-    /// Add filters to the combined state
-    pub fn add_filters(&mut self, new_filters: &[Filter]) {
-        let current_filters = self.current_filters.filters.get_or_insert_with(Vec::new);
-        for filter in new_filters {
-            if !current_filters.contains(filter) {
-                current_filters.push(filter.clone());
-            }
-        }
-    }
-
-    /// Remove filters from the combined state
-    pub fn remove_filters(&mut self, filters_to_remove: &[Filter]) {
-        if let Some(current_filters) = self.current_filters.filters.as_mut() {
-            current_filters.retain(|f| !filters_to_remove.contains(f));
-            if current_filters.is_empty() {
-                self.current_filters.filters = None;
-            }
-        }
-    }
-
-    /// Update the latest stream height
-    pub fn set_stream_height(&mut self, height: String) {
-        self.latest_stream_height = Some(height);
-    }
-
-    /// Check if we have any active filters
-    pub fn has_active_filters(&self) -> bool {
-        !self.current_filters.is_empty()
-    }
-}
-
-impl From<&SubscriptionState> for SubscriptionConfig {
-    fn from(val: &SubscriptionState) -> Self {
-        SubscriptionConfig {
-            filters: val.current_filters.clone(),
-            since: val.latest_stream_height.clone(),
-            limit: None,
-        }
+/// Convert SubscriptionState to SubscriptionConfig for wire protocol
+fn subscription_state_to_config(state: &SubscriptionState) -> SubscriptionConfig {
+    SubscriptionConfig {
+        filters: state.current_filters.clone(),
+        since: state.latest_stream_height.clone(),
+        limit: None,
     }
 }
 
@@ -389,8 +339,9 @@ impl MessagesManager {
     }
 
     pub async fn subscribe(&self) -> Result<()> {
+        let state = self.state.read().await.clone();
         self.messages_service
-            .subscribe((&self.state.read().await.clone()).into())
+            .subscribe(subscription_state_to_config(&state))
             .await
     }
 

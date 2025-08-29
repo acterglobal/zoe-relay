@@ -412,17 +412,19 @@ mod integration_tests {
         storage.store_message(&message1).await.unwrap();
         storage.store_message(&message2).await.unwrap();
 
-        // Create relay keys
+        // Create relay keys and their IDs
         let relay1_key = KeyPair::generate(&mut OsRng).public_key();
         let relay2_key = KeyPair::generate(&mut OsRng).public_key();
+        let relay1_id = Hash::from(*relay1_key.id());
+        let relay2_id = Hash::from(*relay2_key.id());
 
         // Initially, all messages should be unsynced for both relays
         let unsynced_relay1 = storage
-            .get_unsynced_messages_for_relay(&relay1_key, None)
+            .get_unsynced_messages_for_relay(&relay1_id, None)
             .await
             .unwrap();
         let unsynced_relay2 = storage
-            .get_unsynced_messages_for_relay(&relay2_key, None)
+            .get_unsynced_messages_for_relay(&relay2_id, None)
             .await
             .unwrap();
 
@@ -431,17 +433,17 @@ mod integration_tests {
 
         // Mark message1 as synced to relay1
         storage
-            .mark_message_synced(message1.id(), &relay1_key, "100")
+            .mark_message_synced(message1.id(), &relay1_id, "100")
             .await
             .unwrap();
 
         // Now relay1 should have only message2 as unsynced
         let unsynced_relay1 = storage
-            .get_unsynced_messages_for_relay(&relay1_key, None)
+            .get_unsynced_messages_for_relay(&relay1_id, None)
             .await
             .unwrap();
         let unsynced_relay2 = storage
-            .get_unsynced_messages_for_relay(&relay2_key, None)
+            .get_unsynced_messages_for_relay(&relay2_id, None)
             .await
             .unwrap();
 
@@ -451,17 +453,17 @@ mod integration_tests {
 
         // Mark message1 as synced to relay2 as well
         storage
-            .mark_message_synced(message1.id(), &relay2_key, "200")
+            .mark_message_synced(message1.id(), &relay2_id, "200")
             .await
             .unwrap();
 
         // Now both relays should only have message2 as unsynced
         let unsynced_relay1 = storage
-            .get_unsynced_messages_for_relay(&relay1_key, None)
+            .get_unsynced_messages_for_relay(&relay1_id, None)
             .await
             .unwrap();
         let unsynced_relay2 = storage
-            .get_unsynced_messages_for_relay(&relay2_key, None)
+            .get_unsynced_messages_for_relay(&relay2_id, None)
             .await
             .unwrap();
 
@@ -484,9 +486,11 @@ mod integration_tests {
         let message = create_test_message("Test sync status message", &keypair);
         storage.store_message(&message).await.unwrap();
 
-        // Create relay keys
+        // Create relay keys and their IDs
         let relay1_key = KeyPair::generate(&mut OsRng).public_key();
         let relay2_key = KeyPair::generate(&mut OsRng).public_key();
+        let relay1_id = Hash::from(*relay1_key.id());
+        let relay2_id = Hash::from(*relay2_key.id());
 
         // Initially, no sync status
         let sync_status = storage.get_message_sync_status(message.id()).await.unwrap();
@@ -494,11 +498,11 @@ mod integration_tests {
 
         // Mark as synced to relay1 and relay2
         storage
-            .mark_message_synced(message.id(), &relay1_key, "100")
+            .mark_message_synced(message.id(), &relay1_id, "100")
             .await
             .unwrap();
         storage
-            .mark_message_synced(message.id(), &relay2_key, "200")
+            .mark_message_synced(message.id(), &relay2_id, "200")
             .await
             .unwrap();
 
@@ -507,9 +511,9 @@ mod integration_tests {
         sync_status.sort_by(|a, b| a.global_stream_id.cmp(&b.global_stream_id)); // Sort for predictable testing
 
         assert_eq!(sync_status.len(), 2);
-        assert_eq!(sync_status[0].relay_pubkey, relay1_key);
+        assert_eq!(sync_status[0].relay_id, relay1_id);
         assert_eq!(sync_status[0].global_stream_id, "100");
-        assert_eq!(sync_status[1].relay_pubkey, relay2_key);
+        assert_eq!(sync_status[1].relay_id, relay2_id);
         assert_eq!(sync_status[1].global_stream_id, "200");
     }
 
@@ -533,6 +537,7 @@ mod integration_tests {
 
         // Create relay key
         let relay_key = KeyPair::generate(&mut OsRng).public_key();
+        let relay_id = Hash::from(*relay_key.id());
 
         // Initially, no messages have sync status
         let message1_status = storage
@@ -548,11 +553,11 @@ mod integration_tests {
 
         // Mark message1 and message2 as synced (but not message3)
         storage
-            .mark_message_synced(message1.id(), &relay_key, "100")
+            .mark_message_synced(message1.id(), &relay_id, "100")
             .await
             .unwrap();
         storage
-            .mark_message_synced(message2.id(), &relay_key, "200")
+            .mark_message_synced(message2.id(), &relay_id, "200")
             .await
             .unwrap();
 
@@ -592,10 +597,11 @@ mod integration_tests {
 
         // Create relay key
         let relay_key = KeyPair::generate(&mut OsRng).public_key();
+        let relay_id = Hash::from(*relay_key.id());
 
         // Mark as synced with initial stream ID
         storage
-            .mark_message_synced(message.id(), &relay_key, "100")
+            .mark_message_synced(message.id(), &relay_id, "100")
             .await
             .unwrap();
 
@@ -605,7 +611,7 @@ mod integration_tests {
 
         // Update with new stream ID (should replace, not add)
         storage
-            .mark_message_synced(message.id(), &relay_key, "150")
+            .mark_message_synced(message.id(), &relay_id, "150")
             .await
             .unwrap();
 
@@ -632,27 +638,28 @@ mod integration_tests {
         }
 
         let relay_key = KeyPair::generate(&mut OsRng).public_key();
+        let relay_id = Hash::from(*relay_key.id());
 
         // Test unsynced messages with limit
         let unsynced_limited = storage
-            .get_unsynced_messages_for_relay(&relay_key, Some(3))
+            .get_unsynced_messages_for_relay(&relay_id, Some(3))
             .await
             .unwrap();
         assert_eq!(unsynced_limited.len(), 3);
 
         // Mark 2 messages as synced
         storage
-            .mark_message_synced(messages[0].id(), &relay_key, "100")
+            .mark_message_synced(messages[0].id(), &relay_id, "100")
             .await
             .unwrap();
         storage
-            .mark_message_synced(messages[1].id(), &relay_key, "101")
+            .mark_message_synced(messages[1].id(), &relay_id, "101")
             .await
             .unwrap();
 
         // Test unsynced should now have 3 messages
         let unsynced_after = storage
-            .get_unsynced_messages_for_relay(&relay_key, None)
+            .get_unsynced_messages_for_relay(&relay_id, None)
             .await
             .unwrap();
         assert_eq!(unsynced_after.len(), 3);

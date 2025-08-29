@@ -5,6 +5,10 @@ edition = "2024"
 description = "Client-side storage layer for Zoe using SQLite and encryption support"
 license = "MIT OR Apache-2.0"
 
+[features]
+default = ["sqlite"]
+sqlite = ["rusqlite", "refinery"]
+mock = ["mockall"]
 
 [dependencies]
 zoe-wire-protocol = { path = "../wire-protocol" }
@@ -14,8 +18,8 @@ tokio = { workspace = true }
 futures = { workspace = true }
 
 # Database and migrations
-rusqlite = { version = "0.32", features = ["bundled", "sqlcipher", "blob"] }
-refinery = { version = "0.8", features = ["rusqlite"] }
+rusqlite = { version = "0.32", features = ["bundled", "sqlcipher", "blob"], optional = true }
+refinery = { version = "0.8", features = ["rusqlite"], optional = true }
 
 # Serialization
 serde = { workspace = true }
@@ -34,6 +38,9 @@ tracing = { workspace = true }
 # Utilities
 hex = { workspace = true }
 libcrux-ml-dsa = { workspace = true }
+
+# mock testing support
+mockall = { workspace = true, optional = true }
 
 [dev-dependencies]
 # Testing framework

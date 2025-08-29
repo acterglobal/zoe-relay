@@ -1,11 +1,13 @@
 use async_trait::async_trait;
 use rusqlite::{Connection, OptionalExtension, params};
 use std::sync::{Arc, Mutex};
-use zoe_wire_protocol::{Hash, MessageFull, Tag, VerifyingKey};
+use zoe_wire_protocol::{Hash, MessageFull, Tag};
 
 use super::migrations;
 use crate::error::{Result, StorageError};
-use crate::storage::{MessageQuery, MessageStorage, RelaySyncStatus, StorageConfig, StorageStats};
+use crate::storage::{
+    MessageQuery, MessageStorage, RelaySyncStatus, StorageConfig, StorageStats, SubscriptionState,
+};
 
 /// SQLite-based message storage with SQLCipher encryption
 pub struct SqliteMessageStorage {
@@ -466,7 +468,7 @@ impl MessageStorage for SqliteMessageStorage {
     async fn mark_message_synced(
         &self,
         message_id: &Hash,
-        relay_pubkey: &zoe_wire_protocol::VerifyingKey,
+        relay_id: &Hash,
         global_stream_id: &str,
     ) -> Result<()> {
         let conn = self
@@ -475,19 +477,17 @@ impl MessageStorage for SqliteMessageStorage {
             .map_err(|e| StorageError::Internal(format!("Failed to acquire database lock: {e}")))?;
 
         let message_id_bytes = message_id.as_bytes();
-        let relay_pubkey_bytes = relay_pubkey
-            .to_bytes()
-            .expect("Failed to serialize relay pubkey");
+        let relay_id_bytes = relay_id.as_bytes();
 
         conn.execute(
-            "INSERT OR REPLACE INTO relay_sync_status (message_id, relay_pubkey, global_stream_id) VALUES (?1, ?2, ?3)",
-            params![message_id_bytes, &relay_pubkey_bytes[..], global_stream_id],
+            "INSERT OR REPLACE INTO relay_sync_status (message_id, relay_id, global_stream_id) VALUES (?1, ?2, ?3)",
+            params![message_id_bytes, &relay_id_bytes[..], global_stream_id],
         )?;
 
         tracing::debug!(
             "Marked message {} as synced to relay {} with stream ID {}",
             hex::encode(message_id_bytes),
-            hex::encode(relay_pubkey_bytes),
+            hex::encode(relay_id_bytes),
             global_stream_id
         );
 
@@ -496,7 +496,7 @@ impl MessageStorage for SqliteMessageStorage {
 
     async fn get_unsynced_messages_for_relay(
         &self,
-        relay_pubkey: &zoe_wire_protocol::VerifyingKey,
+        relay_id: &Hash,
         limit: Option<usize>,
     ) -> Result<Vec<MessageFull>> {
         let conn = self
@@ -504,9 +504,7 @@ impl MessageStorage for SqliteMessageStorage {
             .lock()
             .map_err(|e| StorageError::Internal(format!("Failed to acquire database lock: {e}")))?;
 
-        let relay_pubkey_bytes = relay_pubkey
-            .to_bytes()
-            .expect("Failed to serialize relay pubkey");
+        let relay_id_bytes = relay_id.as_bytes();
         let limit_clause = if let Some(l) = limit {
             format!(" LIMIT {l}")
         } else if let Some(default_limit) = self.config.max_query_limit {
@@ -517,13 +515,13 @@ impl MessageStorage for SqliteMessageStorage {
 
         let query = format!(
             "SELECT m.data FROM messages m 
-             LEFT JOIN relay_sync_status r ON m.id = r.message_id AND r.relay_pubkey = ?1
+             LEFT JOIN relay_sync_status r ON m.id = r.message_id AND r.relay_id = ?1
              WHERE r.message_id IS NULL
              ORDER BY m.timestamp DESC{limit_clause}"
         );
 
         let mut stmt = conn.prepare(&query)?;
-        let message_iter = stmt.query_map(params![&relay_pubkey_bytes[..]], |row| {
+        let message_iter = stmt.query_map(params![&relay_id_bytes[..]], |row| {
             let data: Vec<u8> = row.get(0)?;
             Ok(data)
         })?;
@@ -539,7 +537,7 @@ impl MessageStorage for SqliteMessageStorage {
         tracing::debug!(
             "Found {} unsynced messages for relay {}",
             messages.len(),
-            hex::encode(relay_pubkey_bytes)
+            hex::encode(relay_id_bytes)
         );
 
         Ok(messages)
@@ -554,30 +552,161 @@ impl MessageStorage for SqliteMessageStorage {
         let message_id_bytes = message_id.as_bytes();
 
         let mut stmt = conn.prepare(
-            "SELECT relay_pubkey, global_stream_id, synced_at FROM relay_sync_status WHERE message_id = ?1"
+            "SELECT relay_id, global_stream_id, synced_at FROM relay_sync_status WHERE message_id = ?1"
         )?;
 
         let sync_iter = stmt.query_map(params![message_id_bytes], |row| {
-            let relay_pubkey_bytes: Vec<u8> = row.get(0)?;
+            let relay_id_bytes: Vec<u8> = row.get(0)?;
             let global_stream_id: String = row.get(1)?;
             let synced_at: i64 = row.get(2)?;
-            Ok((relay_pubkey_bytes, global_stream_id, synced_at))
+            Ok((relay_id_bytes, global_stream_id, synced_at))
         })?;
 
         let mut sync_statuses = Vec::new();
         for sync_result in sync_iter {
-            let (relay_pubkey_bytes, global_stream_id, synced_at) = sync_result?;
+            let (relay_id_bytes, global_stream_id, synced_at) = sync_result?;
 
-            let relay_pubkey = VerifyingKey::try_from(relay_pubkey_bytes.as_slice())
-                .map_err(|e| StorageError::Internal(format!("Invalid relay public key: {e}")))?;
+            let relay_id = if relay_id_bytes.len() == 32 {
+                let mut array = [0u8; 32];
+                array.copy_from_slice(&relay_id_bytes);
+                Hash::from(array)
+            } else {
+                return Err(StorageError::Internal(format!(
+                    "Invalid relay ID length: expected 32 bytes, got {}",
+                    relay_id_bytes.len()
+                )));
+            };
 
             sync_statuses.push(RelaySyncStatus {
-                relay_pubkey,
+                relay_id,
                 global_stream_id,
                 synced_at: synced_at as u64,
             });
         }
 
         Ok(sync_statuses)
+    }
+
+    // Subscription state management methods
+
+    async fn store_subscription_state(
+        &self,
+        relay_id: &Hash,
+        state: &SubscriptionState,
+    ) -> Result<()> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| StorageError::Internal(format!("Failed to acquire database lock: {e}")))?;
+
+        let relay_id_bytes = relay_id.as_bytes();
+        let state_data = postcard::to_stdvec(state).map_err(|e| {
+            StorageError::Internal(format!("Failed to serialize subscription state: {e}"))
+        })?;
+
+        conn.execute(
+            "INSERT OR REPLACE INTO subscription_states (relay_id, state_data, updated_at) VALUES (?1, ?2, strftime('%s', 'now'))",
+            params![&relay_id_bytes[..], state_data],
+        )?;
+
+        tracing::debug!(
+            "Stored subscription state for relay {}",
+            hex::encode(relay_id_bytes)
+        );
+
+        Ok(())
+    }
+
+    async fn get_subscription_state(&self, relay_id: &Hash) -> Result<Option<SubscriptionState>> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| StorageError::Internal(format!("Failed to acquire database lock: {e}")))?;
+
+        let relay_id_bytes = relay_id.as_bytes();
+
+        let mut stmt =
+            conn.prepare("SELECT state_data FROM subscription_states WHERE relay_id = ?1")?;
+
+        let result = stmt.query_row(params![&relay_id_bytes[..]], |row| {
+            let state_data: Vec<u8> = row.get(0)?;
+            Ok(state_data)
+        });
+
+        match result {
+            Ok(state_data) => {
+                let state = postcard::from_bytes(&state_data).map_err(|e| {
+                    StorageError::Internal(format!("Failed to deserialize subscription state: {e}"))
+                })?;
+                Ok(Some(state))
+            }
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(StorageError::Database(e)),
+        }
+    }
+
+    async fn get_all_subscription_states(
+        &self,
+    ) -> Result<std::collections::HashMap<Hash, SubscriptionState>> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| StorageError::Internal(format!("Failed to acquire database lock: {e}")))?;
+
+        let mut stmt = conn.prepare(
+            "SELECT relay_id, state_data FROM subscription_states ORDER BY updated_at DESC",
+        )?;
+
+        let state_iter = stmt.query_map([], |row| {
+            let relay_id_bytes: Vec<u8> = row.get(0)?;
+            let state_data: Vec<u8> = row.get(1)?;
+            Ok((relay_id_bytes, state_data))
+        })?;
+
+        let mut states = std::collections::HashMap::new();
+        for state_result in state_iter {
+            let (relay_id_bytes, state_data) = state_result?;
+
+            let relay_id = if relay_id_bytes.len() == 32 {
+                let mut array = [0u8; 32];
+                array.copy_from_slice(&relay_id_bytes);
+                Hash::from(array)
+            } else {
+                return Err(StorageError::Internal(format!(
+                    "Invalid relay ID length: expected 32 bytes, got {}",
+                    relay_id_bytes.len()
+                )));
+            };
+
+            let state = postcard::from_bytes(&state_data).map_err(|e| {
+                StorageError::Internal(format!("Failed to deserialize subscription state: {e}"))
+            })?;
+
+            states.insert(relay_id, state);
+        }
+
+        Ok(states)
+    }
+
+    async fn delete_subscription_state(&self, relay_id: &Hash) -> Result<bool> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| StorageError::Internal(format!("Failed to acquire database lock: {e}")))?;
+
+        let relay_id_bytes = relay_id.as_bytes();
+
+        let rows_affected = conn.execute(
+            "DELETE FROM subscription_states WHERE relay_id = ?1",
+            params![&relay_id_bytes[..]],
+        )?;
+
+        tracing::debug!(
+            "Deleted subscription state for relay {}, rows affected: {}",
+            hex::encode(relay_id_bytes),
+            rows_affected
+        );
+
+        Ok(rows_affected > 0)
     }
 }

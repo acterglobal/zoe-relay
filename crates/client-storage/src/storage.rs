@@ -1,6 +1,10 @@
 use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
-use zoe_wire_protocol::{Hash, MessageFull, Tag, VerifyingKey};
+use zoe_wire_protocol::{Hash, MessageFilters, MessageFull, Tag, VerifyingKey};
+
+#[cfg(feature = "mock")]
+use mockall::{automock, predicate::*};
 
 /// Configuration for storage implementations
 #[derive(Debug, Clone)]
@@ -60,11 +64,71 @@ pub struct StorageStats {
     pub newest_message_timestamp: Option<u64>,
 }
 
+/// Serializable subscription state that can be persisted and restored.
+///
+/// This state contains all the information needed to restore a MessagesManager
+/// to its previous subscription state after a connection restart.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct SubscriptionState {
+    /// The latest stream height we've received
+    /// Used to resume from the correct position after reconnection
+    pub latest_stream_height: Option<String>,
+
+    /// Combined subscription filters accumulated over time
+    /// This represents the union of all active subscriptions
+    pub current_filters: MessageFilters,
+}
+
+impl SubscriptionState {
+    /// Create a new empty subscription state
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Create subscription state with initial filters
+    pub fn with_filters(filters: MessageFilters) -> Self {
+        Self {
+            latest_stream_height: None,
+            current_filters: filters,
+        }
+    }
+
+    /// Add filters to the combined state
+    pub fn add_filters(&mut self, new_filters: &[zoe_wire_protocol::Filter]) {
+        let current_filters = self.current_filters.filters.get_or_insert_with(Vec::new);
+        for filter in new_filters {
+            if !current_filters.contains(filter) {
+                current_filters.push(filter.clone());
+            }
+        }
+    }
+
+    /// Remove filters from the combined state
+    pub fn remove_filters(&mut self, filters_to_remove: &[zoe_wire_protocol::Filter]) {
+        if let Some(current_filters) = self.current_filters.filters.as_mut() {
+            current_filters.retain(|f| !filters_to_remove.contains(f));
+            if current_filters.is_empty() {
+                self.current_filters.filters = None;
+            }
+        }
+    }
+
+    /// Update the latest stream height
+    pub fn set_stream_height(&mut self, height: String) {
+        self.latest_stream_height = Some(height);
+    }
+
+    /// Check if we have any active filters
+    pub fn has_active_filters(&self) -> bool {
+        !self.current_filters.is_empty()
+    }
+}
+
 /// Sync status for a message on a specific relay
 #[derive(Debug, Clone)]
 pub struct RelaySyncStatus {
-    /// Ed25519 public key of the relay server
-    pub relay_pubkey: VerifyingKey,
+    /// Hash of the relay server's Ed25519 public key (using VerifyingKey.id())
+    pub relay_id: Hash,
     /// Global stream ID where the message was confirmed
     pub global_stream_id: String,
     /// Unix timestamp when sync was confirmed
@@ -72,6 +136,7 @@ pub struct RelaySyncStatus {
 }
 
 /// Trait defining the storage interface for messages
+#[cfg_attr(feature = "mock", automock(type Error = crate::StorageError;))]
 #[async_trait]
 pub trait MessageStorage: Send + Sync {
     type Error: std::error::Error + Send + Sync + 'static;
@@ -92,14 +157,14 @@ pub trait MessageStorage: Send + Sync {
     async fn mark_message_synced(
         &self,
         message_id: &Hash,
-        relay_pubkey: &VerifyingKey,
+        relay_id: &Hash,
         global_stream_id: &str,
     ) -> Result<(), Self::Error>;
 
     /// Get all messages that are not yet synced to a specific relay
     async fn get_unsynced_messages_for_relay(
         &self,
-        relay_pubkey: &VerifyingKey,
+        relay_id: &Hash,
         limit: Option<usize>,
     ) -> Result<Vec<MessageFull>, Self::Error>;
 
@@ -168,4 +233,27 @@ pub trait MessageStorage: Send + Sync {
 
     /// Check if storage is healthy and accessible
     async fn health_check(&self) -> Result<bool, Self::Error>;
+
+    // Subscription state management
+
+    /// Store the subscription state for a specific relay
+    async fn store_subscription_state(
+        &self,
+        relay_id: &Hash,
+        state: &SubscriptionState,
+    ) -> Result<(), Self::Error>;
+
+    /// Get the subscription state for a specific relay
+    async fn get_subscription_state(
+        &self,
+        relay_id: &Hash,
+    ) -> Result<Option<SubscriptionState>, Self::Error>;
+
+    /// Get all stored subscription states (for all relays)
+    async fn get_all_subscription_states(
+        &self,
+    ) -> Result<std::collections::HashMap<Hash, SubscriptionState>, Self::Error>;
+
+    /// Delete subscription state for a specific relay
+    async fn delete_subscription_state(&self, relay_id: &Hash) -> Result<bool, Self::Error>;
 }
