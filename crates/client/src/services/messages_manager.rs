@@ -247,7 +247,6 @@ impl MessagesManagerBuilder {
 ///
 /// This is the primary interface for interacting with the messaging system.
 ///
-/// ```
 pub struct MessagesManager {
     /// The underlying messages service for RPC operations
     messages_service: Arc<MessagesService>,
