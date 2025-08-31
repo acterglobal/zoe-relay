@@ -257,3 +257,122 @@ pub trait MessageStorage: Send + Sync {
     /// Delete subscription state for a specific relay
     async fn delete_subscription_state(&self, relay_id: &Hash) -> Result<bool, Self::Error>;
 }
+
+/// Trait defining a key-value storage interface for arbitrary state data.
+///
+/// This trait provides a generic key-value store for persisting application state
+/// using postcard serialization. Keys are byte slices and values are postcard-serialized blobs.
+///
+/// # Examples
+///
+/// ```rust,no_run
+/// use zoe_client_storage::StateStorage;
+/// use serde::{Deserialize, Serialize};
+///
+/// #[derive(Serialize, Deserialize)]
+/// struct MyState {
+///     counter: u64,
+///     name: String,
+/// }
+///
+/// async fn example(storage: &impl StateStorage) -> Result<(), Box<dyn std::error::Error>> {
+///     let state = MyState { counter: 42, name: "test".to_string() };
+///     
+///     // Store state
+///     storage.store(b"my_key", &state).await?;
+///     
+///     // Retrieve state
+///     let retrieved: Option<MyState> = storage.get(b"my_key").await?;
+///     assert_eq!(retrieved.unwrap().counter, 42);
+///     
+///     Ok(())
+/// }
+/// ```
+#[cfg_attr(any(feature = "mock", test), automock(type Error = crate::StorageError;))]
+#[async_trait]
+pub trait StateStorage: Send + Sync {
+    type Error: std::error::Error + Send + Sync + 'static;
+
+    /// Store a value under the given key.
+    ///
+    /// The value will be serialized using postcard before storage.
+    /// If a value already exists for the key, it will be overwritten.
+    ///
+    /// # Arguments
+    /// * `key` - The key to store the value under (byte slice)
+    /// * `value` - The value to store (must implement Serialize)
+    ///
+    /// # Errors
+    /// Returns an error if serialization fails or storage operation fails.
+    async fn store<T>(&self, key: &[u8], value: &T) -> Result<(), Self::Error>
+    where
+        T: Serialize + Send + Sync + 'static;
+
+    /// Retrieve a value by key.
+    ///
+    /// The stored blob will be deserialized using postcard.
+    ///
+    /// # Arguments
+    /// * `key` - The key to retrieve the value for (byte slice)
+    ///
+    /// # Returns
+    /// * `Ok(Some(value))` if the key exists and deserialization succeeds
+    /// * `Ok(None)` if the key doesn't exist
+    /// * `Err(...)` if deserialization fails or storage operation fails
+    ///
+    /// # Errors
+    /// Returns an error if deserialization fails or storage operation fails.
+    async fn get<T>(&self, key: &[u8]) -> Result<Option<T>, Self::Error>
+    where
+        T: for<'de> Deserialize<'de> + Send + Sync + 'static;
+
+    /// Delete a value by key.
+    ///
+    /// # Arguments
+    /// * `key` - The key to delete (byte slice)
+    ///
+    /// # Returns
+    /// * `Ok(true)` if the key existed and was deleted
+    /// * `Ok(false)` if the key didn't exist
+    ///
+    /// # Errors
+    /// Returns an error if the storage operation fails.
+    async fn delete(&self, key: &[u8]) -> Result<bool, Self::Error>;
+
+    /// Check if a key exists in storage.
+    ///
+    /// # Arguments
+    /// * `key` - The key to check for existence (byte slice)
+    ///
+    /// # Returns
+    /// * `Ok(true)` if the key exists
+    /// * `Ok(false)` if the key doesn't exist
+    ///
+    /// # Errors
+    /// Returns an error if the storage operation fails.
+    async fn has(&self, key: &[u8]) -> Result<bool, Self::Error>;
+
+    /// Get all keys in storage.
+    ///
+    /// # Returns
+    /// A vector of all keys currently stored (as byte vectors).
+    ///
+    /// # Errors
+    /// Returns an error if the storage operation fails.
+    async fn list_keys(&self) -> Result<Vec<Vec<u8>>, Self::Error>;
+
+    /// Clear all data from storage.
+    ///
+    /// # Errors
+    /// Returns an error if the storage operation fails.
+    async fn clear(&self) -> Result<(), Self::Error>;
+
+    /// Get the number of entries in storage.
+    ///
+    /// # Returns
+    /// The total number of key-value pairs stored.
+    ///
+    /// # Errors
+    /// Returns an error if the storage operation fails.
+    async fn count(&self) -> Result<u64, Self::Error>;
+}

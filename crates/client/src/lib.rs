@@ -15,7 +15,7 @@ pub use client::{Client, ClientBuilder};
 pub use error::ClientError;
 pub use file_storage::FileStorage;
 pub use pqxdh::PqxdhProtocolHandler;
-pub use relay_client::RelayClient;
+pub use relay_client::{RelayClient, RelayClientBuilder};
 pub use rpc_transport::{RpcMessageListener, TarpcOverMessagesClient, TarpcOverMessagesServer};
 pub use services::{BlobService, MessagesService, MessagesStream};
 

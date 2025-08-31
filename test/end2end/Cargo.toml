@@ -7,7 +7,7 @@ publish = false
 [dependencies]
 # Core zoe crates we're testing
 zoe-relay = { path = "../../crates/relay" }
-zoe-client = { path = "../../crates/client" }
+zoe-client = { path = "../../crates/client", features = ["test-utils"] }
 zoe-blob-store = { path = "../../crates/blob-store" }
 zoe-message-store = { path = "../../crates/message-store" }
 zoe-wire-protocol = { path = "../../crates/wire-protocol" }

@@ -6,7 +6,8 @@ use zoe_wire_protocol::{Hash, MessageFull, Tag};
 use super::migrations;
 use crate::error::{Result, StorageError};
 use crate::storage::{
-    MessageQuery, MessageStorage, RelaySyncStatus, StorageConfig, StorageStats, SubscriptionState,
+    MessageQuery, MessageStorage, RelaySyncStatus, StateStorage, StorageConfig, StorageStats,
+    SubscriptionState,
 };
 
 /// SQLite-based message storage with SQLCipher encryption
@@ -708,5 +709,137 @@ impl MessageStorage for SqliteMessageStorage {
         );
 
         Ok(rows_affected > 0)
+    }
+}
+
+#[async_trait]
+impl StateStorage for SqliteMessageStorage {
+    type Error = StorageError;
+
+    async fn store<T>(&self, key: &[u8], value: &T) -> Result<()>
+    where
+        T: serde::Serialize + Send + Sync + 'static,
+    {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| StorageError::Internal(format!("Failed to acquire database lock: {e}")))?;
+
+        let value_data = postcard::to_stdvec(value)
+            .map_err(|e| StorageError::Internal(format!("Failed to serialize state value: {e}")))?;
+
+        conn.execute(
+            "INSERT OR REPLACE INTO state_storage (key, value_data, updated_at) VALUES (?1, ?2, strftime('%s', 'now'))",
+            params![key, value_data],
+        )?;
+
+        tracing::debug!("Stored state for key: {:?}", key);
+
+        Ok(())
+    }
+
+    async fn get<T>(&self, key: &[u8]) -> Result<Option<T>>
+    where
+        T: for<'de> serde::Deserialize<'de> + Send + Sync + 'static,
+    {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| StorageError::Internal(format!("Failed to acquire database lock: {e}")))?;
+
+        let mut stmt = conn.prepare("SELECT value_data FROM state_storage WHERE key = ?1")?;
+
+        let result = stmt.query_row(params![key], |row| {
+            let value_data: Vec<u8> = row.get(0)?;
+            Ok(value_data)
+        });
+
+        match result {
+            Ok(value_data) => {
+                let value = postcard::from_bytes(&value_data).map_err(|e| {
+                    StorageError::Internal(format!("Failed to deserialize state value: {e}"))
+                })?;
+                Ok(Some(value))
+            }
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(StorageError::Database(e)),
+        }
+    }
+
+    async fn delete(&self, key: &[u8]) -> Result<bool> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| StorageError::Internal(format!("Failed to acquire database lock: {e}")))?;
+
+        let rows_affected =
+            conn.execute("DELETE FROM state_storage WHERE key = ?1", params![key])?;
+
+        tracing::debug!(
+            "Deleted state for key: {:?}, rows affected: {}",
+            key,
+            rows_affected
+        );
+
+        Ok(rows_affected > 0)
+    }
+
+    async fn has(&self, key: &[u8]) -> Result<bool> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| StorageError::Internal(format!("Failed to acquire database lock: {e}")))?;
+
+        let mut stmt = conn.prepare("SELECT 1 FROM state_storage WHERE key = ?1")?;
+
+        let exists = stmt.query_row(params![key], |_| Ok(())).optional()?;
+
+        Ok(exists.is_some())
+    }
+
+    async fn list_keys(&self) -> Result<Vec<Vec<u8>>> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| StorageError::Internal(format!("Failed to acquire database lock: {e}")))?;
+
+        let mut stmt = conn.prepare("SELECT key FROM state_storage ORDER BY key")?;
+
+        let key_iter = stmt.query_map([], |row| {
+            let key: Vec<u8> = row.get(0)?;
+            Ok(key)
+        })?;
+
+        let mut keys = Vec::new();
+        for key_result in key_iter {
+            keys.push(key_result?);
+        }
+
+        Ok(keys)
+    }
+
+    async fn clear(&self) -> Result<()> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| StorageError::Internal(format!("Failed to acquire database lock: {e}")))?;
+
+        let rows_affected = conn.execute("DELETE FROM state_storage", [])?;
+
+        tracing::debug!("Cleared all state data, rows affected: {}", rows_affected);
+
+        Ok(())
+    }
+
+    async fn count(&self) -> Result<u64> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| StorageError::Internal(format!("Failed to acquire database lock: {e}")))?;
+
+        let count: i64 =
+            conn.query_row("SELECT COUNT(*) FROM state_storage", [], |row| row.get(0))?;
+
+        Ok(count as u64)
     }
 }

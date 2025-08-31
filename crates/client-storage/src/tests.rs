@@ -679,4 +679,445 @@ mod integration_tests {
         assert_eq!(msg1_status.len(), 1);
         assert_eq!(msg1_status[0].global_stream_id, "101");
     }
+
+    // ============================================================================
+    // STATE STORAGE TESTS
+    // ============================================================================
+
+    mod state_storage_tests {
+        use super::*;
+        use crate::storage::StateStorage;
+        use serde::{Deserialize, Serialize};
+
+        #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+        struct TestState {
+            counter: u64,
+            name: String,
+            active: bool,
+        }
+
+        #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+        struct ComplexState {
+            data: std::collections::BTreeMap<String, Vec<u8>>,
+            timestamp: u64,
+            nested: Option<TestState>,
+        }
+
+        async fn create_test_storage() -> SqliteMessageStorage {
+            let temp_dir = TempDir::new().unwrap();
+            let config = StorageConfig {
+                database_path: temp_dir.path().join("test_state.db"),
+                ..Default::default()
+            };
+
+            let encryption_key = [42u8; 32];
+            SqliteMessageStorage::new(config, &encryption_key)
+                .await
+                .unwrap()
+        }
+
+        #[tokio::test]
+        async fn test_store_and_get() {
+            let storage = create_test_storage().await;
+
+            let test_state = TestState {
+                counter: 42,
+                name: "test".to_string(),
+                active: true,
+            };
+
+            // Store state
+            storage.store(b"test_key", &test_state).await.unwrap();
+
+            // Retrieve state
+            let retrieved: Option<TestState> = storage.get(b"test_key").await.unwrap();
+
+            assert!(retrieved.is_some());
+            assert_eq!(retrieved.unwrap(), test_state);
+        }
+
+        #[tokio::test]
+        async fn test_get_nonexistent_state() {
+            let storage = create_test_storage().await;
+
+            let retrieved: Option<TestState> = storage.get(b"nonexistent").await.unwrap();
+
+            assert!(retrieved.is_none());
+        }
+
+        #[tokio::test]
+        async fn test_overwrite_state() {
+            let storage = create_test_storage().await;
+
+            let state1 = TestState {
+                counter: 1,
+                name: "first".to_string(),
+                active: true,
+            };
+
+            let state2 = TestState {
+                counter: 2,
+                name: "second".to_string(),
+                active: false,
+            };
+
+            // Store first state
+            storage.store(b"key", &state1).await.unwrap();
+
+            // Overwrite with second state
+            storage.store(b"key", &state2).await.unwrap();
+
+            // Retrieve should return second state
+            let retrieved: Option<TestState> = storage.get(b"key").await.unwrap();
+            assert_eq!(retrieved.unwrap(), state2);
+        }
+
+        #[tokio::test]
+        async fn test_delete() {
+            let storage = create_test_storage().await;
+
+            let test_state = TestState {
+                counter: 100,
+                name: "delete_me".to_string(),
+                active: true,
+            };
+
+            // Store state
+            storage.store(b"delete_key", &test_state).await.unwrap();
+
+            // Verify it exists
+            let exists = storage.has(b"delete_key").await.unwrap();
+            assert!(exists);
+
+            // Delete state
+            let deleted = storage.delete(b"delete_key").await.unwrap();
+            assert!(deleted);
+
+            // Verify it's gone
+            let exists = storage.has(b"delete_key").await.unwrap();
+            assert!(!exists);
+
+            let retrieved: Option<TestState> = storage.get(b"delete_key").await.unwrap();
+            assert!(retrieved.is_none());
+        }
+
+        #[tokio::test]
+        async fn test_delete_nonexistent_state() {
+            let storage = create_test_storage().await;
+
+            let deleted = storage.delete(b"nonexistent").await.unwrap();
+            assert!(!deleted);
+        }
+
+        #[tokio::test]
+        async fn test_has() {
+            let storage = create_test_storage().await;
+
+            let test_state = TestState {
+                counter: 50,
+                name: "exists".to_string(),
+                active: false,
+            };
+
+            // Initially doesn't exist
+            let exists = storage.has(b"exists_key").await.unwrap();
+            assert!(!exists);
+
+            // Store state
+            storage.store(b"exists_key", &test_state).await.unwrap();
+
+            // Now it exists
+            let exists = storage.has(b"exists_key").await.unwrap();
+            assert!(exists);
+        }
+
+        #[tokio::test]
+        async fn test_list_keys() {
+            let storage = create_test_storage().await;
+
+            let state1 = TestState {
+                counter: 1,
+                name: "one".to_string(),
+                active: true,
+            };
+
+            let state2 = TestState {
+                counter: 2,
+                name: "two".to_string(),
+                active: false,
+            };
+
+            // Initially empty
+            let keys = storage.list_keys().await.unwrap();
+            assert!(keys.is_empty());
+
+            // Store some states
+            storage.store(b"key_b", &state1).await.unwrap();
+            storage.store(b"key_a", &state2).await.unwrap();
+            storage.store(b"key_c", &state1).await.unwrap();
+
+            // List keys (should be sorted)
+            let keys = storage.list_keys().await.unwrap();
+            assert_eq!(
+                keys,
+                vec![b"key_a".to_vec(), b"key_b".to_vec(), b"key_c".to_vec()]
+            );
+        }
+
+        #[tokio::test]
+        async fn test_count() {
+            let storage = create_test_storage().await;
+
+            let test_state = TestState {
+                counter: 0,
+                name: "counter".to_string(),
+                active: true,
+            };
+
+            // Initially zero
+            let count = storage.count().await.unwrap();
+            assert_eq!(count, 0);
+
+            // Add some states
+            storage.store(b"count1", &test_state).await.unwrap();
+            storage.store(b"count2", &test_state).await.unwrap();
+            storage.store(b"count3", &test_state).await.unwrap();
+
+            let count = storage.count().await.unwrap();
+            assert_eq!(count, 3);
+
+            // Delete one
+            storage.delete(b"count2").await.unwrap();
+
+            let count = storage.count().await.unwrap();
+            assert_eq!(count, 2);
+        }
+
+        #[tokio::test]
+        async fn test_clear() {
+            let storage = create_test_storage().await;
+
+            let test_state = TestState {
+                counter: 999,
+                name: "clear_test".to_string(),
+                active: true,
+            };
+
+            // Add multiple states
+            storage.store(b"clear1", &test_state).await.unwrap();
+            storage.store(b"clear2", &test_state).await.unwrap();
+            storage.store(b"clear3", &test_state).await.unwrap();
+
+            // Verify they exist
+            let count = storage.count().await.unwrap();
+            assert_eq!(count, 3);
+
+            // Clear all
+            storage.clear().await.unwrap();
+
+            // Verify all gone
+            let count = storage.count().await.unwrap();
+            assert_eq!(count, 0);
+
+            let keys = storage.list_keys().await.unwrap();
+            assert!(keys.is_empty());
+        }
+
+        #[tokio::test]
+        async fn test_complex_state_serialization() {
+            let storage = create_test_storage().await;
+
+            let mut data = std::collections::BTreeMap::new();
+            data.insert("key1".to_string(), vec![1, 2, 3, 4]);
+            data.insert("key2".to_string(), vec![255, 0, 128]);
+
+            let complex_state = ComplexState {
+                data,
+                timestamp: 1234567890,
+                nested: Some(TestState {
+                    counter: 42,
+                    name: "nested".to_string(),
+                    active: false,
+                }),
+            };
+
+            // Store complex state
+            storage.store(b"complex", &complex_state).await.unwrap();
+
+            // Retrieve and verify
+            let retrieved: Option<ComplexState> = storage.get(b"complex").await.unwrap();
+            assert!(retrieved.is_some());
+            assert_eq!(retrieved.unwrap(), complex_state);
+        }
+
+        #[tokio::test]
+        async fn test_different_types_same_key() {
+            let storage = create_test_storage().await;
+
+            // Store a TestState
+            let test_state = TestState {
+                counter: 123,
+                name: "type_test".to_string(),
+                active: true,
+            };
+            storage.store(b"same_key", &test_state).await.unwrap();
+
+            // Try to retrieve as wrong type - should fail
+            let wrong_type: Result<Option<ComplexState>, _> = storage.get(b"same_key").await;
+            assert!(wrong_type.is_err());
+
+            // Retrieve as correct type - should work
+            let correct_type: Option<TestState> = storage.get(b"same_key").await.unwrap();
+            assert_eq!(correct_type.unwrap(), test_state);
+        }
+
+        #[tokio::test]
+        async fn test_empty_and_special_keys() {
+            let storage = create_test_storage().await;
+
+            let test_state = TestState {
+                counter: 1,
+                name: "special".to_string(),
+                active: true,
+            };
+
+            // Test various key formats
+            let special_keys = vec![
+                b"".as_slice(),                       // Empty key
+                b" ".as_slice(),                      // Space
+                b"key with spaces".as_slice(),        // Spaces in key
+                b"key-with-dashes".as_slice(),        // Dashes
+                b"key_with_underscores".as_slice(),   // Underscores
+                b"key.with.dots".as_slice(),          // Dots
+                b"key/with/slashes".as_slice(),       // Slashes
+                b"key\\with\\backslashes".as_slice(), // Backslashes
+                "🚀emoji_key".as_bytes(),             // Unicode
+                b"very_long_key_name_that_goes_on_and_on_and_on_to_test_length_limits".as_slice(), // Long key
+            ];
+
+            for key in special_keys {
+                storage.store(key, &test_state).await.unwrap();
+                let retrieved: Option<TestState> = storage.get(key).await.unwrap();
+                assert_eq!(retrieved.unwrap(), test_state);
+            }
+        }
+
+        #[tokio::test]
+        async fn test_large_state_data() {
+            let storage = create_test_storage().await;
+
+            // Create a large state with lots of data
+            let mut large_data = std::collections::BTreeMap::new();
+            for i in 0..1000 {
+                large_data.insert(format!("key_{}", i), vec![i as u8; 100]);
+            }
+
+            let large_state = ComplexState {
+                data: large_data,
+                timestamp: 9876543210,
+                nested: Some(TestState {
+                    counter: u64::MAX,
+                    name: "x".repeat(1000), // Large string
+                    active: true,
+                }),
+            };
+
+            // Store and retrieve large state
+            storage.store(b"large", &large_state).await.unwrap();
+
+            let retrieved: Option<ComplexState> = storage.get(b"large").await.unwrap();
+            assert!(retrieved.is_some());
+            assert_eq!(retrieved.unwrap(), large_state);
+        }
+
+        #[tokio::test]
+        async fn test_concurrent_state_operations() {
+            let storage = std::sync::Arc::new(create_test_storage().await);
+
+            let _test_state = TestState {
+                counter: 0,
+                name: "concurrent".to_string(),
+                active: true,
+            };
+
+            // Spawn multiple tasks that store state concurrently
+            let mut handles = vec![];
+            for i in 0..10 {
+                let storage_clone = storage.clone();
+                let state = TestState {
+                    counter: i,
+                    name: format!("concurrent_{}", i),
+                    active: i % 2 == 0,
+                };
+
+                let handle = tokio::spawn(async move {
+                    storage_clone
+                        .store(format!("concurrent_{}", i).as_bytes(), &state)
+                        .await
+                        .unwrap();
+                });
+                handles.push(handle);
+            }
+
+            // Wait for all tasks to complete
+            for handle in handles {
+                handle.await.unwrap();
+            }
+
+            // Verify all states were stored
+            let count = storage.count().await.unwrap();
+            assert_eq!(count, 10);
+
+            // Verify we can retrieve all states
+            for i in 0..10 {
+                let retrieved: Option<TestState> = storage
+                    .get(format!("concurrent_{}", i).as_bytes())
+                    .await
+                    .unwrap();
+                assert!(retrieved.is_some());
+                assert_eq!(retrieved.unwrap().counter, i);
+            }
+        }
+
+        #[tokio::test]
+        async fn test_state_persistence_across_connections() {
+            let temp_dir = TempDir::new().unwrap();
+            let db_path = temp_dir.path().join("persistence_test.db");
+            let encryption_key = [123u8; 32];
+
+            let test_state = TestState {
+                counter: 777,
+                name: "persistent".to_string(),
+                active: true,
+            };
+
+            // Create first storage instance and store data
+            {
+                let config = StorageConfig {
+                    database_path: db_path.clone(),
+                    ..Default::default()
+                };
+                let storage = SqliteMessageStorage::new(config, &encryption_key)
+                    .await
+                    .unwrap();
+
+                storage.store(b"persist_key", &test_state).await.unwrap();
+            } // Storage instance goes out of scope
+
+            // Create second storage instance and verify data persists
+            {
+                let config = StorageConfig {
+                    database_path: db_path,
+                    ..Default::default()
+                };
+                let storage = SqliteMessageStorage::new(config, &encryption_key)
+                    .await
+                    .unwrap();
+
+                let retrieved: Option<TestState> = storage.get(b"persist_key").await.unwrap();
+                assert!(retrieved.is_some());
+                assert_eq!(retrieved.unwrap(), test_state);
+            }
+        }
+    }
 }

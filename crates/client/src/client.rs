@@ -1,5 +1,6 @@
 use crate::error::Result;
-use crate::{ClientError, FileStorage, RelayClient};
+use crate::{ClientError, FileStorage, RelayClient, RelayClientBuilder};
+use zoe_client_storage::{SqliteMessageStorage, StorageConfig};
 use zoe_wire_protocol::{KeyPair, VerifyingKey};
 // Note: serde imports removed since ML-DSA types don't support serde
 use std::net::SocketAddr;
@@ -15,13 +16,10 @@ use flutter_rust_bridge::frb;
 // Note: ML-DSA types don't have simple serde serialization, so we'll handle this differently
 #[cfg_attr(feature = "frb-api", frb(opaque))]
 pub struct ClientSecret {
-    inner_keypair: KeyPair,          // ML-DSA-65 for inner protocol
+    inner_keypair: KeyPair,          // inner protocol
     server_public_key: VerifyingKey, // TLS server key
     server_addr: SocketAddr,
 }
-
-// Note: Serialization removed due to ML-DSA types not supporting serde
-// TODO: Implement custom serialization if needed for ClientSecret
 
 impl ClientSecret {
     // Add this constructor method
@@ -46,12 +44,6 @@ impl ClientSecret {
     pub fn server_public_key(&self) -> &VerifyingKey {
         &self.server_public_key
     }
-
-    // Note: as_hex() method removed due to ML-DSA serialization complexity
-    // TODO: Implement custom serialization if needed
-
-    // Note: from_hex() method removed due to ML-DSA serialization complexity
-    // TODO: Implement custom serialization if needed
 }
 
 pub struct ClientInner {
@@ -67,6 +59,8 @@ pub struct ClientBuilder {
     inner_keypair: Option<KeyPair>,
     server_public_key: Option<VerifyingKey>,
     server_addr: Option<SocketAddr>,
+    storage_config: Option<StorageConfig>,
+    encryption_key: Option<[u8; 32]>,
 }
 
 impl ClientBuilder {
@@ -93,6 +87,26 @@ impl ClientBuilder {
         self.server_addr = Some(server_addr);
     }
 
+    /// Set the storage configuration for the relay client
+    #[cfg_attr(feature = "frb-api", frb(ignore))]
+    pub fn storage_config(&mut self, config: StorageConfig) {
+        self.storage_config = Some(config);
+    }
+
+    /// Set the storage database path (convenience method)
+    #[cfg_attr(feature = "frb-api", frb)]
+    pub fn storage_path(&mut self, path: String) {
+        let mut config = self.storage_config.take().unwrap_or_default();
+        config.database_path = PathBuf::from(path);
+        self.storage_config = Some(config);
+    }
+
+    /// Set the encryption key for storage
+    #[cfg_attr(feature = "frb-api", frb)]
+    pub fn encryption_key(&mut self, key: [u8; 32]) {
+        self.encryption_key = Some(key);
+    }
+
     #[cfg_attr(feature = "frb-api", frb)]
     pub async fn build(self) -> Result<Client> {
         let Some(media_storage_path) = self.media_storage_path else {
@@ -113,18 +127,37 @@ impl ClientBuilder {
             ));
         };
 
+        let Some(encryption_key) = self.encryption_key else {
+            return Err(ClientError::BuildError(
+                "Encryption key is required for storage".to_string(),
+            ));
+        };
+
         // Strategy: Use tokio::task::spawn to run on separate stack
         // This completely avoids stack overflow by using a new task with fresh stack
 
         // Run all operations on separate tasks to avoid stack buildup
         let fs_path = media_storage_path.to_path_buf();
+        let storage_config = self.storage_config.unwrap_or_default();
+
+        // Create storage instance in the ClientBuilder
+        let storage = Arc::new(
+            SqliteMessageStorage::new(storage_config, &encryption_key)
+                .await
+                .map_err(|e| ClientError::BuildError(format!("Failed to create storage: {}", e)))?,
+        );
 
         let relay_client_task = tokio::task::spawn(async move {
+            let mut builder = RelayClientBuilder::new()
+                .server_public_key(server_public_key)
+                .server_address(server_addr)
+                .storage(storage);
+
             if let Some(inner_keypair) = self.inner_keypair {
-                RelayClient::new(inner_keypair, server_public_key, server_addr).await
-            } else {
-                RelayClient::new_with_random_key(server_public_key, server_addr).await
+                builder = builder.client_keypair(inner_keypair);
             }
+
+            builder.build().await
         });
 
         let fs_task = tokio::task::spawn(async move { FileStorage::new(&fs_path).await });
