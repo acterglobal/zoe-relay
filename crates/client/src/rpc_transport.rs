@@ -71,7 +71,7 @@ impl<TarpcMsg> RpcMessageListener<TarpcMsg> {
         is_targeted
     }
 
-    /// Try to decrypt ephemeral ECDH encrypted content and deserialize as `RpcMessage<TarpcMsg>``
+    /// Try to decrypt ephemeral ECDH encrypted content and deserialize as `RpcMessage<TarpcMsg>`
     fn try_decrypt_and_deserialize_message(
         &self,
         message: &MessageFull,
