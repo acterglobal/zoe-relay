@@ -1,5 +1,5 @@
 # Multi-stage Dockerfile for Zoe Relay Server
-FROM rust:1.75-slim as builder
+FROM rust:1.85-slim as builder
 
 # Install system dependencies for building
 RUN apt-get update && apt-get install -y \
@@ -17,6 +17,7 @@ WORKDIR /app
 # Copy workspace configuration
 COPY Cargo.toml Cargo.lock ./
 COPY crates/ ./crates/
+COPY test/ ./test/
 
 # Build the relay binary in release mode
 RUN cargo build --release --bin zoe-relay

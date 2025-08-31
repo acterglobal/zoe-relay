@@ -13,8 +13,9 @@ target/
 *.md
 docs/
 
-# Test files
-test/
+# Test files (but keep test/end2end for workspace)
+test/*
+!test/end2end/
 **/tests/
 **/*_test.rs
 **/*test*.rs
