@@ -1,502 +1,77 @@
 # Zoeyr Project Cursor Rules
 
-## Communication Guidelines
+## Communication & Testing
+- Be direct, professional, and technically accurate
+- **CRITICAL**: Implement unit tests and end-to-end tests instead of examples
+- Unit tests first; e2e tests when unit tests don't provide sufficient coverage
+- Point out conflicts with existing code
 
-### Professional Tone
-- Be direct, helpful, and professional in responses
-- Focus on technical accuracy and clarity
-- Avoid excessive compliments or unnecessary praise
-- Get straight to the point with actionable information
-- Acknowledge requests simply and move to implementation
-- Be critical and point out when proposed ideas conflict with existing code
+## CRITICAL Standards
 
-## Type Safety Standards
+### Type Safety
+- ✅ Use strongly-typed enums with `#[repr(u8)]` for network serialization
+- ✅ Leverage Rust's type system for compile-time error catching
+- ❌ No string-based type discrimination or magic strings
 
-### CRITICAL: Prefer type-safe protocols over string-based typing
+### Data Structures
+- ✅ Use `BTreeMap`/`BTreeSet` for all serializable structures (deterministic ordering)
+- ❌ No `HashMap`/`HashSet` unless measured performance requirement
 
-**Always prioritize type safety in protocol design and implementation:**
+### Imports
+- ✅ Top-level imports with alias renaming for conflicts (`use foo::Bar as FooBar`)
+- ❌ No full-path type definitions (`foo::bar::Baz`) in function bodies
 
-- ✅ **DO**: Use strongly-typed enums, structs, and type definitions
-- ✅ **DO**: Leverage Rust's type system to catch errors at compile time
-- ✅ **DO**: Define clear type boundaries in wire protocols and APIs
-- ✅ **DO**: Use `#[repr(u8)]` or similar for network-serializable enums
-- ❌ **DON'T**: Use string-based type discrimination when type-safe alternatives exist
-- ❌ **DON'T**: Rely on runtime string parsing for type identification
-- ❌ **DON'T**: Use magic strings or string constants for type matching
-
-### Type Safety Examples
-
-**✅ CORRECT - Type-safe approach:**
-```rust
-#[derive(Serialize, Deserialize)]
-#[repr(u8)]
-enum MessageType {
-    Text = 0,
-    Image = 1,
-    File = 2,
-}
-
-#[derive(Serialize, Deserialize)]
-struct Message {
-    msg_type: MessageType,
-    content: MessageContent,
-}
-```
-
-**❌ INCORRECT - String-based typing:**
-```rust
-#[derive(Serialize, Deserialize)]
-struct Message {
-    msg_type: String, // "text", "image", "file"
-    content: String,
-}
-```
-
-### Protocol Design
-- Wire protocols should use type-safe enumerations
-- API boundaries should enforce type constraints at compile time
-- Message formats should leverage discriminated unions over string tags
-- Error types should be strongly typed rather than generic string messages
-
-## Data Structure Standards
-
-### CRITICAL: Prefer BTreeMaps over HashMaps
-
-**Always prioritize BTreeMaps for data structures, especially serializable types:**
-
-- ✅ **DO**: Use `BTreeMap` for key-value mappings in serializable structures
-- ✅ **DO**: Use `BTreeSet` for sets in serializable structures  
-- ✅ **DO**: Use `BTreeMap` for deterministic ordering and consistent serialization
-- ✅ **DO**: Use `BTreeMap` for better binary serialization compatibility
-- ❌ **DON'T**: Use `HashMap` unless you have a specific performance requirement
-- ❌ **DON'T**: Use `HashSet` for serializable data structures
-- ❌ **DON'T**: Mix HashMap and BTreeMap inconsistently across the codebase
-
-### Data Structure Examples
-
-**✅ CORRECT - BTreeMap usage:**
-```rust
-use std::collections::BTreeMap;
-use serde::{Deserialize, Serialize};
-
-#[derive(Serialize, Deserialize)]
-struct UserData {
-    preferences: BTreeMap<String, String>,
-    groups: BTreeMap<u64, GroupInfo>,
-}
-```
-
-**❌ INCORRECT - HashMap usage:**
-```rust
-use std::collections::HashMap;
-
-#[derive(Serialize, Deserialize)]
-struct UserData {
-    preferences: HashMap<String, String>, // Non-deterministic ordering
-    groups: HashMap<u64, GroupInfo>, // Inconsistent serialization
-}
-```
-
-### When BTreeMap is preferred (99% of cases)
-- All serializable data structures
-- Configuration data
-- State machine data  
-- Wire protocol messages
-- Database models
-- Any data that needs consistent ordering
-- General key-value storage needs
-
-### Limited exceptions for HashMap (rare cases only)
-- **ONLY** when you have measured performance bottlenecks with BTreeMap
-- **ONLY** for internal, non-serializable caches where ordering doesn't matter
-- **ONLY** when interfacing with external APIs that specifically require HashMap
-
-## Import Standards
-
-### CRITICAL: Prefer imports over full-path-type-definitions
-
-**Always prioritize clean imports at the top of files:**
-
-- ✅ **DO**: Use top-level imports for all types and functions
-- ✅ **DO**: Use alias renaming (`use foo::Bar as FooBar`) to resolve conflicts
-- ✅ **DO**: Group and organize imports logically
-- ❌ **DON'T**: Use full-path type definitions (`foo::bar::Baz`) in function bodies
-- ❌ **DON'T**: Inline full paths except for single-use conflict resolution
-
-### Import Examples
-
-**✅ CORRECT - Top-level imports:**
-```rust
-use std::collections::HashMap;
-use serde::{Deserialize, Serialize};
-use crate::message::Message;
-use crate::crypto::EncryptedData;
-use external_crate::Config as ExternalConfig;
-
-fn process_data(data: HashMap<String, Message>) -> EncryptedData {
-    // Use imported types directly
-}
-```
-
-**❌ INCORRECT - Full-path usage:**
-```rust
-fn process_data(data: std::collections::HashMap<String, crate::message::Message>) -> crate::crypto::EncryptedData {
-    // Avoid this pattern
-}
-```
-
-### When full paths are acceptable
-- **ONLY** when there's a name conflict and the type is used exactly once in the file
-- **ONLY** for disambiguation in macro contexts where imports don't work
-
-## Serialization Standards
-
-### CRITICAL: Always use postcard for serialization
-
-**NEVER use `serde_json` for data serialization in this project.**
-
-- ✅ **DO**: Use `postcard` for all binary data serialization/deserialization
-- ✅ **DO**: Use `postcard::to_stdvec()` and `postcard::from_bytes()` for standard operations
-- ✅ **DO**: Use `postcard::to_allocvec()` when you need Vec<u8> allocation
-- ❌ **DON'T**: Use `serde_json::to_string()`, `serde_json::from_str()`, or any serde_json methods
-- ❌ **DON'T**: Add `serde_json` as a dependency to new crates
-
-### When postcard is appropriate (99% of cases)
-- Message serialization in wire protocol
-- State machine event serialization
-- Network communication data
-- Blob storage data
-- Any binary data that needs to be stored or transmitted
-- Inter-service communication
-- Encrypted data payloads
-
-### Limited exceptions for serde_json (rare cases only)
-- **ONLY** for human-readable configuration files that users need to edit manually
-- **ONLY** for debugging/logging output where human readability is critical
-- **ONLY** for interoperability with external JSON APIs (like WhatsApp integration)
-
-### Code Examples
-
-**✅ CORRECT - Use postcard:**
-```rust
-use postcard;
-
-// Serialization
-let data = MyStruct { field: "value" };
-let bytes = postcard::to_stdvec(&data)?;
-
-// Deserialization  
-let recovered: MyStruct = postcard::from_bytes(&bytes)?;
-
-// For Vec<u8> allocation
-let bytes = postcard::to_allocvec(&data)?;
-```
-
-**❌ INCORRECT - Don't use serde_json:**
-```rust
-// DON'T DO THIS
-let json = serde_json::to_string(&data)?;
-let recovered: MyStruct = serde_json::from_str(&json)?;
-```
-
-## Dependencies
-
-### Required workspace dependencies
+### Serialization
+- ✅ **ALWAYS** use `postcard` for serialization (`postcard::to_stdvec()`, `postcard::from_bytes()`)
+- ❌ **NEVER** use `serde_json` except for human-readable config or external JSON APIs
 - Use `postcard = { workspace = true }` in Cargo.toml
-- Import with `use postcard;` 
-- Handle errors with `postcard::Error`
 
-### Error handling
-- postcard errors should be wrapped in your crate's error type
-- Use `#[from] postcard::Error` in error enums where appropriate
+## Code Reuse
 
-## Architecture Consistency
+### CRITICAL: Always extend existing types before creating new ones
+1. **Search first**: Check `app-primitives`, `wire-protocol`, `state-machine` for similar types
+2. **Extend existing**: Add fields/variants to existing structs/enums when possible
+3. **Only create new types when**: Explicitly requested, fundamentally different domain, or incompatible requirements
 
-### Wire Protocol
-- This project uses postcard for efficient binary serialization across the wire
-- The `PostcardFormat` struct in `wire-protocol/src/relay/postcard.rs` is the standard serialization format
-- All RPC communication uses postcard via tarpc's serde-transport
+## Problem Escalation
 
-### State Management
-- Group state and events are serialized with postcard
-- Message content uses postcard serialization
-- Encrypted payloads contain postcard-serialized data
+### When to escalate to user instead of compromising:
+- API evolution conflicts requiring architectural decisions
+- Missing dependencies or broken toolchain
+- Breaking changes to existing functionality
+- Ambiguous requirements needing user preference
 
-### Performance
-- Postcard provides compact binary serialization, crucial for network efficiency
-- JSON serialization would significantly increase bandwidth usage
-- Binary formats are more efficient for cryptographic operations
+**Provide**: Progress summary, specific problem, attempted solutions, next steps, clean code state
 
-## Code Reuse and Type Integration
+## Testing & Quality
 
-### CRITICAL: Always reuse and extend existing types and infrastructure
+### CRITICAL: Before completion, MUST run:
+1. `cargo nextest run --all` (fix all failing tests)
+2. `cargo +nightly clippy --all --tests --examples --allow-dirty --allow-staged --fix`
+3. Fix remaining clippy issues
 
-**Before creating any new types or structures, ALWAYS investigate existing codebase:**
+### Test Requirements
+- Unit tests for new functions/methods/modules
+- Integration tests for user-facing functionality  
+- Test error paths and edge cases
+- Test serialization round trips with postcard
+- Descriptive test names explaining what is tested
 
-- ✅ **DO**: Search the codebase thoroughly for existing similar types, structures, and patterns
-- ✅ **DO**: Extend existing types with new fields or variants when possible
-- ✅ **DO**: Amend existing enums with new variants rather than creating parallel enums
-- ✅ **DO**: Reuse existing infrastructure, services, and patterns
-- ✅ **DO**: Build upon existing state machines, events, and data structures
-- ❌ **DON'T**: Create new types that are functionally similar to existing ones
-- ❌ **DON'T**: Duplicate existing patterns or infrastructure
-- ❌ **DON'T**: Reinvent existing abstractions unless explicitly requested
+## Documentation
 
-### Investigation Process
-
-**MANDATORY steps before creating new types:**
-
-1. **Search for existing types** using semantic search and grep:
-   - Look for similar field names, purposes, or functionality
-   - Check `app-primitives`, `wire-protocol`, `state-machine` crates first
-   - Examine existing events, states, and message types
-
-2. **Analyze existing patterns**:
-   - How are similar concepts already modeled?
-   - What existing enums or structs could be extended?
-   - Are there existing traits or interfaces to implement?
-
-3. **Consider extension over creation**:
-   - Can existing structs be extended with new fields?
-   - Can existing enums be extended with new variants?
-   - Can existing services be enhanced rather than replaced?
-
-### Extension Examples
-
-**✅ CORRECT - Extend existing enum:**
-```rust
-// Existing enum in codebase
-#[derive(Serialize, Deserialize)]
-#[repr(u8)]
-enum GroupEvent {
-    MemberJoined = 0,
-    MemberLeft = 1,
-    // Add new variant instead of creating new enum
-    MemberPromoted = 2,
-}
-```
-
-**❌ INCORRECT - Create parallel enum:**
-```rust
-// DON'T create a separate similar enum
-#[derive(Serialize, Deserialize)]
-#[repr(u8)]
-enum MembershipEvent {
-    Promoted = 0,
-    Demoted = 1,
-}
-```
-
-**✅ CORRECT - Extend existing struct:**
-```rust
-// Existing struct in codebase
-#[derive(Serialize, Deserialize)]
-struct GroupMetadata {
-    name: String,
-    description: String,
-    // Add new field instead of creating new struct
-    tags: BTreeSet<String>,
-}
-```
-
-**❌ INCORRECT - Create parallel struct:**
-```rust
-// DON'T create a separate similar struct
-#[derive(Serialize, Deserialize)]
-struct GroupTags {
-    group_id: String,
-    tags: BTreeSet<String>,
-}
-```
-
-### When New Types Are Appropriate
-
-**ONLY create new types when:**
-
-1. **Explicitly requested** by the user to create fresh/new types
-2. **Fundamentally different domain** - the concept doesn't fit existing abstractions
-3. **Clear separation of concerns** - mixing with existing types would violate single responsibility
-4. **Different serialization requirements** - incompatible with existing wire protocols
-5. **Performance isolation** - specific performance characteristics needed
-
-### Integration Guidelines
-
-**When extending existing infrastructure:**
-
-- ✅ **DO**: Follow existing naming conventions and patterns
-- ✅ **DO**: Maintain backward compatibility when possible
-- ✅ **DO**: Add comprehensive tests for new functionality
-- ✅ **DO**: Update existing documentation and examples
-- ✅ **DO**: Use existing error types and patterns
-- ❌ **DON'T**: Break existing APIs without careful consideration
-- ❌ **DON'T**: Introduce inconsistent patterns or styles
-
-### Codebase Exploration Strategy
-
-**Use these tools to find existing types:**
-
-1. **Semantic search**: "How are [concept] types modeled?" or "Where are [similar_features] implemented?"
-2. **Grep search**: Look for similar field names, struct names, or enum variants
-3. **File exploration**: Check related modules and crates systematically
-4. **Example analysis**: Look at existing examples and tests for patterns
-
-**Key locations to investigate:**
-
-- `app-primitives/src/` - Core domain types and structures
-- `wire-protocol/src/` - Network communication types
-- `state-machine/src/` - State and event types
-- `message-store/src/` - Message-related structures
-- Existing examples and tests for usage patterns
-
-## Migration Guidelines
-
-If you encounter existing serde_json usage:
-1. Evaluate if it's truly necessary for human readability
-2. If not, replace with postcard equivalents:
-   - `serde_json::to_string()` → `postcard::to_stdvec()`
-   - `serde_json::from_str()` → `postcard::from_bytes()`
-   - `serde_json::to_vec()` → `postcard::to_stdvec()`
-3. Update error handling to work with `postcard::Error`
-4. Ensure structs have `Serialize, Deserialize` derives (same as before)
-
-## Problem Handling and Escalation
-
-### CRITICAL: When to stop and escalate instead of compromising
-
-**When facing difficulties, particularly API evolution and type-based compilation problems:**
-
-- ❌ **DON'T**: Fallback to implementing "a simpler custom version" with reduced features
-- ❌ **DON'T**: Add TODO-commented code as placeholders for missing functionality
-- ❌ **DON'T**: Create workarounds that compromise the project's architecture or standards
-- ❌ **DON'T**: Implement incomplete solutions that would require significant rework later
-
-### When to escalate to the user
-
-**STOP and hand over to the user when encountering:**
-
-1. **API evolution conflicts**: When existing APIs have changed and cause type-based compilation errors that can't be resolved by updating imports or minor adjustments
-2. **Complex architectural decisions**: When the solution requires fundamental changes to project structure or design patterns
-3. **Missing dependencies or broken toolchain**: When the development environment has issues that prevent compilation
-4. **Ambiguous requirements**: When multiple valid approaches exist and user preference is needed
-5. **Breaking changes**: When the requested feature would require breaking existing functionality
-
-### How to escalate properly
-
-**When stopping, provide:**
-
-1. **Progress summary**: Clear description of what was accomplished
-2. **Specific problem**: Exact compilation errors, API conflicts, or technical blockers encountered
-3. **Attempted solutions**: What approaches were tried and why they didn't work
-4. **Next steps recommendation**: Suggested path forward or alternative approaches
-5. **Code state**: Ensure any partial work is in a clean, and either compilable state or provide the command to easily test the compilation error (revert if necessary) 
-
-### Escalation Example
-
-```
-I've implemented the message parsing logic and integrated it with the existing state machine, 
-but encountered a type compatibility issue with the updated MLS API in version X.Y.Z:
-
-Error: `MlsGroup::new()` now requires a `GroupConfig` parameter that wasn't present in the 
-previous version, and the existing codebase uses patterns that are no longer compatible.
-
-Attempted solutions:
-- Updated imports and checked for migration guides
-- Tried adapting existing GroupConfig usage from other parts of the codebase
-- Investigated if the functionality can be achieved with the new API
-
-The change appears to require architectural decisions about how GroupConfig should be 
-managed across the application. Rather than implementing a simplified version that 
-doesn't fully utilize the new API capabilities, I'm handing this back for guidance 
-on the preferred approach.
-
-Current code is compilable with the previous functionality intact.
-```
-
-## Testing & Quality Assurance
-
-### CRITICAL: Always verify your changes before completion
-
-**Before telling the user you're done, you MUST:**
-
-1. **Run the complete test suite:**
-   ```bash
-   cargo nextest run --all
-   ```
-   - Fix any failing tests before proceeding
-   - All tests must pass before completion
-
-2. **Run clippy and fix all issues:**
-   ```bash
-   cargo +nightly clippy --all --tests --examples --allow-dirty --allow-staged --fix
-   ```
-   - Fix any clippy warnings/errors that remain after auto-fix
-   - Ensure clean compilation across all targets
-
-3. **Verify compilation:**
-   - Ensure all crates, tests, and examples compile successfully
-   - Check that no compilation errors remain
-
-### Testing Guidelines
-- Always test serialization/deserialization round trips with postcard
-- Use `postcard::to_stdvec()` and `postcard::from_bytes()` in tests
-- Binary compatibility tests should use postcard format
-- Run `cargo nextest run --all` to execute the full test suite
-- Never skip test verification when making code changes
-
-### Code Quality
-- Use `cargo clippy` to catch common mistakes and improve code quality
-- Fix all clippy warnings before completion
-- Ensure consistent coding style across the project
-
-### Test Coverage
-- **Write unit tests** for new functions, methods, and modules whenever feasible
-- **Write integration tests** for new features and user-facing functionality
-- **Test error paths** and edge cases, not just happy paths
-- **Use descriptive test names** that explain what is being tested
-- **Group related tests** using `mod tests` blocks or separate test files
-- **Mock external dependencies** when writing unit tests
-- **Test serialization round trips** when adding new serializable types
-
-## Documentation Guidelines
-
-### What NOT to create (unless explicitly requested)
-- ❌ **DON'T** proactively create long markdown files or README files
-- ❌ **DON'T** create extensive documentation files without explicit user request
-- ❌ **DON'T** generate verbose documentation that won't be maintained
-
-### What TO create and maintain
-- ✅ **DO** write clear inline code documentation (`///` doc comments)
-- ✅ **DO** document public APIs, function parameters, and return values
-- ✅ **DO** keep inline documentation up-to-date with code changes
-- ✅ **DO** create CLI usage documentation for new command-line examples
-- ✅ **DO** update existing READMEs and docs when making user-facing changes
-
-### Documentation Quality
-- **Be concise but clear** in inline documentation
-- **Document the "why" not just the "what"** for complex logic
-- **Include examples** in doc comments for non-trivial functions
-- **Update related documentation** when changing user-facing functionality
-- **Check existing docs** for accuracy when modifying public interfaces
-
-### End-of-Task Documentation Check
-When creating user-facing code, always verify:
-1. Are there existing READMEs that need updates?
-2. Do CLI examples need usage documentation?
-3. Are public API changes documented?
-4. Is inline documentation accurate and up-to-date?
+### Requirements
+- ✅ Write clear inline documentation (`///` doc comments) for public APIs
+- ✅ Update existing READMEs when making user-facing changes
+- ❌ Don't create new markdown files unless explicitly requested
 
 ---
 
-**WORKFLOW SUMMARY:**
-1. **FIRST**: Search existing codebase for similar types/patterns before creating anything new
-2. Extend existing types/infrastructure when possible rather than creating new ones
-3. Make your code changes using postcard (never serde_json)
-4. Write unit/integration tests for new functionality
-5. Add clear inline documentation for public APIs
-6. Run `cargo nextest run --all` and fix any test failures
-7. Run `cargo +nightly clippy --all --tests --examples --allow-dirty --allow-staged --fix`
-8. Fix any remaining clippy issues
-9. Check if existing docs need updates for user-facing changes
-10. Only then tell the user you're complete
-
-**Remember: This project prioritizes efficiency and binary compatibility. Always default to postcard unless you have a compelling reason for human-readable JSON format.**
+## WORKFLOW SUMMARY
+1. Search existing codebase for similar types/patterns first
+2. Extend existing types/infrastructure when possible  
+3. Use postcard for serialization (never serde_json)
+4. Write comprehensive unit/integration tests
+5. Add inline documentation for public APIs
+6. Run `cargo nextest run --all` and fix failures
+7. Run clippy and fix all issues
+8. Update existing docs if needed
