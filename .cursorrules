@@ -5,11 +5,12 @@
 - **CRITICAL**: Implement unit tests and end-to-end tests instead of examples
 - Unit tests first; e2e tests when unit tests don't provide sufficient coverage
 - Point out conflicts with existing code
+- ❌ **NEVER** create bash scripts - use testable Rust code instead
 
 ## CRITICAL Standards
 
 ### Type Safety
-- ✅ Use strongly-typed enums with `#[repr(u8)]` for network serialization
+- ✅ Use strongly-typed enums for network serialization
 - ✅ Leverage Rust's type system for compile-time error catching
 - ❌ No string-based type discrimination or magic strings
 
