@@ -3,9 +3,7 @@
 
 services:
   zoe-relay:
-    build:
-      context: .
-      dockerfile: Dockerfile
+    image: ghcr.io/acterglobal/zoe-relay/zoe-relay:latest
     container_name: zoe-relay
     restart: unless-stopped
     depends_on:
@@ -58,7 +56,7 @@ services:
       # Only expose Redis if needed for external access
       - "${REDIS_EXTERNAL_PORT:-6379}:6379"
     volumes:
-      - redis_data:/data
+      - zoe_redis_data:/data
       - ./.config/redis.conf:/usr/local/etc/redis/redis.conf:ro
     command: redis-server /usr/local/etc/redis/redis.conf
     networks:
@@ -86,15 +84,15 @@ volumes:
     driver_opts:
       type: none
       o: bind
-      device: ${ZOE_DATA_PATH:-./data}
+      device: ${ZOE_DATA_PATH:-./zoe-relay-data}
   
   # Persistent storage for Redis data
-  redis_data:
+  zoe_redis_data:
     driver: local
     driver_opts:
       type: none
       o: bind
-      device: ${REDIS_DATA_PATH:-./redis-data}
+      device: ${REDIS_DATA_PATH:-./zoe-redis-data}
 
 networks:
   zoe-network:

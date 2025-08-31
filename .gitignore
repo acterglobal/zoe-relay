@@ -2,5 +2,7 @@
 *.private
 *.public
 zoe-relay-data/
+zoe-redis-data/
 target
+.env
 *.bin

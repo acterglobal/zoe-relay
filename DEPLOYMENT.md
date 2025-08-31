@@ -47,6 +47,19 @@ RUST_LOG=info
 
 ### 3. Deploy
 
+**Production (using published images):**
+```bash
+# Start services using published GitHub Container Registry images
+docker-compose up -d
+```
+
+**Development (building locally):**
+```bash
+# Build and start services locally for development
+docker-compose -f docker-compose.dev.yml up -d
+```
+
+**Standard deployment:**
 ```bash
 # Create data directories
 mkdir -p data redis-data
@@ -62,10 +75,40 @@ docker-compose logs -f zoe-relay
 ```
 
 The deployment will:
-- Build the Zoe Relay Server from source
+- **Production**: Use pre-built images from GitHub Container Registry (ghcr.io)
+- **Development**: Build the Zoe Relay Server from source locally
 - Start Redis with persistent storage
 - Auto-generate server keys (saved to `./data/server.key`)
 - Display QR code in logs for client connections
+
+## 📦 Container Images
+
+### Published Images
+
+The project automatically publishes Docker images to GitHub Container Registry (GHCR) on every push to `main` and `develop` branches:
+
+- **Latest stable**: `ghcr.io/acter/zoeyr/zoe-relay:latest`
+- **Development**: `ghcr.io/acter/zoeyr/zoe-relay:develop`
+- **Tagged releases**: `ghcr.io/acter/zoeyr/zoe-relay:v1.0.0`
+
+### Image Tags
+
+- `latest` - Latest stable release from main branch
+- `develop` - Latest development build
+- `main-<sha>` - Specific commit from main branch
+- `develop-<sha>` - Specific commit from develop branch
+- `pr-<number>` - Pull request builds (for testing)
+
+### Using Specific Images
+
+To use a specific image version, update your `docker-compose.yml`:
+
+```yaml
+services:
+  zoe-relay:
+    image: ghcr.io/acter/zoeyr/zoe-relay:v1.0.0  # Use specific version
+    # ... rest of configuration
+```
 
 ### 4. Verify Deployment
 
