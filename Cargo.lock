@@ -9130,8 +9130,10 @@ version = "0.1.0"
 dependencies = [
  "blake3",
  "forward-compatible-enum",
+ "hex",
  "libcrux-ml-dsa",
  "postcard",
+ "qrcode",
  "rand 0.8.5",
  "serde",
  "thiserror 2.0.16",
@@ -9354,6 +9356,7 @@ dependencies = [
  "toml 0.9.5",
  "tracing",
  "tracing-subscriber",
+ "zoe-app-primitives",
  "zoe-blob-store",
  "zoe-client",
  "zoe-e2e-tests",

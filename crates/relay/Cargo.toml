@@ -17,6 +17,7 @@ default = []
 zoe-wire-protocol = { path = "../wire-protocol", features = ["server"] }
 zoe-message-store = { path = "../message-store" }
 zoe-blob-store = { path = "../blob-store" }
+zoe-app-primitives = { path = "../app-primitives" }
 
 # Async runtime
 tokio = { workspace = true, features = ["io-util"] }

@@ -24,8 +24,13 @@ blake3 = { workspace = true }
 # Forward-compatible enum macros
 forward-compatible-enum = { path = "../forward-compatible-enum" }
 
+# QR code generation
+qrcode = "0.14"
+
 [dev-dependencies]
 # Testing utilities
 rand = { workspace = true }
+hex = { workspace = true }
+postcard = { workspace = true }
 
 

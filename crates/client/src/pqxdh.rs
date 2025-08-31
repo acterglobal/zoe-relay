@@ -132,7 +132,6 @@
 //! operations. This ensures compatibility with the project's binary-first
 //! architecture and optimal network efficiency.
 
-use crate::MessagesService;
 use eyeball::{AsyncLock, ObservableWriteGuard, SharedObservable};
 use futures::StreamExt;
 use rand::RngCore;
@@ -1214,7 +1213,7 @@ impl<T: crate::services::MessagesManagerTrait> PqxdhProtocolHandler<'_, T> {
             let msg = session.gen_next_message(self.client_keypair, message, kind)?;
 
             ObservableWriteGuard::update(&mut current_state, |state: &mut PqxdhProtocolState| {
-                state.sessions.insert(session_id.clone(), session); // re-add the changed session
+                state.sessions.insert(*session_id, session); // re-add the changed session
             });
 
             msg

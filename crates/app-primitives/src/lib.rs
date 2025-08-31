@@ -190,14 +190,18 @@
 //! - Check the integration tests in `test/end2end/`
 //! - Review the state machine crate for event processing patterns
 
+pub mod connection;
 pub mod file;
 pub mod group;
 pub mod identity;
 pub mod metadata;
+pub mod qr;
 pub mod relay;
 
+pub use connection::*;
 pub use file::*;
 pub use group::*;
 pub use identity::*;
 pub use metadata::*;
+pub use qr::*;
 pub use relay::*;
