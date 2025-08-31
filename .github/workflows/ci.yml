@@ -195,6 +195,8 @@ jobs:
       - name: Install SQLCipher and Protobuf (macOS)
         if: matrix.os == 'macos-latest'
         run: |
+          # Uninstall any existing cmake to avoid tap conflicts
+          brew uninstall --ignore-dependencies cmake || true
           brew install sqlcipher protobuf cmake llvm
           echo "/opt/homebrew/opt/llvm/bin" >> $GITHUB_PATH
           echo "LIBCLANG_PATH=/opt/homebrew/opt/llvm/lib" >> $GITHUB_ENV
