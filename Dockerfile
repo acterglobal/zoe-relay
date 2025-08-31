@@ -1,0 +1,57 @@
+# Multi-stage Dockerfile for Zoe Relay Server
+FROM rust:1.75-slim as builder
+
+# Install system dependencies for building
+RUN apt-get update && apt-get install -y \
+    pkg-config \
+    libssl-dev \
+    protobuf-compiler \
+    cmake \
+    gcc \
+    libc6-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Set working directory
+WORKDIR /app
+
+# Copy workspace configuration
+COPY Cargo.toml Cargo.lock ./
+COPY crates/ ./crates/
+
+# Build the relay binary in release mode
+RUN cargo build --release --bin zoe-relay
+
+# Runtime stage - minimal image
+FROM debian:bookworm-slim
+
+# Install runtime dependencies
+RUN apt-get update && apt-get install -y \
+    ca-certificates \
+    libssl3 \
+    && rm -rf /var/lib/apt/lists/* \
+    && apt-get clean
+
+# Create app user for security
+RUN useradd -r -s /bin/false -m -d /app zoe
+
+# Set working directory
+WORKDIR /app
+
+# Copy binary from builder stage
+COPY --from=builder /app/target/release/zoe-relay ./zoe-relay
+
+# Create data directory structure
+RUN mkdir -p /app/data && chown -R zoe:zoe /app
+
+# Switch to app user
+USER zoe
+
+# Expose the default port
+EXPOSE 13908
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD timeout 5 bash -c '</dev/tcp/localhost/13908' || exit 1
+
+# Start the relay server
+CMD ["./zoe-relay"]

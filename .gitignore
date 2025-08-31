@@ -1,7 +1,6 @@
 .vscode
 *.private
 *.public
-blob-store-data/
+zoe-relay-data/
 target
-relay_server.key
 *.bin

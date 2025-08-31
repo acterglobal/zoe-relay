@@ -1,0 +1,69 @@
+# Git and version control
+.git/
+.gitignore
+
+# Build artifacts (will be built in container)
+target/
+
+# Development files
+.vscode/
+.idea/
+
+# Documentation
+*.md
+docs/
+
+# Test files
+test/
+**/tests/
+**/*_test.rs
+**/*test*.rs
+
+# Examples
+**/examples/
+
+# Development data and keys
+data/
+redis-data/
+blob-store-data/
+*.bin
+*.private
+*.public
+*.key
+
+# Environment files
+.env
+.env.*
+env.example
+
+# Docker files (except the one being used)
+docker-compose.*.yml
+
+# IDE and editor files
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+
+# Logs
+*.log
+logs/
+
+# Coverage reports
+coverage/
+*.profraw
+
+# Backup files
+*.bak
+*.backup
+
+# Config files (will be mounted as volumes)
+.config/

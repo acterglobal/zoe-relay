@@ -1,34 +1,105 @@
-version: '3.8'
+# Docker Compose for Zoe Relay Server
+# Production-ready setup with Redis and persistent storage
 
 services:
+  zoe-relay:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: zoe-relay
+    restart: unless-stopped
+    depends_on:
+      redis:
+        condition: service_healthy
+    ports:
+      - "${ZOERELAY_PORT:-13908}:${ZOERELAY_PORT:-13908}"
+    environment:
+      # Network configuration
+      - ZOERELAY_INTERFACE=${ZOERELAY_INTERFACE:-0.0.0.0}
+      - ZOERELAY_PORT=${ZOERELAY_PORT:-13908}
+      - ZOERELAY_EXTERNAL_ADDRESSES=${ZOERELAY_EXTERNAL_ADDRESSES}
+      - ZOERELAY_NAME=${ZOERELAY_NAME:-Zoe Relay Server}
+      
+      # Storage configuration
+      - ZOERELAY_DATA_DIR=${ZOERELAY_DATA_DIR:-/app/data}
+      - ZOERELAY_BLOB_DIR=${ZOERELAY_BLOB_DIR}
+      - ZOERELAY_REDIS_URL=${ZOERELAY_REDIS_URL:-redis://redis:6379}
+      
+      # Security configuration (optional - auto-generated if not provided)
+      - ZOERELAY_PRIVATE_KEY=${ZOERELAY_PRIVATE_KEY}
+      - ZOERELAY_KEY_FILE=${ZOERELAY_KEY_FILE}
+      
+      # Logging
+      - RUST_LOG=${RUST_LOG:-info}
+    volumes:
+      # Persistent storage for server keys and blob data
+      - zoe_data:/app/data
+      # Optional: custom configuration
+      # - ./config:/app/config:ro
+    networks:
+      - zoe-network
+    healthcheck:
+      test: ["CMD-SHELL", "timeout 5 bash -c '</dev/tcp/localhost/${ZOERELAY_PORT:-13908}' || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    # Security settings
+    security_opt:
+      - no-new-privileges:true
+    read_only: false  # Need write access for data directory
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=100m
+
   redis:
     image: redis:7-alpine
     container_name: zoe-redis
+    restart: unless-stopped
     ports:
-      - "6379:6379"
+      # Only expose Redis if needed for external access
+      - "${REDIS_EXTERNAL_PORT:-6379}:6379"
     volumes:
       - redis_data:/data
-      - ./.config/redis.conf:/usr/local/etc/redis/redis.conf
+      - ./.config/redis.conf:/usr/local/etc/redis/redis.conf:ro
     command: redis-server /usr/local/etc/redis/redis.conf
-    restart: unless-stopped
+    networks:
+      - zoe-network
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 30s
-
-  redis-commander:
-    image: rediscommander/redis-commander:latest
-    container_name: zoe-redis-commander
-    ports:
-      - "8081:8081"
+    # Security settings
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=50m
     environment:
-      - REDIS_HOSTS=local:redis:6379
-    depends_on:
-      - redis
-    restart: unless-stopped
+      # Optional Redis configuration via environment
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
 
 volumes:
+  # Persistent storage for relay server data (keys, blobs, etc.)
+  zoe_data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${ZOE_DATA_PATH:-./data}
+  
+  # Persistent storage for Redis data
   redis_data:
-    driver: local 
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${REDIS_DATA_PATH:-./redis-data}
+
+networks:
+  zoe-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16

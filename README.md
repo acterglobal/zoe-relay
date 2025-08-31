@@ -9,11 +9,14 @@ A secure, modular messaging relay system built with QUIC transport, tarpc RPC se
 
 ### Prerequisites
 - **Rust 1.75+** with Cargo
-- **Docker** for Redis backend
+- **Redis** (or Docker compose for Redis a local redis)
 - **Linux/macOS** (Windows via WSL)
 
-### 1. Start Redis
+### 1. Start Redis (Development)
 ```bash
+docker-compose -f docker-compose.dev.yml up -d
+
+# Or use the existing development setup
 docker-compose up -d redis
 ```
 
@@ -24,7 +27,7 @@ cargo run --example relay_server
 
 # In another terminal, send a message (replace <SERVER_PUBLIC_KEY> with key from server output)
 cargo run --example relay_send_client -- \
-  --server-public-key <SERVER_PUBLIC_KEY> \
+  --server-public-key <SERVE-relayPUBLIC_KEY> \
   --message "Hello, Zoeyr!"
 
 # In a third terminal, listen for messages
@@ -32,6 +35,12 @@ cargo run --example relay_listen_client -- \
   --authors <SERVER_PUBLIC_KEY> \
   --follow
 ```
+
+## 🚀 Deployment
+
+### Production Deployment with Docker Compose
+
+See the [Deployment Guide](DEPLOYMENT.md) for detailed instructions and configuration options.
 
 ## 🛠️ Development
 
@@ -43,21 +52,8 @@ cargo build --workspace
 # Run tests
 cargo test --workspace
 
-# Run specific examples
-cargo run --example relay_server --package zoe-relay
-cargo run --example upload_download --package zoe-blob-store
 ```
 
-### Docker Environment
-```bash
-# Start full development environment
-docker-compose up -d
-
-# Check Redis
-docker exec zoe-redis redis-cli ping
-
-# Access Redis Commander (web UI)
-open http://localhost:8081
 ```
 
 ## 🤝 Contributing
@@ -65,9 +61,9 @@ open http://localhost:8081
 1. **Setup Development Environment**
    ```bash
    git clone <repository>
-   cd zoeyr
+   cd zoe-relay
    cargo build --workspace
-   docker-compose up -d redis
+   docker-compose -f docker-compose.dev.yml up -d # start a redis
    ```
 
 2. **Run Tests**
@@ -86,6 +82,8 @@ This project is licensed under MIT OR Apache-2.0.
 
 ---
 
-**Getting Started**: Follow the [Quick Start](#-quick-start) guide above, then explore the [examples](crates/relay/examples/) and [documentation](docs/).
+**Getting Started**: 
+- **Development**: Follow the [Quick Start](#-quick-start) guide above
+- **Production**: See the [Deployment Guide](DEPLOYMENT.md) for Docker Compose deployment
 
-**Questions?** Check the [development guide](docs/development.md) or review the [architecture overview](docs/architecture.md).
+**Questions?** Check the [development guide](docs/development.md), [deployment guide](DEPLOYMENT.md), or review the [architecture overview](docs/architecture.md).

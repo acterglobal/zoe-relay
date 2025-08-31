@@ -1,6 +1,7 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use std::{
+    fs,
     net::{IpAddr, SocketAddr},
     path::PathBuf,
 };
@@ -50,14 +51,18 @@ struct Cli {
     )]
     port: u16,
 
-    /// Blob storage directory
+    /// Data directory for all persistent storage (keys, blobs, etc.)
     #[arg(
-        short = 'b',
-        long = "blob-dir",
-        env = "ZOERELAY_BLOB_DIR",
-        default_value = "./blob-store-data"
+        short = 'd',
+        long = "data-dir",
+        env = "ZOERELAY_DATA_DIR",
+        default_value = "./zoe-relay-data"
     )]
-    blob_dir: PathBuf,
+    data_dir: PathBuf,
+
+    /// Blob storage directory (defaults to data-dir/blobs)
+    #[arg(short = 'b', long = "blob-dir", env = "ZOERELAY_BLOB_DIR")]
+    blob_dir: Option<PathBuf>,
 
     /// Redis URL
     #[arg(
@@ -68,9 +73,13 @@ struct Cli {
     )]
     redis_url: String,
 
-    /// Private key for the server (PEM format)
+    /// Private key for the server (PEM format, defaults to data-dir/server.key)
     #[arg(short = 'k', long = "private-key", env = "ZOERELAY_PRIVATE_KEY")]
     private_key: Option<String>,
+
+    /// Private key file path (defaults to data-dir/server.key)
+    #[arg(long = "key-file", env = "ZOERELAY_KEY_FILE")]
+    key_file: Option<PathBuf>,
 
     /// Show the server key
     #[arg(long = "show-key")]
@@ -144,6 +153,73 @@ fn parse_external_address(addr_str: &str) -> Result<NetworkAddress> {
 
     // Assume it's a DNS name without port
     Ok(NetworkAddress::dns(addr_str))
+}
+
+/// Load or generate a server keypair, with persistent storage
+fn load_or_generate_keypair(
+    private_key_pem: Option<&str>,
+    key_file_path: &PathBuf,
+    show_key: bool,
+) -> Result<KeyPair> {
+    // If a private key is provided via environment/CLI, use it
+    if let Some(pem) = private_key_pem {
+        return KeyPair::from_pem(pem)
+            .map_err(|e| anyhow::anyhow!("Failed to parse private key PEM: {}", e));
+    }
+
+    // Try to load existing key from file
+    if key_file_path.exists() {
+        let pem_content = fs::read_to_string(key_file_path)?;
+        let keypair = KeyPair::from_pem(&pem_content)?;
+        info!(
+            "Loaded existing server key from {}",
+            key_file_path.display()
+        );
+        if show_key {
+            println!(
+                "Loaded server keypair ({}):",
+                keypair.public_key().algorithm()
+            );
+            println!("Public key ID: {}", hex::encode(keypair.public_key().id()));
+            println!("Key file: {}", key_file_path.display());
+        }
+        return Ok(keypair);
+    }
+
+    // Generate a new key and save it
+    info!("Generating new Ed25519 keypair");
+    let keypair = KeyPair::generate_ed25519(&mut rand::thread_rng());
+
+    // Create parent directory if it doesn't exist
+    if let Some(parent) = key_file_path.parent() {
+        fs::create_dir_all(parent).map_err(|e| {
+            anyhow::anyhow!(
+                "Failed to create data directory {}: {}",
+                parent.display(),
+                e
+            )
+        })?;
+    }
+
+    // Save the key to file
+    let pem_string = keypair
+        .to_pem()
+        .map_err(|e| anyhow::anyhow!("Failed to encode keypair to PEM: {}", e))?;
+
+    fs::write(key_file_path, &pem_string)
+        .map_err(|e| anyhow::anyhow!("Failed to save key to {}: {}", key_file_path.display(), e))?;
+
+    info!("Saved new server key to {}", key_file_path.display());
+
+    if show_key {
+        println!("Generated server keypair ({}):", Algorithm::Ed25519);
+        println!("Public key ID: {}", hex::encode(keypair.public_key().id()));
+        println!("Key file: {}", key_file_path.display());
+        println!("\nPrivate key (PEM format):");
+        println!("{}", pem_string);
+    }
+
+    Ok(keypair)
 }
 
 /// Display a QR code for relay server connection information
@@ -273,31 +349,14 @@ async fn main() -> Result<()> {
 
     let address = SocketAddr::from((cli.interface.parse::<IpAddr>()?, cli.port));
 
-    // Load or generate server keypair
-    let server_keypair = if let Some(private_key_pem) = cli.private_key {
-        // Load keypair from PEM string (from environment variable or command line)
-        KeyPair::from_pem(&private_key_pem)
-            .map_err(|e| anyhow::anyhow!("Failed to parse private key PEM: {}", e))?
-    } else {
-        // Generate a new Ed25519 keypair if no key is provided
-        info!("No private key provided, generating new Ed25519 keypair");
-        let server_keypair = KeyPair::generate_ed25519(&mut rand::thread_rng());
-        if cli.show_key {
-            println!("Generated server keypair ({}):", Algorithm::Ed25519);
-            println!(
-                "Public key ID: {}",
-                hex::encode(server_keypair.public_key().id())
-            );
-            println!("\nPrivate key (PEM format):");
-            println!(
-                "{}",
-                server_keypair
-                    .to_pem()
-                    .expect("Failed to encode keypair to PEM")
-            );
-        }
-        server_keypair
-    };
+    // Determine paths for data storage
+    let data_dir = &cli.data_dir;
+    let blob_dir = cli.blob_dir.unwrap_or_else(|| data_dir.join("blobs"));
+    let key_file = cli.key_file.unwrap_or_else(|| data_dir.join("server.key"));
+
+    // Load or generate server keypair with persistent storage
+    let server_keypair =
+        load_or_generate_keypair(cli.private_key.as_deref(), &key_file, cli.show_key)?;
 
     info!("Starting Zoe Relay Server");
 
@@ -305,7 +364,7 @@ async fn main() -> Result<()> {
         .server_keypair(server_keypair)
         .address(address)
         .redis_url(cli.redis_url.clone())
-        .blob_dir(cli.blob_dir.clone())
+        .blob_dir(blob_dir)
         .build()
         .await?;
 
