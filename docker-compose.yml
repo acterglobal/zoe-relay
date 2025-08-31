@@ -22,7 +22,6 @@ services:
       
       # Storage configuration
       - ZOERELAY_DATA_DIR=${ZOERELAY_DATA_DIR:-/app/data}
-      - ZOERELAY_BLOB_DIR=${ZOERELAY_BLOB_DIR}
       - ZOERELAY_REDIS_URL=${ZOERELAY_REDIS_URL:-redis://redis:6379}
       
       # Security configuration (optional - auto-generated if not provided)
