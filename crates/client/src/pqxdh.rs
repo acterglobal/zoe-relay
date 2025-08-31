@@ -742,9 +742,7 @@ impl<'a, T: crate::services::MessagesManagerTrait> PqxdhProtocolHandler<'a, T> {
     {
         let protocol = self.state.get().await.protocol.clone();
         // Discover inbox
-        let (inbox, inbox_tag) = self
-            .fetch_pqxdh_inbox(target_service_key, protocol)
-            .await?;
+        let (inbox, inbox_tag) = self.fetch_pqxdh_inbox(target_service_key, protocol).await?;
 
         // Establish session
         let session = self
