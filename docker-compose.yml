@@ -3,7 +3,9 @@
 
 services:
   zoe-relay:
-    image: ghcr.io/acterglobal/zoe-relay/zoe-relay:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
     container_name: zoe-relay
     restart: unless-stopped
     depends_on:
