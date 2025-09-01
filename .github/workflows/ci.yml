@@ -146,6 +146,7 @@ jobs:
     name: Zoe Client Compile
     runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
         include:
           # Apple targets - run on macOS

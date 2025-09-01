@@ -41,6 +41,8 @@ jobs:
           ZOERELAY_NAME=Test Relay Server
           ZOERELAY_DATA_DIR=/app/data
           ZOERELAY_REDIS_URL=redis://redis:6379
+          ZOE_DATA_PATH=./zoe-relay-data
+          REDIS_DATA_PATH=./zoe-redis-data
           RUST_LOG=info
           EOF
 
