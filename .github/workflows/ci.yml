@@ -201,6 +201,12 @@ jobs:
           echo "/opt/homebrew/opt/llvm/bin" >> $GITHUB_PATH
           echo "LIBCLANG_PATH=/opt/homebrew/opt/llvm/lib" >> $GITHUB_ENV
           
+      - name: Install bindgen-cli (non-windows)
+        if: matrix.os != 'windows-latest'
+        run: |
+          # Install bindgen-cli for aws-lc-sys cross-compilation
+          cargo install --force --locked bindgen-cli
+
       - name: Install Protobuf and CMake (Windows)
         if: matrix.os == 'windows-latest'
         run: |
@@ -215,11 +221,6 @@ jobs:
           unzip -q android-ndk-r25c-linux.zip
           echo "ANDROID_NDK_HOME=$PWD/android-ndk-r25c" >> $GITHUB_ENV
           echo "NDK_HOME=$PWD/android-ndk-r25c" >> $GITHUB_ENV
-          
-      - name: Install bindgen-cli (Linux)
-        if: contains(matrix.target, 'android') && matrix.os == 'ubuntu-latest'
-        run: |
-          cargo install --force --locked bindgen-cli
 
       - name: Setup Android environment (Linux)
         if: contains(matrix.target, 'android') && matrix.os == 'ubuntu-latest'

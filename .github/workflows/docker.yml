@@ -117,10 +117,7 @@ jobs:
           echo "Using image: $IMAGE_TAG"
           
           # Modify docker-compose to use the built image
-          sed -i "s|build:|#build:|g" docker-compose.yml
-          sed -i "s|context: \.|#context: \.|g" docker-compose.yml
-          sed -i "s|dockerfile: Dockerfile|#dockerfile: Dockerfile|g" docker-compose.yml
-          sed -i "s|container_name: zoe-relay|image: $IMAGE_TAG\n    container_name: zoe-relay|g" docker-compose.yml
+          sed -i "s|image: ghcr.io/acterglobal/zoe-relay/zoe-relay:latest|image: $IMAGE_TAG|g" docker-compose.yml
           
           # Start services
           docker compose up -d
