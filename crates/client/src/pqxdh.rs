@@ -138,7 +138,7 @@ use rand::RngCore;
 use serde::{Deserialize, Serialize};
 
 use std::collections::BTreeMap;
-
+use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use thiserror::Error;
 
@@ -469,14 +469,14 @@ impl PqxdhProtocolState {
 /// - **Session Management**: Tracks multiple concurrent sessions by user ID
 /// - **Privacy Preserving**: Uses randomized channel IDs and derived tags
 /// - **Type Safety**: Generic over message payload types with compile-time safety
-pub struct PqxdhProtocolHandler<'a, T: crate::services::MessagesManagerTrait> {
-    messages_manager: &'a T,
-    client_keypair: &'a zoe_wire_protocol::KeyPair,
+pub struct PqxdhProtocolHandler<T: crate::services::MessagesManagerTrait> {
+    messages_manager: Arc<T>,
+    client_keypair: Arc<zoe_wire_protocol::KeyPair>,
     /// Observable state that can be subscribed to for reactive programming
     state: SharedObservable<PqxdhProtocolState, AsyncLock>,
 }
 
-impl<'a, T: crate::services::MessagesManagerTrait> PqxdhProtocolHandler<'a, T> {
+impl<T: crate::services::MessagesManagerTrait> PqxdhProtocolHandler<T> {
     /// Creates a new protocol handler for a specific PQXDH protocol
     ///
     /// This creates a fresh handler with empty state that can be used either as:
@@ -504,8 +504,8 @@ impl<'a, T: crate::services::MessagesManagerTrait> PqxdhProtocolHandler<'a, T> {
     /// # }
     /// ```
     pub fn new(
-        messages_manager: &'a T,
-        client_keypair: &'a zoe_wire_protocol::KeyPair,
+        messages_manager: Arc<T>,
+        client_keypair: Arc<zoe_wire_protocol::KeyPair>,
         protocol: PqxdhInboxProtocol,
     ) -> Self {
         let initial_state = PqxdhProtocolState::new(protocol);
@@ -550,8 +550,8 @@ impl<'a, T: crate::services::MessagesManagerTrait> PqxdhProtocolHandler<'a, T> {
     /// # fn load_from_database() -> Result<PqxdhProtocolState> { todo!() }
     /// ```
     pub fn from_state(
-        messages_manager: &'a T,
-        client_keypair: &'a zoe_wire_protocol::KeyPair,
+        messages_manager: Arc<T>,
+        client_keypair: Arc<zoe_wire_protocol::KeyPair>,
         state: PqxdhProtocolState,
     ) -> Self {
         let state = SharedObservable::new_async(state);
@@ -647,7 +647,7 @@ impl<'a, T: crate::services::MessagesManagerTrait> PqxdhProtocolHandler<'a, T> {
 
         // Generate prekey bundle with private keys
         let (prekey_bundle, private_keys) =
-            create_pqxdh_prekey_bundle_with_private_keys(self.client_keypair, 5)?;
+            create_pqxdh_prekey_bundle_with_private_keys(&self.client_keypair, 5)?;
 
         // Create inbox
         let inbox = PqxdhInbox::new(
@@ -669,7 +669,7 @@ impl<'a, T: crate::services::MessagesManagerTrait> PqxdhProtocolHandler<'a, T> {
         );
 
         let inbox_message_full =
-            MessageFull::new(inbox_message, self.client_keypair).map_err(|e| {
+            MessageFull::new(inbox_message, &self.client_keypair).map_err(|e| {
                 PqxdhError::MessageCreation(format!(
                     "Failed to create MessageFull for inbox: {}",
                     e
@@ -734,7 +734,7 @@ impl<'a, T: crate::services::MessagesManagerTrait> PqxdhProtocolHandler<'a, T> {
         &mut self,
         target_service_key: &VerifyingKey,
         initial_message: &O,
-    ) -> Result<(PqxdhSessionId, impl futures::Stream<Item = I> + 'a)>
+    ) -> Result<(PqxdhSessionId, impl futures::Stream<Item = I>)>
     where
         O: serde::Serialize + for<'de> serde::Deserialize<'de> + Clone,
         I: serde::Serialize + for<'de> serde::Deserialize<'de> + Clone,
@@ -775,7 +775,7 @@ impl<'a, T: crate::services::MessagesManagerTrait> PqxdhProtocolHandler<'a, T> {
         &self,
         my_session_id: PqxdhSessionId,
         catch_up: bool,
-    ) -> Result<impl futures::Stream<Item = I> + 'a>
+    ) -> Result<impl futures::Stream<Item = I>>
     where
         I: serde::Serialize + for<'de> serde::Deserialize<'de> + Clone,
     {
@@ -963,7 +963,7 @@ impl<'a, T: crate::services::MessagesManagerTrait> PqxdhProtocolHandler<'a, T> {
 
 // Internal functions
 
-impl<T: crate::services::MessagesManagerTrait> PqxdhProtocolHandler<'_, T> {
+impl<T: crate::services::MessagesManagerTrait> PqxdhProtocolHandler<T> {
     /// Fetch a PQXDH inbox using the trait method
     async fn fetch_pqxdh_inbox<U: for<'de> Deserialize<'de>>(
         &self,
@@ -1030,7 +1030,7 @@ impl<T: crate::services::MessagesManagerTrait> PqxdhProtocolHandler<'_, T> {
 
         // Initiate PQXDH
         let (initial_message, shared_secret) = pqxdh_initiate(
-            self.client_keypair,
+            &self.client_keypair,
             prekey_bundle,
             &combined_payload_bytes,
             &mut rng,
@@ -1048,7 +1048,7 @@ impl<T: crate::services::MessagesManagerTrait> PqxdhProtocolHandler<'_, T> {
             target_tags,
         );
 
-        let message_full = MessageFull::new(message, self.client_keypair).map_err(|e| {
+        let message_full = MessageFull::new(message, &self.client_keypair).map_err(|e| {
             PqxdhError::MessageCreation(format!("Failed to create initial message: {}", e))
         })?;
 
@@ -1210,7 +1210,7 @@ impl<T: crate::services::MessagesManagerTrait> PqxdhProtocolHandler<'_, T> {
                 return Err(PqxdhError::SessionNotFound);
             };
 
-            let msg = session.gen_next_message(self.client_keypair, message, kind)?;
+            let msg = session.gen_next_message(&self.client_keypair, message, kind)?;
 
             ObservableWriteGuard::update(&mut current_state, |state: &mut PqxdhProtocolState| {
                 state.sessions.insert(*session_id, session); // re-add the changed session
@@ -1398,7 +1398,7 @@ mod tests {
     }
 
     fn create_test_inbox() -> PqxdhInbox {
-        let keypair = create_test_keypair();
+        let keypair = Arc::new(create_test_keypair());
         let (prekey_bundle, _) = create_pqxdh_prekey_bundle_with_private_keys(&keypair, 3).unwrap();
         PqxdhInbox::new(InboxType::Public, prekey_bundle, Some(1024), None)
     }
@@ -1418,12 +1418,12 @@ mod tests {
         MessageFull::new(message, author).unwrap()
     }
 
-    type TestPqxdhHandler<'a> = PqxdhProtocolHandler<'a, MockMessagesManagerTrait>;
+    type TestPqxdhHandler = PqxdhProtocolHandler<MockMessagesManagerTrait>;
 
     #[tokio::test]
     async fn test_publish_service_success() {
         let mut mock_manager = MockMessagesManagerTrait::new();
-        let keypair = create_test_keypair();
+        let keypair = Arc::new(create_test_keypair());
 
         // Mock the publish call
         mock_manager.expect_publish().times(1).returning(|_| {
@@ -1432,8 +1432,11 @@ mod tests {
             })
         });
 
-        let mut handler =
-            TestPqxdhHandler::new(&mock_manager, &keypair, PqxdhInboxProtocol::EchoService);
+        let mut handler = TestPqxdhHandler::new(
+            Arc::new(mock_manager),
+            keypair.clone(),
+            PqxdhInboxProtocol::EchoService,
+        );
 
         let result = handler.publish_service(false).await;
         assert!(result.is_ok());
@@ -1449,10 +1452,13 @@ mod tests {
     #[tokio::test]
     async fn test_publish_service_already_published() {
         let mock_manager = MockMessagesManagerTrait::new();
-        let keypair = create_test_keypair();
+        let keypair = Arc::new(create_test_keypair());
 
-        let mut handler =
-            TestPqxdhHandler::new(&mock_manager, &keypair, PqxdhInboxProtocol::EchoService);
+        let mut handler = TestPqxdhHandler::new(
+            Arc::new(mock_manager),
+            keypair.clone(),
+            PqxdhInboxProtocol::EchoService,
+        );
 
         // Manually set inbox_tag to simulate already published state
 
@@ -1475,7 +1481,7 @@ mod tests {
     #[tokio::test]
     async fn test_publish_service_force_overwrite() {
         let mut mock_manager = MockMessagesManagerTrait::new();
-        let keypair = create_test_keypair();
+        let keypair = Arc::new(create_test_keypair());
 
         // Mock the publish call
         mock_manager.expect_publish().times(1).returning(|_| {
@@ -1484,8 +1490,11 @@ mod tests {
             })
         });
 
-        let mut handler =
-            TestPqxdhHandler::new(&mock_manager, &keypair, PqxdhInboxProtocol::EchoService);
+        let mut handler = TestPqxdhHandler::new(
+            Arc::new(mock_manager),
+            keypair.clone(),
+            PqxdhInboxProtocol::EchoService,
+        );
 
         // Manually set inbox_tag to simulate already published state
 
@@ -1508,7 +1517,7 @@ mod tests {
     #[tokio::test]
     async fn test_connect_to_service_success() {
         let mut mock_manager = MockMessagesManagerTrait::new();
-        let client_keypair = create_test_keypair();
+        let client_keypair = Arc::new(create_test_keypair());
         let service_keypair = create_test_keypair();
         let service_key = service_keypair.public_key();
 
@@ -1542,8 +1551,8 @@ mod tests {
             .returning(|_, _| Ok(Box::pin(stream::empty())));
 
         let mut handler = TestPqxdhHandler::new(
-            &mock_manager,
-            &client_keypair,
+            Arc::new(mock_manager),
+            client_keypair.clone(),
             PqxdhInboxProtocol::EchoService,
         );
 
@@ -1555,6 +1564,9 @@ mod tests {
         assert!(result.is_ok());
         let (session_id, _stream) = result.unwrap();
 
+        // Drop the stream to release the borrow on handler
+        drop(_stream);
+
         // Verify session was created
         let state = handler.state.read().await;
         assert!(state.sessions.contains_key(&session_id));
@@ -1564,7 +1576,7 @@ mod tests {
     #[tokio::test]
     async fn test_connect_to_service_inbox_not_found() {
         let mut mock_manager = MockMessagesManagerTrait::new();
-        let client_keypair = create_test_keypair();
+        let client_keypair = Arc::new(create_test_keypair());
         let service_keypair = create_test_keypair();
         let service_key = service_keypair.public_key();
 
@@ -1579,8 +1591,8 @@ mod tests {
             .returning(|_, _| Ok(None));
 
         let mut handler = TestPqxdhHandler::new(
-            &mock_manager,
-            &client_keypair,
+            Arc::new(mock_manager),
+            client_keypair.clone(),
             PqxdhInboxProtocol::EchoService,
         );
 
@@ -1596,7 +1608,7 @@ mod tests {
     #[tokio::test]
     async fn test_send_message_success() {
         let mut mock_manager = MockMessagesManagerTrait::new();
-        let keypair = create_test_keypair();
+        let keypair = Arc::new(create_test_keypair());
 
         // Mock publish call
         mock_manager.expect_publish().times(1).returning(|_| {
@@ -1605,8 +1617,11 @@ mod tests {
             })
         });
 
-        let handler =
-            TestPqxdhHandler::new(&mock_manager, &keypair, PqxdhInboxProtocol::EchoService);
+        let handler = TestPqxdhHandler::new(
+            Arc::new(mock_manager),
+            keypair.clone(),
+            PqxdhInboxProtocol::EchoService,
+        );
 
         // Create a test session
         let session_id: PqxdhSessionId = [42u8; 32];
@@ -1641,10 +1656,13 @@ mod tests {
     #[tokio::test]
     async fn test_send_message_session_not_found() {
         let mock_manager = MockMessagesManagerTrait::new();
-        let keypair = create_test_keypair();
+        let keypair = Arc::new(create_test_keypair());
 
-        let handler =
-            TestPqxdhHandler::new(&mock_manager, &keypair, PqxdhInboxProtocol::EchoService);
+        let handler = TestPqxdhHandler::new(
+            Arc::new(mock_manager),
+            keypair.clone(),
+            PqxdhInboxProtocol::EchoService,
+        );
 
         let session_id: PqxdhSessionId = [42u8; 32];
         let message = "Test message".to_string();
@@ -1657,7 +1675,7 @@ mod tests {
     #[tokio::test]
     async fn test_inbox_stream_success() {
         let mut mock_manager = MockMessagesManagerTrait::new();
-        let keypair = create_test_keypair();
+        let keypair = Arc::new(create_test_keypair());
 
         // Mock ensure_contains_filter and filtered_messages_stream
         mock_manager
@@ -1670,8 +1688,11 @@ mod tests {
             .times(1)
             .returning(|_| Box::pin(stream::empty()));
 
-        let handler =
-            TestPqxdhHandler::new(&mock_manager, &keypair, PqxdhInboxProtocol::EchoService);
+        let handler = TestPqxdhHandler::new(
+            Arc::new(mock_manager),
+            keypair.clone(),
+            PqxdhInboxProtocol::EchoService,
+        );
 
         // Set up service provider state
 
@@ -1698,10 +1719,13 @@ mod tests {
     #[tokio::test]
     async fn test_inbox_stream_service_not_published() {
         let mock_manager = MockMessagesManagerTrait::new();
-        let keypair = create_test_keypair();
+        let keypair = Arc::new(create_test_keypair());
 
-        let handler =
-            TestPqxdhHandler::new(&mock_manager, &keypair, PqxdhInboxProtocol::EchoService);
+        let handler = TestPqxdhHandler::new(
+            Arc::new(mock_manager),
+            keypair.clone(),
+            PqxdhInboxProtocol::EchoService,
+        );
 
         let result = handler.inbox_stream::<String>().await;
         assert!(matches!(result, Err(PqxdhError::ServiceNotPublished)));
@@ -1710,12 +1734,15 @@ mod tests {
     /// Test state serialization and restoration
     #[tokio::test]
     async fn test_state_persistence() {
-        let mock_manager = MockMessagesManagerTrait::new();
-        let keypair = create_test_keypair();
+        let mock_manager = Arc::new(MockMessagesManagerTrait::new());
+        let keypair = Arc::new(create_test_keypair());
 
         // Create handler with initial state
-        let original_handler =
-            TestPqxdhHandler::new(&mock_manager, &keypair, PqxdhInboxProtocol::EchoService);
+        let original_handler = TestPqxdhHandler::new(
+            mock_manager.clone(),
+            keypair.clone(),
+            PqxdhInboxProtocol::EchoService,
+        );
 
         // Add some state
         let session_id: PqxdhSessionId = [99u8; 32];
@@ -1751,7 +1778,7 @@ mod tests {
         // Deserialize and create new handler
         let restored_state: PqxdhProtocolState = postcard::from_bytes(&serialized_state).unwrap();
         let restored_handler =
-            TestPqxdhHandler::from_state(&mock_manager, &keypair, restored_state);
+            TestPqxdhHandler::from_state(mock_manager.clone(), keypair.clone(), restored_state);
 
         // Verify state was restored correctly
         let restored_state = restored_handler.state.read().await;
@@ -1770,7 +1797,7 @@ mod tests {
     #[tokio::test]
     async fn test_error_handling_scenarios() {
         let mut mock_manager = MockMessagesManagerTrait::new();
-        let keypair = create_test_keypair();
+        let keypair = Arc::new(create_test_keypair());
 
         // Test RPC error during publish
         mock_manager
@@ -1778,8 +1805,11 @@ mod tests {
             .times(1)
             .returning(|_| Err(crate::ClientError::Generic("Network error".to_string())));
 
-        let mut handler =
-            TestPqxdhHandler::new(&mock_manager, &keypair, PqxdhInboxProtocol::EchoService);
+        let mut handler = TestPqxdhHandler::new(
+            Arc::new(mock_manager),
+            keypair.clone(),
+            PqxdhInboxProtocol::EchoService,
+        );
 
         let result = handler.publish_service(false).await;
         assert!(matches!(result, Err(PqxdhError::MessagesService(_))));
@@ -1789,10 +1819,13 @@ mod tests {
     #[tokio::test]
     async fn test_multiple_session_management() {
         let mock_manager = MockMessagesManagerTrait::new();
-        let keypair = create_test_keypair();
+        let keypair = Arc::new(create_test_keypair());
 
-        let handler =
-            TestPqxdhHandler::new(&mock_manager, &keypair, PqxdhInboxProtocol::EchoService);
+        let handler = TestPqxdhHandler::new(
+            Arc::new(mock_manager),
+            keypair.clone(),
+            PqxdhInboxProtocol::EchoService,
+        );
 
         // Create multiple test sessions
         let session_ids = [[1u8; 32], [2u8; 32], [3u8; 32]];
@@ -1830,7 +1863,7 @@ mod tests {
     #[tokio::test]
     async fn test_send_emphemeral_message() {
         let mut mock_manager = MockMessagesManagerTrait::new();
-        let keypair = create_test_keypair();
+        let keypair = Arc::new(create_test_keypair());
 
         // Mock publish call
         mock_manager.expect_publish().times(1).returning(|_| {
@@ -1839,8 +1872,11 @@ mod tests {
             })
         });
 
-        let handler =
-            TestPqxdhHandler::new(&mock_manager, &keypair, PqxdhInboxProtocol::EchoService);
+        let handler = TestPqxdhHandler::new(
+            Arc::new(mock_manager),
+            keypair.clone(),
+            PqxdhInboxProtocol::EchoService,
+        );
 
         // Create a test session
         let session_id: PqxdhSessionId = [55u8; 32];
@@ -1877,7 +1913,7 @@ mod tests {
     #[tokio::test]
     async fn test_listen_for_messages() {
         let mut mock_manager = MockMessagesManagerTrait::new();
-        let keypair = create_test_keypair();
+        let keypair = Arc::new(create_test_keypair());
 
         // Mock catch_up_and_subscribe
         mock_manager
@@ -1885,8 +1921,11 @@ mod tests {
             .times(1)
             .returning(|_, _| Ok(Box::pin(stream::empty())));
 
-        let handler =
-            TestPqxdhHandler::new(&mock_manager, &keypair, PqxdhInboxProtocol::EchoService);
+        let handler = TestPqxdhHandler::new(
+            Arc::new(mock_manager),
+            keypair.clone(),
+            PqxdhInboxProtocol::EchoService,
+        );
 
         // Create a test session
         let session_id: PqxdhSessionId = [77u8; 32];
@@ -1925,10 +1964,13 @@ mod tests {
     #[tokio::test]
     async fn test_listen_for_messages_session_not_found() {
         let mock_manager = MockMessagesManagerTrait::new();
-        let keypair = create_test_keypair();
+        let keypair = Arc::new(create_test_keypair());
 
-        let handler =
-            TestPqxdhHandler::new(&mock_manager, &keypair, PqxdhInboxProtocol::EchoService);
+        let handler = TestPqxdhHandler::new(
+            Arc::new(mock_manager),
+            keypair.clone(),
+            PqxdhInboxProtocol::EchoService,
+        );
 
         let session_id: PqxdhSessionId = [88u8; 32];
         let result = handler

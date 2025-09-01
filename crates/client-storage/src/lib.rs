@@ -8,8 +8,8 @@ mod tests;
 pub use error::{Result, StorageError};
 pub use sqlite::SqliteMessageStorage;
 pub use storage::{
-    MessageQuery, MessageStorage, RelaySyncStatus, StateStorage, StorageConfig, StorageStats,
-    SubscriptionState,
+    MessageQuery, MessageStorage, RelaySyncStatus, StateNamespace, StateStorage, StorageConfig,
+    StorageStats, SubscriptionState,
 };
 
 // Storage factory for creating appropriate storage implementations

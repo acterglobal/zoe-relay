@@ -1,3 +1,5 @@
+use std::cmp::Ordering;
+
 use serde::{Deserialize, Serialize};
 
 // PQXDH types are available through the main crate re-exports
@@ -23,6 +25,32 @@ pub enum PqxdhInboxProtocol {
 
     // Custom protocols (anything else)
     CustomProtocol(u32), // 15001+ - Custom PQXDH protocols
+}
+
+impl PartialOrd for PqxdhInboxProtocol {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for PqxdhInboxProtocol {
+    fn cmp(&self, other: &Self) -> Ordering {
+        u32::from(self).cmp(&u32::from(other))
+    }
+}
+
+impl PqxdhInboxProtocol {
+    pub fn as_u32(&self) -> u32 {
+        u32::from(self)
+    }
+    pub fn into_bytes(&self) -> Vec<u8> {
+        self.as_u32().to_le_bytes().to_vec()
+    }
+
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, String> {
+        let value = u32::from_le_bytes(bytes.try_into().map_err(|_| "Invalid bytes")?);
+        Ok(Self::from(value))
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
@@ -52,8 +80,17 @@ impl From<u32> for PqxdhInboxProtocol {
     }
 }
 
-impl From<PqxdhInboxProtocol> for u32 {
-    fn from(val: PqxdhInboxProtocol) -> Self {
+impl std::fmt::Display for PqxdhInboxProtocol {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            PqxdhInboxProtocol::EchoService => write!(f, "EchoService"),
+            PqxdhInboxProtocol::CustomProtocol(a) => write!(f, "CustomProtocol({a})"),
+        }
+    }
+}
+
+impl From<&PqxdhInboxProtocol> for u32 {
+    fn from(val: &PqxdhInboxProtocol) -> Self {
         match val {
             // Core protocols - commented until implemented
             // PqxdhInboxProtocol::GroupInvite => 0,
@@ -65,8 +102,14 @@ impl From<PqxdhInboxProtocol> for u32 {
             PqxdhInboxProtocol::EchoService => 1000,
 
             // Custom protocols
-            PqxdhInboxProtocol::CustomProtocol(a) => a,
+            PqxdhInboxProtocol::CustomProtocol(a) => *a,
         }
+    }
+}
+
+impl From<PqxdhInboxProtocol> for u32 {
+    fn from(val: PqxdhInboxProtocol) -> Self {
+        u32::from(&val)
     }
 }
 
@@ -89,7 +132,7 @@ impl From<StoreKey> for u32 {
         match val {
             StoreKey::PublicUserInfo => 0,
             StoreKey::MlsKeyPackage => 100,
-            StoreKey::PqxdhInbox(protocol) => 10000 + u32::from(protocol),
+            StoreKey::PqxdhInbox(protocol) => 10000 + u32::from(&protocol),
             StoreKey::CustomKey(a) => a,
         }
     }
@@ -100,7 +143,7 @@ impl From<&StoreKey> for u32 {
         match val {
             StoreKey::PublicUserInfo => 0,
             StoreKey::MlsKeyPackage => 100,
-            StoreKey::PqxdhInbox(protocol) => 10000 + u32::from(protocol.clone()),
+            StoreKey::PqxdhInbox(protocol) => 10000 + u32::from(protocol),
             StoreKey::CustomKey(a) => *a,
         }
     }

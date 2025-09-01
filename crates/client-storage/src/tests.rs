@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod integration_tests {
     use crate::sqlite::SqliteMessageStorage;
-    use crate::storage::{MessageQuery, MessageStorage, StorageConfig};
+    use crate::storage::{MessageQuery, MessageStorage, StateNamespace, StorageConfig};
     use rand::rngs::OsRng;
     use tempfile::TempDir;
     use zoe_wire_protocol::{
@@ -727,10 +727,20 @@ mod integration_tests {
             };
 
             // Store state
-            storage.store(b"test_key", &test_state).await.unwrap();
+            storage
+                .store(
+                    &StateNamespace::Custom(b"test".to_vec()),
+                    b"test_key",
+                    &test_state,
+                )
+                .await
+                .unwrap();
 
             // Retrieve state
-            let retrieved: Option<TestState> = storage.get(b"test_key").await.unwrap();
+            let retrieved: Option<TestState> = storage
+                .get(&StateNamespace::Custom(b"test".to_vec()), b"test_key")
+                .await
+                .unwrap();
 
             assert!(retrieved.is_some());
             assert_eq!(retrieved.unwrap(), test_state);
@@ -740,7 +750,10 @@ mod integration_tests {
         async fn test_get_nonexistent_state() {
             let storage = create_test_storage().await;
 
-            let retrieved: Option<TestState> = storage.get(b"nonexistent").await.unwrap();
+            let retrieved: Option<TestState> = storage
+                .get(&StateNamespace::Custom(b"test".to_vec()), b"nonexistent")
+                .await
+                .unwrap();
 
             assert!(retrieved.is_none());
         }
@@ -762,13 +775,22 @@ mod integration_tests {
             };
 
             // Store first state
-            storage.store(b"key", &state1).await.unwrap();
+            storage
+                .store(&StateNamespace::Custom(b"test".to_vec()), b"key", &state1)
+                .await
+                .unwrap();
 
             // Overwrite with second state
-            storage.store(b"key", &state2).await.unwrap();
+            storage
+                .store(&StateNamespace::Custom(b"test".to_vec()), b"key", &state2)
+                .await
+                .unwrap();
 
             // Retrieve should return second state
-            let retrieved: Option<TestState> = storage.get(b"key").await.unwrap();
+            let retrieved: Option<TestState> = storage
+                .get(&StateNamespace::Custom(b"test".to_vec()), b"key")
+                .await
+                .unwrap();
             assert_eq!(retrieved.unwrap(), state2);
         }
 
@@ -783,21 +805,40 @@ mod integration_tests {
             };
 
             // Store state
-            storage.store(b"delete_key", &test_state).await.unwrap();
+            storage
+                .store(
+                    &StateNamespace::Custom(b"test".to_vec()),
+                    b"delete_key",
+                    &test_state,
+                )
+                .await
+                .unwrap();
 
             // Verify it exists
-            let exists = storage.has(b"delete_key").await.unwrap();
+            let exists = storage
+                .has(&StateNamespace::Custom(b"test".to_vec()), b"delete_key")
+                .await
+                .unwrap();
             assert!(exists);
 
             // Delete state
-            let deleted = storage.delete(b"delete_key").await.unwrap();
+            let deleted = storage
+                .delete(&StateNamespace::Custom(b"test".to_vec()), b"delete_key")
+                .await
+                .unwrap();
             assert!(deleted);
 
             // Verify it's gone
-            let exists = storage.has(b"delete_key").await.unwrap();
+            let exists = storage
+                .has(&StateNamespace::Custom(b"test".to_vec()), b"delete_key")
+                .await
+                .unwrap();
             assert!(!exists);
 
-            let retrieved: Option<TestState> = storage.get(b"delete_key").await.unwrap();
+            let retrieved: Option<TestState> = storage
+                .get(&StateNamespace::Custom(b"test".to_vec()), b"delete_key")
+                .await
+                .unwrap();
             assert!(retrieved.is_none());
         }
 
@@ -805,7 +846,10 @@ mod integration_tests {
         async fn test_delete_nonexistent_state() {
             let storage = create_test_storage().await;
 
-            let deleted = storage.delete(b"nonexistent").await.unwrap();
+            let deleted = storage
+                .delete(&StateNamespace::Custom(b"test".to_vec()), b"nonexistent")
+                .await
+                .unwrap();
             assert!(!deleted);
         }
 
@@ -820,14 +864,27 @@ mod integration_tests {
             };
 
             // Initially doesn't exist
-            let exists = storage.has(b"exists_key").await.unwrap();
+            let exists = storage
+                .has(&StateNamespace::Custom(b"test".to_vec()), b"exists_key")
+                .await
+                .unwrap();
             assert!(!exists);
 
             // Store state
-            storage.store(b"exists_key", &test_state).await.unwrap();
+            storage
+                .store(
+                    &StateNamespace::Custom(b"test".to_vec()),
+                    b"exists_key",
+                    &test_state,
+                )
+                .await
+                .unwrap();
 
             // Now it exists
-            let exists = storage.has(b"exists_key").await.unwrap();
+            let exists = storage
+                .has(&StateNamespace::Custom(b"test".to_vec()), b"exists_key")
+                .await
+                .unwrap();
             assert!(exists);
         }
 
@@ -852,9 +909,18 @@ mod integration_tests {
             assert!(keys.is_empty());
 
             // Store some states
-            storage.store(b"key_b", &state1).await.unwrap();
-            storage.store(b"key_a", &state2).await.unwrap();
-            storage.store(b"key_c", &state1).await.unwrap();
+            storage
+                .store(&StateNamespace::Custom(b"test".to_vec()), b"key_b", &state1)
+                .await
+                .unwrap();
+            storage
+                .store(&StateNamespace::Custom(b"test".to_vec()), b"key_a", &state2)
+                .await
+                .unwrap();
+            storage
+                .store(&StateNamespace::Custom(b"test".to_vec()), b"key_c", &state1)
+                .await
+                .unwrap();
 
             // List keys (should be sorted)
             let keys = storage.list_keys().await.unwrap();
@@ -879,15 +945,39 @@ mod integration_tests {
             assert_eq!(count, 0);
 
             // Add some states
-            storage.store(b"count1", &test_state).await.unwrap();
-            storage.store(b"count2", &test_state).await.unwrap();
-            storage.store(b"count3", &test_state).await.unwrap();
+            storage
+                .store(
+                    &StateNamespace::Custom(b"test".to_vec()),
+                    b"count1",
+                    &test_state,
+                )
+                .await
+                .unwrap();
+            storage
+                .store(
+                    &StateNamespace::Custom(b"test".to_vec()),
+                    b"count2",
+                    &test_state,
+                )
+                .await
+                .unwrap();
+            storage
+                .store(
+                    &StateNamespace::Custom(b"test".to_vec()),
+                    b"count3",
+                    &test_state,
+                )
+                .await
+                .unwrap();
 
             let count = storage.count().await.unwrap();
             assert_eq!(count, 3);
 
             // Delete one
-            storage.delete(b"count2").await.unwrap();
+            storage
+                .delete(&StateNamespace::Custom(b"test".to_vec()), b"count2")
+                .await
+                .unwrap();
 
             let count = storage.count().await.unwrap();
             assert_eq!(count, 2);
@@ -904,9 +994,30 @@ mod integration_tests {
             };
 
             // Add multiple states
-            storage.store(b"clear1", &test_state).await.unwrap();
-            storage.store(b"clear2", &test_state).await.unwrap();
-            storage.store(b"clear3", &test_state).await.unwrap();
+            storage
+                .store(
+                    &StateNamespace::Custom(b"test".to_vec()),
+                    b"clear1",
+                    &test_state,
+                )
+                .await
+                .unwrap();
+            storage
+                .store(
+                    &StateNamespace::Custom(b"test".to_vec()),
+                    b"clear2",
+                    &test_state,
+                )
+                .await
+                .unwrap();
+            storage
+                .store(
+                    &StateNamespace::Custom(b"test".to_vec()),
+                    b"clear3",
+                    &test_state,
+                )
+                .await
+                .unwrap();
 
             // Verify they exist
             let count = storage.count().await.unwrap();
@@ -942,10 +1053,20 @@ mod integration_tests {
             };
 
             // Store complex state
-            storage.store(b"complex", &complex_state).await.unwrap();
+            storage
+                .store(
+                    &StateNamespace::Custom(b"test".to_vec()),
+                    b"complex",
+                    &complex_state,
+                )
+                .await
+                .unwrap();
 
             // Retrieve and verify
-            let retrieved: Option<ComplexState> = storage.get(b"complex").await.unwrap();
+            let retrieved: Option<ComplexState> = storage
+                .get(&StateNamespace::Custom(b"test".to_vec()), b"complex")
+                .await
+                .unwrap();
             assert!(retrieved.is_some());
             assert_eq!(retrieved.unwrap(), complex_state);
         }
@@ -960,14 +1081,26 @@ mod integration_tests {
                 name: "type_test".to_string(),
                 active: true,
             };
-            storage.store(b"same_key", &test_state).await.unwrap();
+            storage
+                .store(
+                    &StateNamespace::Custom(b"test".to_vec()),
+                    b"same_key",
+                    &test_state,
+                )
+                .await
+                .unwrap();
 
             // Try to retrieve as wrong type - should fail
-            let wrong_type: Result<Option<ComplexState>, _> = storage.get(b"same_key").await;
+            let wrong_type: Result<Option<ComplexState>, _> = storage
+                .get(&StateNamespace::Custom(b"test".to_vec()), b"same_key")
+                .await;
             assert!(wrong_type.is_err());
 
             // Retrieve as correct type - should work
-            let correct_type: Option<TestState> = storage.get(b"same_key").await.unwrap();
+            let correct_type: Option<TestState> = storage
+                .get(&StateNamespace::Custom(b"test".to_vec()), b"same_key")
+                .await
+                .unwrap();
             assert_eq!(correct_type.unwrap(), test_state);
         }
 
@@ -996,8 +1129,14 @@ mod integration_tests {
             ];
 
             for key in special_keys {
-                storage.store(key, &test_state).await.unwrap();
-                let retrieved: Option<TestState> = storage.get(key).await.unwrap();
+                storage
+                    .store(&StateNamespace::Custom(b"test".to_vec()), key, &test_state)
+                    .await
+                    .unwrap();
+                let retrieved: Option<TestState> = storage
+                    .get(&StateNamespace::Custom(b"test".to_vec()), key)
+                    .await
+                    .unwrap();
                 assert_eq!(retrieved.unwrap(), test_state);
             }
         }
@@ -1023,9 +1162,19 @@ mod integration_tests {
             };
 
             // Store and retrieve large state
-            storage.store(b"large", &large_state).await.unwrap();
+            storage
+                .store(
+                    &StateNamespace::Custom(b"test".to_vec()),
+                    b"large",
+                    &large_state,
+                )
+                .await
+                .unwrap();
 
-            let retrieved: Option<ComplexState> = storage.get(b"large").await.unwrap();
+            let retrieved: Option<ComplexState> = storage
+                .get(&StateNamespace::Custom(b"test".to_vec()), b"large")
+                .await
+                .unwrap();
             assert!(retrieved.is_some());
             assert_eq!(retrieved.unwrap(), large_state);
         }
@@ -1052,7 +1201,11 @@ mod integration_tests {
 
                 let handle = tokio::spawn(async move {
                     storage_clone
-                        .store(format!("concurrent_{}", i).as_bytes(), &state)
+                        .store(
+                            &StateNamespace::Custom(b"test".to_vec()),
+                            format!("concurrent_{}", i).as_bytes(),
+                            &state,
+                        )
                         .await
                         .unwrap();
                 });
@@ -1071,7 +1224,10 @@ mod integration_tests {
             // Verify we can retrieve all states
             for i in 0..10 {
                 let retrieved: Option<TestState> = storage
-                    .get(format!("concurrent_{}", i).as_bytes())
+                    .get(
+                        &StateNamespace::Custom(b"test".to_vec()),
+                        format!("concurrent_{}", i).as_bytes(),
+                    )
                     .await
                     .unwrap();
                 assert!(retrieved.is_some());
@@ -1101,7 +1257,14 @@ mod integration_tests {
                     .await
                     .unwrap();
 
-                storage.store(b"persist_key", &test_state).await.unwrap();
+                storage
+                    .store(
+                        &StateNamespace::Custom(b"test".to_vec()),
+                        b"persist_key",
+                        &test_state,
+                    )
+                    .await
+                    .unwrap();
             } // Storage instance goes out of scope
 
             // Create second storage instance and verify data persists
@@ -1114,7 +1277,10 @@ mod integration_tests {
                     .await
                     .unwrap();
 
-                let retrieved: Option<TestState> = storage.get(b"persist_key").await.unwrap();
+                let retrieved: Option<TestState> = storage
+                    .get(&StateNamespace::Custom(b"test".to_vec()), b"persist_key")
+                    .await
+                    .unwrap();
                 assert!(retrieved.is_some());
                 assert_eq!(retrieved.unwrap(), test_state);
             }

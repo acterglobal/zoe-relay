@@ -716,7 +716,7 @@ impl MessageStorage for SqliteMessageStorage {
 impl StateStorage for SqliteMessageStorage {
     type Error = StorageError;
 
-    async fn store<T>(&self, key: &[u8], value: &T) -> Result<()>
+    async fn store<T>(&self, namespace: &crate::StateNamespace, key: &[u8], value: &T) -> Result<()>
     where
         T: serde::Serialize + Send + Sync + 'static,
     {
@@ -728,17 +728,24 @@ impl StateStorage for SqliteMessageStorage {
         let value_data = postcard::to_stdvec(value)
             .map_err(|e| StorageError::Internal(format!("Failed to serialize state value: {e}")))?;
 
+        let namespace_blob = postcard::to_stdvec(namespace)
+            .map_err(|e| StorageError::Internal(format!("Failed to serialize namespace: {e}")))?;
+
         conn.execute(
-            "INSERT OR REPLACE INTO state_storage (key, value_data, updated_at) VALUES (?1, ?2, strftime('%s', 'now'))",
-            params![key, value_data],
+            "INSERT OR REPLACE INTO state_storage (namespace, key, value_data, updated_at) VALUES (?1, ?2, ?3, strftime('%s', 'now'))",
+            params![namespace_blob, key, value_data],
         )?;
 
-        tracing::debug!("Stored state for key: {:?}", key);
+        tracing::debug!(
+            "Stored state for namespace {:?}, key: {:?}",
+            namespace_blob,
+            key
+        );
 
         Ok(())
     }
 
-    async fn get<T>(&self, key: &[u8]) -> Result<Option<T>>
+    async fn get<T>(&self, namespace: &crate::StateNamespace, key: &[u8]) -> Result<Option<T>>
     where
         T: for<'de> serde::Deserialize<'de> + Send + Sync + 'static,
     {
@@ -747,9 +754,13 @@ impl StateStorage for SqliteMessageStorage {
             .lock()
             .map_err(|e| StorageError::Internal(format!("Failed to acquire database lock: {e}")))?;
 
-        let mut stmt = conn.prepare("SELECT value_data FROM state_storage WHERE key = ?1")?;
+        let namespace_blob = postcard::to_stdvec(namespace)
+            .map_err(|e| StorageError::Internal(format!("Failed to serialize namespace: {e}")))?;
 
-        let result = stmt.query_row(params![key], |row| {
+        let mut stmt =
+            conn.prepare("SELECT value_data FROM state_storage WHERE namespace = ?1 AND key = ?2")?;
+
+        let result = stmt.query_row(params![namespace_blob, key], |row| {
             let value_data: Vec<u8> = row.get(0)?;
             Ok(value_data)
         });
@@ -766,17 +777,23 @@ impl StateStorage for SqliteMessageStorage {
         }
     }
 
-    async fn delete(&self, key: &[u8]) -> Result<bool> {
+    async fn delete(&self, namespace: &crate::StateNamespace, key: &[u8]) -> Result<bool> {
         let conn = self
             .conn
             .lock()
             .map_err(|e| StorageError::Internal(format!("Failed to acquire database lock: {e}")))?;
 
-        let rows_affected =
-            conn.execute("DELETE FROM state_storage WHERE key = ?1", params![key])?;
+        let namespace_blob = postcard::to_stdvec(namespace)
+            .map_err(|e| StorageError::Internal(format!("Failed to serialize namespace: {e}")))?;
+
+        let rows_affected = conn.execute(
+            "DELETE FROM state_storage WHERE namespace = ?1 AND key = ?2",
+            params![namespace_blob, key],
+        )?;
 
         tracing::debug!(
-            "Deleted state for key: {:?}, rows affected: {}",
+            "Deleted state for namespace {:?}, key: {:?}, rows affected: {}",
+            namespace_blob,
             key,
             rows_affected
         );
@@ -784,15 +801,21 @@ impl StateStorage for SqliteMessageStorage {
         Ok(rows_affected > 0)
     }
 
-    async fn has(&self, key: &[u8]) -> Result<bool> {
+    async fn has(&self, namespace: &crate::StateNamespace, key: &[u8]) -> Result<bool> {
         let conn = self
             .conn
             .lock()
             .map_err(|e| StorageError::Internal(format!("Failed to acquire database lock: {e}")))?;
 
-        let mut stmt = conn.prepare("SELECT 1 FROM state_storage WHERE key = ?1")?;
+        let namespace_blob = postcard::to_stdvec(namespace)
+            .map_err(|e| StorageError::Internal(format!("Failed to serialize namespace: {e}")))?;
 
-        let exists = stmt.query_row(params![key], |_| Ok(())).optional()?;
+        let mut stmt =
+            conn.prepare("SELECT 1 FROM state_storage WHERE namespace = ?1 AND key = ?2")?;
+
+        let exists = stmt
+            .query_row(params![namespace_blob, key], |_| Ok(()))
+            .optional()?;
 
         Ok(exists.is_some())
     }
@@ -816,6 +839,80 @@ impl StateStorage for SqliteMessageStorage {
         }
 
         Ok(keys)
+    }
+
+    async fn list_keys_in_namespace(
+        &self,
+        namespace: &crate::StateNamespace,
+    ) -> Result<Vec<Vec<u8>>> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| StorageError::Internal(format!("Failed to acquire database lock: {e}")))?;
+
+        let namespace_blob = postcard::to_stdvec(namespace)
+            .map_err(|e| StorageError::Internal(format!("Failed to serialize namespace: {e}")))?;
+
+        let mut stmt =
+            conn.prepare("SELECT key FROM state_storage WHERE namespace = ?1 ORDER BY key")?;
+
+        let key_iter = stmt.query_map([namespace_blob], |row| {
+            let key: Vec<u8> = row.get(0)?;
+            Ok(key)
+        })?;
+
+        let mut keys = Vec::new();
+        for key_result in key_iter {
+            keys.push(key_result?);
+        }
+
+        Ok(keys)
+    }
+
+    async fn list_namespace_data<T>(
+        &self,
+        namespace: &crate::StateNamespace,
+    ) -> Result<Vec<(Vec<u8>, T)>>
+    where
+        T: for<'de> serde::Deserialize<'de> + Send + Sync + 'static,
+    {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| StorageError::Internal(format!("Failed to acquire database lock: {e}")))?;
+
+        let namespace_blob = postcard::to_stdvec(namespace)
+            .map_err(|e| StorageError::Internal(format!("Failed to serialize namespace: {e}")))?;
+
+        let mut stmt = conn.prepare(
+            "SELECT key, value_data FROM state_storage WHERE namespace = ?1 ORDER BY key",
+        )?;
+
+        Ok(stmt
+            .query_map([namespace_blob], |row| {
+                let key: Vec<u8> = row.get(0)?;
+                let value_data: Vec<u8> = row.get(1)?;
+                Ok((key, value_data))
+            })?
+            .into_iter()
+            .filter_map(|data| {
+                let (key, value_data) = match data {
+                    Ok(data) => data,
+                    Err(e) => {
+                        tracing::error!(error=?e, "Failed to read data from state storage");
+                        return None;
+                    }
+                };
+                let value = match postcard::from_bytes(&value_data) {
+                    Ok(value) => value,
+                    Err(e) => {
+                        tracing::error!(error=?e, "Failed to deserialize state value");
+                        return None;
+                    }
+                };
+                Some((key, value))
+            })
+            .collect::<Vec<_>>())
     }
 
     async fn clear(&self) -> Result<()> {

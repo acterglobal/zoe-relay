@@ -8,8 +8,8 @@ use zoe_wire_protocol::EncryptionKey;
 pub use zoe_app_primitives::{GroupMember, GroupState};
 
 /// Encryption state for a group
-/// This is not serialized with the group state - managed separately
-#[derive(Debug, Clone)]
+/// This is serialized separately from the group state for security
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GroupEncryptionState {
     /// Current encryption key
     pub current_key: EncryptionKey,

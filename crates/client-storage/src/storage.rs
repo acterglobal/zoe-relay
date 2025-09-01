@@ -6,6 +6,19 @@ use zoe_wire_protocol::{Hash, MessageFilters, MessageFull, Tag, VerifyingKey};
 #[cfg(any(feature = "mock", test))]
 use mockall::{automock, predicate::*};
 
+/// Namespace for organizing different types of state data in storage.
+///
+/// This enum provides a type-safe way to categorize and query state data
+/// by namespace, enabling efficient retrieval of related data without
+/// scanning all keys.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum StateNamespace {
+    /// PQXDH protocol session states for a specific verification key
+    PqxdhSession(zoe_wire_protocol::Id),
+    // Any other namespace
+    Custom(Vec<u8>),
+}
+
 /// Configuration for storage implementations
 #[derive(Debug, Clone)]
 pub struct StorageConfig {
@@ -266,7 +279,7 @@ pub trait MessageStorage: Send + Sync {
 /// # Examples
 ///
 /// ```rust,no_run
-/// use zoe_client_storage::StateStorage;
+/// use zoe_client_storage::{StateStorage, StateNamespace};
 /// use serde::{Deserialize, Serialize};
 ///
 /// #[derive(Serialize, Deserialize)]
@@ -277,12 +290,13 @@ pub trait MessageStorage: Send + Sync {
 ///
 /// async fn example(storage: &impl StateStorage) -> Result<(), Box<dyn std::error::Error>> {
 ///     let state = MyState { counter: 42, name: "test".to_string() };
+///     let namespace = StateNamespace::Custom(b"example".to_vec());
 ///     
 ///     // Store state
-///     storage.store(b"my_key", &state).await?;
+///     storage.store(&namespace, b"my_key", &state).await?;
 ///     
 ///     // Retrieve state
-///     let retrieved: Option<MyState> = storage.get(b"my_key").await?;
+///     let retrieved: Option<MyState> = storage.get(&namespace, b"my_key").await?;
 ///     assert_eq!(retrieved.unwrap().counter, 42);
 ///     
 ///     Ok(())
@@ -293,26 +307,33 @@ pub trait MessageStorage: Send + Sync {
 pub trait StateStorage: Send + Sync {
     type Error: std::error::Error + Send + Sync + 'static;
 
-    /// Store a value under the given key.
+    /// Store a value under the given key within a namespace.
     ///
     /// The value will be serialized using postcard before storage.
     /// If a value already exists for the key, it will be overwritten.
     ///
     /// # Arguments
+    /// * `namespace` - The namespace to store the value in
     /// * `key` - The key to store the value under (byte slice)
     /// * `value` - The value to store (must implement Serialize)
     ///
     /// # Errors
     /// Returns an error if serialization fails or storage operation fails.
-    async fn store<T>(&self, key: &[u8], value: &T) -> Result<(), Self::Error>
+    async fn store<T>(
+        &self,
+        namespace: &StateNamespace,
+        key: &[u8],
+        value: &T,
+    ) -> Result<(), Self::Error>
     where
         T: Serialize + Send + Sync + 'static;
 
-    /// Retrieve a value by key.
+    /// Retrieve a value by key within a namespace.
     ///
     /// The stored blob will be deserialized using postcard.
     ///
     /// # Arguments
+    /// * `namespace` - The namespace to retrieve the value from
     /// * `key` - The key to retrieve the value for (byte slice)
     ///
     /// # Returns
@@ -322,13 +343,18 @@ pub trait StateStorage: Send + Sync {
     ///
     /// # Errors
     /// Returns an error if deserialization fails or storage operation fails.
-    async fn get<T>(&self, key: &[u8]) -> Result<Option<T>, Self::Error>
+    async fn get<T>(
+        &self,
+        namespace: &StateNamespace,
+        key: &[u8],
+    ) -> Result<Option<T>, Self::Error>
     where
         T: for<'de> Deserialize<'de> + Send + Sync + 'static;
 
-    /// Delete a value by key.
+    /// Delete a value by key within a namespace.
     ///
     /// # Arguments
+    /// * `namespace` - The namespace to delete the value from
     /// * `key` - The key to delete (byte slice)
     ///
     /// # Returns
@@ -337,11 +363,12 @@ pub trait StateStorage: Send + Sync {
     ///
     /// # Errors
     /// Returns an error if the storage operation fails.
-    async fn delete(&self, key: &[u8]) -> Result<bool, Self::Error>;
+    async fn delete(&self, namespace: &StateNamespace, key: &[u8]) -> Result<bool, Self::Error>;
 
-    /// Check if a key exists in storage.
+    /// Check if a key exists in storage within a namespace.
     ///
     /// # Arguments
+    /// * `namespace` - The namespace to check in
     /// * `key` - The key to check for existence (byte slice)
     ///
     /// # Returns
@@ -350,7 +377,7 @@ pub trait StateStorage: Send + Sync {
     ///
     /// # Errors
     /// Returns an error if the storage operation fails.
-    async fn has(&self, key: &[u8]) -> Result<bool, Self::Error>;
+    async fn has(&self, namespace: &StateNamespace, key: &[u8]) -> Result<bool, Self::Error>;
 
     /// Get all keys in storage.
     ///
@@ -360,6 +387,39 @@ pub trait StateStorage: Send + Sync {
     /// # Errors
     /// Returns an error if the storage operation fails.
     async fn list_keys(&self) -> Result<Vec<Vec<u8>>, Self::Error>;
+
+    /// Get all keys within a specific namespace.
+    ///
+    /// # Arguments
+    /// * `namespace` - The namespace to list keys from
+    ///
+    /// # Returns
+    /// A vector of all keys in the given namespace (as byte vectors).
+    ///
+    /// # Errors
+    /// Returns an error if the storage operation fails.
+    async fn list_keys_in_namespace(
+        &self,
+        namespace: &StateNamespace,
+    ) -> Result<Vec<Vec<u8>>, Self::Error>;
+
+    /// Get all key-value pairs within a specific namespace.
+    ///
+    /// # Arguments
+    /// * `namespace` - The namespace to retrieve data from
+    ///
+    /// # Returns
+    /// A vector of (key, value_data) tuples for all entries in the namespace.
+    /// The value_data is the raw serialized bytes.
+    ///
+    /// # Errors
+    /// Returns an error if the storage operation fails.
+    async fn list_namespace_data<T>(
+        &self,
+        namespace: &crate::StateNamespace,
+    ) -> Result<Vec<(Vec<u8>, T)>, Self::Error>
+    where
+        T: for<'de> serde::Deserialize<'de> + Send + Sync + 'static;
 
     /// Clear all data from storage.
     ///

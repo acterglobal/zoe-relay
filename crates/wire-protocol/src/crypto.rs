@@ -178,7 +178,7 @@ impl Default for Argon2Params {
 }
 
 /// ChaCha20-Poly1305 encryption key
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EncryptionKey {
     /// The actual key bytes (32 bytes for ChaCha20)
     pub key: [u8; 32],

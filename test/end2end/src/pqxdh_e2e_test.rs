@@ -11,12 +11,13 @@ use crate::multi_client_infra::{MultiClientTestHarness, TestClient};
 use anyhow::{Context, Result};
 use futures::StreamExt;
 use serial_test::serial;
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::timeout;
 use tracing::{info, warn};
 use zoe_client::pqxdh::{PqxdhError, PqxdhProtocolHandler};
 use zoe_client::services::messages_manager::MessagesManager;
-use zoe_wire_protocol::PqxdhInboxProtocol;
+use zoe_wire_protocol::{KeyPair, PqxdhInboxProtocol};
 
 #[tokio::test]
 #[serial]
@@ -40,8 +41,8 @@ async fn test_pqxdh_simple_echo_e2e() -> Result<()> {
 
     // Alice sets up as service provider
     let mut alice_handler = PqxdhProtocolHandler::new(
-        &alice_manager,
-        alice.keypair(),
+        Arc::new(alice_manager),
+        Arc::new(KeyPair::generate(&mut rand::thread_rng())),
         PqxdhInboxProtocol::EchoService,
     );
 
@@ -56,13 +57,17 @@ async fn test_pqxdh_simple_echo_e2e() -> Result<()> {
     info!("👂 Alice is now listening for client connections");
 
     // Bob sets up as client
-    let mut bob_handler =
-        PqxdhProtocolHandler::new(&bob_manager, bob.keypair(), PqxdhInboxProtocol::EchoService);
+    let mut bob_handler = PqxdhProtocolHandler::new(
+        Arc::new(bob_manager),
+        Arc::new(KeyPair::generate(&mut rand::thread_rng())),
+        PqxdhInboxProtocol::EchoService,
+    );
 
     // Bob connects to Alice's service
     let initial_message = "Hello Alice!".to_string();
+    let alice_public_key = alice.public_key();
     let (bob_session_id, mut bob_responses) = bob_handler
-        .connect_to_service::<String, String>(&alice.public_key(), &initial_message)
+        .connect_to_service::<String, String>(&alice_public_key, &initial_message)
         .await?;
     let mut bob_response_stream = Box::pin(bob_responses);
 
@@ -115,6 +120,9 @@ async fn test_pqxdh_simple_echo_e2e() -> Result<()> {
         "Bob should receive the echoed message from Alice"
     );
 
+    // Drop the stream to release the borrow on bob_handler
+    drop(bob_response_stream);
+
     // Test additional message exchange
     let follow_up_message = "How are you?".to_string();
 
@@ -153,8 +161,15 @@ async fn test_pqxdh_simple_echo_e2e() -> Result<()> {
 
     info!("📤 Alice sent follow-up echo: '{}'", echo_follow_up);
 
+    // Create a new listener stream for Bob to receive the follow-up echo
+    let mut bob_follow_up_stream = Box::pin(
+        bob_handler
+            .listen_for_messages::<String>(bob_session_id, true)
+            .await?,
+    );
+
     // Bob receives the follow-up echo
-    let follow_up_response = timeout(Duration::from_secs(5), bob_response_stream.next())
+    let follow_up_response = timeout(Duration::from_secs(5), bob_follow_up_stream.next())
         .await
         .unwrap()
         .unwrap();
@@ -201,12 +216,17 @@ async fn test_pqxdh_error_scenarios() -> Result<()> {
     let bob_manager = create_messages_manager(&bob).await?;
 
     // Test 1: Connecting to non-existent service
-    let mut bob_handler =
-        PqxdhProtocolHandler::new(&bob_manager, bob.keypair(), PqxdhInboxProtocol::EchoService);
+    let mut bob_handler = PqxdhProtocolHandler::new(
+        Arc::new(bob_manager),
+        Arc::new(KeyPair::generate(&mut rand::thread_rng())),
+        PqxdhInboxProtocol::EchoService,
+    );
 
     // Try to connect to Alice before she publishes a service
+    let alice_public_key = alice.public_key();
+    let hello_message = "Hello".to_string();
     let result = bob_handler
-        .connect_to_service::<String, String>(&alice.public_key(), &"Hello".to_string())
+        .connect_to_service::<String, String>(&alice_public_key, &hello_message)
         .await;
 
     match result {
@@ -231,8 +251,8 @@ async fn test_pqxdh_error_scenarios() -> Result<()> {
 
     // Test 2: Double service publication
     let mut alice_handler = PqxdhProtocolHandler::new(
-        &alice_manager,
-        alice.keypair(),
+        Arc::new(alice_manager),
+        Arc::new(KeyPair::generate(&mut rand::thread_rng())),
         PqxdhInboxProtocol::EchoService,
     );
 
