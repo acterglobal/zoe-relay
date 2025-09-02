@@ -230,18 +230,14 @@ impl PqxdhPrekeyBundle {
         identity_key: &VerifyingKey,
     ) -> std::result::Result<(), PqxdhError> {
         // Verify signed prekey signature
-        let signed_prekey_valid = identity_key
+        identity_key
             .verify(self.signed_prekey.as_bytes(), &self.signed_prekey_signature)
             .map_err(|e| {
                 PqxdhError::CryptoError(format!("Failed to verify signed prekey signature: {}", e))
             })?;
 
-        if !signed_prekey_valid {
-            return Err(PqxdhError::SignatureVerificationFailed);
-        }
-
         // Verify PQ signed prekey signature
-        let pq_signed_prekey_valid = identity_key
+        identity_key
             .verify(&self.pq_signed_prekey, &self.pq_signed_prekey_signature)
             .map_err(|e| {
                 PqxdhError::CryptoError(format!(
@@ -249,10 +245,6 @@ impl PqxdhPrekeyBundle {
                     e
                 ))
             })?;
-
-        if !pq_signed_prekey_valid {
-            return Err(PqxdhError::SignatureVerificationFailed);
-        }
 
         // Verify that every PQ one-time key has a corresponding signature
         for (key_id, pq_key) in &self.pq_one_time_keys {
@@ -263,16 +255,12 @@ impl PqxdhPrekeyBundle {
                 ))
             })?;
 
-            let signature_valid = identity_key.verify(pq_key, signature).map_err(|e| {
+            identity_key.verify(pq_key, signature).map_err(|e| {
                 PqxdhError::CryptoError(format!(
                     "Failed to verify PQ one-time key signature for {}: {}",
                     key_id, e
                 ))
             })?;
-
-            if !signature_valid {
-                return Err(PqxdhError::SignatureVerificationFailed);
-            }
         }
 
         // Verify that every PQ one-time signature has a corresponding key (no extra signatures)

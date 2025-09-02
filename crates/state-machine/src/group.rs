@@ -229,7 +229,7 @@ impl GroupManager {
         );
 
         // Sign and return the message
-        MessageFull::new(message, sender).map_err(GroupError::WireProtocol)
+        Ok(MessageFull::new(message, sender)?)
     }
 
     /// Process an incoming group event message

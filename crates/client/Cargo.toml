@@ -9,7 +9,7 @@ name = "full"
 [features]
 default = ["frb-api"]
 mls = ["dep:openmls", "dep:openmls_rust_crypto", "dep:openmls_basic_credential", "dep:openmls_memory_storage"]
-frb-api = ["dep:flutter_rust_bridge"]
+frb-api = ["dep:flutter_rust_bridge", "dep:extend", "tokio/net"]
 test-utils = []
 mock = ["zoe-client-storage/mock", "dep:mockall"]
 
@@ -58,7 +58,6 @@ async-trait = { workspace = true }
 async-stream = { workspace = true }
 eyeball = { version = "0.8", features = ["async-lock"] }
 
-
 # Mock support for testing
 mockall = { workspace = true, optional = true }
 
@@ -83,6 +82,7 @@ anyhow = { workspace = true }
 # Temporary directory support for deprecated methods
 tempfile = { workspace = true }
 
+extend = { workspace = true, optional = true }
 
 [dev-dependencies]
 # Testing framework

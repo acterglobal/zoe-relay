@@ -20,7 +20,7 @@ impl StorageFactory {
     pub async fn create_sqlite(
         config: StorageConfig,
         encryption_key: &[u8; 32],
-    ) -> Result<Box<dyn MessageStorage<Error = StorageError>>> {
+    ) -> Result<Box<dyn MessageStorage>> {
         let storage = SqliteMessageStorage::new(config, encryption_key).await?;
         Ok(Box::new(storage))
     }

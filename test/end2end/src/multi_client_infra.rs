@@ -394,7 +394,7 @@ impl MultiClientTestHarness {
         let client = timeout(
             Duration::from_secs(10),
             RelayClientBuilder::new()
-                .client_keypair(keypair)
+                .client_keypair(Arc::new(keypair))
                 .db_storage_path(data_dir.path().to_path_buf().join(format!("{name}.db")))
                 .server_public_key(self.infra.server_public_key.clone())
                 .server_address(self.infra.server_addr)

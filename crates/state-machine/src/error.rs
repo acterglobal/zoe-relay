@@ -1,4 +1,5 @@
 use thiserror::Error;
+use zoe_wire_protocol::MessageFullError;
 
 use crate::state::GroupSessionError;
 
@@ -39,6 +40,9 @@ pub enum GroupError {
 
     #[error("Group Session error: {0}")]
     SessionError(#[from] GroupSessionError),
+
+    #[error("Message full error: {0}")]
+    MessageFullError(#[from] MessageFullError),
 }
 
 pub type GroupResult<T> = Result<T, GroupError>;

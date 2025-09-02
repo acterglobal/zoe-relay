@@ -151,22 +151,23 @@ pub struct RelaySyncStatus {
 }
 
 /// Trait defining the storage interface for messages
-#[cfg_attr(any(feature = "mock", test), automock(type Error = crate::StorageError;))]
+#[cfg_attr(any(feature = "mock", test), automock())]
 #[async_trait]
 pub trait MessageStorage: Send + Sync {
-    type Error: std::error::Error + Send + Sync + 'static;
-
     /// Store a new message or update an existing one
-    async fn store_message(&self, message: &MessageFull) -> Result<(), Self::Error>;
+    async fn store_message(&self, message: &MessageFull) -> Result<(), crate::StorageError>;
 
     /// Retrieve a message by its ID
-    async fn get_message(&self, id: &Hash) -> Result<Option<MessageFull>, Self::Error>;
+    async fn get_message(&self, id: &Hash) -> Result<Option<MessageFull>, crate::StorageError>;
 
     /// Delete a message by its ID
-    async fn delete_message(&self, id: &Hash) -> Result<bool, Self::Error>;
+    async fn delete_message(&self, id: &Hash) -> Result<bool, crate::StorageError>;
 
     /// Query messages with various filters
-    async fn query_messages(&self, query: &MessageQuery) -> Result<Vec<MessageFull>, Self::Error>;
+    async fn query_messages(
+        &self,
+        query: &MessageQuery,
+    ) -> Result<Vec<MessageFull>, crate::StorageError>;
 
     /// Mark a message as synced to a relay with its global stream ID
     async fn mark_message_synced(
@@ -174,27 +175,27 @@ pub trait MessageStorage: Send + Sync {
         message_id: &Hash,
         relay_id: &Hash,
         global_stream_id: &str,
-    ) -> Result<(), Self::Error>;
+    ) -> Result<(), crate::StorageError>;
 
     /// Get all messages that are not yet synced to a specific relay
     async fn get_unsynced_messages_for_relay(
         &self,
         relay_id: &Hash,
         limit: Option<usize>,
-    ) -> Result<Vec<MessageFull>, Self::Error>;
+    ) -> Result<Vec<MessageFull>, crate::StorageError>;
 
     /// Get sync status for a specific message across all relays
     async fn get_message_sync_status(
         &self,
         message_id: &Hash,
-    ) -> Result<Vec<RelaySyncStatus>, Self::Error>;
+    ) -> Result<Vec<RelaySyncStatus>, crate::StorageError>;
 
     /// Get messages by author with optional limit
     async fn get_messages_by_author(
         &self,
         author: &VerifyingKey,
         limit: Option<usize>,
-    ) -> Result<Vec<MessageFull>, Self::Error> {
+    ) -> Result<Vec<MessageFull>, crate::StorageError> {
         let query = MessageQuery {
             author: Some(author.clone()),
             limit,
@@ -208,7 +209,7 @@ pub trait MessageStorage: Send + Sync {
         &self,
         tag: &Tag,
         limit: Option<usize>,
-    ) -> Result<Vec<MessageFull>, Self::Error> {
+    ) -> Result<Vec<MessageFull>, crate::StorageError> {
         let query = MessageQuery {
             tag: Some(tag.clone()),
             limit,
@@ -222,7 +223,7 @@ pub trait MessageStorage: Send + Sync {
         &self,
         timestamp: u64,
         limit: Option<usize>,
-    ) -> Result<Vec<MessageFull>, Self::Error> {
+    ) -> Result<Vec<MessageFull>, crate::StorageError> {
         let query = MessageQuery {
             after_timestamp: Some(timestamp),
             limit,
@@ -232,22 +233,22 @@ pub trait MessageStorage: Send + Sync {
     }
 
     /// Get the total number of stored messages
-    async fn get_message_count(&self) -> Result<u64, Self::Error>;
+    async fn get_message_count(&self) -> Result<u64, crate::StorageError>;
 
     /// Get storage statistics
-    async fn get_storage_stats(&self) -> Result<StorageStats, Self::Error>;
+    async fn get_storage_stats(&self) -> Result<StorageStats, crate::StorageError>;
 
     /// Clear all messages from storage
-    async fn clear_all_messages(&self) -> Result<(), Self::Error>;
+    async fn clear_all_messages(&self) -> Result<(), crate::StorageError>;
 
     /// Get the storage size in bytes
-    async fn get_storage_size(&self) -> Result<u64, Self::Error>;
+    async fn get_storage_size(&self) -> Result<u64, crate::StorageError>;
 
     /// Perform storage maintenance (e.g., VACUUM for SQLite)
-    async fn maintenance(&self) -> Result<(), Self::Error>;
+    async fn maintenance(&self) -> Result<(), crate::StorageError>;
 
     /// Check if storage is healthy and accessible
-    async fn health_check(&self) -> Result<bool, Self::Error>;
+    async fn health_check(&self) -> Result<bool, crate::StorageError>;
 
     // Subscription state management
 
@@ -256,21 +257,22 @@ pub trait MessageStorage: Send + Sync {
         &self,
         relay_id: &Hash,
         state: &SubscriptionState,
-    ) -> Result<(), Self::Error>;
+    ) -> Result<(), crate::StorageError>;
 
     /// Get the subscription state for a specific relay
     async fn get_subscription_state(
         &self,
         relay_id: &Hash,
-    ) -> Result<Option<SubscriptionState>, Self::Error>;
+    ) -> Result<Option<SubscriptionState>, crate::StorageError>;
 
     /// Get all stored subscription states (for all relays)
     async fn get_all_subscription_states(
         &self,
-    ) -> Result<std::collections::HashMap<Hash, SubscriptionState>, Self::Error>;
+    ) -> Result<std::collections::HashMap<Hash, SubscriptionState>, crate::StorageError>;
 
     /// Delete subscription state for a specific relay
-    async fn delete_subscription_state(&self, relay_id: &Hash) -> Result<bool, Self::Error>;
+    async fn delete_subscription_state(&self, relay_id: &Hash)
+    -> Result<bool, crate::StorageError>;
 }
 
 /// Trait defining a key-value storage interface for arbitrary state data.
@@ -307,8 +309,6 @@ pub trait MessageStorage: Send + Sync {
 #[cfg_attr(any(feature = "mock", test), automock(type Error = crate::StorageError;))]
 #[async_trait]
 pub trait StateStorage: Send + Sync {
-    type Error: std::error::Error + Send + Sync + 'static;
-
     /// Store a value under the given key within a namespace.
     ///
     /// The value will be serialized using postcard before storage.
@@ -326,7 +326,7 @@ pub trait StateStorage: Send + Sync {
         namespace: &StateNamespace,
         key: &[u8],
         value: &T,
-    ) -> Result<(), Self::Error>
+    ) -> Result<(), crate::StorageError>
     where
         T: Serialize + Send + Sync + 'static;
 
@@ -349,7 +349,7 @@ pub trait StateStorage: Send + Sync {
         &self,
         namespace: &StateNamespace,
         key: &[u8],
-    ) -> Result<Option<T>, Self::Error>
+    ) -> Result<Option<T>, crate::StorageError>
     where
         T: for<'de> Deserialize<'de> + Send + Sync + 'static;
 
@@ -365,7 +365,11 @@ pub trait StateStorage: Send + Sync {
     ///
     /// # Errors
     /// Returns an error if the storage operation fails.
-    async fn delete(&self, namespace: &StateNamespace, key: &[u8]) -> Result<bool, Self::Error>;
+    async fn delete(
+        &self,
+        namespace: &StateNamespace,
+        key: &[u8],
+    ) -> Result<bool, crate::StorageError>;
 
     /// Check if a key exists in storage within a namespace.
     ///
@@ -379,7 +383,11 @@ pub trait StateStorage: Send + Sync {
     ///
     /// # Errors
     /// Returns an error if the storage operation fails.
-    async fn has(&self, namespace: &StateNamespace, key: &[u8]) -> Result<bool, Self::Error>;
+    async fn has(
+        &self,
+        namespace: &StateNamespace,
+        key: &[u8],
+    ) -> Result<bool, crate::StorageError>;
 
     /// Get all keys in storage.
     ///
@@ -388,7 +396,7 @@ pub trait StateStorage: Send + Sync {
     ///
     /// # Errors
     /// Returns an error if the storage operation fails.
-    async fn list_keys(&self) -> Result<Vec<Vec<u8>>, Self::Error>;
+    async fn list_keys(&self) -> Result<Vec<Vec<u8>>, crate::StorageError>;
 
     /// Get all keys within a specific namespace.
     ///
@@ -403,7 +411,7 @@ pub trait StateStorage: Send + Sync {
     async fn list_keys_in_namespace(
         &self,
         namespace: &StateNamespace,
-    ) -> Result<Vec<Vec<u8>>, Self::Error>;
+    ) -> Result<Vec<Vec<u8>>, crate::StorageError>;
 
     /// Get all key-value pairs within a specific namespace.
     ///
@@ -419,7 +427,7 @@ pub trait StateStorage: Send + Sync {
     async fn list_namespace_data<T>(
         &self,
         namespace: &crate::StateNamespace,
-    ) -> Result<Vec<(Vec<u8>, T)>, Self::Error>
+    ) -> Result<Vec<(Vec<u8>, T)>, crate::StorageError>
     where
         T: for<'de> serde::Deserialize<'de> + Send + Sync + 'static;
 
@@ -427,7 +435,7 @@ pub trait StateStorage: Send + Sync {
     ///
     /// # Errors
     /// Returns an error if the storage operation fails.
-    async fn clear(&self) -> Result<(), Self::Error>;
+    async fn clear(&self) -> Result<(), crate::StorageError>;
 
     /// Get the number of entries in storage.
     ///
@@ -436,5 +444,5 @@ pub trait StateStorage: Send + Sync {
     ///
     /// # Errors
     /// Returns an error if the storage operation fails.
-    async fn count(&self) -> Result<u64, Self::Error>;
+    async fn count(&self) -> Result<u64, crate::StorageError>;
 }

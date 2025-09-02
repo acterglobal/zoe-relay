@@ -31,7 +31,7 @@ struct Cli {
     /// Can be specified multiple times: -e relay1.com -e relay2.com:9443
     #[arg(
         short = 'e',
-        long = "external-address",
+        long = "external-addresses",
         env = "ZOERELAY_EXTERNAL_ADDRESSES",
         value_delimiter = ',',
         help = "External addresses where this relay can be reached"

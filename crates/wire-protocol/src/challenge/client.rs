@@ -338,7 +338,7 @@ mod tests {
             let pub_key = keys[i].public_key();
 
             // Verify the signature works
-            assert!(pub_key.verify(test_data, &test_sig).unwrap());
+            assert_eq!(pub_key.verify(test_data, &test_sig).unwrap(), ());
         }
     }
 
@@ -456,9 +456,9 @@ mod tests {
             expires_at: challenge.expires_at,
         };
 
-        assert!(!server_public_key
+        assert!(server_public_key
             .verify(&bad_challenge.nonce, &bad_challenge.signature)
-            .unwrap());
+            .is_err());
     }
 
     #[test]

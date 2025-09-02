@@ -237,8 +237,6 @@ impl SqliteMessageStorage {
 
 #[async_trait]
 impl MessageStorage for SqliteMessageStorage {
-    type Error = StorageError;
-
     async fn store_message(&self, message: &MessageFull) -> Result<()> {
         let mut conn = self
             .conn
@@ -714,8 +712,6 @@ impl MessageStorage for SqliteMessageStorage {
 
 #[async_trait]
 impl StateStorage for SqliteMessageStorage {
-    type Error = StorageError;
-
     async fn store<T>(&self, namespace: &crate::StateNamespace, key: &[u8], value: &T) -> Result<()>
     where
         T: serde::Serialize + Send + Sync + 'static,

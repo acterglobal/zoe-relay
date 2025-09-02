@@ -298,17 +298,9 @@ fn verify_single_key_proof(key_proof: &KeyProof, signature_data: &[u8]) -> Resul
     let signature = &key_proof.signature;
 
     // Verify the signature - returns Result<bool, _>
-    let is_valid = verifying_key
+    verifying_key
         .verify(signature_data, signature)
-        .map_err(|e| anyhow::anyhow!("Signature verification failed: {}", e))?;
-
-    if !is_valid {
-        return Err(anyhow::anyhow!(
-            "Signature verification failed: invalid signature"
-        ));
-    }
-
-    Ok(())
+        .map_err(|e| anyhow::anyhow!("Signature verification failed: {}", e))
 }
 
 /// Sends the challenge result back to the client

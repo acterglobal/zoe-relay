@@ -1,8 +1,10 @@
 use crate::error::Result;
 use crate::{ClientError, FileStorage, RelayClient, RelayClientBuilder};
+use rand::Rng;
 use zoe_client_storage::{SqliteMessageStorage, StorageConfig};
 use zoe_wire_protocol::{KeyPair, VerifyingKey};
 // Note: serde imports removed since ML-DSA types don't support serde
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -15,45 +17,64 @@ use flutter_rust_bridge::frb;
 
 // Note: ML-DSA types don't have simple serde serialization, so we'll handle this differently
 #[cfg_attr(feature = "frb-api", frb(opaque))]
+#[derive(Serialize, Deserialize)]
 pub struct ClientSecret {
-    inner_keypair: KeyPair,          // inner protocol
+    #[serde(
+        serialize_with = "serialize_key_pair",
+        deserialize_with = "deserialize_key_pair"
+    )]
+    inner_keypair: Arc<KeyPair>, // inner protocol
     server_public_key: VerifyingKey, // TLS server key
     server_addr: SocketAddr,
+    encryption_key: [u8; 32],
+}
+
+fn serialize_key_pair<S>(
+    key_pair: &Arc<KeyPair>,
+    serializer: S,
+) -> std::result::Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    serializer.serialize_str(&key_pair.to_pem().map_err(serde::ser::Error::custom)?)
+}
+fn deserialize_key_pair<'de, D>(deserializer: D) -> std::result::Result<Arc<KeyPair>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let s = String::deserialize(deserializer)?;
+    Ok(Arc::new(
+        KeyPair::from_pem(&s).map_err(serde::de::Error::custom)?,
+    ))
 }
 
 impl ClientSecret {
-    // Add this constructor method
-    pub fn new(
-        inner_keypair: KeyPair,
-        server_public_key: VerifyingKey,
-        server_addr: SocketAddr,
-    ) -> Self {
-        Self {
-            inner_keypair,
-            server_public_key,
-            server_addr,
-        }
+    pub fn from_hex(hex: &str) -> Result<Self> {
+        let bytes = hex::decode(hex).map_err(|e| {
+            ClientError::BuildError(format!("Failed to decode hex for client secret: {}", e))
+        })?;
+        let secret = postcard::from_bytes(&bytes).map_err(|e| {
+            ClientError::BuildError(format!("Failed to deserialize client secret: {}", e))
+        })?;
+        Ok(secret)
     }
 
-    /// Get the inner keypair (ML-DSA-65)
-    pub fn inner_keypair(&self) -> &KeyPair {
-        &self.inner_keypair
-    }
-
-    /// Get the server public key
-    pub fn server_public_key(&self) -> &VerifyingKey {
-        &self.server_public_key
+    pub fn to_hex(&self) -> Result<String> {
+        let bytes = postcard::to_stdvec(&self).map_err(|e| {
+            ClientError::BuildError(format!("Failed to serialize client secret: {}", e))
+        })?;
+        Ok(hex::encode(bytes))
     }
 }
 
 #[derive(Default)]
 #[cfg_attr(feature = "frb-api", frb(opaque))]
 pub struct ClientBuilder {
-    media_storage_path: Option<PathBuf>,
-    inner_keypair: Option<KeyPair>,
+    media_storage_dir: Option<PathBuf>,
+    inner_keypair: Option<Arc<KeyPair>>,
     server_public_key: Option<VerifyingKey>,
     server_addr: Option<SocketAddr>,
-    storage_config: Option<StorageConfig>,
+    db_storage_dir: Option<PathBuf>,
     encryption_key: Option<[u8; 32]>,
 }
 
@@ -63,16 +84,22 @@ impl ClientBuilder {
         self.server_addr = Some(secret.server_addr);
         self.server_public_key = Some(secret.server_public_key);
         self.inner_keypair = Some(secret.inner_keypair);
+        self.encryption_key = Some(secret.encryption_key);
     }
 
     #[cfg_attr(feature = "frb-api", frb)]
-    pub fn media_storage_path(&mut self, media_storage_path: String) {
-        self.media_storage_path = Some(PathBuf::from(media_storage_path));
+    pub fn media_storage_dir(&mut self, media_storage_dir: String) {
+        self.media_storage_dir_pathbuf(PathBuf::from(media_storage_dir));
+    }
+
+    #[cfg_attr(feature = "frb-api", frb(ignore))]
+    pub fn media_storage_dir_pathbuf(&mut self, media_storage_dir: PathBuf) {
+        self.media_storage_dir = Some(PathBuf::from(media_storage_dir));
     }
 
     #[cfg_attr(feature = "frb-api", frb(ignore))]
     pub fn inner_keypair(&mut self, inner_keypair: KeyPair) {
-        self.inner_keypair = Some(inner_keypair);
+        self.inner_keypair = Some(Arc::new(inner_keypair));
     }
 
     #[cfg_attr(feature = "frb-api", frb)]
@@ -81,18 +108,10 @@ impl ClientBuilder {
         self.server_addr = Some(server_addr);
     }
 
-    /// Set the storage configuration for the relay client
-    #[cfg_attr(feature = "frb-api", frb(ignore))]
-    pub fn storage_config(&mut self, config: StorageConfig) {
-        self.storage_config = Some(config);
-    }
-
     /// Set the storage database path (convenience method)
     #[cfg_attr(feature = "frb-api", frb)]
-    pub fn db_storage_path(&mut self, path: String) {
-        let mut config = self.storage_config.take().unwrap_or_default();
-        config.database_path = PathBuf::from(path);
-        self.storage_config = Some(config);
+    pub fn db_storage_dir(&mut self, path: String) {
+        self.db_storage_dir = Some(PathBuf::from(path));
     }
 
     /// Set the encryption key for storage
@@ -103,9 +122,9 @@ impl ClientBuilder {
 
     #[cfg_attr(feature = "frb-api", frb)]
     pub async fn build(self) -> Result<Client> {
-        let Some(media_storage_path) = self.media_storage_path else {
+        let Some(media_storage_dir) = self.media_storage_dir else {
             return Err(ClientError::BuildError(
-                "Media storage path is required".to_string(),
+                "Media storage dir is required".to_string(),
             ));
         };
 
@@ -121,18 +140,35 @@ impl ClientBuilder {
             ));
         };
 
-        let Some(encryption_key) = self.encryption_key else {
-            return Err(ClientError::BuildError(
-                "Encryption key is required for storage".to_string(),
-            ));
+        let encryption_key = match self.encryption_key {
+            Some(encryption_key) => encryption_key,
+            None => rand::rngs::OsRng::default().r#gen(),
         };
+
+        let key_pair = if let Some(key_pair) = self.inner_keypair {
+            key_pair
+        } else {
+            Arc::new(KeyPair::generate(&mut rand::rngs::OsRng))
+        };
+
+        let user_id = key_pair.id();
+        let user_id_hex = hex::encode(user_id);
 
         // Strategy: Use tokio::task::spawn to run on separate stack
         // This completely avoids stack overflow by using a new task with fresh stack
 
         // Run all operations on separate tasks to avoid stack buildup
-        let fs_path = media_storage_path.to_path_buf();
-        let storage_config = self.storage_config.unwrap_or_default();
+        let fs_path = media_storage_dir.to_path_buf().join(&user_id_hex);
+        let storage_config = StorageConfig {
+            database_path: self
+                .db_storage_dir
+                .unwrap_or_default()
+                .join(&user_id_hex)
+                .join("db.sqlite"),
+            max_query_limit: None,
+            enable_wal_mode: false,
+            cache_size_kb: None,
+        };
 
         // Create storage instance in the ClientBuilder
         let storage = Arc::new(
@@ -141,18 +177,13 @@ impl ClientBuilder {
                 .map_err(|e| ClientError::BuildError(format!("Failed to create storage: {}", e)))?,
         );
 
-        let relay_client = {
-            let mut builder = RelayClientBuilder::new()
-                .server_public_key(server_public_key)
-                .server_address(server_addr)
-                .storage(storage);
-
-            if let Some(inner_keypair) = self.inner_keypair {
-                builder = builder.client_keypair(inner_keypair);
-            }
-
-            builder.build().await?
-        };
+        let relay_client = RelayClientBuilder::new()
+            .server_public_key(server_public_key.clone())
+            .server_address(server_addr)
+            .storage(storage)
+            .client_keypair(key_pair.clone())
+            .build()
+            .await?;
 
         let fs = FileStorage::new(
             &fs_path,
@@ -162,6 +193,12 @@ impl ClientBuilder {
         .await?;
 
         Ok(Client {
+            client_secret: Arc::new(ClientSecret {
+                inner_keypair: key_pair,
+                server_public_key: server_public_key,
+                server_addr: server_addr,
+                encryption_key: encryption_key,
+            }),
             fs: Arc::new(fs),
             relay_client,
         })
@@ -171,6 +208,7 @@ impl ClientBuilder {
 #[derive(Clone)]
 #[cfg_attr(feature = "frb-api", frb(opaque))]
 pub struct Client {
+    client_secret: Arc<ClientSecret>,
     fs: Arc<FileStorage>,
     relay_client: RelayClient,
 }
@@ -183,8 +221,17 @@ impl Client {
     }
 }
 
+#[cfg_attr(feature = "frb-api", frb)]
 // File Storage
 impl Client {
+    pub fn client_secret_hex(&self) -> Result<String> {
+        self.client_secret.to_hex()
+    }
+
+    pub fn id_hex(&self) -> String {
+        hex::encode(self.client_secret.inner_keypair.id())
+    }
+
     /// Store a file by reading from disk, encrypting, and storing in blob storage
     ///
     /// This method:

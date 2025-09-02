@@ -51,7 +51,7 @@ struct RelayClientInner {
 /// # }
 /// ```
 pub struct RelayClientBuilder {
-    client_keypair_inner: Option<KeyPair>,
+    client_keypair_inner: Option<Arc<KeyPair>>,
     server_public_key: Option<VerifyingKey>,
     server_address: Option<SocketAddr>,
     db_config: Option<DbConfig>,
@@ -78,7 +78,7 @@ impl RelayClientBuilder {
 
     /// Set the client's inner protocol keypair (for message signing/verification)
     /// If not set, a random keypair will be generated
-    pub fn client_keypair(mut self, keypair: KeyPair) -> Self {
+    pub fn client_keypair(mut self, keypair: Arc<KeyPair>) -> Self {
         self.client_keypair_inner = Some(keypair);
         self
     }
@@ -159,10 +159,9 @@ impl RelayClientBuilder {
             })?
         };
 
-        let client_keypair_inner = Arc::new(
-            self.client_keypair_inner
-                .unwrap_or_else(|| KeyPair::generate(&mut rand::thread_rng())),
-        );
+        let client_keypair_inner = self
+            .client_keypair_inner
+            .unwrap_or_else(|| Arc::new(KeyPair::generate(&mut rand::thread_rng())));
 
         // Generate TLS keypair for certificates (default to Ed25519)
         let client_keypair_tls = KeyPair::generate_ed25519(&mut rand::thread_rng());

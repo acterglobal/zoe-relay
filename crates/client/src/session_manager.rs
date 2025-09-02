@@ -38,7 +38,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tokio::task::JoinHandle;
 
-use zoe_client_storage::{StateNamespace, StateStorage};
+use zoe_client_storage::{StateNamespace, StateStorage, StorageError};
 use zoe_state_machine::{GroupDataUpdate, GroupManager};
 use zoe_wire_protocol::PqxdhInboxProtocol;
 
@@ -50,7 +50,7 @@ use crate::services::MessagesManagerTrait;
 pub enum SessionManagerError {
     /// Storage operation failed
     #[error("Storage error: {0}")]
-    Storage(#[from] Box<dyn std::error::Error + Send + Sync>),
+    Storage(#[from] StorageError),
     /// Serialization/deserialization failed
     #[error("Serialization error: {0}")]
     Serialization(String),
@@ -224,7 +224,7 @@ impl<S: StateStorage + 'static, M: MessagesManagerTrait + 'static> SessionManage
         let sessions: Vec<(Vec<u8>, zoe_state_machine::GroupSession)> = storage
             .list_namespace_data(&namespace)
             .await
-            .map_err(|e| SessionManagerError::Storage(Box::new(e)))?;
+            .map_err(|e| SessionManagerError::Storage(e))?;
 
         let group_manager = Arc::new(
             GroupManager::builder()
@@ -290,7 +290,7 @@ impl<S: StateStorage + 'static, M: MessagesManagerTrait + 'static> SessionManage
         let pqxdh_data = storage
             .list_namespace_data(&namespace)
             .await
-            .map_err(|e| SessionManagerError::Storage(Box::new(e)))?;
+            .map_err(SessionManagerError::Storage)?;
 
         let mut handlers = Vec::new();
         for (key, protocol_state) in pqxdh_data {
@@ -336,7 +336,7 @@ impl<S: StateStorage + 'static, M: MessagesManagerTrait + 'static> SessionManage
             storage
                 .store(&namespace, &handler_id_bytes, &initial_state)
                 .await
-                .map_err(|e| SessionManagerError::Storage(Box::new(e)))?;
+                .map_err(SessionManagerError::Storage)?;
         }
 
         // Spawn background task to listen to state changes

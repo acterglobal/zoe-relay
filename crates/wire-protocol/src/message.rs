@@ -1,4 +1,4 @@
-use crate::{KeyPair, Signature, VerifyingKey};
+use crate::{KeyPair, Signature, VerifyError, VerifyingKey};
 use blake3::{Hash, Hasher};
 use serde::{Deserialize, Serialize};
 
@@ -442,7 +442,7 @@ impl Message {
         &self,
         message_bytes: &[u8],
         signature: &Signature,
-    ) -> Result<bool, Box<dyn std::error::Error>> {
+    ) -> Result<(), VerifyError> {
         match self {
             Message::MessageV0(ref inner) => inner.header.sender.verify(message_bytes, signature),
         }
@@ -792,8 +792,18 @@ impl From<MessageFull> for MessageFullWire {
     }
 }
 
+#[derive(Debug, thiserror::Error)]
+pub enum MessageFullError {
+    #[error("Signature does not match sender message")]
+    VerificationFailed(#[from] VerifyError),
+    #[error("Postcard Serialization error")]
+    SerializationError(#[from] postcard::Error),
+    #[error("Invalid content")]
+    InvalidContent,
+}
+
 impl TryFrom<MessageFullWire> for MessageFull {
-    type Error = Box<dyn std::error::Error>;
+    type Error = MessageFullError;
     fn try_from(value: MessageFullWire) -> Result<Self, Self::Error> {
         let message_bytes = postcard::to_stdvec(&value.message)?;
         Self::with_signature(value.signature, value.message, &message_bytes)
@@ -802,7 +812,7 @@ impl TryFrom<MessageFullWire> for MessageFull {
 
 impl MessageFull {
     /// Create a new MessageFull with proper signature and ID
-    pub fn new(message: Message, signer: &KeyPair) -> Result<Self, Box<dyn std::error::Error>> {
+    pub fn new(message: Message, signer: &KeyPair) -> Result<Self, MessageFullError> {
         let message_bytes = postcard::to_stdvec(&message)?;
         let signature = signer.sign(&message_bytes);
         Self::with_signature(signature, Box::new(message), &message_bytes)
@@ -812,10 +822,8 @@ impl MessageFull {
         signature: Signature,
         message: Box<Message>,
         message_bytes: &[u8],
-    ) -> Result<Self, Box<dyn std::error::Error>> {
-        if !message.verify_sender_signature(message_bytes, &signature)? {
-            return Err("Signature does not match sender message".into());
-        }
+    ) -> Result<Self, MessageFullError> {
+        message.verify_sender_signature(message_bytes, &signature)?;
         let mut hasher = Hasher::new();
         hasher.update(message_bytes);
         Ok(Self {
@@ -845,7 +853,7 @@ impl MessageFull {
     }
 
     /// The value this message is stored under in the storage
-    pub fn storage_value(&self) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+    pub fn storage_value(&self) -> Result<Vec<u8>, MessageFullError> {
         Ok(postcard::to_stdvec(&self)?)
     }
 
@@ -874,7 +882,7 @@ impl MessageFull {
     }
 
     /// Deserialize a message from its storage value
-    pub fn from_storage_value(value: &[u8]) -> Result<Self, Box<dyn std::error::Error>> {
+    pub fn from_storage_value(value: &[u8]) -> Result<Self, MessageFullError> {
         let message: Self = postcard::from_bytes(value)?;
         Ok(message)
     }
@@ -922,136 +930,18 @@ impl MessageFull {
 
 impl MessageFull {
     /// Try to deserialize content if it's raw (unencrypted)
-    pub fn try_deserialize_content<C>(&self) -> Result<C, Box<dyn std::error::Error>>
+    pub fn try_deserialize_content<C>(&self) -> Result<C, MessageFullError>
     where
         C: for<'a> Deserialize<'a>,
     {
-        match &*self.message {
-            Message::MessageV0(message) => match &message.content {
-                Content::Raw(bytes) => Ok(postcard::from_bytes(bytes)?),
-                Content::ChaCha20Poly1305(_) => {
-                    Err("Cannot deserialize encrypted content without decryption key".into())
-                }
-                Content::Ed25519SelfEncrypted(_) => {
-                    Err("Cannot deserialize ed25519-encrypted content without signing key".into())
-                }
-                Content::MlDsaSelfEncrypted(_) => {
-                    Err("Cannot deserialize ML-DSA-encrypted content without signing key".into())
-                }
-                Content::EphemeralEcdh(_) => Err(
-                    "Cannot deserialize ephemeral ECDH-encrypted content without signing keys"
-                        .into(),
-                ),
-                Content::PqxdhEncrypted(_) => {
-                    Err("Cannot deserialize PQXDH-encrypted content without private keys".into())
-                }
-                Content::Unknown { discriminant, .. } => {
-                    Err(format!("Unknown content type: {discriminant}").into())
-                }
-            },
-        }
-    }
-
-    /// Try to deserialize encrypted content by decrypting it first
-    pub fn try_deserialize_encrypted_content<C>(
-        &self,
-        encryption_key: &crate::crypto::EncryptionKey,
-    ) -> Result<C, Box<dyn std::error::Error>>
-    where
-        C: for<'a> Deserialize<'a>,
-    {
-        match &*self.message {
-            Message::MessageV0(message) => match &message.content {
-                Content::Raw(_) => Err("Content is not encrypted".into()),
-                Content::ChaCha20Poly1305(encrypted) => {
-                    let plaintext = encryption_key.decrypt_content(encrypted)?;
-                    Ok(postcard::from_bytes(&plaintext)?)
-                }
-                Content::Ed25519SelfEncrypted(_) => {
-                    Err("Cannot decrypt ed25519-encrypted content with EncryptionKey - use signing key instead".into())
-                }
-                Content::MlDsaSelfEncrypted(_) => {
-                    Err("Cannot decrypt ML-DSA-encrypted content with EncryptionKey - use ML-DSA signing key instead".into())
-                }
-                Content::EphemeralEcdh(_) => {
-                    Err("Cannot decrypt ephemeral ECDH-encrypted content with EncryptionKey - use signing keys instead".into())
-                }
-                Content::PqxdhEncrypted(_) => {
-                    Err("Cannot decrypt PQXDH-encrypted content with EncryptionKey - use PQXDH private keys instead".into())
-                }
-                Content::Unknown { discriminant,.. } => Err(format!("Unknown content type: {discriminant}").into()),
-            },
-        }
-    }
-
-    /// Try to deserialize ed25519-encrypted content by decrypting it first
-    pub fn try_deserialize_ed25519_encrypted_content<C>(
-        &self,
-        signing_key: &ed25519_dalek::SigningKey,
-    ) -> Result<C, Box<dyn std::error::Error>>
-    where
-        C: for<'a> Deserialize<'a>,
-    {
-        match &*self.message {
-            Message::MessageV0(message) => match &message.content {
-                Content::Raw(_) => Err("Content is not encrypted".into()),
-                Content::ChaCha20Poly1305(_) => {
-                    Err("Cannot decrypt ChaCha20Poly1305 content with signing key - use EncryptionKey instead".into())
-                }
-                Content::Ed25519SelfEncrypted(encrypted) => {
-                    let plaintext = encrypted.decrypt(signing_key)?;
-                    Ok(postcard::from_bytes(&plaintext)?)
-                }
-                Content::MlDsaSelfEncrypted(_) => {
-                    Err("Cannot decrypt ML-DSA content with Ed25519 key - use ML-DSA signing key instead".into())
-                }
-                Content::EphemeralEcdh(encrypted) => {
-                    let plaintext = encrypted.decrypt(signing_key)?;
-                    Ok(postcard::from_bytes(&plaintext)?)
-                }
-                Content::PqxdhEncrypted(_) => {
-                    Err("Cannot decrypt PQXDH-encrypted content with Ed25519 key - use PQXDH private keys instead".into())
-                }
-                Content::Unknown { discriminant,.. } => Err(format!("Unknown content type: {discriminant}").into()),
-            },
-        }
-    }
-
-    /// Try to deserialize ML-DSA-encrypted content by decrypting it first
-    pub fn try_deserialize_ml_dsa_encrypted_content<C>(
-        &self,
-        signing_key: &KeyPair,
-    ) -> Result<C, Box<dyn std::error::Error>>
-    where
-        C: for<'a> Deserialize<'a>,
-    {
-        match &*self.message {
-            Message::MessageV0(message) => match &message.content {
-                Content::Raw(_) => Err("Content is not encrypted".into()),
-                Content::ChaCha20Poly1305(_) => {
-                    Err("Cannot decrypt ChaCha20Poly1305 content with signing key - use EncryptionKey instead".into())
-                }
-                Content::Ed25519SelfEncrypted(_) => {
-                    Err("Cannot decrypt Ed25519 content with ML-DSA key - use Ed25519 signing key instead".into())
-                }
-                Content::MlDsaSelfEncrypted(encrypted) => {
-                    match signing_key {
-                        KeyPair::MlDsa65(key, _) => {
-                            let plaintext = encrypted.decrypt(&key.signing_key)?;
-                            Ok(postcard::from_bytes(&plaintext)?)
-                        }
-                        _ => Err("ML-DSA self-encrypted content requires MlDsa65 signing key".into()),
-                    }
-                }
-                Content::EphemeralEcdh(_) => {
-                    Err("Cannot decrypt ephemeral ECDH content with ML-DSA key - use Ed25519 signing key instead".into())
-                }
-                Content::PqxdhEncrypted(_) => {
-                    Err("Cannot decrypt PQXDH-encrypted content with ML-DSA key - use PQXDH private keys instead".into())
-                }
-                Content::Unknown { discriminant,.. } => Err(format!("Unknown content type: {discriminant}").into()),
-            },
-        }
+        let Message::MessageV0(MessageV0 {
+            content: Content::Raw(bytes),
+            ..
+        }) = &*self.message
+        else {
+            return Err(MessageFullError::InvalidContent);
+        };
+        Ok(postcard::from_bytes(bytes)?)
     }
 }
 

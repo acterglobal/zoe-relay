@@ -263,8 +263,20 @@ impl TryFrom<&[u8]> for VerifyingKey {
     }
 }
 
+#[derive(Debug, thiserror::Error)]
+pub enum VerifyError {
+    #[error("Invalid key")]
+    InvalidKey,
+    #[error("Ed25519 signature error")]
+    Ed25519SignatureError(ed25519_dalek::SignatureError),
+    #[error("ML-DSA verify error")]
+    MlDsaVerifyError(libcrux_ml_dsa::VerificationError),
+}
+
+/// flutter_rust_bridge:opaque
 impl VerifyingKey {
     /// Get the algorithm for this key type
+    ///
     pub fn algorithm(&self) -> Algorithm {
         match self {
             Self::Ed25519(_) => Algorithm::Ed25519,
@@ -307,25 +319,24 @@ impl VerifyingKey {
     /// # Ok(())
     /// # }
     /// ```
-    pub fn verify(
-        &self,
-        message: &[u8],
-        signature: &Signature,
-    ) -> Result<bool, Box<dyn std::error::Error>> {
+    pub fn verify(&self, message: &[u8], signature: &Signature) -> Result<(), VerifyError> {
         match (self, signature) {
-            (VerifyingKey::Ed25519(key), Signature::Ed25519(sig)) => {
-                Ok(key.verify(message, sig).is_ok())
-            }
+            (VerifyingKey::Ed25519(key), Signature::Ed25519(sig)) => key
+                .verify(message, sig)
+                .map_err(VerifyError::Ed25519SignatureError),
             (VerifyingKey::MlDsa44((key, _hash)), Signature::MlDsa44((sig, _hash2))) => {
-                Ok(ml_dsa_44::portable::verify(key, message, &[], sig).is_ok())
+                ml_dsa_44::portable::verify(key, message, &[], sig)
+                    .map_err(VerifyError::MlDsaVerifyError)
             }
             (VerifyingKey::MlDsa65((key, _hash)), Signature::MlDsa65((sig, _hash2))) => {
-                Ok(ml_dsa_65::portable::verify(key, message, &[], sig).is_ok())
+                ml_dsa_65::portable::verify(key, message, &[], sig)
+                    .map_err(VerifyError::MlDsaVerifyError)
             }
             (VerifyingKey::MlDsa87((key, _hash)), Signature::MlDsa87((sig, _hash2))) => {
-                Ok(ml_dsa_87::portable::verify(key, message, &[], sig).is_ok())
+                ml_dsa_87::portable::verify(key, message, &[], sig)
+                    .map_err(VerifyError::MlDsaVerifyError)
             }
-            _ => Ok(false), // Mismatched key and signature types
+            _ => Err(VerifyError::InvalidKey), // Mismatched key and signature types
         }
     }
 
@@ -370,6 +381,13 @@ impl VerifyingKey {
 
     pub fn to_bytes(&self) -> Result<Vec<u8>, postcard::Error> {
         postcard::to_stdvec(self)
+    }
+
+    pub fn from_hex(hex: String) -> Result<Self, String> {
+        let bytes = hex::decode(hex).map_err(|e| format!("Invalid hex: {}", e))?;
+        let key: VerifyingKey =
+            postcard::from_bytes(&bytes).map_err(|e| format!("Invalid key data: {}", e))?;
+        Ok(key)
     }
 }
 
@@ -1523,20 +1541,20 @@ mod tests {
             let verifying_key = keypair.public_key();
 
             // Test that signature can be verified
-            let is_valid = verifying_key
-                .verify(message, &signature)
-                .expect("Verification should not error");
-            assert!(
+            let is_valid = verifying_key.verify(message, &signature).unwrap();
+            assert_eq!(
                 is_valid,
+                (),
                 "Signature should be valid for correct key and message"
             );
 
             // Test with wrong message
             let wrong_message = b"different message";
-            let is_invalid = verifying_key
-                .verify(wrong_message, &signature)
-                .expect("Verification should not error");
-            assert!(!is_invalid, "Signature should be invalid for wrong message");
+            let is_invalid = verifying_key.verify(wrong_message, &signature);
+            assert!(
+                is_invalid.is_err(),
+                "Signature should be invalid for wrong message"
+            );
         }
     }
 
@@ -1698,11 +1716,10 @@ mod tests {
 
         // Test that matching key/signature pairs work
         for (key, sig) in verifying_keys.iter().zip(signatures.iter()) {
-            let is_valid = key
-                .verify(message, sig)
-                .expect("Verification should not error");
-            assert!(
+            let is_valid = key.verify(message, sig).unwrap();
+            assert_eq!(
                 is_valid,
+                (),
                 "Matching key and signature should verify successfully"
             );
         }
@@ -1711,11 +1728,9 @@ mod tests {
         for (i, key) in verifying_keys.iter().enumerate() {
             for (j, sig) in signatures.iter().enumerate() {
                 if i != j {
-                    let is_valid = key
-                        .verify(message, sig)
-                        .expect("Verification should not error");
+                    let is_valid = key.verify(message, sig);
                     assert!(
-                        !is_valid,
+                        is_valid.is_err(),
                         "Mismatched key and signature should fail verification"
                     );
                 }
@@ -1965,12 +1980,14 @@ mod tests {
 
             // Both signatures should verify with the public key
             let public_key = original_keypair.public_key();
-            assert!(
+            assert_eq!(
                 public_key.verify(message, &original_signature).unwrap(),
+                (),
                 "Original signature should verify after PEM round trip"
             );
-            assert!(
+            assert_eq!(
                 public_key.verify(message, &restored_signature).unwrap(),
+                (),
                 "Restored signature should verify after PEM round trip"
             );
         }
@@ -2001,11 +2018,12 @@ mod tests {
             // Test that we can sign and verify
             let message = format!("Environment variable test message {}", i);
             let signature = restored_keypair.sign(message.as_bytes());
-            assert!(
+            assert_eq!(
                 restored_keypair
                     .public_key()
                     .verify(message.as_bytes(), &signature)
                     .unwrap(),
+                (),
                 "Should be able to sign and verify after environment variable round trip"
             );
         }
@@ -2085,13 +2103,13 @@ mod tests {
             // Verify signing still works
             let message = format!("Test message for {}", name);
             let signature = restored.sign(message.as_bytes());
-            assert!(
+            assert_eq!(
                 restored
                     .public_key()
                     .verify(message.as_bytes(), &signature)
                     .unwrap(),
-                "{} should be able to sign and verify after PEM serialization",
-                name
+                (),
+                "{name} should be able to sign and verify after PEM serialization"
             );
 
             // Verify PEM format contains expected labels

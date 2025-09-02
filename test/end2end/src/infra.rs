@@ -43,7 +43,7 @@ async fn create_test_relay_client(
     server_addr: SocketAddr,
 ) -> Result<RelayClient> {
     RelayClientBuilder::new()
-        .client_keypair(client_keypair)
+        .client_keypair(Arc::new(client_keypair))
         .server_public_key(server_public_key)
         .server_address(server_addr)
         .encryption_key([0u8; 32]) // Use default encryption key for tests
@@ -156,7 +156,7 @@ impl TestInfrastructure {
         let client = timeout(
             Duration::from_secs(5),
             RelayClientBuilder::new()
-                .client_keypair(keypair)
+                .client_keypair(Arc::new(keypair))
                 .server_public_key(self.server_public_key.clone())
                 .server_address(self.server_addr)
                 .encryption_key([0u8; 32]) // Use default encryption key for tests

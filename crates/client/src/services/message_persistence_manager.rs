@@ -6,7 +6,7 @@ use std::{ops::Deref, sync::Arc};
 use tokio::{select, task::JoinHandle};
 use tokio_stream::wrappers::BroadcastStream;
 use tracing::{debug, error, warn};
-use zoe_client_storage::{MessageStorage, StorageError, SubscriptionState};
+use zoe_client_storage::{MessageStorage, SubscriptionState};
 use zoe_wire_protocol::{
     CatchUpResponse, Filter, Hash, MessageFull, PublishResult, StreamMessage, VerifyingKey,
 };
@@ -29,7 +29,7 @@ use super::messages_manager::{
 /// # use std::sync::Arc;
 /// # use zoe_client_storage::StorageError;
 /// # async fn example(
-/// #     storage: Arc<dyn MessageStorage<Error = StorageError>>,
+/// #     storage: Arc<dyn MessageStorage>,
 /// #     connection: &quinn::Connection,
 /// #     relay_key: VerifyingKey,
 /// # ) -> zoe_client::error::Result<()> {
@@ -52,7 +52,7 @@ use super::messages_manager::{
 /// # }
 /// ```
 pub struct GenericMessagePersistenceManagerBuilder<T: MessagesManagerTrait> {
-    storage: Option<Arc<dyn MessageStorage<Error = StorageError>>>,
+    storage: Option<Arc<dyn MessageStorage>>,
     relay_id: Option<Hash>,
     buffer_size: Option<usize>,
     autosubscribe: bool,
@@ -76,7 +76,7 @@ impl<T: MessagesManagerTrait> GenericMessagePersistenceManagerBuilder<T> {
     }
 
     /// Set the storage implementation to use for persistence
-    pub fn storage(mut self, storage: Arc<dyn MessageStorage<Error = StorageError>>) -> Self {
+    pub fn storage(mut self, storage: Arc<dyn MessageStorage>) -> Self {
         self.storage = Some(storage);
         self
     }
@@ -228,7 +228,7 @@ impl<T: MessagesManagerTrait> GenericMessagePersistenceManager<T> {
 
     /// Load subscription state from storage for a specific relay
     pub async fn load_subscription_state(
-        storage: &dyn MessageStorage<Error = StorageError>,
+        storage: &dyn MessageStorage,
         relay_id: &Hash,
     ) -> Result<Option<SubscriptionState>> {
         storage
@@ -239,7 +239,7 @@ impl<T: MessagesManagerTrait> GenericMessagePersistenceManager<T> {
 
     /// Load all subscription states from storage
     pub async fn load_all_subscription_states(
-        storage: &dyn MessageStorage<Error = StorageError>,
+        storage: &dyn MessageStorage,
     ) -> Result<std::collections::HashMap<Hash, SubscriptionState>> {
         storage.get_all_subscription_states().await.map_err(|e| {
             ClientError::Generic(format!("Failed to load all subscription states: {}", e))
@@ -256,7 +256,7 @@ impl<T: MessagesManagerTrait> GenericMessagePersistenceManager<T> {
     /// * `relay_pubkey` - Optional relay public key for sync tracking
     /// * `buffer_size` - Optional buffer size for the task queue
     async fn new(
-        storage: Arc<dyn MessageStorage<Error = StorageError>>,
+        storage: Arc<dyn MessageStorage>,
         messages_manager: Arc<T>,
         relay_id: Hash,
     ) -> Result<Self> {
@@ -317,7 +317,7 @@ impl<T: MessagesManagerTrait> GenericMessagePersistenceManager<T> {
 
     /// Handle a single message event by persisting it
     async fn handle_message_event(
-        storage: &dyn MessageStorage<Error = StorageError>,
+        storage: &dyn MessageStorage,
         event: &MessageEvent,
         relay_id: &Hash,
     ) -> Result<()> {
@@ -494,7 +494,7 @@ mod tests {
 
     use crate::services::messages_manager::MockMessagesManagerTrait;
     use tokio::sync::broadcast;
-    use zoe_client_storage::storage::MockMessageStorage;
+    use zoe_client_storage::{StorageError, storage::MockMessageStorage};
     use zoe_wire_protocol::{Content, KeyPair, Kind, MessageFilters, MessageFull, PublishResult};
 
     fn create_test_message(content: &str) -> MessageFull {
@@ -855,6 +855,8 @@ mod tests {
 
     #[cfg(test)]
     mod wiring_tests {
+        use zoe_client_storage::StorageError;
+
         use super::*;
 
         type TestPersistenceManager = GenericMessagePersistenceManager<MockMessagesManagerTrait>;
