@@ -10,7 +10,7 @@ services:
     depends_on:
       - zoe-redis
     ports:
-      - "${ZOERELAY_PORT:-13908}:${ZOERELAY_PORT:-13908}"
+      - "${ZOERELAY_PORT:-13908}:${ZOERELAY_PORT:-13908}/udp"
     environment:
       # Network configuration
       - ZOERELAY_PORT=${ZOERELAY_PORT:-13908}
