@@ -73,7 +73,6 @@ impl TestInfrastructure {
         info!("✅ Connected to blob service");
 
         // For now, we'll create a mock message service since the current API has issues
-        // TODO: Re-enable proper Redis message service when API is stabilized
         let redis_url = "redis://127.0.0.1:6379".to_string();
 
         // Try to connect to Redis, but don't fail if it's not available

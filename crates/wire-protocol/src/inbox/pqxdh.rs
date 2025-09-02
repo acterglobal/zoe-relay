@@ -207,17 +207,84 @@ impl PqxdhPrekeyBundle {
     /// Verify all signatures in the prekey bundle
     ///
     /// This checks that all prekeys are properly signed by the given identity key.
+    ///
+    /// ## Verification Process
+    ///
+    /// 1. Verifies `signed_prekey_signature` over `signed_prekey` bytes
+    /// 2. Verifies `pq_signed_prekey_signature` over `pq_signed_prekey` bytes  
+    /// 3. Verifies each `pq_one_time_signatures` over their respective `pq_one_time_keys`
+    /// 4. Ensures all PQ one-time keys have corresponding signatures (no missing or extra signatures)
+    ///
+    /// ## Security Properties
+    ///
+    /// - **Authentication**: Proves all keys were signed by the identity key holder
+    /// - **Integrity**: Detects any tampering with prekey data after signing
+    /// - **Completeness**: Ensures signature coverage matches key availability
+    ///
+    /// ## Returns
+    ///
+    /// - `Ok(())` if all signatures are valid and complete
+    /// - `Err(PqxdhError::SignatureVerificationFailed)` if any signature is invalid or missing
     pub fn verify_signatures(
         &self,
-        _identity_key: &VerifyingKey,
+        identity_key: &VerifyingKey,
     ) -> std::result::Result<(), PqxdhError> {
-        // TODO: Implement signature verification
-        // This would verify:
-        // - signed_prekey_signature over signed_prekey
-        // - pq_signed_prekey_signature over pq_signed_prekey
-        // - all pq_one_time_signatures over their respective keys
+        // Verify signed prekey signature
+        let signed_prekey_valid = identity_key
+            .verify(self.signed_prekey.as_bytes(), &self.signed_prekey_signature)
+            .map_err(|e| {
+                PqxdhError::CryptoError(format!("Failed to verify signed prekey signature: {}", e))
+            })?;
 
-        // For now, return Ok - this will be implemented when we add the crypto helpers
+        if !signed_prekey_valid {
+            return Err(PqxdhError::SignatureVerificationFailed);
+        }
+
+        // Verify PQ signed prekey signature
+        let pq_signed_prekey_valid = identity_key
+            .verify(&self.pq_signed_prekey, &self.pq_signed_prekey_signature)
+            .map_err(|e| {
+                PqxdhError::CryptoError(format!(
+                    "Failed to verify PQ signed prekey signature: {}",
+                    e
+                ))
+            })?;
+
+        if !pq_signed_prekey_valid {
+            return Err(PqxdhError::SignatureVerificationFailed);
+        }
+
+        // Verify that every PQ one-time key has a corresponding signature
+        for (key_id, pq_key) in &self.pq_one_time_keys {
+            let signature = self.pq_one_time_signatures.get(key_id).ok_or_else(|| {
+                PqxdhError::InvalidPrekeyBundle(format!(
+                    "Missing signature for PQ one-time key: {}",
+                    key_id
+                ))
+            })?;
+
+            let signature_valid = identity_key.verify(pq_key, signature).map_err(|e| {
+                PqxdhError::CryptoError(format!(
+                    "Failed to verify PQ one-time key signature for {}: {}",
+                    key_id, e
+                ))
+            })?;
+
+            if !signature_valid {
+                return Err(PqxdhError::SignatureVerificationFailed);
+            }
+        }
+
+        // Verify that every PQ one-time signature has a corresponding key (no extra signatures)
+        for key_id in self.pq_one_time_signatures.keys() {
+            if !self.pq_one_time_keys.contains_key(key_id) {
+                return Err(PqxdhError::InvalidPrekeyBundle(format!(
+                    "Extra signature found for non-existent PQ one-time key: {}",
+                    key_id
+                )));
+            }
+        }
+
         Ok(())
     }
 
@@ -262,6 +329,299 @@ impl PqxdhInbox {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::KeyPair;
+    use rand::rngs::OsRng;
+
+    /// Helper function to create a test keypair and identity
+    fn create_test_identity() -> (KeyPair, VerifyingKey) {
+        let keypair = KeyPair::generate_ed25519(&mut OsRng);
+        let identity = keypair.public_key();
+        (keypair, identity)
+    }
+
+    /// Helper function to create a prekey bundle with proper signatures
+    fn create_signed_prekey_bundle(identity_keypair: &KeyPair) -> PqxdhPrekeyBundle {
+        let signed_prekey = x25519_dalek::PublicKey::from([1u8; 32]);
+        let pq_signed_prekey = vec![2u8; 1184]; // ML-KEM 768 public key size
+
+        // Create proper signatures
+        let signed_prekey_signature = identity_keypair.sign(signed_prekey.as_bytes());
+        let pq_signed_prekey_signature = identity_keypair.sign(&pq_signed_prekey);
+
+        // Create one-time keys with signatures
+        let mut pq_one_time_keys = BTreeMap::new();
+        let mut pq_one_time_signatures = BTreeMap::new();
+
+        let pq_otk_1 = vec![3u8; 1184];
+        let pq_otk_2 = vec![4u8; 1184];
+
+        pq_one_time_keys.insert("pq_otk_1".to_string(), pq_otk_1.clone());
+        pq_one_time_keys.insert("pq_otk_2".to_string(), pq_otk_2.clone());
+
+        pq_one_time_signatures.insert("pq_otk_1".to_string(), identity_keypair.sign(&pq_otk_1));
+        pq_one_time_signatures.insert("pq_otk_2".to_string(), identity_keypair.sign(&pq_otk_2));
+
+        PqxdhPrekeyBundle {
+            signed_prekey,
+            signed_prekey_signature,
+            signed_prekey_id: "spk_001".to_string(),
+            one_time_prekeys: BTreeMap::new(),
+            pq_signed_prekey,
+            pq_signed_prekey_signature,
+            pq_signed_prekey_id: "pqspk_001".to_string(),
+            pq_one_time_keys,
+            pq_one_time_signatures,
+        }
+    }
+
+    /// Helper function to create a prekey bundle with invalid signatures
+    fn create_invalid_prekey_bundle() -> PqxdhPrekeyBundle {
+        // Create signatures with a different keypair (invalid)
+        let wrong_keypair = KeyPair::generate_ed25519(&mut OsRng);
+
+        let signed_prekey = x25519_dalek::PublicKey::from([1u8; 32]);
+        let pq_signed_prekey = vec![2u8; 1184];
+
+        // These signatures are from the wrong key, so they should fail verification
+        let signed_prekey_signature = wrong_keypair.sign(signed_prekey.as_bytes());
+        let pq_signed_prekey_signature = wrong_keypair.sign(&pq_signed_prekey);
+
+        let mut pq_one_time_keys = BTreeMap::new();
+        let mut pq_one_time_signatures = BTreeMap::new();
+
+        let pq_otk_1 = vec![3u8; 1184];
+        pq_one_time_keys.insert("pq_otk_1".to_string(), pq_otk_1.clone());
+        pq_one_time_signatures.insert("pq_otk_1".to_string(), wrong_keypair.sign(&pq_otk_1));
+
+        PqxdhPrekeyBundle {
+            signed_prekey,
+            signed_prekey_signature,
+            signed_prekey_id: "spk_001".to_string(),
+            one_time_prekeys: BTreeMap::new(),
+            pq_signed_prekey,
+            pq_signed_prekey_signature,
+            pq_signed_prekey_id: "pqspk_001".to_string(),
+            pq_one_time_keys,
+            pq_one_time_signatures,
+        }
+    }
+
+    #[test]
+    fn test_signature_verification_with_valid_signatures_should_pass() {
+        let (identity_keypair, identity_key) = create_test_identity();
+        let bundle = create_signed_prekey_bundle(&identity_keypair);
+
+        // This should pass when properly implemented
+        let result = bundle.verify_signatures(&identity_key);
+
+        // Currently this passes because the TODO just returns Ok(())
+        // But when implemented, it should still pass because signatures are valid
+        assert!(result.is_ok(), "Valid signatures should pass verification");
+    }
+
+    #[test]
+    fn test_signature_verification_with_invalid_signatures_should_fail() {
+        let (_identity_keypair, identity_key) = create_test_identity();
+        let bundle = create_invalid_prekey_bundle();
+
+        // This should fail because signatures are from wrong keypair
+        let result = bundle.verify_signatures(&identity_key);
+
+        assert!(
+            result.is_err(),
+            "Invalid signatures should fail verification"
+        );
+        assert!(matches!(
+            result.unwrap_err(),
+            PqxdhError::SignatureVerificationFailed
+        ));
+    }
+
+    #[test]
+    fn test_signature_verification_with_wrong_identity_key() {
+        let (identity_keypair, _identity_key) = create_test_identity();
+        let bundle = create_signed_prekey_bundle(&identity_keypair);
+
+        // Create a different identity key
+        let (_wrong_keypair, wrong_identity_key) = create_test_identity();
+
+        // This should fail because we're using the wrong identity key
+        let result = bundle.verify_signatures(&wrong_identity_key);
+
+        assert!(
+            result.is_err(),
+            "Wrong identity key should fail verification"
+        );
+        assert!(matches!(
+            result.unwrap_err(),
+            PqxdhError::SignatureVerificationFailed
+        ));
+    }
+
+    #[test]
+    fn test_signature_verification_with_tampered_signed_prekey() {
+        let (identity_keypair, identity_key) = create_test_identity();
+        let mut bundle = create_signed_prekey_bundle(&identity_keypair);
+
+        // Tamper with the signed prekey after it was signed
+        bundle.signed_prekey = x25519_dalek::PublicKey::from([99u8; 32]);
+
+        let result = bundle.verify_signatures(&identity_key);
+
+        assert!(
+            result.is_err(),
+            "Tampered signed prekey should fail verification"
+        );
+        assert!(matches!(
+            result.unwrap_err(),
+            PqxdhError::SignatureVerificationFailed
+        ));
+    }
+
+    #[test]
+    fn test_signature_verification_with_tampered_pq_signed_prekey() {
+        let (identity_keypair, identity_key) = create_test_identity();
+        let mut bundle = create_signed_prekey_bundle(&identity_keypair);
+
+        // Tamper with the PQ signed prekey after it was signed
+        bundle.pq_signed_prekey = vec![99u8; 1184];
+
+        let result = bundle.verify_signatures(&identity_key);
+
+        assert!(
+            result.is_err(),
+            "Tampered PQ signed prekey should fail verification"
+        );
+        assert!(matches!(
+            result.unwrap_err(),
+            PqxdhError::SignatureVerificationFailed
+        ));
+    }
+
+    #[test]
+    fn test_signature_verification_with_tampered_pq_one_time_key() {
+        let (identity_keypair, identity_key) = create_test_identity();
+        let mut bundle = create_signed_prekey_bundle(&identity_keypair);
+
+        // Tamper with one of the PQ one-time keys after it was signed
+        bundle
+            .pq_one_time_keys
+            .insert("pq_otk_1".to_string(), vec![99u8; 1184]);
+
+        let result = bundle.verify_signatures(&identity_key);
+
+        assert!(
+            result.is_err(),
+            "Tampered PQ one-time key should fail verification"
+        );
+        assert!(matches!(
+            result.unwrap_err(),
+            PqxdhError::SignatureVerificationFailed
+        ));
+    }
+
+    #[test]
+    fn test_signature_verification_with_missing_pq_one_time_signature() {
+        let (identity_keypair, identity_key) = create_test_identity();
+        let mut bundle = create_signed_prekey_bundle(&identity_keypair);
+
+        // Remove a signature for an existing key
+        bundle.pq_one_time_signatures.remove("pq_otk_1");
+
+        let result = bundle.verify_signatures(&identity_key);
+
+        assert!(
+            result.is_err(),
+            "Missing PQ one-time signature should fail verification"
+        );
+        assert!(matches!(
+            result.unwrap_err(),
+            PqxdhError::InvalidPrekeyBundle(_)
+        ));
+    }
+
+    #[test]
+    fn test_signature_verification_with_extra_pq_one_time_signature() {
+        let (identity_keypair, identity_key) = create_test_identity();
+        let mut bundle = create_signed_prekey_bundle(&identity_keypair);
+
+        // Add a signature for a non-existent key
+        let fake_key = vec![88u8; 1184];
+        bundle
+            .pq_one_time_signatures
+            .insert("fake_key".to_string(), identity_keypair.sign(&fake_key));
+
+        let result = bundle.verify_signatures(&identity_key);
+
+        assert!(
+            result.is_err(),
+            "Extra PQ one-time signature should fail verification"
+        );
+        assert!(matches!(
+            result.unwrap_err(),
+            PqxdhError::InvalidPrekeyBundle(_)
+        ));
+    }
+
+    #[test]
+    fn test_signature_verification_with_empty_bundle() {
+        let (_identity_keypair, identity_key) = create_test_identity();
+
+        // Create a bundle with minimal required fields but no one-time keys
+        let bundle = PqxdhPrekeyBundle {
+            signed_prekey: x25519_dalek::PublicKey::from([0u8; 32]),
+            signed_prekey_signature: crate::Signature::Ed25519(Box::new(
+                ed25519_dalek::Signature::from_bytes(&[0u8; 64]),
+            )),
+            signed_prekey_id: "spk_001".to_string(),
+            one_time_prekeys: BTreeMap::new(),
+            pq_signed_prekey: vec![0u8; 1184],
+            pq_signed_prekey_signature: crate::Signature::Ed25519(Box::new(
+                ed25519_dalek::Signature::from_bytes(&[0u8; 64]),
+            )),
+            pq_signed_prekey_id: "pqspk_001".to_string(),
+            pq_one_time_keys: BTreeMap::new(),
+            pq_one_time_signatures: BTreeMap::new(),
+        };
+
+        let result = bundle.verify_signatures(&identity_key);
+
+        // This should fail because the signatures are dummy values (all zeros)
+        assert!(
+            result.is_err(),
+            "Invalid dummy signatures should fail verification"
+        );
+        assert!(matches!(
+            result.unwrap_err(),
+            PqxdhError::SignatureVerificationFailed
+        ));
+    }
+
+    #[test]
+    fn test_signature_verification_with_mismatched_signature_types() {
+        let (identity_keypair, identity_key) = create_test_identity();
+        let mut bundle = create_signed_prekey_bundle(&identity_keypair);
+
+        // Create a different keypair with ML-DSA and try to mix signature types
+        let mldsa_keypair = KeyPair::generate_ml_dsa65(&mut OsRng);
+        let mldsa_signature = mldsa_keypair.sign(bundle.signed_prekey.as_bytes());
+
+        // Replace Ed25519 signature with ML-DSA signature (type mismatch)
+        bundle.signed_prekey_signature = mldsa_signature;
+
+        let result = bundle.verify_signatures(&identity_key);
+
+        // This should fail because signature type doesn't match identity key type
+        // The VerifyingKey::verify method returns Ok(false) for mismatched types
+        assert!(
+            result.is_err(),
+            "Mismatched signature types should fail verification"
+        );
+        assert!(matches!(
+            result.unwrap_err(),
+            PqxdhError::SignatureVerificationFailed
+        ));
+    }
 
     #[test]
     fn test_inbox_type_serialization() {

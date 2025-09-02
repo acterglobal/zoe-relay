@@ -195,13 +195,6 @@ async fn main() -> Result<()> {
                 .help("Server's ed25519 public key (hex encoded)")
                 .required(true),
         )
-        .arg(
-            Arg::new("client-key")
-                .short('c')
-                .long("client-key")
-                .value_name("HEX_PRIVATE_KEY")
-                .help("Client's ed25519 private key (hex encoded, optional - generates random if not provided)"),
-        )
         .get_matches();
 
     // Parse server address
@@ -236,15 +229,7 @@ async fn main() -> Result<()> {
     };
 
     // Create client (with optional private key)
-    let client = if let Some(client_key_hex) = matches.get_one::<String>("client-key") {
-        let _client_key_bytes = hex::decode(client_key_hex)
-            .map_err(|e| anyhow::anyhow!("Invalid client key hex: {}", e))?;
-
-        let client_keypair = KeyPair::generate(&mut rand::thread_rng()); // TODO: Implement proper key loading
-        RelayClient::new(client_keypair, server_public_key, address).await?
-    } else {
-        RelayClient::new_with_random_key(server_public_key, address).await?
-    };
+    let client = RelayClient::new_with_random_key(server_public_key, address).await?;
 
     // Run the echo test
     let (messages_service, (messages_stream, _)) = client.connect_message_service().await?;

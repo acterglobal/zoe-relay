@@ -35,6 +35,7 @@ struct Cli {
         env = "ZOERELAY_EXTERNAL_ADDRESSES",
         value_delimiter = ',',
         value_parser = parse_optional_string_vec,
+        default_value = "",
         help = "External addresses where this relay can be reached"
     )]
     external_addresses: Vec<String>,
@@ -75,11 +76,11 @@ struct Cli {
     redis_url: String,
 
     /// Private key for the server (PEM format, defaults to data-dir/server.key)
-    #[arg(short = 'k', long = "private-key", env = "ZOERELAY_PRIVATE_KEY", value_parser = parse_optional_string)]
+    #[arg(short = 'k', long = "private-key", env = "ZOERELAY_PRIVATE_KEY", value_parser = parse_optional_string, default_value = "")]
     private_key: Option<String>,
 
     /// Private key file path (defaults to data-dir/server.key)
-    #[arg(long = "key-file", env = "ZOERELAY_KEY_FILE", value_parser = parse_optional_pathbuf)]
+    #[arg(long = "key-file", env = "ZOERELAY_KEY_FILE", value_parser = parse_optional_pathbuf, default_value = "")]
     key_file: Option<PathBuf>,
 
     /// Show the server key

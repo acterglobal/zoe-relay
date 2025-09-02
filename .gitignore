@@ -3,6 +3,7 @@
 *.public
 zoe-relay-data/
 zoe-redis-data/
+test-redis-data/
 target
 .env
 *.bin

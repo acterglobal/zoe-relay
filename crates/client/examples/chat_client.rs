@@ -434,12 +434,6 @@ fn parse_args() -> Result<ChatConfig> {
                 .help("Chat channel name")
                 .default_value("general"),
         )
-        .arg(
-            Arg::new("client-key")
-                .long("client-key")
-                .value_name("HEX_KEY")
-                .help("Client's ed25519 private key (32 bytes in hex). If not provided, a random key will be generated."),
-        )
         .get_matches();
 
     let server_addr: SocketAddr = matches
@@ -475,14 +469,7 @@ fn parse_args() -> Result<ChatConfig> {
 
     let channel = matches.get_one::<String>("channel").unwrap().clone();
 
-    let client_keypair = if let Some(client_key_hex) = matches.get_one::<String>("client-key") {
-        let _client_key_bytes = hex::decode(client_key_hex)
-            .map_err(|e| anyhow::anyhow!("Invalid client key hex: {}", e))?;
-        // TODO: Implement proper ML-DSA key loading from bytes
-        KeyPair::generate(&mut rand::thread_rng())
-    } else {
-        KeyPair::generate(&mut rand::thread_rng())
-    };
+    let client_keypair = KeyPair::generate(&mut rand::thread_rng());
 
     Ok(ChatConfig {
         server_addr,

@@ -24,7 +24,6 @@ use clap::{Arg, Command};
 use std::{fs, net::SocketAddr, path::Path};
 use tracing::{error, info};
 use zoe_client::{BlobService, RelayClient};
-use zoe_wire_protocol::KeyPair;
 
 /// Upload a file to the blob store
 async fn upload_file(blob_service: &BlobService, file_path: &Path) -> Result<String> {
@@ -166,13 +165,6 @@ async fn main() -> Result<()> {
                 .help("Server's ed25519 public key (hex encoded)")
                 .required(true),
         )
-        .arg(
-            Arg::new("client-key")
-                .short('c')
-                .long("client-key")
-                .value_name("HEX_PRIVATE_KEY")
-                .help("Client's ed25519 private key (hex encoded, optional - generates random if not provided)"),
-        )
         .subcommand(
             Command::new("upload")
                 .about("Upload a file to the blob store")
@@ -181,7 +173,7 @@ async fn main() -> Result<()> {
                         .value_name("FILE_PATH")
                         .help("Path to the file to upload")
                         .required(true),
-                )
+                ),
         )
         .subcommand(
             Command::new("download")
@@ -198,7 +190,7 @@ async fn main() -> Result<()> {
                         .long("output")
                         .value_name("OUTPUT_PATH")
                         .help("Output file path for downloaded blob"),
-                )
+                ),
         )
         .subcommand(
             Command::new("test")
@@ -208,7 +200,7 @@ async fn main() -> Result<()> {
                         .value_name("FILE_PATH")
                         .help("Path to the file to test with")
                         .required(true),
-                )
+                ),
         )
         .subcommand_required(true)
         .get_matches();
@@ -264,17 +256,7 @@ async fn main() -> Result<()> {
     };
 
     // Create client (with optional private key)
-    let client = if let Some(client_key_hex) = matches.get_one::<String>("client-key") {
-        let _client_key_bytes = hex::decode(client_key_hex)
-            .map_err(|e| anyhow::anyhow!("Invalid client key hex: {}", e))?;
-
-        // For now, just generate a random key since ML-DSA key loading is complex
-        // TODO: Implement proper ML-DSA key loading from bytes
-        let client_keypair = KeyPair::generate(&mut rand::thread_rng());
-        RelayClient::new(client_keypair, server_public_key, address).await?
-    } else {
-        RelayClient::new_with_random_key(server_public_key, address).await?
-    };
+    let client = RelayClient::new_with_random_key(server_public_key, address).await?;
 
     info!("🔗 Connected to relay server at {}", address);
     info!(
