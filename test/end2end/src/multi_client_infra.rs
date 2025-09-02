@@ -388,12 +388,14 @@ impl MultiClientTestHarness {
 
         // Generate unique keypair for this client
         let keypair = KeyPair::generate(&mut rand::thread_rng());
+        let data_dir = tempfile::tempdir().context("Failed to create temporary directory")?;
 
         // Create the underlying relay client (this handles version negotiation and challenge protocol)
         let client = timeout(
             Duration::from_secs(10),
             RelayClientBuilder::new()
                 .client_keypair(keypair)
+                .db_storage_path(data_dir.path().to_path_buf().join(format!("{name}.db")))
                 .server_public_key(self.infra.server_public_key.clone())
                 .server_address(self.infra.server_addr)
                 .encryption_key([0u8; 32]) // Use default encryption key for tests

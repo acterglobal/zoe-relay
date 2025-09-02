@@ -632,7 +632,7 @@ impl<T: crate::services::MessagesManagerTrait> PqxdhProtocolHandler<T> {
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn publish_service(&mut self, force_overwrite: bool) -> Result<Tag> {
+    pub async fn publish_service(&self, force_overwrite: bool) -> Result<Tag> {
         let (inbox_tag, protocol) = {
             let current_state = self.state.get().await;
             (
@@ -731,7 +731,7 @@ impl<T: crate::services::MessagesManagerTrait> PqxdhProtocolHandler<T> {
     /// # }
     /// ```
     pub async fn connect_to_service<O, I>(
-        &mut self,
+        &self,
         target_service_key: &VerifyingKey,
         initial_message: &O,
     ) -> Result<(PqxdhSessionId, impl futures::Stream<Item = I>)>
@@ -1432,7 +1432,7 @@ mod tests {
             })
         });
 
-        let mut handler = TestPqxdhHandler::new(
+        let handler = TestPqxdhHandler::new(
             Arc::new(mock_manager),
             keypair.clone(),
             PqxdhInboxProtocol::EchoService,
@@ -1454,7 +1454,7 @@ mod tests {
         let mock_manager = MockMessagesManagerTrait::new();
         let keypair = Arc::new(create_test_keypair());
 
-        let mut handler = TestPqxdhHandler::new(
+        let handler = TestPqxdhHandler::new(
             Arc::new(mock_manager),
             keypair.clone(),
             PqxdhInboxProtocol::EchoService,
@@ -1490,7 +1490,7 @@ mod tests {
             })
         });
 
-        let mut handler = TestPqxdhHandler::new(
+        let handler = TestPqxdhHandler::new(
             Arc::new(mock_manager),
             keypair.clone(),
             PqxdhInboxProtocol::EchoService,
@@ -1550,7 +1550,7 @@ mod tests {
             .times(1)
             .returning(|_, _| Ok(Box::pin(stream::empty())));
 
-        let mut handler = TestPqxdhHandler::new(
+        let handler = TestPqxdhHandler::new(
             Arc::new(mock_manager),
             client_keypair.clone(),
             PqxdhInboxProtocol::EchoService,
@@ -1590,7 +1590,7 @@ mod tests {
             .times(1)
             .returning(|_, _| Ok(None));
 
-        let mut handler = TestPqxdhHandler::new(
+        let handler = TestPqxdhHandler::new(
             Arc::new(mock_manager),
             client_keypair.clone(),
             PqxdhInboxProtocol::EchoService,
@@ -1805,7 +1805,7 @@ mod tests {
             .times(1)
             .returning(|_| Err(crate::ClientError::Generic("Network error".to_string())));
 
-        let mut handler = TestPqxdhHandler::new(
+        let handler = TestPqxdhHandler::new(
             Arc::new(mock_manager),
             keypair.clone(),
             PqxdhInboxProtocol::EchoService,

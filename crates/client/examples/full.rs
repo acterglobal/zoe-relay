@@ -143,7 +143,7 @@ pub async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // Build the client
         builder.client_secret(client_secret);
         builder.media_storage_path(media_storage_path.to_string_lossy().to_string());
-        builder.storage_path(db_storage_path.to_string_lossy().to_string());
+        builder.db_storage_path(db_storage_path.to_string_lossy().to_string());
         builder.encryption_key(encryption_key);
     }
 

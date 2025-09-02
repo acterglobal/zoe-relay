@@ -89,7 +89,7 @@ impl ClientBuilder {
 
     /// Set the storage database path (convenience method)
     #[cfg_attr(feature = "frb-api", frb)]
-    pub fn storage_path(&mut self, path: String) {
+    pub fn db_storage_path(&mut self, path: String) {
         let mut config = self.storage_config.take().unwrap_or_default();
         config.database_path = PathBuf::from(path);
         self.storage_config = Some(config);

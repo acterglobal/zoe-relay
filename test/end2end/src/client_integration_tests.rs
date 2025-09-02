@@ -373,17 +373,17 @@ async fn test_all_signature_types_e2e() -> Result<()> {
     let filter = Filter::Channel(test_channel.as_bytes().to_vec());
 
     ed25519_service
-        .subscribe()
+        .ensure_contains_filter(filter.clone())
         .await
         .context("Failed to subscribe Ed25519 client")?;
 
     ml_dsa_44_service
-        .subscribe()
+        .ensure_contains_filter(filter.clone())
         .await
         .context("Failed to subscribe ML-DSA-44 client")?;
 
     ml_dsa_65_service
-        .subscribe()
+        .ensure_contains_filter(filter.clone())
         .await
         .context("Failed to subscribe ML-DSA-65 client")?;
 
@@ -619,8 +619,10 @@ async fn test_signature_type_interoperability_e2e() -> Result<()> {
     // Subscribe both clients to the same channel
     let filter = Filter::Channel(test_channel.as_bytes().to_vec());
 
-    ed25519_service.subscribe().await?;
-    ml_dsa_65_service.subscribe().await?;
+    ed25519_service
+        .ensure_contains_filter(filter.clone())
+        .await?;
+    ml_dsa_65_service.ensure_contains_filter(filter).await?;
 
     tokio::time::sleep(Duration::from_millis(200)).await;
 

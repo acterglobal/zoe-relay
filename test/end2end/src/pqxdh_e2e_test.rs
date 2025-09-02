@@ -40,11 +40,11 @@ async fn test_pqxdh_simple_echo_e2e() -> Result<()> {
     info!("📡 Created MessagesManagers for both clients");
 
     // Alice sets up as service provider
-    let mut alice_handler = PqxdhProtocolHandler::new(
-        Arc::new(alice_manager),
-        Arc::new(KeyPair::generate(&mut rand::thread_rng())),
-        PqxdhInboxProtocol::EchoService,
-    );
+    let mut alice_handler = alice
+        .client
+        .session_manager()
+        .pqxdh_handler(PqxdhInboxProtocol::EchoService)
+        .await?;
 
     // Alice publishes her service inbox
     let inbox_tag = alice_handler.publish_service(false).await?;
@@ -54,17 +54,17 @@ async fn test_pqxdh_simple_echo_e2e() -> Result<()> {
     // Alice starts listening for incoming client connections BEFORE Bob connects
     let mut alice_inbox_stream = Box::pin(alice_handler.inbox_stream::<String>().await?);
 
-    info!("👂 Alice is now listening for client connections");
+    info!("👂 Alice is now listening on the inbox");
 
     // Give Alice's service a moment to be fully published and discoverable
     tokio::time::sleep(Duration::from_millis(100)).await;
 
     // Bob sets up as client
-    let mut bob_handler = PqxdhProtocolHandler::new(
-        Arc::new(bob_manager),
-        Arc::new(KeyPair::generate(&mut rand::thread_rng())),
-        PqxdhInboxProtocol::EchoService,
-    );
+    let mut bob_handler = bob
+        .client
+        .session_manager()
+        .pqxdh_handler(PqxdhInboxProtocol::EchoService)
+        .await?;
 
     // Bob connects to Alice's service
     let initial_message = "Hello Alice!".to_string();
@@ -97,9 +97,6 @@ async fn test_pqxdh_simple_echo_e2e() -> Result<()> {
         "Alice should receive Bob's initial message"
     );
 
-    // Drop the inbox stream to release the borrow on alice_handler
-    // drop(alice_inbox_stream);
-
     // Alice echoes the message back
     let echo_message = format!("Echo: {}", received_message);
     alice_handler
@@ -122,9 +119,6 @@ async fn test_pqxdh_simple_echo_e2e() -> Result<()> {
         response, echo_message,
         "Bob should receive the echoed message from Alice"
     );
-
-    // Drop the stream to release the borrow on bob_handler
-    drop(bob_response_stream);
 
     // Test additional message exchange
     let follow_up_message = "How are you?".to_string();
@@ -164,15 +158,8 @@ async fn test_pqxdh_simple_echo_e2e() -> Result<()> {
 
     info!("📤 Alice sent follow-up echo: '{}'", echo_follow_up);
 
-    // Create a new listener stream for Bob to receive the follow-up echo
-    let mut bob_follow_up_stream = Box::pin(
-        bob_handler
-            .listen_for_messages::<String>(bob_session_id, true)
-            .await?,
-    );
-
     // Bob receives the follow-up echo
-    let follow_up_response = timeout(Duration::from_secs(5), bob_follow_up_stream.next())
+    let follow_up_response = timeout(Duration::from_secs(5), bob_response_stream.next())
         .await
         .unwrap()
         .unwrap();

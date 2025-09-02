@@ -399,21 +399,15 @@ mod tests {
         let channel_name = "e2e_test_channel";
 
         // Set up subscriptions for both clients to listen to the same channel
-        let subscription_config1 = zoe_wire_protocol::SubscriptionConfig {
-            filters: zoe_wire_protocol::MessageFilters {
-                filters: Some(vec![zoe_wire_protocol::Filter::Channel(
-                    channel_name.as_bytes().to_vec(),
-                )]),
-            },
-            since: None,
-            limit: Some(10), // Limit to recent messages
-        };
-
-        let subscription_config2 = subscription_config1.clone();
+        let channel_filter = zoe_wire_protocol::Filter::Channel(channel_name.as_bytes().to_vec());
 
         // Subscribe both clients to the channel
-        messages_service1.subscribe().await?;
-        messages_service2.subscribe().await?;
+        messages_service1
+            .ensure_contains_filter(channel_filter.clone())
+            .await?;
+        messages_service2
+            .ensure_contains_filter(channel_filter)
+            .await?;
 
         // Give a moment for subscriptions to be processed
         tokio::time::sleep(Duration::from_millis(200)).await;
@@ -918,17 +912,11 @@ mod tests {
         // Step 4: Client 2 subscribes to messages from client 1 to catch the group creation event
         // Note: The group creation message (root event) doesn't tag itself with Event tags,
         // so we need to subscribe to the author instead
-        let subscription_config = zoe_wire_protocol::SubscriptionConfig {
-            filters: zoe_wire_protocol::MessageFilters {
-                filters: Some(vec![zoe_wire_protocol::Filter::Author(
-                    *client1.public_key().id(),
-                )]),
-            },
-            since: None,
-            limit: Some(10),
-        };
+        let author_filter = zoe_wire_protocol::Filter::Author(*client1.public_key().id());
 
-        messages_service2.subscribe().await?;
+        messages_service2
+            .ensure_contains_filter(author_filter)
+            .await?;
 
         info!("📬 Client 2 subscribed to client 1's messages");
 

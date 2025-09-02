@@ -41,7 +41,7 @@ struct RelayClientInner {
 /// let client = RelayClientBuilder::new()
 ///     .server_public_key(server_key)
 ///     .server_address(server_addr)
-///     .storage_path("client_messages.db")
+///     .db_storage_path("client_messages.db")
 ///     .encryption_key(encryption_key)
 ///     .autosubscribe(true)
 ///     .build()
@@ -101,7 +101,7 @@ impl RelayClientBuilder {
     }
 
     /// Set the storage database path (convenience method)
-    pub fn storage_path<P: Into<PathBuf>>(mut self, path: P) -> Self {
+    pub fn db_storage_path<P: Into<PathBuf>>(mut self, path: P) -> Self {
         let mut config = self.db_config.unwrap_or_default();
         config.database_path = path.into();
         self.db_config = Some(config);

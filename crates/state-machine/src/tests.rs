@@ -206,16 +206,11 @@ async fn test_role_update() {
         .unwrap();
 
     // Simulate Bob joining by sending an activity
-    let group_session = dga.get_group_session(&result.group_id).await.unwrap();
-    let encryption_key = group_session.current_key.clone();
     let bob_dga = GroupManager::builder().build();
     let group_session = dga.get_group_session(&result.group_id).await.unwrap();
     bob_dga
         .add_group_session(result.group_id, group_session)
         .await;
-    let group_state = dga.get_group_state(&result.group_id).await.unwrap().clone();
-    // Note: Direct access to groups is no longer possible, using add_group_session instead
-    // bob_dga.groups.insert(result.group_id, group_state);
 
     let bob_activity = create_group_activity_event(());
     let bob_message = bob_dga
@@ -256,17 +251,11 @@ async fn test_leave_group_event() {
         .unwrap();
 
     // Add Bob as a member first
-    let group_session = dga.get_group_session(&result.group_id).await.unwrap();
-    let encryption_key = group_session.current_key.clone();
     let bob_dga = GroupManager::builder().build();
     let group_session = dga.get_group_session(&result.group_id).await.unwrap();
     bob_dga
         .add_group_session(result.group_id, group_session)
         .await;
-    let group_state = dga.get_group_state(&result.group_id).await.unwrap().clone();
-    // Note: Direct access to groups is no longer possible, using add_group_session instead
-    // bob_dga.groups.insert(result.group_id, group_state);
-
     let bob_activity = create_group_activity_event(());
     let bob_message = bob_dga
         .create_group_event_message(result.group_id, bob_activity, &bob_key, timestamp + 5)
@@ -350,17 +339,11 @@ async fn test_permission_denied_for_role_update() {
         .unwrap();
 
     // Add Bob as a regular member
-    let group_session = dga.get_group_session(&result.group_id).await.unwrap();
-    let encryption_key = group_session.current_key.clone();
     let bob_dga = GroupManager::builder().build();
     let group_session = dga.get_group_session(&result.group_id).await.unwrap();
     bob_dga
         .add_group_session(result.group_id, group_session)
         .await;
-    let group_state = dga.get_group_state(&result.group_id).await.unwrap().clone();
-    // Note: Direct access to groups is no longer possible, using add_group_session instead
-    // bob_dga.groups.insert(result.group_id, group_state);
-
     let bob_activity = create_group_activity_event(());
     let bob_message = bob_dga
         .create_group_event_message(result.group_id, bob_activity, &bob_key, timestamp + 5)
