@@ -16,7 +16,7 @@ services:
     environment:
       # Network configuration
       - ZOERELAY_PORT=${ZOERELAY_PORT:-13908}
-      - ZOERELAY_EXTERNAL_ADDRESSES=${ZOERELAY_EXTERNAL_ADDRESSES:localhost}
+      - ZOERELAY_EXTERNAL_ADDRESSES=${ZOERELAY_EXTERNAL_ADDRESSES:-localhost}
       - ZOERELAY_NAME=${ZOERELAY_NAME:-Zoe Relay Server}
       # Logging
       - RUST_LOG=${RUST_LOG:-info}
