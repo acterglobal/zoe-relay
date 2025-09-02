@@ -20,9 +20,6 @@ test/*
 **/*_test.rs
 **/*test*.rs
 
-# Examples
-**/examples/
-
 # Development data and keys
 data/
 redis-data/
