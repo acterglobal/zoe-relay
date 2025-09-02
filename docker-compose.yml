@@ -10,10 +10,11 @@ services:
     depends_on:
       - zoe-redis
     ports:
-      - "${ZOERELAY_PORT:-13908}:${ZOERELAY_PORT:-13908}/udp"
+      - "${ZOERELAY_PORT:-13908}:13908/udp"
     environment:
       # Network configuration
-      - ZOERELAY_PORT=${ZOERELAY_PORT:-13908}
+      - ZOERELAY_PORT=13908
+      - ZOERELAY_INTERFACE=0.0.0.0
       - ZOERELAY_EXTERNAL_ADDRESSES=${ZOERELAY_EXTERNAL_ADDRESSES:-localhost}
       - ZOERELAY_NAME=${ZOERELAY_NAME:-Zoe Relay Server}
       # Logging
@@ -25,7 +26,7 @@ services:
       # Optional: custom configuration
       # - ./config:/app/config:ro
     healthcheck:
-      test: ["CMD-SHELL", "timeout 5 bash -c '</dev/tcp/localhost/${ZOERELAY_PORT:-13908}' || exit 1"]
+      test: ["CMD-SHELL", "timeout 5 bash -c '</dev/udp/localhost/13908' || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3
