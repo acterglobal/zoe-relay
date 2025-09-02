@@ -43,6 +43,7 @@ async fn test_pqxdh_simple_echo_e2e() -> Result<()> {
     let mut alice_handler = alice
         .client
         .session_manager()
+        .await
         .pqxdh_handler(PqxdhInboxProtocol::EchoService)
         .await?;
 
@@ -63,6 +64,7 @@ async fn test_pqxdh_simple_echo_e2e() -> Result<()> {
     let mut bob_handler = bob
         .client
         .session_manager()
+        .await
         .pqxdh_handler(PqxdhInboxProtocol::EchoService)
         .await?;
 

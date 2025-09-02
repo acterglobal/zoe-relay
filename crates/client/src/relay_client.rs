@@ -2,6 +2,7 @@ use crate::SessionManager;
 use crate::challenge::perform_client_challenge_handshake;
 use crate::error::{ClientError, Result};
 use crate::services::{BlobService, MessagePersistenceManager, MessagePersistenceManagerBuilder};
+use async_once_cell::OnceCell;
 use quinn::{Connection, Endpoint};
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -14,7 +15,7 @@ struct RelayClientInner {
     client_keypair_tls: KeyPair, // For TLS certificates (Ed25519 or ML-DSA-44)
     client_keypair_inner: Arc<KeyPair>, // For inner protocol
     connection: Connection,
-    blob_service: Arc<BlobService>,
+    blob_service: OnceCell<Arc<BlobService>>,
     persistence_manager: Arc<MessagePersistenceManager>,
     session_manager: SessionManager<SqliteMessageStorage, MessagePersistenceManager>,
     storage: Arc<SqliteMessageStorage>,
@@ -189,8 +190,6 @@ impl RelayClientBuilder {
             )
         };
 
-        let blob_service = Arc::new(BlobService::connect(&connection).await?);
-
         // Create persistence manager (always required now)
         let persistence_manager = Arc::new(
             MessagePersistenceManagerBuilder::new()
@@ -214,7 +213,7 @@ impl RelayClientBuilder {
                 storage,
                 connection,
                 persistence_manager,
-                blob_service,
+                blob_service: OnceCell::new(),
                 session_manager,
                 endpoint,
             }),
@@ -313,6 +312,17 @@ impl RelayClientInner {
     }
 }
 
+// different services
+impl RelayClientInner {
+    pub async fn blob_service(&self) -> Result<&Arc<BlobService>> {
+        self.blob_service
+            .get_or_try_init(
+                async move { Ok(Arc::new(BlobService::connect(&self.connection).await?)) },
+            )
+            .await
+    }
+}
+
 // public methods
 impl RelayClient {
     /// Get the client's inner protocol public key
@@ -334,26 +344,26 @@ impl RelayClient {
         &self.inner.connection
     }
 
-    /// Get access to the message persistence manager
-    pub fn persistence_manager(&self) -> &MessagePersistenceManager {
-        &self.inner.persistence_manager
-    }
-
-    pub fn session_manager(
-        &self,
-    ) -> &SessionManager<SqliteMessageStorage, MessagePersistenceManager> {
-        &self.inner.session_manager
-    }
-
-    pub fn blob_service(&self) -> &Arc<BlobService> {
-        &self.inner.blob_service
-    }
-
     pub fn storage(&self) -> &Arc<SqliteMessageStorage> {
         &self.inner.storage
     }
 
     pub async fn close(&self) {
         self.inner.close().await;
+    }
+
+    /// Get access to the message persistence manager
+    pub async fn persistence_manager(&self) -> &MessagePersistenceManager {
+        &self.inner.persistence_manager
+    }
+
+    pub async fn session_manager(
+        &self,
+    ) -> &SessionManager<SqliteMessageStorage, MessagePersistenceManager> {
+        &self.inner.session_manager
+    }
+
+    pub async fn blob_service(&self) -> Result<&Arc<BlobService>> {
+        self.inner.blob_service().await
     }
 }

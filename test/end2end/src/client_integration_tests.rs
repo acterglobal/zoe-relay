@@ -26,7 +26,7 @@ async fn test_message_posting_and_retrieval() -> Result<()> {
     let client = infra.create_client().await?;
 
     // Connect to message service
-    let persistence_manager = client.persistence_manager();
+    let persistence_manager = client.persistence_manager().await;
     let mut messages_stream = persistence_manager.all_messages_stream();
     let messages_service = persistence_manager.messages_manager().clone();
 
@@ -122,7 +122,7 @@ async fn test_user_data_storage_and_lookup() -> Result<()> {
     let infra = TestInfrastructure::setup().await?;
     let client = infra.create_client().await?;
 
-    let persistence_manager = client.persistence_manager();
+    let persistence_manager = client.persistence_manager().await;
     let mut messages_stream = persistence_manager.all_messages_stream();
     let messages_service = persistence_manager.messages_manager().clone();
 
@@ -231,7 +231,7 @@ async fn test_subscription_unsubscription_functionality() -> Result<()> {
     let infra = TestInfrastructure::setup().await?;
     let client = infra.create_client().await?;
 
-    let persistence_manager = client.persistence_manager();
+    let persistence_manager = client.persistence_manager().await;
     let mut messages_stream = persistence_manager.all_messages_stream();
     let messages_service = persistence_manager.messages_manager().clone();
 
@@ -351,19 +351,19 @@ async fn test_all_signature_types_e2e() -> Result<()> {
     let test_channel = format!("signature_types_e2e_{}", rand::thread_rng().next_u32());
 
     // Connect all clients to message service
-    let ed25519_persistence = ed25519_client.persistence_manager();
+    let ed25519_persistence = ed25519_client.persistence_manager().await;
     let mut ed25519_stream = ed25519_persistence.all_messages_stream();
     let ed25519_service = ed25519_persistence.messages_manager().clone();
 
-    let ml_dsa_44_persistence = ml_dsa_44_client.persistence_manager();
+    let ml_dsa_44_persistence = ml_dsa_44_client.persistence_manager().await;
     let mut ml_dsa_44_stream = ml_dsa_44_persistence.all_messages_stream();
     let ml_dsa_44_service = ml_dsa_44_persistence.messages_manager().clone();
 
-    let ml_dsa_65_persistence = ml_dsa_65_client.persistence_manager();
+    let ml_dsa_65_persistence = ml_dsa_65_client.persistence_manager().await;
     let mut ml_dsa_65_stream = ml_dsa_65_persistence.all_messages_stream();
     let ml_dsa_65_service = ml_dsa_65_persistence.messages_manager().clone();
 
-    let ml_dsa_87_persistence = ml_dsa_87_client.persistence_manager();
+    let ml_dsa_87_persistence = ml_dsa_87_client.persistence_manager().await;
     let mut ml_dsa_87_stream = ml_dsa_87_persistence.all_messages_stream();
     let ml_dsa_87_service = ml_dsa_87_persistence.messages_manager().clone();
 
@@ -608,11 +608,11 @@ async fn test_signature_type_interoperability_e2e() -> Result<()> {
     let test_channel = format!("interop_test_{}", rand::thread_rng().next_u32());
 
     // Connect both clients to message service
-    let ed25519_persistence = ed25519_client.persistence_manager();
+    let ed25519_persistence = ed25519_client.persistence_manager().await;
     let mut ed25519_stream = ed25519_persistence.all_messages_stream();
     let ed25519_service = ed25519_persistence.messages_manager().clone();
 
-    let ml_dsa_65_persistence = ml_dsa_65_client.persistence_manager();
+    let ml_dsa_65_persistence = ml_dsa_65_client.persistence_manager().await;
     let mut ml_dsa_65_stream = ml_dsa_65_persistence.all_messages_stream();
     let ml_dsa_65_service = ml_dsa_65_persistence.messages_manager().clone();
 

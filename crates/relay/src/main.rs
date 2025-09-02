@@ -112,7 +112,6 @@ fn parse_algorithm(s: &str) -> Result<Algorithm, String> {
     }
 }
 
-
 /// Parse an external address string into a NetworkAddress
 ///
 /// Supports formats like:

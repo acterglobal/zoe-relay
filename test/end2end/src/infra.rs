@@ -216,7 +216,7 @@ mod tests {
         let client = infra.create_client().await?;
 
         // Try to connect to blob service to verify routing works
-        let blob_service = client.blob_service();
+        let blob_service = client.blob_service().await?;
 
         // This should succeed (connection-wise) - blob_service is already an Arc<BlobService>
         info!("✅ Successfully connected to blob service");
@@ -235,7 +235,7 @@ mod tests {
         let client = infra.create_client().await?;
 
         // Connect to blob service
-        let blob_service = client.blob_service();
+        let blob_service = client.blob_service().await?;
 
         // Test basic blob operations
         let test_data = b"Hello, this is test blob data for end-to-end testing!";
@@ -272,7 +272,7 @@ mod tests {
         let client = infra.create_client().await?;
 
         // Test that we can at least connect to the message service
-        let persistence_manager = client.persistence_manager();
+        let persistence_manager = client.persistence_manager().await;
         let connection_result: Result<_> = Ok((
             persistence_manager.messages_manager().clone(),
             (
@@ -301,8 +301,8 @@ mod tests {
         let client1 = infra.create_client().await?;
         let client2 = infra.create_client().await?;
 
-        let blob_service1 = client1.blob_service();
-        let blob_service2 = client2.blob_service();
+        let blob_service1 = client1.blob_service().await?;
+        let blob_service2 = client2.blob_service().await?;
 
         // Upload data from both clients concurrently
         let data1 = b"Client 1 data";
@@ -337,7 +337,7 @@ mod tests {
         let client = infra.create_client().await?;
 
         // Test that services handle various edge cases
-        let blob_service = client.blob_service();
+        let blob_service = client.blob_service().await?;
 
         // Test empty blob
         let empty_data = b"";
@@ -385,11 +385,11 @@ mod tests {
         );
 
         // Connect both clients to message service
-        let persistence_manager1 = client1.persistence_manager();
+        let persistence_manager1 = client1.persistence_manager().await;
         let mut messages_stream1 = persistence_manager1.all_messages_stream();
         let messages_service1 = persistence_manager1.messages_manager().clone();
 
-        let persistence_manager2 = client2.persistence_manager();
+        let persistence_manager2 = client2.persistence_manager().await;
         let mut messages_stream2 = persistence_manager2.all_messages_stream();
         let messages_service2 = persistence_manager2.messages_manager().clone();
 
@@ -563,8 +563,8 @@ mod tests {
         );
 
         // Connect both clients to blob service for FileStorage
-        let blob_service1 = client1.blob_service();
-        let blob_service2 = client2.blob_service();
+        let blob_service1 = client1.blob_service().await?;
+        let blob_service2 = client2.blob_service().await?;
 
         info!("📡 Both clients connected to blob service");
 
@@ -727,7 +727,7 @@ mod tests {
         };
 
         let temp_dir3 = tempfile::TempDir::new()?;
-        let blob_service3 = client3.blob_service();
+        let blob_service3 = client3.blob_service().await?;
         let file_storage3 = zoe_client::FileStorage::new(
             temp_dir3.path(),
             blob_service3.clone(),
@@ -803,11 +803,11 @@ mod tests {
         );
 
         // Connect both clients to message service
-        let persistence_manager1 = client1.persistence_manager();
+        let persistence_manager1 = client1.persistence_manager().await;
         let mut messages_stream1 = persistence_manager1.all_messages_stream();
         let messages_service1 = persistence_manager1.messages_manager().clone();
 
-        let persistence_manager2 = client2.persistence_manager();
+        let persistence_manager2 = client2.persistence_manager().await;
         let mut messages_stream2 = persistence_manager2.all_messages_stream();
         let messages_service2 = persistence_manager2.messages_manager().clone();
 

@@ -272,7 +272,7 @@ impl TestClient {
         BroadcastStream<zoe_wire_protocol::StreamMessage>,
         BroadcastStream<zoe_wire_protocol::CatchUpResponse>,
     )> {
-        let persistence_manager = self.client.persistence_manager();
+        let persistence_manager = self.client.persistence_manager().await;
         let msg_stream = persistence_manager.messages_stream();
         let catch_up_stream = persistence_manager.catch_up_stream();
         let service = persistence_manager.messages_manager().clone();

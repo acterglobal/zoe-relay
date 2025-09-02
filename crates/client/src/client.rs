@@ -156,7 +156,7 @@ impl ClientBuilder {
 
         let fs = FileStorage::new(
             &fs_path,
-            relay_client.blob_service().clone(),
+            relay_client.blob_service().await?.clone(),
             CompressionConfig::default(),
         )
         .await?;
