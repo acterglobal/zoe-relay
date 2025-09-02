@@ -34,8 +34,6 @@ struct Cli {
         long = "external-address",
         env = "ZOERELAY_EXTERNAL_ADDRESSES",
         value_delimiter = ',',
-        value_parser = parse_optional_string_vec,
-        default_value = "",
         help = "External addresses where this relay can be reached"
     )]
     external_addresses: Vec<String>,
@@ -63,7 +61,7 @@ struct Cli {
     data_dir: PathBuf,
 
     /// Blob storage directory (defaults to data-dir/blobs)
-    #[arg(short = 'b', long = "blob-dir", env = "ZOERELAY_BLOB_DIR", value_parser = parse_optional_pathbuf)]
+    #[arg(short = 'b', long = "blob-dir", env = "ZOERELAY_BLOB_DIR")]
     blob_dir: Option<PathBuf>,
 
     /// Redis URL
@@ -75,12 +73,12 @@ struct Cli {
     )]
     redis_url: String,
 
-    /// Private key for the server (PEM format, defaults to data-dir/server.key)
-    #[arg(short = 'k', long = "private-key", env = "ZOERELAY_PRIVATE_KEY", value_parser = parse_optional_string, default_value = "")]
+    /// Private key for the server (PEM format, defaults to data-dir/server.pem)
+    #[arg(short = 'k', long = "private-key", env = "ZOERELAY_PRIVATE_KEY")]
     private_key: Option<String>,
 
-    /// Private key file path (defaults to data-dir/server.key)
-    #[arg(long = "key-file", env = "ZOERELAY_KEY_FILE", value_parser = parse_optional_pathbuf, default_value = "")]
+    /// Private key file path (defaults to data-dir/server.pem)
+    #[arg(long = "key-file", env = "ZOERELAY_KEY_FILE")]
     key_file: Option<PathBuf>,
 
     /// Show the server key
@@ -114,38 +112,6 @@ fn parse_algorithm(s: &str) -> Result<Algorithm, String> {
     }
 }
 
-/// Parse an optional string, treating empty strings as None
-/// This is used for environment variables that should be optional
-fn parse_optional_string(s: &str) -> Result<Option<String>, String> {
-    if s.trim().is_empty() {
-        Ok(None)
-    } else {
-        Ok(Some(s.to_string()))
-    }
-}
-
-/// Parse an optional PathBuf, treating empty strings as None
-/// This is used for environment variables that should be optional
-fn parse_optional_pathbuf(s: &str) -> Result<Option<PathBuf>, String> {
-    if s.trim().is_empty() {
-        Ok(None)
-    } else {
-        Ok(Some(PathBuf::from(s)))
-    }
-}
-
-/// Parse optional comma-separated strings, treating empty strings as empty Vec
-/// This is used for environment variables that should be optional lists
-fn parse_optional_string_vec(s: &str) -> Result<Vec<String>, String> {
-    if s.trim().is_empty() {
-        Ok(Vec::new())
-    } else {
-        Ok(s.split(',')
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty())
-            .collect())
-    }
-}
 
 /// Parse an external address string into a NetworkAddress
 ///
@@ -387,7 +353,7 @@ async fn main() -> Result<()> {
     // Determine paths for data storage
     let data_dir = &cli.data_dir;
     let blob_dir = cli.blob_dir.unwrap_or_else(|| data_dir.join("blobs"));
-    let key_file = cli.key_file.unwrap_or_else(|| data_dir.join("server.key"));
+    let key_file = cli.key_file.unwrap_or_else(|| data_dir.join("server.pem"));
 
     // Load or generate server keypair with persistent storage
     let server_keypair =

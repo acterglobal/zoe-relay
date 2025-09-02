@@ -15,19 +15,9 @@ services:
       - "${ZOERELAY_PORT:-13908}:${ZOERELAY_PORT:-13908}"
     environment:
       # Network configuration
-      - ZOERELAY_INTERFACE=${ZOERELAY_INTERFACE:-0.0.0.0}
       - ZOERELAY_PORT=${ZOERELAY_PORT:-13908}
-      - ZOERELAY_EXTERNAL_ADDRESSES=${ZOERELAY_EXTERNAL_ADDRESSES}
+      - ZOERELAY_EXTERNAL_ADDRESSES=${ZOERELAY_EXTERNAL_ADDRESSES:localhost}
       - ZOERELAY_NAME=${ZOERELAY_NAME:-Zoe Relay Server}
-      
-      # Storage configuration
-      - ZOERELAY_DATA_DIR=${ZOERELAY_DATA_DIR:-/app/data}
-      - ZOERELAY_REDIS_URL=${ZOERELAY_REDIS_URL:-redis://redis:6379}
-      
-      # Security configuration (optional - auto-generated if not provided)
-      - ZOERELAY_PRIVATE_KEY=${ZOERELAY_PRIVATE_KEY}
-      - ZOERELAY_KEY_FILE=${ZOERELAY_KEY_FILE}
-      
       # Logging
       - RUST_LOG=${RUST_LOG:-info}
     volumes:
@@ -54,9 +44,6 @@ services:
     image: redis:7-alpine
     container_name: zoe-redis
     restart: unless-stopped
-    ports:
-      # Only expose Redis if needed for external access
-      - "${REDIS_EXTERNAL_PORT:-6379}:6379"
     volumes:
       - zoe_redis_data:/data
       - ./.config/redis.conf:/usr/local/etc/redis/redis.conf:ro
@@ -86,7 +73,8 @@ volumes:
     driver_opts:
       type: none
       o: bind
-      device: ${ZOE_DATA_PATH:-./zoe-relay-data}
+      device: ${ZOE_DATA_PATH:-./zoe-data/relay}
+      is_directory: true
   
   # Persistent storage for Redis data
   zoe_redis_data:
@@ -94,7 +82,8 @@ volumes:
     driver_opts:
       type: none
       o: bind
-      device: ${REDIS_DATA_PATH:-./zoe-redis-data}
+      device: ${REDIS_DATA_PATH:-./zoe-data/redis}
+      is_directory: true
 
 networks:
   zoe-network:
