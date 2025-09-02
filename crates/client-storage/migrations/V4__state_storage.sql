@@ -3,7 +3,7 @@
 
 -- Create state_storage table
 CREATE TABLE IF NOT EXISTS state_storage (
-    key TEXT PRIMARY KEY,                       -- String key for the state entry
+    key BLOB PRIMARY KEY,                       -- String key for the state entry
     value_data BLOB NOT NULL,                   -- Serialized state value (postcard format)
     updated_at INTEGER DEFAULT (strftime('%s', 'now')), -- Unix timestamp when state was last updated
     created_at INTEGER DEFAULT (strftime('%s', 'now'))  -- Unix timestamp when state was first created
