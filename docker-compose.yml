@@ -6,11 +6,9 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: zoe-relay
     restart: unless-stopped
     depends_on:
-      redis:
-        condition: service_healthy
+      - zoe-redis
     ports:
       - "${ZOERELAY_PORT:-13908}:${ZOERELAY_PORT:-13908}"
     environment:
@@ -26,62 +24,30 @@ services:
       - zoe_data:/app/data
       # Optional: custom configuration
       # - ./config:/app/config:ro
-    networks:
-      - zoe-network
     healthcheck:
       test: ["CMD-SHELL", "timeout 5 bash -c '</dev/tcp/localhost/${ZOERELAY_PORT:-13908}' || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 10s
-    # Security settings
-    security_opt:
-      - no-new-privileges:true
-    read_only: false  # Need write access for data directory
-    tmpfs:
-      - /tmp:rw,noexec,nosuid,size=100m
 
   zoe-redis:
     image: redis:7-alpine
     restart: unless-stopped
     volumes:
       - zoe_redis_data:/data
-    command: redis-server
-    networks:
-      - zoe-network
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 10s
-    # Security settings
-    security_opt:
-      - no-new-privileges:true
-    read_only: true
-    tmpfs:
-      - /tmp:rw,noexec,nosuid,size=50m
 
 volumes:
   # Persistent storage for relay server data (keys, blobs, etc.)
   zoe_data:
     driver: local
-    driver_opts:
-      type: none
-      o: bind
-      device: ${ZOE_DATA_PATH:-./zoe-data/relay}
   
   # Persistent storage for Redis data
   zoe_redis_data:
     driver: local
-    driver_opts:
-      type: none
-      o: bind
-      device: ${REDIS_DATA_PATH:-./zoe-data/redis}
-
-networks:
-  zoe-network:
-    driver: bridge
-    ipam:
-      config:
-        - subnet: 172.20.0.0/16
