@@ -20,6 +20,7 @@ services:
       - ZOERELAY_NAME=${ZOERELAY_NAME:-Zoe Relay Server}
       # Logging
       - RUST_LOG=${RUST_LOG:-info}
+      - ZOERELAY_REDIS_URL=${ZOERELAY_REDIS_URL:-redis://zoe-redis:6379}
     volumes:
       # Persistent storage for server keys and blob data
       - zoe_data:/app/data
@@ -32,7 +33,7 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 30s
+      start_period: 10s
     # Security settings
     security_opt:
       - no-new-privileges:true
@@ -46,8 +47,7 @@ services:
     restart: unless-stopped
     volumes:
       - zoe_redis_data:/data
-      - ./.config/redis.conf:/usr/local/etc/redis/redis.conf:ro
-    command: redis-server /usr/local/etc/redis/redis.conf
+    command: redis-server
     networks:
       - zoe-network
     healthcheck:
@@ -62,9 +62,6 @@ services:
     read_only: true
     tmpfs:
       - /tmp:rw,noexec,nosuid,size=50m
-    environment:
-      # Optional Redis configuration via environment
-      - REDIS_PASSWORD=${REDIS_PASSWORD}
 
 volumes:
   # Persistent storage for relay server data (keys, blobs, etc.)
