@@ -65,6 +65,7 @@ hex = "0.4"
 base64 = "0.22"
 uuid = { version = "1.0", features = ["v4"] }
 chrono = { version = "0.4", features = ["serde"] }
+env_logger = "0.11"
 
 # Compression
 brotli = "8"
@@ -94,6 +95,15 @@ debug = true
 debug-assertions = true
 overflow-checks = true
 incremental = true
+
+[profile.dev-fast]
+# Fast development profile for worktree workflows
+inherits = "dev"
+opt-level = 1
+debug = 1  # Reduced debug info for faster builds
+incremental = true
+codegen-units = 256  # More parallel compilation
+# Dependencies are still optimized via .cargo/config.toml
 
 [profile.bench]
 # Optimize benchmarks

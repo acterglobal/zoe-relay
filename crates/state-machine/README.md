@@ -41,11 +41,11 @@ The Digital Group Assistant (DGA) protocol provides an **encrypted group managem
 
 ```rust
 use zoe_state_machine::{
-    DigitalGroupAssistant, CreateGroupConfig, GroupSettings
+    GroupManager, CreateGroupConfig, GroupSettings
 };
 
 // Create a DGA instance
-let mut dga = DigitalGroupAssistant::new();
+let mut dga = GroupManager::new();
 
 // Create a group
 let config = CreateGroupConfig {

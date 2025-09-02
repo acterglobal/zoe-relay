@@ -3,7 +3,10 @@ pub mod message_persistence_manager;
 pub mod messages;
 pub mod messages_manager;
 
-pub use blob_store::{BlobError, BlobService, Result as BlobResult};
+pub use blob_store::{BlobError, BlobService, BlobStore, Result as BlobResult};
+
+#[cfg(any(feature = "mock", test))]
+pub use blob_store::MockBlobStore;
 pub use message_persistence_manager::{
     GenericMessagePersistenceManager, GenericMessagePersistenceManagerBuilder,
     MessagePersistenceManager, MessagePersistenceManagerBuilder,

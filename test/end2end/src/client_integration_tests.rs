@@ -7,14 +7,16 @@
 
 use crate::infra::TestInfrastructure;
 use anyhow::{Context, Result};
+use futures::StreamExt;
 use rand::{Rng, RngCore};
 use std::collections::BTreeMap;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::time::timeout;
 use tracing::{debug, info, warn};
+use zoe_client::services::MessagesManagerTrait;
 use zoe_wire_protocol::{
     Algorithm, Content, Filter, KeyPair, Kind, Message, MessageFilters, MessageFull, StoreKey,
-    StreamMessage, SubscriptionConfig, Tag, VerifyingKey,
+    StreamMessage, Tag, VerifyingKey,
 };
 
 /// Test message posting and retrieval functionality
@@ -24,10 +26,9 @@ async fn test_message_posting_and_retrieval() -> Result<()> {
     let client = infra.create_client().await?;
 
     // Connect to message service
-    let (messages_service, (mut messages_stream, _)) = client
-        .connect_message_service()
-        .await
-        .context("Failed to connect to message service")?;
+    let persistence_manager = client.persistence_manager();
+    let mut messages_stream = persistence_manager.all_messages_stream();
+    let messages_service = persistence_manager.messages_manager().clone();
 
     info!("📡 Connected to message service for posting test");
 
@@ -35,16 +36,10 @@ async fn test_message_posting_and_retrieval() -> Result<()> {
     let test_channel = format!("test_channel_{}", rand::thread_rng().next_u32());
 
     // Subscribe to the channel FIRST (like working test)
-    let subscription_config = SubscriptionConfig {
-        filters: MessageFilters {
-            filters: Some(vec![Filter::Channel(test_channel.as_bytes().to_vec())]),
-        },
-        since: None, // Get all messages
-        limit: None,
-    };
+    let filter = Filter::Channel(test_channel.as_bytes().to_vec());
 
     messages_service
-        .subscribe(subscription_config)
+        .ensure_contains_filter(filter)
         .await
         .context("Failed to subscribe to test channel")?;
 
@@ -73,10 +68,9 @@ async fn test_message_posting_and_retrieval() -> Result<()> {
 
     // Publish the message
     let publish_result = messages_service
-        .publish(tarpc::context::current(), message_full)
+        .publish(message_full)
         .await
-        .context("Failed to publish message")?
-        .context("Publish returned error")?;
+        .context("Failed to publish message")?;
 
     info!("📤 Published message successfully: {:?}", publish_result);
 
@@ -90,8 +84,9 @@ async fn test_message_posting_and_retrieval() -> Result<()> {
     info!("👂 Testing message retrieval via subscription...");
 
     // Try to receive messages (working test pattern)
+    futures::pin_mut!(messages_stream);
     for _ in 0..5 {
-        match timeout(receive_timeout, messages_stream.recv()).await {
+        match timeout(receive_timeout, messages_stream.next()).await {
             Ok(Some(stream_message)) => match stream_message {
                 StreamMessage::MessageReceived {
                     message: _msg,
@@ -127,24 +122,17 @@ async fn test_user_data_storage_and_lookup() -> Result<()> {
     let infra = TestInfrastructure::setup().await?;
     let client = infra.create_client().await?;
 
-    let (messages_service, (mut messages_stream, _)) = client
-        .connect_message_service()
-        .await
-        .context("Failed to connect to message service")?;
+    let persistence_manager = client.persistence_manager();
+    let mut messages_stream = persistence_manager.all_messages_stream();
+    let messages_service = persistence_manager.messages_manager().clone();
 
     info!("📡 Connected to message service for user data test");
 
     // Subscribe to user data messages FIRST
-    let user_subscription_config = SubscriptionConfig {
-        filters: MessageFilters {
-            filters: Some(vec![Filter::User(*client.public_key().id())]),
-        },
-        since: None,
-        limit: None,
-    };
+    let user_filter = Filter::User(*client.public_key().id());
 
     messages_service
-        .subscribe(user_subscription_config)
+        .ensure_contains_filter(user_filter)
         .await
         .context("Failed to subscribe to user data messages")?;
 
@@ -171,10 +159,9 @@ async fn test_user_data_storage_and_lookup() -> Result<()> {
         .map_err(|e| anyhow::anyhow!("Failed to create MessageFull for user data: {}", e))?;
 
     let publish_result = messages_service
-        .publish(tarpc::context::current(), message_full)
+        .publish(message_full)
         .await
-        .context("Failed to publish user data message")?
-        .context("Publish returned error")?;
+        .context("Failed to publish user data message")?;
 
     info!("📤 Published user data successfully: {:?}", publish_result);
 
@@ -183,11 +170,7 @@ async fn test_user_data_storage_and_lookup() -> Result<()> {
 
     // now we fetch the user data
     let user_data = messages_service
-        .user_data(
-            tarpc::context::current(),
-            *client.public_key().id(),
-            StoreKey::CustomKey(3),
-        )
+        .user_data(*client.public_key().id(), StoreKey::CustomKey(3))
         .await?;
 
     // Collect user data messages
@@ -197,8 +180,9 @@ async fn test_user_data_storage_and_lookup() -> Result<()> {
     info!("👂 Testing user data lookup via subscription...");
 
     // Try to receive user data messages
+    futures::pin_mut!(messages_stream);
     for _ in 0..5 {
-        match timeout(receive_timeout, messages_stream.recv()).await {
+        match timeout(receive_timeout, messages_stream.next()).await {
             Ok(Some(stream_message)) => {
                 match stream_message {
                     StreamMessage::MessageReceived {
@@ -247,10 +231,9 @@ async fn test_subscription_unsubscription_functionality() -> Result<()> {
     let infra = TestInfrastructure::setup().await?;
     let client = infra.create_client().await?;
 
-    let (messages_service, (mut messages_stream, _)) = client
-        .connect_message_service()
-        .await
-        .context("Failed to connect to message service")?;
+    let persistence_manager = client.persistence_manager();
+    let mut messages_stream = persistence_manager.all_messages_stream();
+    let messages_service = persistence_manager.messages_manager().clone();
 
     info!("📡 Connected to message service for subscription test");
 
@@ -258,16 +241,10 @@ async fn test_subscription_unsubscription_functionality() -> Result<()> {
     let test_channel = format!("sub_test_{}", rand::thread_rng().next_u32());
 
     // Step 1: Subscribe to a specific channel
-    let subscription_config = SubscriptionConfig {
-        filters: MessageFilters {
-            filters: Some(vec![Filter::Channel(test_channel.as_bytes().to_vec())]),
-        },
-        since: None,
-        limit: None,
-    };
+    let filter = Filter::Channel(test_channel.as_bytes().to_vec());
 
     messages_service
-        .subscribe(subscription_config)
+        .ensure_contains_filter(filter)
         .await
         .context("Failed to subscribe to test channel")?;
 
@@ -295,10 +272,9 @@ async fn test_subscription_unsubscription_functionality() -> Result<()> {
         .map_err(|e| anyhow::anyhow!("Failed to create subscribed message: {}", e))?;
 
     let publish_result = messages_service
-        .publish(tarpc::context::current(), subscribed_message_full)
+        .publish(subscribed_message_full)
         .await
-        .context("Failed to publish subscribed message")?
-        .context("Publish returned error")?;
+        .context("Failed to publish subscribed message")?;
 
     info!(
         "📤 Published message while subscribed: {:?}",
@@ -314,8 +290,9 @@ async fn test_subscription_unsubscription_functionality() -> Result<()> {
     info!("👂 Testing message stream activity...");
 
     // Check for any message activity
+    futures::pin_mut!(messages_stream);
     for _ in 0..3 {
-        match timeout(receive_timeout, messages_stream.recv()).await {
+        match timeout(receive_timeout, messages_stream.next()).await {
             Ok(Some(stream_message)) => match stream_message {
                 StreamMessage::MessageReceived {
                     message: _msg,
@@ -374,54 +351,44 @@ async fn test_all_signature_types_e2e() -> Result<()> {
     let test_channel = format!("signature_types_e2e_{}", rand::thread_rng().next_u32());
 
     // Connect all clients to message service
-    let (ed25519_service, (mut ed25519_stream, _)) = ed25519_client
-        .connect_message_service()
-        .await
-        .context("Failed to connect Ed25519 client to message service")?;
+    let ed25519_persistence = ed25519_client.persistence_manager();
+    let mut ed25519_stream = ed25519_persistence.all_messages_stream();
+    let ed25519_service = ed25519_persistence.messages_manager().clone();
 
-    let (ml_dsa_44_service, (mut ml_dsa_44_stream, _)) = ml_dsa_44_client
-        .connect_message_service()
-        .await
-        .context("Failed to connect ML-DSA-44 client to message service")?;
+    let ml_dsa_44_persistence = ml_dsa_44_client.persistence_manager();
+    let mut ml_dsa_44_stream = ml_dsa_44_persistence.all_messages_stream();
+    let ml_dsa_44_service = ml_dsa_44_persistence.messages_manager().clone();
 
-    let (ml_dsa_65_service, (mut ml_dsa_65_stream, _)) = ml_dsa_65_client
-        .connect_message_service()
-        .await
-        .context("Failed to connect ML-DSA-65 client to message service")?;
+    let ml_dsa_65_persistence = ml_dsa_65_client.persistence_manager();
+    let mut ml_dsa_65_stream = ml_dsa_65_persistence.all_messages_stream();
+    let ml_dsa_65_service = ml_dsa_65_persistence.messages_manager().clone();
 
-    let (ml_dsa_87_service, (mut ml_dsa_87_stream, _)) = ml_dsa_87_client
-        .connect_message_service()
-        .await
-        .context("Failed to connect ML-DSA-87 client to message service")?;
+    let ml_dsa_87_persistence = ml_dsa_87_client.persistence_manager();
+    let mut ml_dsa_87_stream = ml_dsa_87_persistence.all_messages_stream();
+    let ml_dsa_87_service = ml_dsa_87_persistence.messages_manager().clone();
 
     info!("📡 All clients connected to message service");
 
     // Subscribe all clients to the test channel
-    let subscription_config = SubscriptionConfig {
-        filters: MessageFilters {
-            filters: Some(vec![Filter::Channel(test_channel.as_bytes().to_vec())]),
-        },
-        since: None,
-        limit: None,
-    };
+    let filter = Filter::Channel(test_channel.as_bytes().to_vec());
 
     ed25519_service
-        .subscribe(subscription_config.clone())
+        .subscribe()
         .await
         .context("Failed to subscribe Ed25519 client")?;
 
     ml_dsa_44_service
-        .subscribe(subscription_config.clone())
+        .subscribe()
         .await
         .context("Failed to subscribe ML-DSA-44 client")?;
 
     ml_dsa_65_service
-        .subscribe(subscription_config.clone())
+        .subscribe()
         .await
         .context("Failed to subscribe ML-DSA-65 client")?;
 
     ml_dsa_87_service
-        .subscribe(subscription_config)
+        .ensure_contains_filter(filter)
         .await
         .context("Failed to subscribe ML-DSA-87 client")?;
 
@@ -483,28 +450,24 @@ async fn test_all_signature_types_e2e() -> Result<()> {
 
     // Publish all messages
     let ed25519_result = ed25519_service
-        .publish(tarpc::context::current(), ed25519_full)
+        .publish(ed25519_full)
         .await
-        .context("Failed to publish Ed25519 message")?
-        .context("Ed25519 publish returned error")?;
+        .context("Failed to publish Ed25519 message")?;
 
     let ml_dsa_44_result = ml_dsa_44_service
-        .publish(tarpc::context::current(), ml_dsa_44_full)
+        .publish(ml_dsa_44_full)
         .await
-        .context("Failed to publish ML-DSA-44 message")?
-        .context("ML-DSA-44 publish returned error")?;
+        .context("Failed to publish ML-DSA-44 message")?;
 
     let ml_dsa_65_result = ml_dsa_65_service
-        .publish(tarpc::context::current(), ml_dsa_65_full)
+        .publish(ml_dsa_65_full)
         .await
-        .context("Failed to publish ML-DSA-65 message")?
-        .context("ML-DSA-65 publish returned error")?;
+        .context("Failed to publish ML-DSA-65 message")?;
 
     let ml_dsa_87_result = ml_dsa_87_service
-        .publish(tarpc::context::current(), ml_dsa_87_full)
+        .publish(ml_dsa_87_full)
         .await
-        .context("Failed to publish ML-DSA-87 message")?
-        .context("ML-DSA-87 publish returned error")?;
+        .context("Failed to publish ML-DSA-87 message")?;
 
     info!("📤 All signature type messages published successfully:");
     info!("   📝 Ed25519 result: {:?}", ed25519_result);
@@ -519,17 +482,22 @@ async fn test_all_signature_types_e2e() -> Result<()> {
     let receive_timeout = Duration::from_millis(1000);
 
     // Helper function to collect messages from a stream
-    async fn collect_messages_from_stream(
-        stream: &mut tokio::sync::mpsc::UnboundedReceiver<StreamMessage>,
+    async fn collect_messages_from_stream<S>(
+        mut stream: S,
         client_name: &str,
         timeout_duration: Duration,
-    ) -> Vec<String> {
+    ) -> Vec<String>
+    where
+        S: futures::Stream<Item = StreamMessage>,
+    {
+        use futures::pin_mut;
+        pin_mut!(stream);
         let mut messages = Vec::new();
         let mut attempts = 0;
         const MAX_ATTEMPTS: usize = 10;
 
         while attempts < MAX_ATTEMPTS {
-            match timeout(timeout_duration, stream.recv()).await {
+            match timeout(timeout_duration, stream.next()).await {
                 Ok(Some(StreamMessage::MessageReceived { message: msg, .. })) => {
                     if let Some(content) = msg.raw_content() {
                         let content_str = String::from_utf8_lossy(content).to_string();
@@ -551,13 +519,13 @@ async fn test_all_signature_types_e2e() -> Result<()> {
 
     // Collect messages from all clients
     let ed25519_messages =
-        collect_messages_from_stream(&mut ed25519_stream, "Ed25519", receive_timeout).await;
+        collect_messages_from_stream(ed25519_stream, "Ed25519", receive_timeout).await;
     let ml_dsa_44_messages =
-        collect_messages_from_stream(&mut ml_dsa_44_stream, "ML-DSA-44", receive_timeout).await;
+        collect_messages_from_stream(ml_dsa_44_stream, "ML-DSA-44", receive_timeout).await;
     let ml_dsa_65_messages =
-        collect_messages_from_stream(&mut ml_dsa_65_stream, "ML-DSA-65", receive_timeout).await;
+        collect_messages_from_stream(ml_dsa_65_stream, "ML-DSA-65", receive_timeout).await;
     let ml_dsa_87_messages =
-        collect_messages_from_stream(&mut ml_dsa_87_stream, "ML-DSA-87", receive_timeout).await;
+        collect_messages_from_stream(ml_dsa_87_stream, "ML-DSA-87", receive_timeout).await;
 
     // Verify that all clients received all messages (cross-signature-type communication)
     let expected_messages = [
@@ -640,29 +608,19 @@ async fn test_signature_type_interoperability_e2e() -> Result<()> {
     let test_channel = format!("interop_test_{}", rand::thread_rng().next_u32());
 
     // Connect both clients to message service
-    let (ed25519_service, (mut ed25519_stream, _)) = ed25519_client
-        .connect_message_service()
-        .await
-        .context("Failed to connect Ed25519 client")?;
+    let ed25519_persistence = ed25519_client.persistence_manager();
+    let mut ed25519_stream = ed25519_persistence.all_messages_stream();
+    let ed25519_service = ed25519_persistence.messages_manager().clone();
 
-    let (ml_dsa_65_service, (mut ml_dsa_65_stream, _)) = ml_dsa_65_client
-        .connect_message_service()
-        .await
-        .context("Failed to connect ML-DSA-65 client")?;
+    let ml_dsa_65_persistence = ml_dsa_65_client.persistence_manager();
+    let mut ml_dsa_65_stream = ml_dsa_65_persistence.all_messages_stream();
+    let ml_dsa_65_service = ml_dsa_65_persistence.messages_manager().clone();
 
     // Subscribe both clients to the same channel
-    let subscription_config = SubscriptionConfig {
-        filters: MessageFilters {
-            filters: Some(vec![Filter::Channel(test_channel.as_bytes().to_vec())]),
-        },
-        since: None,
-        limit: None,
-    };
+    let filter = Filter::Channel(test_channel.as_bytes().to_vec());
 
-    ed25519_service
-        .subscribe(subscription_config.clone())
-        .await?;
-    ml_dsa_65_service.subscribe(subscription_config).await?;
+    ed25519_service.subscribe().await?;
+    ml_dsa_65_service.subscribe().await?;
 
     tokio::time::sleep(Duration::from_millis(200)).await;
 
@@ -695,12 +653,8 @@ async fn test_signature_type_interoperability_e2e() -> Result<()> {
         .map_err(|e| anyhow::anyhow!("Failed to create ML-DSA-65 MessageFull: {}", e))?;
 
     // Publish both messages
-    ed25519_service
-        .publish(tarpc::context::current(), ed25519_full)
-        .await??;
-    ml_dsa_65_service
-        .publish(tarpc::context::current(), ml_dsa_65_full)
-        .await??;
+    ed25519_service.publish(ed25519_full).await?;
+    ml_dsa_65_service.publish(ml_dsa_65_full).await?;
 
     info!("📤 Cross-signature messages published");
 
@@ -712,8 +666,9 @@ async fn test_signature_type_interoperability_e2e() -> Result<()> {
     let mut ml_dsa_65_received_count = 0;
 
     // Check Ed25519 client received messages
+    futures::pin_mut!(ed25519_stream);
     for _ in 0..10 {
-        match timeout(Duration::from_millis(500), ed25519_stream.recv()).await {
+        match timeout(Duration::from_millis(500), ed25519_stream.next()).await {
             Ok(Some(StreamMessage::MessageReceived { message: msg, .. })) => {
                 if let Some(content) = msg.raw_content() {
                     let content_str = String::from_utf8_lossy(content);
@@ -729,8 +684,9 @@ async fn test_signature_type_interoperability_e2e() -> Result<()> {
     }
 
     // Check ML-DSA-65 client received messages
+    futures::pin_mut!(ml_dsa_65_stream);
     for _ in 0..10 {
-        match timeout(Duration::from_millis(500), ml_dsa_65_stream.recv()).await {
+        match timeout(Duration::from_millis(500), ml_dsa_65_stream.next()).await {
             Ok(Some(StreamMessage::MessageReceived { message: msg, .. })) => {
                 if let Some(content) = msg.raw_content() {
                     let content_str = String::from_utf8_lossy(content);

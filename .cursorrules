@@ -50,6 +50,7 @@
 1. `cargo nextest run --all` (fix all failing tests)
 2. `cargo +nightly clippy --all --tests --examples --allow-dirty --allow-staged --fix`
 3. Fix remaining clippy issues
+4. NEVER write examples unless explicitly asked to
 
 ### Test Requirements
 - Unit tests for new functions/methods/modules

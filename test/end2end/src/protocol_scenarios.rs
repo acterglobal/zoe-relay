@@ -7,14 +7,13 @@
 
 use crate::multi_client_infra::{MultiClientTestHarness, TestClient};
 use anyhow::{Context, Result};
+use futures::StreamExt;
 use rand::RngCore;
 use serial_test::serial;
 use std::time::Duration;
 use tokio::time::timeout;
 use tracing::{info, warn};
-use zoe_wire_protocol::{
-    Kind, Message, MessageFilters, MessageFull, StreamMessage, SubscriptionConfig, Tag,
-};
+use zoe_wire_protocol::{Kind, Message, MessageFilters, MessageFull, StreamMessage, Tag};
 
 /// Test scenario: Group chat with multiple participants
 ///
@@ -95,11 +94,11 @@ async fn test_group_chat_scenario() -> Result<()> {
         // Collect messages for this participant
         for _ in 0..10 {
             // Allow for multiple messages
-            match timeout(receive_timeout, stream.recv()).await {
-                Ok(Some(StreamMessage::MessageReceived {
+            match timeout(receive_timeout, stream.next()).await {
+                Ok(Some(Ok(StreamMessage::MessageReceived {
                     message: _msg,
                     stream_height,
-                })) => {
+                }))) => {
                     participant_messages += 1;
                     total_messages_received += 1;
                     info!(
@@ -107,11 +106,12 @@ async fn test_group_chat_scenario() -> Result<()> {
                         participant.name, stream_height
                     );
                 }
-                Ok(Some(StreamMessage::StreamHeightUpdate(_))) => {
+                Ok(Some(Ok(StreamMessage::StreamHeightUpdate(_)))) => {
                     // Ignore height updates
                 }
-                Ok(None) => break,
-                Err(_) => break, // Timeout
+                Ok(Some(Err(_))) => break, // Stream error
+                Ok(None) => break,         // Stream ended
+                Err(_) => break,           // Timeout
             }
         }
 
@@ -235,10 +235,12 @@ async fn test_dynamic_membership_scenario() -> Result<()> {
     ] {
         let mut messages = 0;
         for _ in 0..10 {
-            match timeout(receive_timeout, stream.recv()).await {
-                Ok(Some(StreamMessage::MessageReceived { .. })) => messages += 1,
-                Ok(Some(StreamMessage::StreamHeightUpdate(_))) => {}
-                _ => break,
+            match timeout(receive_timeout, stream.next()).await {
+                Ok(Some(Ok(StreamMessage::MessageReceived { .. }))) => messages += 1,
+                Ok(Some(Ok(StreamMessage::StreamHeightUpdate(_)))) => {}
+                Ok(Some(Err(_))) => break, // Stream error
+                Ok(None) => break,         // Stream ended
+                Err(_) => break,           // Timeout
             }
         }
         results.insert(name.to_string(), messages);
@@ -326,13 +328,15 @@ async fn test_high_frequency_messaging_scenario() -> Result<()> {
 
         for _ in 0..20 {
             // Allow for many messages
-            match timeout(receive_timeout, stream.recv()).await {
-                Ok(Some(StreamMessage::MessageReceived { .. })) => {
+            match timeout(receive_timeout, stream.next()).await {
+                Ok(Some(Ok(StreamMessage::MessageReceived { .. }))) => {
                     client_received += 1;
                     total_received += 1;
                 }
-                Ok(Some(StreamMessage::StreamHeightUpdate(_))) => {}
-                _ => break,
+                Ok(Some(Ok(StreamMessage::StreamHeightUpdate(_)))) => {}
+                Ok(Some(Err(_))) => break, // Stream error
+                Ok(None) => break,         // Stream ended
+                Err(_) => break,           // Timeout
             }
         }
 
@@ -553,13 +557,15 @@ async fn test_server_resilience_under_load_scenario() -> Result<()> {
             let stream = &mut streams[i];
 
             for _ in 0..15 {
-                match timeout(receive_timeout, stream.recv()).await {
-                    Ok(Some(StreamMessage::MessageReceived { .. })) => {
+                match timeout(receive_timeout, stream.next()).await {
+                    Ok(Some(Ok(StreamMessage::MessageReceived { .. }))) => {
                         client_received += 1;
                         total_received += 1;
                     }
-                    Ok(Some(StreamMessage::StreamHeightUpdate(_))) => {}
-                    _ => break,
+                    Ok(Some(Ok(StreamMessage::StreamHeightUpdate(_)))) => {}
+                    Ok(Some(Err(_))) => break, // Stream error
+                    Ok(None) => break,         // Stream ended
+                    Err(_) => break,           // Timeout
                 }
             }
         }

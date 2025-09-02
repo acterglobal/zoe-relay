@@ -168,8 +168,23 @@ pub fn generate_qr_string<T: Serialize>(data: &T, options: &QrOptions) -> QrResu
 
     // QR code
     for line in image.lines() {
-        let padded_line = format!("{line:^width$}", width = options.border_width - 2);
-        result.push_str(&format!("│{padded_line}│\n"));
+        // Calculate the visual width of the QR line (Unicode characters may have different widths)
+        let line_visual_width = line.chars().count();
+
+        // Calculate padding needed to center the QR code within the border
+        let total_padding = options.border_width.saturating_sub(line_visual_width);
+        let left_padding = total_padding / 2;
+        let right_padding = total_padding - left_padding;
+
+        // Create the padded line with proper spacing
+        let padded_line = format!(
+            "{}{}{}",
+            " ".repeat(left_padding),
+            line,
+            " ".repeat(right_padding)
+        );
+
+        result.push_str(&format!("│{}│\n", padded_line));
     }
 
     // Separator after QR code
@@ -364,5 +379,148 @@ mod tests {
         let last_line = lines.last().unwrap();
         assert!(last_line.starts_with("└"));
         assert!(last_line.ends_with("┘"));
+    }
+
+    #[test]
+    fn test_qr_line_formatting_consistency() {
+        let data = TestData {
+            message: "Test".to_string(),
+            number: 42,
+        };
+
+        let options = QrOptions::new("TEST").with_border_width(60);
+
+        let qr_string = generate_qr_string(&data, &options).unwrap();
+        let lines: Vec<&str> = qr_string.lines().collect();
+
+        for (i, line) in lines.iter().enumerate() {
+            // Each line should start and end with border characters
+            assert!(
+                line.starts_with('│')
+                    || line.starts_with('┌')
+                    || line.starts_with('├')
+                    || line.starts_with('└'),
+                "Line {} should start with border character: '{}'",
+                i,
+                line
+            );
+            assert!(
+                line.ends_with('│')
+                    || line.ends_with('┐')
+                    || line.ends_with('┤')
+                    || line.ends_with('┘'),
+                "Line {} should end with border character: '{}'",
+                i,
+                line
+            );
+
+            // Check that QR code lines are properly formatted
+            if line.starts_with('│') && !line.contains("TEST") && !line.contains("Scan to connect")
+            {
+                // This should be a QR code line - verify it's properly padded
+                // Extract content by removing the first and last characters (the │ borders)
+                let chars: Vec<char> = line.chars().collect();
+                if chars.len() >= 2 {
+                    let content: String = chars[1..chars.len() - 1].iter().collect();
+                    assert_eq!(
+                        content.chars().count(),
+                        options.border_width,
+                        "QR line {} content should be exactly {} characters: '{}'",
+                        i,
+                        options.border_width,
+                        content
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_qr_centering_with_different_border_widths() {
+        let data = TestData {
+            message: "Centering test".to_string(),
+            number: 999,
+        };
+
+        // Test with various border widths
+        for border_width in [40, 50, 60, 70, 80] {
+            let options = QrOptions::new("CENTERING TEST").with_border_width(border_width);
+
+            let qr_string = generate_qr_string(&data, &options).unwrap();
+            let lines: Vec<&str> = qr_string.lines().collect();
+
+            // Find QR code lines and verify they're properly centered
+            for line in &lines {
+                if line.starts_with('│')
+                    && !line.contains("CENTERING TEST")
+                    && !line.contains("Scan to connect")
+                {
+                    let chars: Vec<char> = line.chars().collect();
+                    if chars.len() >= 2 {
+                        let content: String = chars[1..chars.len() - 1].iter().collect();
+                        assert_eq!(
+                            content.chars().count(),
+                            border_width,
+                            "Content width should match border_width {} for line: '{}'",
+                            border_width,
+                            content
+                        );
+
+                        // Verify the QR code is centered by checking that leading and trailing spaces are balanced
+                        let trimmed = content.trim();
+                        if !trimmed.is_empty() {
+                            let leading_spaces = content.len() - content.trim_start().len();
+                            let trailing_spaces = content.len() - content.trim_end().len();
+                            // Allow for ±1 difference due to odd/even width differences
+                            assert!(
+                                (leading_spaces as i32 - trailing_spaces as i32).abs() <= 1,
+                                "QR code should be centered: leading={}, trailing={}, content='{}'",
+                                leading_spaces,
+                                trailing_spaces,
+                                content
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_qr_visual_output_sample() {
+        let data = TestData {
+            message: "Visual test".to_string(),
+            number: 12345,
+        };
+
+        let options = QrOptions::new("📡 ZOE RELAY SERVER")
+            .with_subtitle("Bind: 127.0.0.1:13908")
+            .with_subtitle("Key: 75cbe0f409466428...")
+            .with_footer("Scan with Zoe client to connect")
+            .with_border_width(60);
+
+        let qr_string = generate_qr_string(&data, &options).unwrap();
+
+        // Print the QR code for visual inspection during development
+        // This helps ensure the output looks correct
+        println!("Generated QR code:");
+        println!("{}", qr_string);
+
+        // Verify structure
+        let lines: Vec<&str> = qr_string.lines().collect();
+        assert!(!lines.is_empty(), "QR string should have content");
+
+        // Should contain all expected text elements
+        let full_text = qr_string;
+        assert!(full_text.contains("📡 ZOE RELAY SERVER"));
+        assert!(full_text.contains("Bind: 127.0.0.1:13908"));
+        assert!(full_text.contains("Key: 75cbe0f409466428..."));
+        assert!(full_text.contains("Scan with Zoe client to connect"));
+
+        // Should have proper border structure
+        assert!(full_text.contains("┌"));
+        assert!(full_text.contains("└"));
+        assert!(full_text.contains("├"));
+        assert!(full_text.contains("┤"));
     }
 }

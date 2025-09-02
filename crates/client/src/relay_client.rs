@@ -1,22 +1,24 @@
+use crate::SessionManager;
 use crate::challenge::perform_client_challenge_handshake;
 use crate::error::{ClientError, Result};
-use crate::services::{
-    BlobService, CatchUpStream, MessagePersistenceManager, MessagePersistenceManagerBuilder,
-    MessagesService, MessagesStream,
-};
-use quinn::Connection;
+use crate::services::{BlobService, MessagePersistenceManager, MessagePersistenceManagerBuilder};
+use quinn::{Connection, Endpoint};
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tracing::info;
-use zoe_client_storage::{SqliteMessageStorage, StorageConfig};
+use zoe_client_storage::{SqliteMessageStorage, StorageConfig as DbConfig};
 use zoe_wire_protocol::{KeyPair, VerifyingKey, connection::client::create_client_endpoint};
 
 struct RelayClientInner {
     client_keypair_tls: KeyPair, // For TLS certificates (Ed25519 or ML-DSA-44)
-    client_keypair_inner: KeyPair, // For inner protocol
+    client_keypair_inner: Arc<KeyPair>, // For inner protocol
     connection: Connection,
-    persistence_manager: MessagePersistenceManager,
+    blob_service: Arc<BlobService>,
+    persistence_manager: Arc<MessagePersistenceManager>,
+    session_manager: SessionManager<SqliteMessageStorage, MessagePersistenceManager>,
+    storage: Arc<SqliteMessageStorage>,
+    endpoint: Endpoint,
 }
 
 /// Builder for creating RelayClient instances with configurable options.
@@ -51,7 +53,7 @@ pub struct RelayClientBuilder {
     client_keypair_inner: Option<KeyPair>,
     server_public_key: Option<VerifyingKey>,
     server_address: Option<SocketAddr>,
-    storage_config: Option<StorageConfig>,
+    db_config: Option<DbConfig>,
     encryption_key: Option<[u8; 32]>,
     storage: Option<Arc<SqliteMessageStorage>>,
     autosubscribe: bool,
@@ -65,7 +67,7 @@ impl RelayClientBuilder {
             client_keypair_inner: None,
             server_public_key: None,
             server_address: None,
-            storage_config: None,
+            db_config: None,
             encryption_key: None,
             storage: None,
             autosubscribe: false,
@@ -93,16 +95,16 @@ impl RelayClientBuilder {
     }
 
     /// Set the storage configuration
-    pub fn storage_config(mut self, config: StorageConfig) -> Self {
-        self.storage_config = Some(config);
+    pub fn db_config(mut self, config: DbConfig) -> Self {
+        self.db_config = Some(config);
         self
     }
 
     /// Set the storage database path (convenience method)
     pub fn storage_path<P: Into<PathBuf>>(mut self, path: P) -> Self {
-        let mut config = self.storage_config.unwrap_or_default();
+        let mut config = self.db_config.unwrap_or_default();
         config.database_path = path.into();
-        self.storage_config = Some(config);
+        self.db_config = Some(config);
         self
     }
 
@@ -115,7 +117,7 @@ impl RelayClientBuilder {
     /// Set a pre-created storage instance
     ///
     /// When this is set, the builder will use this storage instead of creating one
-    /// from storage_config and encryption_key.
+    /// from db_config and encryption_key.
     pub fn storage(mut self, storage: Arc<SqliteMessageStorage>) -> Self {
         self.storage = Some(storage);
         self
@@ -156,15 +158,16 @@ impl RelayClientBuilder {
             })?
         };
 
-        let client_keypair_inner = self
-            .client_keypair_inner
-            .unwrap_or_else(|| KeyPair::generate(&mut rand::thread_rng()));
+        let client_keypair_inner = Arc::new(
+            self.client_keypair_inner
+                .unwrap_or_else(|| KeyPair::generate(&mut rand::thread_rng())),
+        );
 
         // Generate TLS keypair for certificates (default to Ed25519)
         let client_keypair_tls = KeyPair::generate_ed25519(&mut rand::thread_rng());
 
         // Establish connection
-        let connection = RelayClient::connect_with_transport_keys(
+        let (endpoint, connection) = RelayClientInner::connect_with_transport_keys(
             &client_keypair_tls,
             &client_keypair_inner,
             server_address,
@@ -176,9 +179,9 @@ impl RelayClientBuilder {
         let storage = if let Some(storage) = self.storage {
             storage
         } else {
-            let storage_config = self.storage_config.unwrap_or_default();
+            let db_config = self.db_config.unwrap_or_default();
             Arc::new(
-                SqliteMessageStorage::new(storage_config, &encryption_key)
+                SqliteMessageStorage::new(db_config, &encryption_key)
                     .await
                     .map_err(|e| {
                         ClientError::Generic(format!("Failed to create storage: {}", e))
@@ -186,21 +189,34 @@ impl RelayClientBuilder {
             )
         };
 
+        let blob_service = Arc::new(BlobService::connect(&connection).await?);
+
         // Create persistence manager (always required now)
-        let persistence_manager = MessagePersistenceManagerBuilder::new()
-            .storage(storage)
-            .relay_pubkey(server_public_key)
-            .autosubscribe(self.autosubscribe)
-            .buffer_size(self.buffer_size.unwrap_or(1000))
-            .build(&connection)
+        let persistence_manager = Arc::new(
+            MessagePersistenceManagerBuilder::new()
+                .storage(storage.clone())
+                .relay_pubkey(server_public_key)
+                .autosubscribe(self.autosubscribe)
+                .buffer_size(self.buffer_size.unwrap_or(1000))
+                .build(&connection)
+                .await?,
+        );
+
+        let session_manager = SessionManager::builder(storage.clone(), persistence_manager.clone())
+            .client_keypair(client_keypair_inner.clone())
+            .build()
             .await?;
 
         Ok(RelayClient {
             inner: Arc::new(RelayClientInner {
                 client_keypair_tls,
                 client_keypair_inner,
+                storage,
                 connection,
                 persistence_manager,
+                blob_service,
+                session_manager,
+                endpoint,
             }),
         })
     }
@@ -213,18 +229,23 @@ impl Default for RelayClientBuilder {
 }
 
 /// A Zoe Relay Client with integrated message persistence
+#[derive(Clone)]
 pub struct RelayClient {
     inner: Arc<RelayClientInner>,
 }
 
-impl RelayClient {
+impl RelayClientInner {
+    async fn close(&self) {
+        self.connection.close(0u32.into(), b"Client closed");
+        self.endpoint.wait_idle().await;
+    }
     /// Connect to relay server with transport keys and return the connection
     async fn connect_with_transport_keys(
         client_keypair_tls: &KeyPair, // For TLS certificates (Ed25519 or ML-DSA-44)
         client_keypair_inner: &KeyPair, // For inner protocol
         server_addr: SocketAddr,
         server_public_key: &VerifyingKey,
-    ) -> Result<Connection> {
+    ) -> Result<(Endpoint, Connection)> {
         info!("🚀 Starting relay client with transport keys");
         info!(
             "🔑 Client TLS key: {} ({})",
@@ -279,6 +300,7 @@ impl RelayClient {
         .await
         else {
             connection.close(0u32.into(), b"ML-DSA handshake failed");
+            client_endpoint.wait_idle().await;
             return Err(anyhow::anyhow!("ML-DSA handshake failed").into());
         };
 
@@ -287,26 +309,19 @@ impl RelayClient {
             verified_count, 1
         );
 
-        Ok(connection)
+        Ok((client_endpoint, connection))
     }
+}
 
-    pub async fn connect_message_service(
-        &self,
-    ) -> Result<(MessagesService, (MessagesStream, CatchUpStream))> {
-        MessagesService::connect(&self.inner.connection).await
-    }
-
-    pub async fn connect_blob_service(&self) -> Result<BlobService> {
-        BlobService::connect(&self.inner.connection).await
-    }
-
+// public methods
+impl RelayClient {
     /// Get the client's inner protocol public key
     pub fn public_key(&self) -> VerifyingKey {
         self.inner.client_keypair_inner.public_key()
     }
 
     /// Get the client's inner protocol keypair
-    pub fn keypair(&self) -> &KeyPair {
+    pub fn keypair(&self) -> &Arc<KeyPair> {
         &self.inner.client_keypair_inner
     }
 
@@ -324,84 +339,21 @@ impl RelayClient {
         &self.inner.persistence_manager
     }
 
-    /// Connect to message service with automatic persistence
-    ///
-    /// Returns the standard message service connection. All messages are automatically
-    /// persisted through the integrated MessagePersistenceManager.
-    pub async fn connect_message_service_with_persistence(
+    pub fn session_manager(
         &self,
-    ) -> Result<(MessagesService, (MessagesStream, CatchUpStream))> {
-        // All RelayClients now have persistence, so just return the standard service
-        self.connect_message_service().await
-    }
-}
-
-// Test-only methods for backward compatibility
-#[cfg(any(test, feature = "test-utils"))]
-impl RelayClient {
-    /// Create a RelayClient with a random keypair (test-only)
-    ///
-    /// This method is only available in test builds and creates a client with
-    /// temporary storage. Production code should use RelayClientBuilder.
-    pub async fn new_with_random_key(
-        server_public_key: VerifyingKey,
-        server_addr: SocketAddr,
-    ) -> Result<Self> {
-        let inner_keypair = KeyPair::generate(&mut rand::thread_rng());
-        Self::new(inner_keypair, server_public_key, server_addr).await
+    ) -> &SessionManager<SqliteMessageStorage, MessagePersistenceManager> {
+        &self.inner.session_manager
     }
 
-    /// Create a RelayClient with the given keypair (test-only)
-    ///
-    /// This method is only available in test builds and creates a client with
-    /// temporary storage. Production code should use RelayClientBuilder.
-    pub async fn new(
-        client_keypair_inner: KeyPair,
-        server_public_key: VerifyingKey,
-        server_addr: SocketAddr,
-    ) -> Result<Self> {
-        // Generate TLS keypair for certificates (default to Ed25519)
-        let client_keypair_tls = KeyPair::generate_ed25519(&mut rand::thread_rng());
-        let connection = Self::connect_with_transport_keys(
-            &client_keypair_tls,
-            &client_keypair_inner,
-            server_addr,
-            &server_public_key,
-        )
-        .await?;
+    pub fn blob_service(&self) -> &Arc<BlobService> {
+        &self.inner.blob_service
+    }
 
-        // Create temporary storage for tests
-        let temp_dir = tempfile::tempdir()
-            .map_err(|e| ClientError::Generic(format!("Failed to create temp directory: {e}")))?;
-        let temp_db_path = temp_dir.path().join("test_messages.db");
-        let temp_encryption_key = [0u8; 32]; // Temporary key for tests
+    pub fn storage(&self) -> &Arc<SqliteMessageStorage> {
+        &self.inner.storage
+    }
 
-        let storage_config = StorageConfig {
-            database_path: temp_db_path,
-            ..Default::default()
-        };
-
-        let storage = Arc::new(
-            SqliteMessageStorage::new(storage_config, &temp_encryption_key)
-                .await
-                .map_err(|e| ClientError::Generic(format!("Failed to create test storage: {e}")))?,
-        );
-
-        let persistence_manager = MessagePersistenceManagerBuilder::new()
-            .storage(storage)
-            .relay_pubkey(server_public_key)
-            .autosubscribe(false)
-            .buffer_size(1000)
-            .build(&connection)
-            .await?;
-
-        Ok(Self {
-            inner: Arc::new(RelayClientInner {
-                client_keypair_tls,
-                client_keypair_inner,
-                connection,
-                persistence_manager,
-            }),
-        })
+    pub async fn close(&self) {
+        self.inner.close().await;
     }
 }

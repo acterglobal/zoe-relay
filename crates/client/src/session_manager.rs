@@ -39,6 +39,7 @@ use tokio::sync::RwLock;
 use tokio::task::JoinHandle;
 
 use zoe_client_storage::{StateNamespace, StateStorage};
+use zoe_state_machine::{GroupDataUpdate, GroupManager};
 use zoe_wire_protocol::PqxdhInboxProtocol;
 
 use crate::pqxdh::PqxdhProtocolHandler;
@@ -69,6 +70,8 @@ pub type SessionManagerResult<T> = Result<T, SessionManagerError>;
 pub enum SessionStateChange {
     /// PQXDH protocol state changed
     PqxdhStateChanged { handler_id: String },
+    /// Group manager state changed
+    GroupManagerUpdate(GroupDataUpdate),
     /// Session was removed
     SessionRemoved {
         namespace: StateNamespace,
@@ -112,14 +115,21 @@ impl<S: StateStorage + 'static, M: MessagesManagerTrait + 'static> SessionManage
             storage.clone(),
             messages_manager.clone(),
             client_keypair.clone(),
-            StateNamespace::PqxdhSession(client_keypair.id().clone()),
+            StateNamespace::PqxdhSession(*client_keypair.id()),
         )
         .await?;
+
+        // Create group manager instance and initialize listener
+        let (group_manager, group_manager_task) =
+            SessionManager::<S, M>::init_group_manager(storage.clone(), client_keypair.clone())
+                .await?;
 
         let manager = SessionManager {
             storage,
             messages_manager,
             pqxdh_handlers: RwLock::new(BTreeMap::from_iter(states)),
+            group_manager,
+            group_manager_task,
             client_keypair,
         };
 
@@ -137,8 +147,8 @@ impl<S: StateStorage + 'static, M: MessagesManagerTrait + 'static> SessionManage
 /// - State change events are broadcast to subscribers
 ///
 /// The SessionManager is designed to be long-lived and handles the lifecycle
-/// of multiple PQXDH protocol handlers, automatically managing their state
-/// persistence and providing reactive access to state changes.
+/// of multiple PQXDH protocol handlers and group encryption sessions, automatically
+/// managing their state persistence and providing reactive access to state changes.
 pub struct SessionManager<S: StateStorage + 'static, M: MessagesManagerTrait + 'static> {
     /// Underlying state storage
     storage: Arc<S>,
@@ -147,6 +157,10 @@ pub struct SessionManager<S: StateStorage + 'static, M: MessagesManagerTrait + '
     /// PQXDH handlers with their background listener tasks  
     pqxdh_handlers:
         RwLock<BTreeMap<PqxdhInboxProtocol, (Arc<PqxdhProtocolHandler<M>>, JoinHandle<()>)>>,
+    /// Group manager instance with background listener task
+    group_manager: Arc<GroupManager>,
+    #[allow(dead_code)]
+    group_manager_task: JoinHandle<()>,
     client_keypair: Arc<zoe_wire_protocol::KeyPair>,
 }
 
@@ -188,7 +202,7 @@ impl<S: StateStorage + 'static, M: MessagesManagerTrait + 'static> SessionManage
                     self.storage.clone(),
                     protocol,
                     handler.clone(),
-                    StateNamespace::PqxdhSession(self.client_keypair.id().clone()),
+                    StateNamespace::PqxdhSession(*self.client_keypair.id()),
                     true,
                 )
                 .await?;
@@ -196,6 +210,66 @@ impl<S: StateStorage + 'static, M: MessagesManagerTrait + 'static> SessionManage
                 Ok(handler_arc)
             }
         }
+    }
+}
+
+/// Group Manager Integration
+impl<S: StateStorage + 'static, M: MessagesManagerTrait + 'static> SessionManager<S, M> {
+    /// Initialize group manager with listener task
+    async fn init_group_manager(
+        storage: Arc<S>,
+        client_keypair: Arc<zoe_wire_protocol::KeyPair>,
+    ) -> SessionManagerResult<(Arc<GroupManager>, JoinHandle<()>)> {
+        let namespace = StateNamespace::GroupSession(*client_keypair.id());
+        let sessions: Vec<(Vec<u8>, zoe_state_machine::GroupSession)> = storage
+            .list_namespace_data(&namespace)
+            .await
+            .map_err(|e| SessionManagerError::Storage(Box::new(e)))?;
+
+        let group_manager = Arc::new(
+            GroupManager::builder()
+                .with_sessions(sessions.into_iter().map(|(_, session)| session).collect())
+                .build(),
+        );
+        let mut group_updates = group_manager.subscribe_to_updates();
+
+        let task = tokio::spawn(async move {
+            while let Ok(update) = group_updates.recv().await {
+                tracing::debug!("Received group manager update: {:?}", update);
+                match update {
+                    GroupDataUpdate::GroupAdded(group_session)
+                    | GroupDataUpdate::GroupUpdated(group_session) => {
+                        if let Err(e) = storage
+                            .store(
+                                &namespace,
+                                group_session.state.group_id.as_bytes(),
+                                &group_session,
+                            )
+                            .await
+                        {
+                            tracing::error!(error=?e, "Failed to persist group session");
+                        }
+                    }
+                    GroupDataUpdate::GroupRemoved(group_session) => {
+                        if let Err(e) = storage
+                            .delete(&namespace, group_session.state.group_id.as_bytes())
+                            .await
+                        {
+                            tracing::error!(error=?e, "Failed to delete group session");
+                        }
+                    }
+                }
+            }
+            tracing::info!("Group manager listener task ended");
+        });
+
+        tracing::info!("Group manager listener started");
+        Ok((group_manager, task))
+    }
+
+    /// Get access to the group manager
+    pub fn group_manager(&self) -> &Arc<GroupManager> {
+        &self.group_manager
     }
 }
 
@@ -319,6 +393,7 @@ mod tests {
     use rand::thread_rng;
 
     use zoe_client_storage::{StateNamespace, storage::MockStateStorage};
+
     use zoe_wire_protocol::{KeyPair, PqxdhInboxProtocol};
 
     use crate::pqxdh::PqxdhProtocolState;
@@ -331,7 +406,7 @@ mod tests {
 
     #[allow(dead_code)]
     fn create_test_namespace(keypair: &KeyPair) -> StateNamespace {
-        StateNamespace::PqxdhSession(keypair.public_key().id().clone())
+        StateNamespace::PqxdhSession(*keypair.public_key().id())
     }
 
     /// Test SessionManagerBuilder creation and configuration
@@ -366,6 +441,9 @@ mod tests {
         // Mock storage to return empty data (no existing sessions)
         mock_storage
             .expect_list_namespace_data::<PqxdhProtocolState>()
+            .returning(|_| Ok(Vec::new()));
+        mock_storage
+            .expect_list_namespace_data::<zoe_state_machine::GroupSession>()
             .returning(|_| Ok(Vec::new()));
 
         let manager = SessionManagerBuilder::new(Arc::new(mock_storage), Arc::new(mock_messages))
@@ -409,6 +487,9 @@ mod tests {
         mock_storage
             .expect_list_namespace_data::<PqxdhProtocolState>()
             .returning(|_| Ok(Vec::new()));
+        mock_storage
+            .expect_list_namespace_data::<zoe_state_machine::GroupSession>()
+            .returning(|_| Ok(Vec::new()));
 
         // Mock storage for initial state persistence
         mock_storage
@@ -448,6 +529,9 @@ mod tests {
         // Mock storage for initial load (empty)
         mock_storage
             .expect_list_namespace_data::<PqxdhProtocolState>()
+            .returning(|_| Ok(Vec::new()));
+        mock_storage
+            .expect_list_namespace_data::<zoe_state_machine::GroupSession>()
             .returning(|_| Ok(Vec::new()));
 
         // Mock storage for initial state persistence (should only be called once)
@@ -490,10 +574,15 @@ mod tests {
         let protocol_bytes = protocol.clone().into_bytes();
         let existing_data = vec![(protocol_bytes, existing_state)];
 
-        // Mock storage to return existing data
+        // Mock storage to return existing PQXDH data
         mock_storage
             .expect_list_namespace_data::<PqxdhProtocolState>()
             .returning(move |_| Ok(existing_data.clone()));
+
+        // Mock storage to return empty group session data
+        mock_storage
+            .expect_list_namespace_data::<zoe_state_machine::GroupSession>()
+            .returning(|_| Ok(Vec::new()));
 
         let manager = SessionManagerBuilder::new(Arc::new(mock_storage), Arc::new(mock_messages))
             .client_keypair(keypair.clone())
@@ -513,7 +602,7 @@ mod tests {
         let mock_messages = MockMessagesManagerTrait::new();
         let keypair = Arc::new(create_test_keypair());
 
-        // Mock storage to fail on list_namespace_data
+        // Mock storage to fail on list_namespace_data for PQXDH
         mock_storage
             .expect_list_namespace_data::<PqxdhProtocolState>()
             .returning(|_| {
@@ -540,6 +629,9 @@ mod tests {
         // Mock storage for initial load (empty)
         mock_storage
             .expect_list_namespace_data::<PqxdhProtocolState>()
+            .returning(|_| Ok(Vec::new()));
+        mock_storage
+            .expect_list_namespace_data::<zoe_state_machine::GroupSession>()
             .returning(|_| Ok(Vec::new()));
 
         // Mock storage for initial state persistence (2 protocols)

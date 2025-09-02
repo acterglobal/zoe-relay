@@ -15,6 +15,8 @@ use mockall::{automock, predicate::*};
 pub enum StateNamespace {
     /// PQXDH protocol session states for a specific verification key
     PqxdhSession(zoe_wire_protocol::Id),
+    /// Group encryption session states for a specific client key
+    GroupSession(zoe_wire_protocol::Id),
     // Any other namespace
     Custom(Vec<u8>),
 }

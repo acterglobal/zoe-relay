@@ -3,7 +3,7 @@ use crate::version::ServerProtocolConfig;
 use crate::KeyPair;
 use quinn::Endpoint;
 use std::net::SocketAddr;
-use tracing::info;
+use tracing::debug;
 
 use quinn::ServerConfig;
 use std::sync::Arc;
@@ -22,11 +22,11 @@ pub fn create_server_endpoint_with_protocols(
     server_keypair: &KeyPair,
     protocol_negotiation: &ServerProtocolConfig,
 ) -> std::result::Result<Endpoint, CryptoError> {
-    info!("🚀 Creating relay server endpoint on {}", addr);
+    debug!("🚀 Creating relay server endpoint on {}", addr);
 
     let rustls_config = match server_keypair {
         KeyPair::Ed25519(signing_key) => {
-            info!(
+            debug!(
                 "🔑 Server Ed25519 public key: {}",
                 hex::encode(signing_key.verifying_key().to_bytes())
             );
@@ -71,7 +71,7 @@ pub fn create_server_endpoint_with_protocols(
 
     let endpoint = Endpoint::server(server_config, addr)
         .map_err(|e| CryptoError::TlsError(format!("Failed to create server endpoint: {e}")))?;
-    info!("✅ Server endpoint ready on {}", addr);
+    debug!("✅ Server endpoint ready on {}", addr);
 
     Ok(endpoint)
 }

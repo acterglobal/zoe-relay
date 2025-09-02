@@ -1,7 +1,9 @@
 use thiserror::Error;
 
+use crate::state::GroupSessionError;
+
 #[derive(Error, Debug)]
-pub enum DgaError {
+pub enum GroupError {
     #[error("Serialization error: {0}")]
     Serialization(#[from] postcard::Error),
 
@@ -34,6 +36,9 @@ pub enum DgaError {
 
     #[error("Invalid operation: {0}")]
     InvalidOperation(String),
+
+    #[error("Group Session error: {0}")]
+    SessionError(#[from] GroupSessionError),
 }
 
-pub type DgaResult<T> = Result<T, DgaError>;
+pub type GroupResult<T> = Result<T, GroupError>;

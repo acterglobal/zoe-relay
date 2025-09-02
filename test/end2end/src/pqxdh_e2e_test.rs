@@ -56,6 +56,9 @@ async fn test_pqxdh_simple_echo_e2e() -> Result<()> {
 
     info!("👂 Alice is now listening for client connections");
 
+    // Give Alice's service a moment to be fully published and discoverable
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
     // Bob sets up as client
     let mut bob_handler = PqxdhProtocolHandler::new(
         Arc::new(bob_manager),

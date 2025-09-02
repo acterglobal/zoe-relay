@@ -6,4 +6,6 @@ zoe-redis-data/
 test-redis-data/
 target
 .env
+messages.db
+*.db.*
 *.bin

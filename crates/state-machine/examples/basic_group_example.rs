@@ -1,10 +1,11 @@
 use zoe_wire_protocol::KeyPair;
 
-use zoe_state_machine::{DigitalGroupAssistant, GroupSettings, create_group_activity_event};
+use zoe_state_machine::{GroupManager, GroupSettings, create_group_activity_event};
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Create a DGA instance
-    let mut dga = DigitalGroupAssistant::new();
+    let dga = GroupManager::builder().build();
 
     // Create signing keys for users
     let mut rng = rand::thread_rng();
@@ -36,12 +37,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let create_group = zoe_app_primitives::CreateGroup::new(group_info);
 
-    let create_result = dga.create_group(
-        create_group,
-        None, // Generate a new key
-        &alice_keypair,
-        chrono::Utc::now().timestamp() as u64,
-    )?;
+    let create_result = dga
+        .create_group(
+            create_group,
+            None, // Generate a new key
+            &alice_keypair,
+            chrono::Utc::now().timestamp() as u64,
+        )
+        .await?;
 
     println!("Created group: {:?}", create_result.group_id);
     println!(
@@ -64,18 +67,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Alice posts a welcome message to the group
     let activity_event = create_group_activity_event(());
 
-    let activity_message = dga.create_group_event_message(
-        create_result.group_id,
-        activity_event,
-        &alice_keypair,
-        chrono::Utc::now().timestamp() as u64,
-    )?;
+    let activity_message = dga
+        .create_group_event_message(
+            create_result.group_id,
+            activity_event,
+            &alice_keypair,
+            chrono::Utc::now().timestamp() as u64,
+        )
+        .await?;
 
     // Process Alice's activity
-    dga.process_group_event(&activity_message)?;
+    dga.process_group_event(&activity_message).await?;
 
     // Check the group state
-    let group_state = dga.get_group_state(&create_result.group_id).unwrap();
+    let group_state = dga.get_group_state(&create_result.group_id).await.unwrap();
     println!(
         "Group '{}' now has {} active members",
         group_state.name,
@@ -87,7 +92,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // Create subscription filter for this group
-    let subscription_filter = dga.create_group_subscription_filter(&create_result.group_id)?;
+    let subscription_filter = dga
+        .create_group_subscription_filter(&create_result.group_id)
+        .await?;
     println!("Subscription filter for group events: {subscription_filter:?}");
 
     println!("\nNote: This group uses AES-256-GCM encryption.");

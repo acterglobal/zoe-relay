@@ -107,7 +107,7 @@ use zoe_message_store::RedisMessageStorage;
 use zoe_wire_protocol::{CryptoError, VerifyingKey};
 
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tracing::{error, info};
+use tracing::{debug, error, info};
 use zoe_wire_protocol::{connection::server::create_server_endpoint, KeyPair, StreamPair};
 
 use crate::{RelayServiceRouter, Service, ServiceError, ServiceRouter};
@@ -268,15 +268,13 @@ impl<R: ServiceRouter + 'static> RelayServer<R> {
 
     /// Run the relay server, accepting and handling connections
     pub async fn run(self) -> Result<()> {
-        info!(
-            "🚀 Relay server starting on {}",
-            self.endpoint.local_addr()?
+        debug!(address = ?self.endpoint.local_addr()?,
+            "Relay server starting",
         );
         let server_identity = self.server_keypair.public_key();
-        info!(
-            "🔑 Server identity: {} ({})",
-            server_identity,
-            server_identity.algorithm()
+        debug!(
+            server_identity = ?server_identity,
+            "Server identity:",
         );
 
         while let Some(conn) = self.endpoint.accept().await {

@@ -11,6 +11,8 @@ serde = { version = "1.0", features = ["derive"] }
 blake3 = "1.5"
 libcrux-ml-dsa = { workspace = true }
 ed25519-dalek = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
 rand_chacha = "0.3"
 postcard = "1.0"
 # AES-GCM removed - only using ChaCha20-Poly1305 from wire-protocol
@@ -21,3 +23,4 @@ thiserror = "1.0"
 rand = "0.8"
 chrono = "0.4"
 hex = "0.4"
+tokio = { version = "1.0", features = ["macros", "rt"] }

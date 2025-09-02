@@ -1,5 +1,7 @@
 use zoe_wire_protocol::MessageError;
 
+use crate::SessionManagerError;
+
 #[derive(thiserror::Error, Debug)]
 pub enum ClientError {
     #[error("Generic error: {0}")]
@@ -32,6 +34,8 @@ pub enum ClientError {
     Message(#[from] MessageError),
     #[error("RPC error: {0}")]
     RpcError(#[from] tarpc::client::RpcError),
+    #[error("Session manager error: {0}")]
+    SessionManager(#[from] SessionManagerError),
 }
 
 pub type Result<T> = std::result::Result<T, ClientError>;

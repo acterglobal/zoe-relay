@@ -60,6 +60,7 @@
 
 use crate::infra::TestInfrastructure;
 use anyhow::{Context, Result};
+use futures::StreamExt;
 use libcrux_ml_dsa;
 use rand::{Rng, RngCore};
 use std::collections::BTreeMap;
@@ -67,9 +68,11 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::sync::RwLock;
 use tokio::time::timeout;
+use tokio_stream::wrappers::BroadcastStream;
 use tracing::{debug, info, warn};
-use zoe_client::RelayClient;
+use zoe_client::services::MessagesManagerTrait;
 use zoe_client::services::messages_manager::MessagesManager;
+use zoe_client::{RelayClient, RelayClientBuilder};
 use zoe_wire_protocol::{
     Content, Filter, KeyPair, Kind, Message, MessageFilters, MessageFull, StreamMessage,
     SubscriptionConfig, Tag, VerifyingKey,
@@ -265,20 +268,14 @@ impl TestClient {
     pub async fn connect_message_service(
         &self,
     ) -> Result<(
-        zoe_client::services::messages::MessagesService,
-        zoe_client::services::messages::MessagesStream,
-        zoe_client::services::messages::CatchUpStream,
+        Arc<zoe_client::services::MessagesManager>,
+        BroadcastStream<zoe_wire_protocol::StreamMessage>,
+        BroadcastStream<zoe_wire_protocol::CatchUpResponse>,
     )> {
-        let (service, (msg_stream, catch_up_stream)) = self
-            .client
-            .connect_message_service()
-            .await
-            .with_context(|| {
-                format!(
-                    "Failed to connect message service for client '{}'",
-                    self.name
-                )
-            })?;
+        let persistence_manager = self.client.persistence_manager();
+        let msg_stream = persistence_manager.messages_stream();
+        let catch_up_stream = persistence_manager.catch_up_stream();
+        let service = persistence_manager.messages_manager().clone();
 
         Ok((service, msg_stream, catch_up_stream))
     }
@@ -286,7 +283,7 @@ impl TestClient {
     /// Create and publish a message to a specific channel
     pub async fn publish_to_channel(
         &self,
-        message_service: &zoe_client::services::messages::MessagesService,
+        messages_manager: &zoe_client::services::MessagesManager,
         channel: &str,
         content: &str,
     ) -> Result<()> {
@@ -307,11 +304,10 @@ impl TestClient {
         let message_full = MessageFull::new(message, self.keypair())
             .map_err(|e| anyhow::anyhow!("Failed to create MessageFull: {}", e))?;
 
-        message_service
-            .publish(tarpc::context::current(), message_full)
+        messages_manager
+            .publish(message_full)
             .await
-            .with_context(|| format!("Failed to publish message from client '{}'", self.name))?
-            .with_context(|| format!("Publish returned error for client '{}'", self.name))?;
+            .with_context(|| format!("Failed to publish message from client '{}'", self.name))?;
 
         info!(
             "📤 Client '{}' published message to channel '{}'",
@@ -323,20 +319,14 @@ impl TestClient {
     /// Subscribe to a specific channel and return a filtered stream
     pub async fn subscribe_to_channel(
         &self,
-        message_service: &zoe_client::services::messages::MessagesService,
-        message_stream: zoe_client::services::messages::MessagesStream,
+        messages_manager: &zoe_client::services::MessagesManager,
+        message_stream: BroadcastStream<zoe_wire_protocol::StreamMessage>,
         channel: &str,
-    ) -> Result<zoe_client::services::messages::MessagesStream> {
-        let subscription_config = SubscriptionConfig {
-            filters: MessageFilters {
-                filters: Some(vec![Filter::Channel(channel.as_bytes().to_vec())]),
-            },
-            since: None,
-            limit: None,
-        };
+    ) -> Result<BroadcastStream<zoe_wire_protocol::StreamMessage>> {
+        let filter = Filter::Channel(channel.as_bytes().to_vec());
 
-        message_service
-            .subscribe(subscription_config)
+        messages_manager
+            .ensure_contains_filter(filter)
             .await
             .with_context(|| {
                 format!(
@@ -402,11 +392,12 @@ impl MultiClientTestHarness {
         // Create the underlying relay client (this handles version negotiation and challenge protocol)
         let client = timeout(
             Duration::from_secs(10),
-            RelayClient::new(
-                keypair,
-                self.infra.server_public_key.clone(),
-                self.infra.server_addr,
-            ),
+            RelayClientBuilder::new()
+                .client_keypair(keypair)
+                .server_public_key(self.infra.server_public_key.clone())
+                .server_address(self.infra.server_addr)
+                .encryption_key([0u8; 32]) // Use default encryption key for tests
+                .build(),
         )
         .await
         .with_context(|| format!("Timeout connecting client '{}'", name))?
@@ -505,8 +496,8 @@ impl MultiClientTestHarness {
 
             // Try to receive messages
             for _ in 0..5 {
-                match timeout(receive_timeout, stream.recv()).await {
-                    Ok(Some(stream_message)) => match stream_message {
+                match timeout(receive_timeout, stream.next()).await {
+                    Ok(Some(Ok(stream_message))) => match stream_message {
                         StreamMessage::MessageReceived {
                             message: _msg,
                             stream_height,
@@ -524,6 +515,7 @@ impl MultiClientTestHarness {
                             );
                         }
                     },
+                    Ok(Some(Err(_))) => break, // Stream error
                     Ok(None) => break,
                     Err(_) => break, // Timeout
                 }
@@ -605,18 +597,18 @@ impl MultiClientTestHarness {
 
         // Collect for client A
         for _ in 0..5 {
-            match timeout(receive_timeout, stream_a.recv()).await {
-                Ok(Some(StreamMessage::MessageReceived { .. })) => messages_a += 1,
-                Ok(Some(StreamMessage::StreamHeightUpdate(_))) => {}
+            match timeout(receive_timeout, stream_a.next()).await {
+                Ok(Some(Ok(StreamMessage::MessageReceived { .. }))) => messages_a += 1,
+                Ok(Some(Ok(StreamMessage::StreamHeightUpdate(_)))) => {}
                 _ => break,
             }
         }
 
         // Collect for client B
         for _ in 0..5 {
-            match timeout(receive_timeout, stream_b.recv()).await {
-                Ok(Some(StreamMessage::MessageReceived { .. })) => messages_b += 1,
-                Ok(Some(StreamMessage::StreamHeightUpdate(_))) => {}
+            match timeout(receive_timeout, stream_b.next()).await {
+                Ok(Some(Ok(StreamMessage::MessageReceived { .. }))) => messages_b += 1,
+                Ok(Some(Ok(StreamMessage::StreamHeightUpdate(_)))) => {}
                 _ => break,
             }
         }

@@ -262,42 +262,46 @@ fn display_relay_qr_code(
         connection_info = connection_info.with_name(name);
     }
 
-    // Log the total number of addresses in the QR code
-    tracing::info!(
-        "QR code will contain {} total addresses",
-        connection_info.addresses.len()
-    );
-    for (i, addr) in connection_info.addresses.iter().enumerate() {
-        tracing::info!("  Address {}: {}", i + 1, addr);
-    }
+    if connection_info.addresses.is_empty() {
+        tracing::warn!("Skipping QR code display because no addresses are available");
+    } else {
+        // Log the total number of addresses in the QR code
+        tracing::trace!(
+            "QR code will contain {} total addresses",
+            connection_info.addresses.len()
+        );
+        for (i, addr) in connection_info.addresses.iter().enumerate() {
+            tracing::info!("  Address {}: {}", i + 1, addr);
+        }
 
-    // Create QR options with relay-specific formatting
-    let mut options = QrOptions::new("📡 ZOE RELAY SERVER")
-        .with_subtitle(format!("Bind: {}", bind_address))
-        .with_subtitle(format!("Key: {}...", &hex::encode(public_key.id())[..16]))
-        .with_footer("Scan with Zoe client to connect");
+        // Create QR options with relay-specific formatting
+        let mut options = QrOptions::new("📡 ZOE RELAY SERVER")
+            .with_subtitle(format!("Bind: {}", bind_address))
+            .with_subtitle(format!("Key: {}...", &hex::encode(public_key.id())[..16]))
+            .with_footer("Scan with Zoe client to connect");
 
-    // Show all addresses that are actually in the QR code
-    if !connection_info.addresses.is_empty() {
-        let address_display: Vec<String> = connection_info
-            .addresses
-            .iter()
-            .map(|addr| addr.to_string())
-            .collect();
-        options = options.with_subtitle(format!(
-            "Addresses ({}): {}",
-            connection_info.addresses.len(),
-            address_display.join(", ")
-        ));
-    }
+        // Show all addresses that are actually in the QR code
+        if !connection_info.addresses.is_empty() {
+            let address_display: Vec<String> = connection_info
+                .addresses
+                .iter()
+                .map(|addr| addr.to_string())
+                .collect();
+            options = options.with_subtitle(format!(
+                "Addresses ({}): {}",
+                connection_info.addresses.len(),
+                address_display.join(", ")
+            ));
+        }
 
-    if let Some(name) = server_name {
-        options = options.with_subtitle(format!("Name: {}", name));
-    }
+        if let Some(name) = server_name {
+            options = options.with_subtitle(format!("Name: {}", name));
+        }
 
-    // Display the QR code using the helper function
-    if let Err(e) = display_qr_code(&connection_info, &options) {
-        tracing::error!(error=?e, "❌ Failed to generate QR code");
+        // Display the QR code using the helper function
+        if let Err(e) = display_qr_code(&connection_info, &options) {
+            tracing::error!(error=?e, "❌ Failed to generate QR code");
+        }
     }
 
     Ok(())

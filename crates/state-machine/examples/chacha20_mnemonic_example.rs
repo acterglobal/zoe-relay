@@ -1,13 +1,14 @@
 use zoe_wire_protocol::KeyPair;
 
-use zoe_state_machine::{DigitalGroupAssistant, GroupSettings, MnemonicPhrase};
+use zoe_state_machine::{GroupManager, GroupSettings, MnemonicPhrase};
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("🔐 ChaCha20-Poly1305 + Mnemonic Keyphrase Example");
     println!("===============================================\n");
 
     // Create a DGA instance
-    let mut dga = DigitalGroupAssistant::new();
+    let dga = GroupManager::builder().build();
 
     // Create signing keys for users
     let mut rng = rand::thread_rng();
@@ -27,9 +28,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let passphrase = "additional-security-passphrase"; // Optional but recommended
     let timestamp = chrono::Utc::now().timestamp() as u64;
 
-    let encryption_key = DigitalGroupAssistant::create_key_from_mnemonic(
-        &mnemonic, passphrase, group_name, timestamp,
-    )?;
+    let encryption_key =
+        GroupManager::create_key_from_mnemonic(&mnemonic, passphrase, group_name, timestamp)?;
 
     println!("🔑 Created encryption key using ChaCha20-Poly1305");
     println!("Key ID: {:?}", hex::encode(&encryption_key.key_id));
@@ -66,12 +66,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let create_group = zoe_app_primitives::CreateGroup::new(group_info);
 
-    let create_result = dga.create_group(
-        create_group,
-        Some(encryption_key.clone()),
-        &alice_keypair,
-        timestamp,
-    )?;
+    let create_result = dga
+        .create_group(
+            create_group,
+            Some(encryption_key.clone()),
+            &alice_keypair,
+            timestamp,
+        )
+        .await?;
 
     println!("✅ Created group: {}", create_result.group_id);
     println!("   Using ChaCha20-Poly1305 encryption");
@@ -91,7 +93,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut salt_array = [0u8; 32];
     salt_array.copy_from_slice(&derivation_info.salt);
 
-    let recovered_key = DigitalGroupAssistant::recover_key_from_mnemonic(
+    let recovered_key = GroupManager::recover_key_from_mnemonic(
         &mnemonic,
         passphrase,
         group_name,

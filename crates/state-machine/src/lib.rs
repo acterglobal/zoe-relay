@@ -13,7 +13,7 @@ mod tests;
 pub use error::*;
 pub use group::*;
 // Re-export specific types from state module, excluding GroupState which is now in app-primitives
-pub use state::{GroupEncryptionState, GroupStateSnapshot};
+pub use state::{GroupSession, GroupStateSnapshot};
 
 // Re-export unified group state types from app-primitives
 pub use zoe_app_primitives::{

@@ -36,25 +36,28 @@ fn create_test_group() -> zoe_app_primitives::CreateGroup {
     zoe_app_primitives::CreateGroup::new(group_info)
 }
 
-#[test]
-fn test_create_encrypted_group() {
-    let mut dga = DigitalGroupAssistant::new();
+#[tokio::test]
+async fn test_create_encrypted_group() {
+    let dga = GroupManager::builder().build();
     let (alice_key, _bob_key) = create_test_keys();
     let create_group = create_test_group();
     let timestamp = 1234567890;
 
     let result = dga
         .create_group(create_group, None, &alice_key, timestamp)
+        .await
         .unwrap();
 
     // Verify group was created
-    assert!(dga.get_group_state(&result.group_id).is_some());
+    let group_state = dga.get_group_state(&result.group_id).await;
+    assert!(group_state.is_some());
 
-    // Verify group has encryption key
-    assert!(dga.group_keys.contains_key(&result.group_id));
+    // Verify group has encryption key (now part of GroupSession)
+    let group_session = dga.get_group_session(&result.group_id).await;
+    assert!(group_session.is_some());
 
     // Verify group state
-    let group_state = dga.get_group_state(&result.group_id).unwrap();
+    let group_state = group_state.unwrap();
     assert_eq!(group_state.name, "Test Group");
     assert_eq!(
         group_state.description(),
@@ -68,41 +71,16 @@ fn test_create_encrypted_group() {
     );
 }
 
-#[test]
-fn test_encrypt_decrypt_group_event() {
-    let mut dga = DigitalGroupAssistant::new();
-    let (alice_key, _bob_key) = create_test_keys();
-    let create_group = create_test_group();
-    let timestamp = 1234567890;
+// Note: encrypt_group_event and decrypt_group_event methods were removed
+// This test is commented out as the methods no longer exist
+// #[tokio::test]
+// async fn test_encrypt_decrypt_group_event() {
+//     // Test removed - encryption/decryption is now handled internally
+// }
 
-    // Create group
-    let result = dga
-        .create_group(create_group, None, &alice_key, timestamp)
-        .unwrap();
-
-    // Create a test event
-    let original_event = create_group_activity_event(());
-
-    // Get encryption key
-    let encryption_state = dga.group_keys.get(&result.group_id).unwrap();
-
-    // Encrypt the event
-    let encrypted_payload = dga
-        .encrypt_group_event(&original_event, &encryption_state.current_key)
-        .unwrap();
-
-    // Decrypt the event
-    let decrypted_event = dga
-        .decrypt_group_event(&encrypted_payload, &encryption_state.current_key)
-        .unwrap();
-
-    // Verify they match
-    assert_eq!(original_event, decrypted_event);
-}
-
-#[test]
-fn test_process_encrypted_create_group_event() {
-    let mut dga = DigitalGroupAssistant::new();
+#[tokio::test]
+async fn test_process_encrypted_create_group_event() {
+    let dga = GroupManager::builder().build();
     let (alice_key, _bob_key) = create_test_keys();
     let create_group = create_test_group();
     let timestamp = 1234567890;
@@ -110,23 +88,24 @@ fn test_process_encrypted_create_group_event() {
     // Create group and get the message
     let result = dga
         .create_group(create_group, None, &alice_key, timestamp)
+        .await
         .unwrap();
 
-    // Create a fresh DGA instance and add the encryption key
-    let mut fresh_dga = DigitalGroupAssistant::new();
-    let encryption_key = dga
-        .group_keys
-        .get(&result.group_id)
-        .unwrap()
-        .current_key
-        .clone();
-    fresh_dga.add_group_key(result.group_id, encryption_key);
+    // Create a fresh DGA instance and add the complete group session
+    let fresh_dga = GroupManager::builder().build();
+    let group_session = dga.get_group_session(&result.group_id).await.unwrap();
+    fresh_dga
+        .add_group_session(result.group_id, group_session)
+        .await;
 
     // Process the create group message
-    fresh_dga.process_group_event(&result.message).unwrap();
+    fresh_dga
+        .process_group_event(&result.message)
+        .await
+        .unwrap();
 
     // Verify the group was created
-    let group_state = fresh_dga.get_group_state(&result.group_id).unwrap();
+    let group_state = fresh_dga.get_group_state(&result.group_id).await.unwrap();
     assert_eq!(group_state.name, "Test Group");
     assert_eq!(
         group_state.description(),
@@ -136,9 +115,9 @@ fn test_process_encrypted_create_group_event() {
     assert!(group_state.is_member(&alice_key.public_key()));
 }
 
-#[test]
-fn test_encrypted_group_activity() {
-    let mut dga = DigitalGroupAssistant::new();
+#[tokio::test]
+async fn test_encrypted_group_activity() {
+    let dga = GroupManager::builder().build();
     let (alice_key, _bob_key) = create_test_keys();
     let create_group = create_test_group();
     let timestamp = 1234567890;
@@ -146,6 +125,7 @@ fn test_encrypted_group_activity() {
     // Create group
     let result = dga
         .create_group(create_group, None, &alice_key, timestamp)
+        .await
         .unwrap();
 
     // Create and send an activity event
@@ -153,20 +133,21 @@ fn test_encrypted_group_activity() {
 
     let activity_message = dga
         .create_group_event_message(result.group_id, activity_event, &alice_key, timestamp + 1)
+        .await
         .unwrap();
 
     // Process the activity
-    dga.process_group_event(&activity_message).unwrap();
+    dga.process_group_event(&activity_message).await.unwrap();
 
     // Verify Alice is still the only member (she was already the creator)
-    let group_state = dga.get_group_state(&result.group_id).unwrap();
+    let group_state = dga.get_group_state(&result.group_id).await.unwrap();
     assert_eq!(group_state.members.len(), 1);
     assert!(group_state.is_member(&alice_key.public_key()));
 }
 
-#[test]
-fn test_new_member_via_activity() {
-    let mut dga = DigitalGroupAssistant::new();
+#[tokio::test]
+async fn test_new_member_via_activity() {
+    let dga = GroupManager::builder().build();
     let (alice_key, bob_key) = create_test_keys();
     let create_group = create_test_group();
     let timestamp = 1234567890;
@@ -174,38 +155,34 @@ fn test_new_member_via_activity() {
     // Alice creates group
     let result = dga
         .create_group(create_group, None, &alice_key, timestamp)
+        .await
         .unwrap();
 
-    // Simulate Bob getting the encryption key via inbox system
+    // Simulate Bob getting the group session via inbox system
     // (In reality, this would happen through a separate secure channel)
-    let encryption_key = dga
-        .group_keys
-        .get(&result.group_id)
-        .unwrap()
-        .current_key
-        .clone();
 
-    // Create a separate DGA instance for Bob and give him the key
-    let mut bob_dga = DigitalGroupAssistant::new();
-    bob_dga.add_group_key(result.group_id, encryption_key);
+    // Create a separate DGA instance for Bob and give him the complete session
+    let bob_dga = GroupManager::builder().build();
+    let group_session = dga.get_group_session(&result.group_id).await.unwrap();
+    bob_dga
+        .add_group_session(result.group_id, group_session)
+        .await;
 
-    // Bob needs to know about the group state too (would sync via events)
-    // For test purposes, we'll just copy the state
-    let group_state = dga.get_group_state(&result.group_id).unwrap().clone();
-    bob_dga.groups.insert(result.group_id, group_state);
+    // Bob now has the complete group session, no need for separate state management
 
     // Bob sends an activity
     let bob_activity = create_group_activity_event(());
 
     let bob_message = bob_dga
         .create_group_event_message(result.group_id, bob_activity, &bob_key, timestamp + 10)
+        .await
         .unwrap();
 
     // Alice processes Bob's message
-    dga.process_group_event(&bob_message).unwrap();
+    dga.process_group_event(&bob_message).await.unwrap();
 
     // Verify Bob is now an active member
-    let group_state = dga.get_group_state(&result.group_id).unwrap();
+    let group_state = dga.get_group_state(&result.group_id).await.unwrap();
     assert_eq!(group_state.members.len(), 2);
     assert!(group_state.is_member(&alice_key.public_key()));
     assert!(group_state.is_member(&bob_key.public_key()));
@@ -215,9 +192,9 @@ fn test_new_member_via_activity() {
     );
 }
 
-#[test]
-fn test_role_update() {
-    let mut dga = DigitalGroupAssistant::new();
+#[tokio::test]
+async fn test_role_update() {
+    let dga = GroupManager::builder().build();
     let (alice_key, bob_key) = create_test_keys();
     let create_group = create_test_group();
     let timestamp = 1234567890;
@@ -225,46 +202,49 @@ fn test_role_update() {
     // Create group and add Bob as member
     let result = dga
         .create_group(create_group, None, &alice_key, timestamp)
+        .await
         .unwrap();
 
     // Simulate Bob joining by sending an activity
-    let encryption_key = dga
-        .group_keys
-        .get(&result.group_id)
-        .unwrap()
-        .current_key
-        .clone();
-    let mut bob_dga = DigitalGroupAssistant::new();
-    bob_dga.add_group_key(result.group_id, encryption_key);
-    let group_state = dga.get_group_state(&result.group_id).unwrap().clone();
-    bob_dga.groups.insert(result.group_id, group_state);
+    let group_session = dga.get_group_session(&result.group_id).await.unwrap();
+    let encryption_key = group_session.current_key.clone();
+    let bob_dga = GroupManager::builder().build();
+    let group_session = dga.get_group_session(&result.group_id).await.unwrap();
+    bob_dga
+        .add_group_session(result.group_id, group_session)
+        .await;
+    let group_state = dga.get_group_state(&result.group_id).await.unwrap().clone();
+    // Note: Direct access to groups is no longer possible, using add_group_session instead
+    // bob_dga.groups.insert(result.group_id, group_state);
 
     let bob_activity = create_group_activity_event(());
     let bob_message = bob_dga
         .create_group_event_message(result.group_id, bob_activity, &bob_key, timestamp + 5)
+        .await
         .unwrap();
-    dga.process_group_event(&bob_message).unwrap();
+    dga.process_group_event(&bob_message).await.unwrap();
 
     // Alice promotes Bob to Admin
     let role_update = create_role_update_event(bob_key.public_key(), GroupRole::Admin);
 
     let role_message = dga
         .create_group_event_message(result.group_id, role_update, &alice_key, timestamp + 10)
+        .await
         .unwrap();
 
-    dga.process_group_event(&role_message).unwrap();
+    dga.process_group_event(&role_message).await.unwrap();
 
     // Verify Bob's role was updated
-    let group_state = dga.get_group_state(&result.group_id).unwrap();
+    let group_state = dga.get_group_state(&result.group_id).await.unwrap();
     assert_eq!(
         group_state.get_member_role(&bob_key.public_key()),
         Some(&GroupRole::Admin)
     );
 }
 
-#[test]
-fn test_leave_group_event() {
-    let mut dga = DigitalGroupAssistant::new();
+#[tokio::test]
+async fn test_leave_group_event() {
+    let dga = GroupManager::builder().build();
     let (alice_key, bob_key) = create_test_keys();
     let create_group = create_test_group();
     let timestamp = 1234567890;
@@ -272,29 +252,35 @@ fn test_leave_group_event() {
     // Create group and add Bob
     let result = dga
         .create_group(create_group, None, &alice_key, timestamp)
+        .await
         .unwrap();
 
     // Add Bob as a member first
-    let encryption_key = dga
-        .group_keys
-        .get(&result.group_id)
-        .unwrap()
-        .current_key
-        .clone();
-    let mut bob_dga = DigitalGroupAssistant::new();
-    bob_dga.add_group_key(result.group_id, encryption_key);
-    let group_state = dga.get_group_state(&result.group_id).unwrap().clone();
-    bob_dga.groups.insert(result.group_id, group_state);
+    let group_session = dga.get_group_session(&result.group_id).await.unwrap();
+    let encryption_key = group_session.current_key.clone();
+    let bob_dga = GroupManager::builder().build();
+    let group_session = dga.get_group_session(&result.group_id).await.unwrap();
+    bob_dga
+        .add_group_session(result.group_id, group_session)
+        .await;
+    let group_state = dga.get_group_state(&result.group_id).await.unwrap().clone();
+    // Note: Direct access to groups is no longer possible, using add_group_session instead
+    // bob_dga.groups.insert(result.group_id, group_state);
 
     let bob_activity = create_group_activity_event(());
     let bob_message = bob_dga
         .create_group_event_message(result.group_id, bob_activity, &bob_key, timestamp + 5)
+        .await
         .unwrap();
-    dga.process_group_event(&bob_message).unwrap();
+    dga.process_group_event(&bob_message).await.unwrap();
 
     // Verify Bob is a member
     assert_eq!(
-        dga.get_group_state(&result.group_id).unwrap().members.len(),
+        dga.get_group_state(&result.group_id)
+            .await
+            .unwrap()
+            .members
+            .len(),
         2
     );
 
@@ -303,20 +289,21 @@ fn test_leave_group_event() {
 
     let leave_message = bob_dga
         .create_group_event_message(result.group_id, leave_event, &bob_key, timestamp + 10)
+        .await
         .unwrap();
 
-    dga.process_group_event(&leave_message).unwrap();
+    dga.process_group_event(&leave_message).await.unwrap();
 
     // Verify Bob is no longer in active members
-    let group_state = dga.get_group_state(&result.group_id).unwrap();
+    let group_state = dga.get_group_state(&result.group_id).await.unwrap();
     assert_eq!(group_state.members.len(), 1);
     assert!(!group_state.is_member(&bob_key.public_key()));
     assert!(group_state.is_member(&alice_key.public_key()));
 }
 
-#[test]
-fn test_missing_encryption_key_error() {
-    let mut dga = DigitalGroupAssistant::new();
+#[tokio::test]
+async fn test_missing_group_session_error() {
+    let dga = GroupManager::builder().build();
     let (alice_key, _bob_key) = create_test_keys();
     let create_group = create_test_group();
     let timestamp = 1234567890;
@@ -324,59 +311,34 @@ fn test_missing_encryption_key_error() {
     // Create group
     let result = dga
         .create_group(create_group, None, &alice_key, timestamp)
+        .await
         .unwrap();
 
-    // Remove the encryption key to simulate not having it
-    dga.group_keys.remove(&result.group_id);
+    // Remove the group session to simulate not having it
+    dga.remove_group_session(&result.group_id).await;
 
-    // Try to create an event without the key
+    // Try to create an event without the group session
     let activity_event = create_group_activity_event(());
 
-    let result =
-        dga.create_group_event_message(result.group_id, activity_event, &alice_key, timestamp + 1);
-
-    assert!(result.is_err());
-    assert!(
-        result
-            .unwrap_err()
-            .to_string()
-            .contains("No encryption key available")
-    );
-}
-
-#[test]
-fn test_invalid_key_id_decryption_error() {
-    let mut dga = DigitalGroupAssistant::new();
-    let (alice_key, _bob_key) = create_test_keys();
-    let create_group = create_test_group();
-    let timestamp = 1234567890;
-
-    // Create group
     let result = dga
-        .create_group(create_group, None, &alice_key, timestamp)
-        .unwrap();
-
-    // Create a fake encrypted payload with invalid ciphertext
-    let fake_payload = ChaCha20Poly1305Content {
-        ciphertext: vec![1, 2, 3, 4, 5], // Invalid ciphertext
-        nonce: [0; 12],                  // All zeros nonce
-    };
-
-    let encryption_key = &dga.group_keys.get(&result.group_id).unwrap().current_key;
-    let result = dga.decrypt_group_event(&fake_payload, encryption_key);
+        .create_group_event_message(result.group_id, activity_event, &alice_key, timestamp + 1)
+        .await;
 
     assert!(result.is_err());
-    assert!(
-        result
-            .unwrap_err()
-            .to_string()
-            .contains("decryption failed")
-    );
+    let error_msg = result.unwrap_err().to_string();
+    assert!(error_msg.contains("Group not found"));
 }
 
-#[test]
-fn test_permission_denied_for_role_update() {
-    let mut dga = DigitalGroupAssistant::new();
+// Note: This test was removed because decrypt_group_event method no longer exists
+// Encryption/decryption is now handled internally by the GroupManager
+// #[tokio::test]
+// async fn test_invalid_key_id_decryption_error() {
+//     // Test removed - decryption is now handled internally
+// }
+
+#[tokio::test]
+async fn test_permission_denied_for_role_update() {
+    let dga = GroupManager::builder().build();
     let (alice_key, bob_key) = create_test_keys();
     let create_group = create_test_group();
     let timestamp = 1234567890;
@@ -384,25 +346,27 @@ fn test_permission_denied_for_role_update() {
     // Create group
     let result = dga
         .create_group(create_group, None, &alice_key, timestamp)
+        .await
         .unwrap();
 
     // Add Bob as a regular member
-    let encryption_key = dga
-        .group_keys
-        .get(&result.group_id)
-        .unwrap()
-        .current_key
-        .clone();
-    let mut bob_dga = DigitalGroupAssistant::new();
-    bob_dga.add_group_key(result.group_id, encryption_key);
-    let group_state = dga.get_group_state(&result.group_id).unwrap().clone();
-    bob_dga.groups.insert(result.group_id, group_state);
+    let group_session = dga.get_group_session(&result.group_id).await.unwrap();
+    let encryption_key = group_session.current_key.clone();
+    let bob_dga = GroupManager::builder().build();
+    let group_session = dga.get_group_session(&result.group_id).await.unwrap();
+    bob_dga
+        .add_group_session(result.group_id, group_session)
+        .await;
+    let group_state = dga.get_group_state(&result.group_id).await.unwrap().clone();
+    // Note: Direct access to groups is no longer possible, using add_group_session instead
+    // bob_dga.groups.insert(result.group_id, group_state);
 
     let bob_activity = create_group_activity_event(());
     let bob_message = bob_dga
         .create_group_event_message(result.group_id, bob_activity, &bob_key, timestamp + 5)
+        .await
         .unwrap();
-    dga.process_group_event(&bob_message).unwrap();
+    dga.process_group_event(&bob_message).await.unwrap();
 
     // Bob (regular member) tries to update Alice's role (should fail)
     let role_update = create_role_update_event(
@@ -412,10 +376,11 @@ fn test_permission_denied_for_role_update() {
 
     let role_message = bob_dga
         .create_group_event_message(result.group_id, role_update, &bob_key, timestamp + 10)
+        .await
         .unwrap();
 
     // This should fail when processed
-    let result = dga.process_group_event(&role_message);
+    let result = dga.process_group_event(&role_message).await;
     assert!(result.is_err());
     assert!(
         result
@@ -425,9 +390,9 @@ fn test_permission_denied_for_role_update() {
     );
 }
 
-#[test]
-fn test_subscription_filter_creation() {
-    let mut dga = DigitalGroupAssistant::new();
+#[tokio::test]
+async fn test_subscription_filter_creation() {
+    let dga = GroupManager::builder().build();
     let (alice_key, _bob_key) = create_test_keys();
     let create_group = create_test_group();
     let timestamp = 1234567890;
@@ -435,11 +400,13 @@ fn test_subscription_filter_creation() {
     // Create group
     let result = dga
         .create_group(create_group, None, &alice_key, timestamp)
+        .await
         .unwrap();
 
     // Create subscription filter
     let filter = dga
         .create_group_subscription_filter(&result.group_id)
+        .await
         .unwrap();
 
     // Verify filter
@@ -452,12 +419,12 @@ fn test_subscription_filter_creation() {
     }
 }
 
-#[test]
-fn test_group_key_generation() {
+#[tokio::test]
+async fn test_group_key_generation() {
     let timestamp = 1234567890;
 
-    let key1 = DigitalGroupAssistant::generate_group_key(timestamp);
-    let key2 = DigitalGroupAssistant::generate_group_key(timestamp);
+    let key1 = GroupManager::generate_group_key(timestamp);
+    let key2 = GroupManager::generate_group_key(timestamp);
 
     // Keys should be different (random generation)
     assert_ne!(key1.key, key2.key);
@@ -470,8 +437,8 @@ fn test_group_key_generation() {
     assert_eq!(key1.key.len(), 32); // 256 bits
 }
 
-#[test]
-fn test_create_key_from_mnemonic() {
+#[tokio::test]
+async fn test_create_key_from_mnemonic() {
     use crate::MnemonicPhrase;
     use bip39::Language;
 
@@ -485,10 +452,8 @@ fn test_create_key_from_mnemonic() {
     let passphrase = "test-passphrase";
     let timestamp = 1640995200;
 
-    let key = DigitalGroupAssistant::create_key_from_mnemonic(
-        &mnemonic, passphrase, group_name, timestamp,
-    )
-    .unwrap();
+    let key = GroupManager::create_key_from_mnemonic(&mnemonic, passphrase, group_name, timestamp)
+        .unwrap();
 
     // Verify key properties
     assert_eq!(key.key.len(), 32);
@@ -503,8 +468,8 @@ fn test_create_key_from_mnemonic() {
     assert_eq!(derivation_info.context, "dga-group-test-group");
 }
 
-#[test]
-fn test_recover_key_from_mnemonic() {
+#[tokio::test]
+async fn test_recover_key_from_mnemonic() {
     use crate::MnemonicPhrase;
 
     // Generate a mnemonic and derive a key
@@ -514,10 +479,9 @@ fn test_recover_key_from_mnemonic() {
     let timestamp = 1640995200;
 
     // Create initial key
-    let original_key = DigitalGroupAssistant::create_key_from_mnemonic(
-        &mnemonic, passphrase, group_name, timestamp,
-    )
-    .unwrap();
+    let original_key =
+        GroupManager::create_key_from_mnemonic(&mnemonic, passphrase, group_name, timestamp)
+            .unwrap();
 
     // Extract salt for recovery
     let derivation_info = original_key.derivation_info.as_ref().unwrap();
@@ -525,7 +489,7 @@ fn test_recover_key_from_mnemonic() {
     salt.copy_from_slice(&derivation_info.salt);
 
     // Recover the key using the same parameters
-    let recovered_key = DigitalGroupAssistant::recover_key_from_mnemonic(
+    let recovered_key = GroupManager::recover_key_from_mnemonic(
         &mnemonic, passphrase, group_name, &salt, timestamp,
     )
     .unwrap();
@@ -536,17 +500,17 @@ fn test_recover_key_from_mnemonic() {
     assert_eq!(original_key.created_at, recovered_key.created_at);
 }
 
-#[test]
-fn test_mnemonic_key_integration_with_group_creation() {
+#[tokio::test]
+async fn test_mnemonic_key_integration_with_group_creation() {
     use crate::{GroupSettings, MnemonicPhrase};
 
-    let mut dga = DigitalGroupAssistant::new();
+    let dga = GroupManager::builder().build();
     let alice_key = KeyPair::generate_ml_dsa65(&mut rand::thread_rng());
     let timestamp = chrono::Utc::now().timestamp() as u64;
 
     // Generate mnemonic and create encryption key
     let mnemonic = MnemonicPhrase::generate().unwrap();
-    let encryption_key = DigitalGroupAssistant::create_key_from_mnemonic(
+    let encryption_key = GroupManager::create_key_from_mnemonic(
         &mnemonic,
         "test-passphrase",
         "integration-test-group",
@@ -587,20 +551,22 @@ fn test_mnemonic_key_integration_with_group_creation() {
             &alice_key,
             timestamp,
         )
+        .await
         .unwrap();
 
     // Verify group was created successfully
-    assert!(dga.groups.contains_key(&result.group_id));
-    assert!(dga.group_keys.contains_key(&result.group_id));
+    assert!(dga.get_group_session(&result.group_id).await.is_some());
+    assert!(dga.get_group_session(&result.group_id).await.is_some());
 
     // Verify the key is properly stored
-    let stored_key = &dga.group_keys.get(&result.group_id).unwrap().current_key;
+    let group_session = dga.get_group_session(&result.group_id).await.unwrap();
+    let stored_key = &group_session.current_key;
     assert_eq!(stored_key.key, encryption_key.key);
     assert_eq!(stored_key.key_id, encryption_key.key_id);
 }
 
-#[test]
-fn test_invalid_mnemonic_phrase_error() {
+#[tokio::test]
+async fn test_invalid_mnemonic_phrase_error() {
     use crate::MnemonicPhrase;
     use zoe_wire_protocol::bip39::Language;
 
@@ -613,8 +579,8 @@ fn test_invalid_mnemonic_phrase_error() {
     assert!(result.is_err());
 }
 
-#[test]
-fn test_mnemonic_key_different_contexts_produce_different_keys() {
+#[tokio::test]
+async fn test_mnemonic_key_different_contexts_produce_different_keys() {
     use crate::MnemonicPhrase;
 
     let mnemonic = MnemonicPhrase::generate().unwrap();
@@ -622,21 +588,13 @@ fn test_mnemonic_key_different_contexts_produce_different_keys() {
     let timestamp = 1640995200;
 
     // Same mnemonic, different contexts should produce different keys
-    let key1 = DigitalGroupAssistant::create_key_from_mnemonic(
-        &mnemonic,
-        passphrase,
-        "group-one",
-        timestamp,
-    )
-    .unwrap();
+    let key1 =
+        GroupManager::create_key_from_mnemonic(&mnemonic, passphrase, "group-one", timestamp)
+            .unwrap();
 
-    let key2 = DigitalGroupAssistant::create_key_from_mnemonic(
-        &mnemonic,
-        passphrase,
-        "group-two",
-        timestamp,
-    )
-    .unwrap();
+    let key2 =
+        GroupManager::create_key_from_mnemonic(&mnemonic, passphrase, "group-two", timestamp)
+            .unwrap();
 
     // Keys should be different
     assert_ne!(key1.key, key2.key);
@@ -649,8 +607,8 @@ fn test_mnemonic_key_different_contexts_produce_different_keys() {
     assert_eq!(info2.context, "dga-group-group-two");
 }
 
-#[test]
-fn test_mnemonic_key_different_passphrases_produce_different_keys() {
+#[tokio::test]
+async fn test_mnemonic_key_different_passphrases_produce_different_keys() {
     use crate::MnemonicPhrase;
 
     let mnemonic = MnemonicPhrase::generate().unwrap();
@@ -658,21 +616,13 @@ fn test_mnemonic_key_different_passphrases_produce_different_keys() {
     let timestamp = 1640995200;
 
     // Same mnemonic, different passphrases should produce different keys
-    let key1 = DigitalGroupAssistant::create_key_from_mnemonic(
-        &mnemonic,
-        "passphrase-one",
-        group_name,
-        timestamp,
-    )
-    .unwrap();
+    let key1 =
+        GroupManager::create_key_from_mnemonic(&mnemonic, "passphrase-one", group_name, timestamp)
+            .unwrap();
 
-    let key2 = DigitalGroupAssistant::create_key_from_mnemonic(
-        &mnemonic,
-        "passphrase-two",
-        group_name,
-        timestamp,
-    )
-    .unwrap();
+    let key2 =
+        GroupManager::create_key_from_mnemonic(&mnemonic, "passphrase-two", group_name, timestamp)
+            .unwrap();
 
     // Keys should be different
     assert_ne!(key1.key, key2.key);

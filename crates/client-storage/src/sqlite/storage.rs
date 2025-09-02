@@ -894,7 +894,6 @@ impl StateStorage for SqliteMessageStorage {
                 let value_data: Vec<u8> = row.get(1)?;
                 Ok((key, value_data))
             })?
-            .into_iter()
             .filter_map(|data| {
                 let (key, value_data) = match data {
                     Ok(data) => data,

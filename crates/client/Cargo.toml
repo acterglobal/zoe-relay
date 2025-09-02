@@ -3,6 +3,9 @@ name = "zoe-client"
 version = "0.1.0"
 edition = "2024"
 
+[[example]]
+name = "full"
+
 [features]
 default = ["frb-api"]
 mls = ["dep:openmls", "dep:openmls_rust_crypto", "dep:openmls_basic_credential", "dep:openmls_memory_storage"]
@@ -80,35 +83,6 @@ anyhow = { workspace = true }
 tempfile = { workspace = true }
 
 
-[[example]]
-name = "echo_message_client"
-path = "examples/echo_message_client.rs"
-required-features = ["test-utils"]
-
-[[example]]
-name = "blob_client"
-path = "examples/blob_client.rs"
-required-features = ["test-utils"]
-
-[[example]]
-name = "mls_chat_client"
-path = "examples/mls_chat_client.rs"
-required-features = ["mls"]
-
-
-
-[[example]]
-name = "chat_client"
-path = "examples/chat_client.rs"
-required-features = ["test-utils"]
-
-[[example]]
-name = "simple_bot_service"
-path = "examples/simple_bot_service.rs"
-
-
-
-
 [dev-dependencies]
 # Testing framework
 tokio-test = { workspace = true }
@@ -123,6 +97,7 @@ zoe-message-store = { path = "../message-store" }
 clap = { workspace = true }
 anyhow = { workspace = true }
 tracing-subscriber = { workspace = true }
+env_logger = { workspace = true }
 tempfile = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

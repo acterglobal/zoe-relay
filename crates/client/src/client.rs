@@ -7,7 +7,7 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::fs;
-use zoe_app_primitives::FileRef;
+use zoe_app_primitives::{CompressionConfig, FileRef};
 use zoe_blob_store::BlobClient;
 
 #[cfg(feature = "frb-api")]
@@ -44,12 +44,6 @@ impl ClientSecret {
     pub fn server_public_key(&self) -> &VerifyingKey {
         &self.server_public_key
     }
-}
-
-pub struct ClientInner {
-    fs: FileStorage,
-    #[allow(dead_code)]
-    relay_client: RelayClient,
 }
 
 #[derive(Default)]
@@ -147,7 +141,7 @@ impl ClientBuilder {
                 .map_err(|e| ClientError::BuildError(format!("Failed to create storage: {}", e)))?,
         );
 
-        let relay_client_task = tokio::task::spawn(async move {
+        let relay_client = {
             let mut builder = RelayClientBuilder::new()
                 .server_public_key(server_public_key)
                 .server_address(server_addr)
@@ -157,26 +151,19 @@ impl ClientBuilder {
                 builder = builder.client_keypair(inner_keypair);
             }
 
-            builder.build().await
-        });
+            builder.build().await?
+        };
 
-        let fs_task = tokio::task::spawn(async move { FileStorage::new(&fs_path).await });
-
-        // Wait for both to complete
-        let relay_client = relay_client_task
-            .await
-            .map_err(|e| ClientError::Generic(e.to_string()))??;
-        let mut fs = fs_task
-            .await
-            .map_err(|e| ClientError::Generic(e.to_string()))??;
-
-        // Connect blob service (keep on same task to avoid move issues)
-        let blob_service = relay_client.connect_blob_service().await?;
-
-        fs.set_remote_blob_service(blob_service);
+        let fs = FileStorage::new(
+            &fs_path,
+            relay_client.blob_service().clone(),
+            CompressionConfig::default(),
+        )
+        .await?;
 
         Ok(Client {
-            inner: Arc::new(ClientInner { fs, relay_client }),
+            fs: Arc::new(fs),
+            relay_client,
         })
     }
 }
@@ -184,7 +171,8 @@ impl ClientBuilder {
 #[derive(Clone)]
 #[cfg_attr(feature = "frb-api", frb(opaque))]
 pub struct Client {
-    inner: Arc<ClientInner>,
+    fs: Arc<FileStorage>,
+    relay_client: RelayClient,
 }
 
 impl Client {
@@ -220,7 +208,7 @@ impl Client {
     /// - Encryption fails
     /// - Blob storage operation fails
     pub async fn store_file(&self, file_path: PathBuf) -> Result<FileRef> {
-        self.inner.fs.store_file(&file_path).await
+        self.fs.store_file(&file_path).await
     }
 
     /// Store raw data (not from a file) with encryption and blob storage
@@ -242,10 +230,7 @@ impl Client {
         reference_name: &str,
         content_type: Option<String>,
     ) -> Result<FileRef> {
-        self.inner
-            .fs
-            .store_data(data, reference_name, content_type)
-            .await
+        self.fs.store_data(data, reference_name, content_type).await
     }
 
     /// Check if a file exists in storage
@@ -258,7 +243,7 @@ impl Client {
     ///
     /// `true` if the file exists in storage, `false` otherwise
     pub async fn has_file(&self, stored_info: &FileRef) -> Result<bool> {
-        self.inner.fs.has_file(stored_info).await
+        self.fs.has_file(stored_info).await
     }
 
     /// Retrieve a file from storage and save it to disk
@@ -281,7 +266,7 @@ impl Client {
     /// - Writing to disk fails
     pub async fn retrieve_file(&self, file_ref: &FileRef, output_path: PathBuf) -> Result<()> {
         // Get the file content from storage
-        let content = self.inner.fs.retrieve_file(file_ref).await?;
+        let content = self.fs.retrieve_file(file_ref).await?;
 
         // Write the content to the specified path
         fs::write(&output_path, content)
@@ -312,7 +297,7 @@ impl Client {
     /// - The file cannot be found in storage
     /// - Decryption fails
     pub async fn retrieve_file_bytes(&self, file_ref: &FileRef) -> Result<Vec<u8>> {
-        self.inner.fs.retrieve_file(file_ref).await
+        self.fs.retrieve_file(file_ref).await
     }
 
     /// Get a reference to the blob client for advanced operations
@@ -325,6 +310,10 @@ impl Client {
     /// A reference to the `BlobClient`
     #[cfg_attr(feature = "frb-api", frb(ignore))]
     pub fn blob_client(&self) -> &BlobClient {
-        self.inner.fs.blob_client()
+        self.fs.blob_client()
+    }
+
+    pub async fn close(&self) {
+        self.relay_client.close().await;
     }
 }
