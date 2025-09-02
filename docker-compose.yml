@@ -41,9 +41,8 @@ services:
     tmpfs:
       - /tmp:rw,noexec,nosuid,size=100m
 
-  redis:
+  zoe-redis:
     image: redis:7-alpine
-    container_name: zoe-redis
     restart: unless-stopped
     volumes:
       - zoe_redis_data:/data
@@ -55,7 +54,7 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 30s
+      start_period: 10s
     # Security settings
     security_opt:
       - no-new-privileges:true
