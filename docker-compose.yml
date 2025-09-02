@@ -74,7 +74,6 @@ volumes:
       type: none
       o: bind
       device: ${ZOE_DATA_PATH:-./zoe-data/relay}
-      is_directory: true
   
   # Persistent storage for Redis data
   zoe_redis_data:
@@ -83,7 +82,6 @@ volumes:
       type: none
       o: bind
       device: ${REDIS_DATA_PATH:-./zoe-data/redis}
-      is_directory: true
 
 networks:
   zoe-network:
