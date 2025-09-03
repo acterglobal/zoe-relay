@@ -395,7 +395,7 @@ impl MultiClientTestHarness {
             Duration::from_secs(10),
             RelayClientBuilder::new()
                 .client_keypair(Arc::new(keypair))
-                .db_storage_path(data_dir.path().to_path_buf().join(format!("{name}.db")))
+                .db_storage_path(data_dir.path().to_path_buf().join("messages.db"))
                 .server_public_key(self.infra.server_public_key.clone())
                 .server_address(self.infra.server_addr)
                 .encryption_key([0u8; 32]) // Use default encryption key for tests

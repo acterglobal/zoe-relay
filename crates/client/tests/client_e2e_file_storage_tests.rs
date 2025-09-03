@@ -107,6 +107,7 @@ impl TestInfrastructure {
 
         let mut builder = Client::builder();
         builder.media_storage_dir_pathbuf(media_storage_path.to_path_buf());
+        builder.db_storage_dir_pathbuf(media_storage_path.to_path_buf());
         builder.server_info(self.server_public_key.clone(), self.server_addr);
         // Add encryption key for storage
         builder.encryption_key([42u8; 32]);

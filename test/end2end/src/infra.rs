@@ -152,6 +152,7 @@ impl TestInfrastructure {
         info!("👤 Creating relay client with {} signature", algorithm);
 
         let keypair = KeyPair::generate_for_algorithm(algorithm, &mut rand::thread_rng());
+        let temp_dir = TempDir::new().context("Failed to create temp directory")?;
 
         let client = timeout(
             Duration::from_secs(5),
@@ -159,7 +160,8 @@ impl TestInfrastructure {
                 .client_keypair(Arc::new(keypair))
                 .server_public_key(self.server_public_key.clone())
                 .server_address(self.server_addr)
-                .encryption_key([0u8; 32]) // Use default encryption key for tests
+                .encryption_key([0u8; 32])
+                .db_storage_path(temp_dir.path().to_path_buf().join("db.sqlite"))
                 .build(),
         )
         .await??;
