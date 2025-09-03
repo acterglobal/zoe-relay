@@ -1,11 +1,11 @@
-# Docker Compose for Zoe Relay Server
-# Production-ready setup with Redis and persistent storage
+# Docker Compose for Zoe Network Services
+# Production-ready setup with Redis, Relay Server, and WhatsApp Bot
 
 services:
   zoe-relay:
     build:
       context: .
-      dockerfile: Dockerfile
+      dockerfile: docker/Dockerfile.relay
     restart: unless-stopped
     depends_on:
       - zoe-redis
@@ -31,6 +31,54 @@ services:
       timeout: 10s
       retries: 3
       start_period: 10s
+    networks:
+      - zoe-network
+
+  zoe-wa-bot:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.wa-bot
+    restart: unless-stopped
+    depends_on:
+      zoe-relay:
+        condition: service_healthy
+    environment:
+      # Relay connection - automatically discover relay server
+      - ZOE_RELAY_ADDRESS=zoe-relay:13908
+      - ZOE_SERVER_KEY=${ZOE_SERVER_KEY:-}  # Will be auto-generated if not provided
+      # WhatsApp configuration
+      - WHATSAPP_DB_PATH=/app/data/whatsapp.db
+      - MAX_CONNECTION_ATTEMPTS=${MAX_CONNECTION_ATTEMPTS:-10}
+      # Logging
+      - RUST_LOG=${RUST_LOG:-info}
+      # Bot mode - can be overridden
+      - BOT_MODE=${BOT_MODE:-bridge}  # bridge, listen, or custom command
+    volumes:
+      # Persistent storage for WhatsApp database and bot data
+      - zoe_wa_bot_data:/app/data
+    healthcheck:
+      test: ["CMD", "./zoe-wa-bot", "--help"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+    networks:
+      - zoe-network
+    # Override command based on BOT_MODE environment variable
+    command: >
+      sh -c '
+        case "$${BOT_MODE}" in
+          "listen")
+            exec ./zoe-wa-bot --server-key "$${ZOE_SERVER_KEY}" --relay-address "$${ZOE_RELAY_ADDRESS}" listen --show-timestamps
+            ;;
+          "bridge")
+            exec ./zoe-wa-bot --server-key "$${ZOE_SERVER_KEY}" --relay-address "$${ZOE_RELAY_ADDRESS}"
+            ;;
+          *)
+            exec ./zoe-wa-bot --server-key "$${ZOE_SERVER_KEY}" --relay-address "$${ZOE_RELAY_ADDRESS}" $${BOT_MODE}
+            ;;
+        esac
+      '
 
   zoe-redis:
     image: redis:7-alpine
@@ -43,10 +91,23 @@ services:
       timeout: 10s
       retries: 3
       start_period: 10s
+    networks:
+      - zoe-network
+
+networks:
+  zoe-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
 
 volumes:
   # Persistent storage for relay server data (keys, blobs, etc.)
   zoe_data:
+    driver: local
+  
+  # Persistent storage for WhatsApp bot data (database, session, etc.)
+  zoe_wa_bot_data:
     driver: local
   
   # Persistent storage for Redis data
