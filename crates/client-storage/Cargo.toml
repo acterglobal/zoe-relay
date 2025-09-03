@@ -18,7 +18,7 @@ tokio = { workspace = true }
 futures = { workspace = true }
 
 # Database and migrations
-rusqlite = { version = "0.32", features = ["bundled", "sqlcipher", "blob"], optional = true }
+rusqlite = { workspace = true, features = ["bundled", "sqlcipher", "blob"], optional = true }
 refinery = { version = "0.8", features = ["rusqlite"], optional = true }
 
 # Serialization
