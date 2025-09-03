@@ -232,19 +232,12 @@ impl PqxdhPrekeyBundle {
         // Verify signed prekey signature
         identity_key
             .verify(self.signed_prekey.as_bytes(), &self.signed_prekey_signature)
-            .map_err(|e| {
-                PqxdhError::CryptoError(format!("Failed to verify signed prekey signature: {}", e))
-            })?;
+            .map_err(|_| PqxdhError::SignatureVerificationFailed)?;
 
         // Verify PQ signed prekey signature
         identity_key
             .verify(&self.pq_signed_prekey, &self.pq_signed_prekey_signature)
-            .map_err(|e| {
-                PqxdhError::CryptoError(format!(
-                    "Failed to verify PQ signed prekey signature: {}",
-                    e
-                ))
-            })?;
+            .map_err(|_| PqxdhError::SignatureVerificationFailed)?;
 
         // Verify that every PQ one-time key has a corresponding signature
         for (key_id, pq_key) in &self.pq_one_time_keys {
@@ -255,12 +248,9 @@ impl PqxdhPrekeyBundle {
                 ))
             })?;
 
-            identity_key.verify(pq_key, signature).map_err(|e| {
-                PqxdhError::CryptoError(format!(
-                    "Failed to verify PQ one-time key signature for {}: {}",
-                    key_id, e
-                ))
-            })?;
+            identity_key
+                .verify(pq_key, signature)
+                .map_err(|_| PqxdhError::SignatureVerificationFailed)?;
         }
 
         // Verify that every PQ one-time signature has a corresponding key (no extra signatures)
@@ -318,6 +308,7 @@ impl PqxdhInbox {
 mod tests {
     use super::*;
     use crate::KeyPair;
+    use assert_matches::assert_matches;
     use rand::rngs::OsRng;
 
     /// Helper function to create a test keypair and identity
@@ -419,10 +410,7 @@ mod tests {
             result.is_err(),
             "Invalid signatures should fail verification"
         );
-        assert!(matches!(
-            result.unwrap_err(),
-            PqxdhError::SignatureVerificationFailed
-        ));
+        assert_matches!(result.unwrap_err(), PqxdhError::SignatureVerificationFailed);
     }
 
     #[test]
