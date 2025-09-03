@@ -1,4 +1,6 @@
 pub mod challenge;
+#[cfg(feature = "cli")]
+pub mod cli;
 pub mod client;
 pub mod error;
 pub mod file_storage;

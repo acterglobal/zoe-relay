@@ -32,12 +32,9 @@
 //! If any of these steps fail, the example will exit with an error message
 //! explaining what might be wrong.
 
-use clap::{Parser, arg, command};
-use std::{net::SocketAddr, path::PathBuf};
-use tempfile::TempDir;
+use clap::{Parser, command};
 use tracing::{error, info};
-use zoe_client::{Client, util::resolve_to_socket_addr};
-use zoe_wire_protocol::VerifyingKey;
+use zoe_client::cli::{RelayClientArgs, full_cli_client, main_setup};
 
 #[cfg(debug_assertions)]
 const IS_DEBUG: bool = true;
@@ -47,27 +44,8 @@ const IS_DEBUG: bool = false;
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 struct FullClientArgs {
-    /// Relay server address (e.g., "127.0.0.1:8080")
-    #[arg(short, long, default_value = "127.0.0.1:13908")]
-    relay_address: String,
-
-    /// Server public key in hex format (optional - will generate random for demo)
-    #[arg(short, long, value_parser = parse_verifying_key)]
-    server_key: VerifyingKey,
-
-    #[arg(short, long, conflicts_with = "ephemeral")]
-    persist_path: Option<PathBuf>,
-
-    #[arg(short, long, conflicts_with = "persist_path")]
-    ephemeral: bool,
-}
-
-/// Helper function to parse hex string to VerifyingKey (simplified for demo)
-fn parse_verifying_key(hex_str: &str) -> Result<VerifyingKey, String> {
-    let hex = hex::decode(hex_str).map_err(|e| format!("Invalid hex string: {}", e))?;
-    let key: VerifyingKey =
-        postcard::from_bytes(&hex).map_err(|e| format!("Invalid key: {}", e))?;
-    Ok(key)
+    #[command(flatten)]
+    args: RelayClientArgs,
 }
 
 #[tokio::main]
@@ -77,64 +55,11 @@ pub async fn main() -> Result<(), Box<dyn std::error::Error>> {
         std::process::exit(1);
     }
 
-    // Initialize Rustls crypto provider before any TLS operations
-    rustls::crypto::aws_lc_rs::default_provider()
-        .install_default()
-        .expect("Failed to install crypto provider");
+    main_setup().await?;
 
-    // Initialize logging
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("full=info")),
-        )
-        .init();
-
-    let args = FullClientArgs::parse();
-
-    info!("🚀 Starting Zoe Client Connection Test");
-    info!("📍 Target server: {}", args.relay_address);
-
-    let server_addr: SocketAddr = match resolve_to_socket_addr(&args.relay_address).await {
-        Ok(addr) => addr,
-        Err(e) => {
-            error!("Invalid server address or failed to resolve: {e}");
-            std::process::exit(1);
-        }
-    };
-
-    // Parse server address
-    let server_public_key = args.server_key;
-
-    let mut builder = Client::builder();
-    builder.server_info(server_public_key, server_addr);
-    if let Some(persist_path) = args.persist_path {
-        info!("💾 Using persistent storage at: {}", persist_path.display());
-        error!("persistence not yet implemented");
-    } else if !args.ephemeral {
-        error!("💾 Must specify either --persist-path or --ephemeral");
-        std::process::exit(1);
-    } else {
-        // ephemeral mode
-
-        let temp_dir = TempDir::new()?;
-        // Create temporary directories for storage
-
-        info!(
-            "💾 Using temporary storage at: {}",
-            temp_dir.path().display()
-        );
-        let media_storage_path = temp_dir.path().join("blobs");
-        let db_storage_path = temp_dir.path().join("db");
-
-        info!("🔧 Building client...");
-
-        // Build the clien
-        builder.media_storage_dir_pathbuf(media_storage_path);
-        builder.db_storage_dir_pathbuf(db_storage_path);
-    }
-
-    let client_result = builder.build().await;
+    let args = FullClientArgs::parse().args;
+    let server_addr = args.relay_address.clone();
+    let client_result = full_cli_client(args).await;
 
     match client_result {
         Ok(client) => {
