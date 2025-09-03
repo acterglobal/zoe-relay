@@ -2,14 +2,14 @@
 # Provides only Redis for local development - run the relay server with cargo
 
 services:
-  redis:
+  zoe-dev-redis:
     image: redis:7-alpine
     container_name: zoe-redis-dev
     restart: unless-stopped
     ports:
       - "${REDIS_PORT:-6379}:6379"
     volumes:
-      - redis_dev_data:/data
+      - zoe_dev_redis_dev_data:/data
       - ./.config/redis.conf:/usr/local/etc/redis/redis.conf:ro
     command: redis-server /usr/local/etc/redis/redis.conf
     healthcheck:
@@ -26,7 +26,7 @@ services:
       - /tmp:rw,noexec,nosuid,size=50m
 
   # Optional: Redis management interface for development
-  redis-commander:
+  zoe-dev-redis-commander:
     image: rediscommander/redis-commander:latest
     container_name: zoe-redis-commander-dev
     restart: unless-stopped
@@ -42,5 +42,5 @@ services:
 
 volumes:
   # Development Redis data (ephemeral by default)
-  redis_dev_data:
+  zoe_dev_redis_dev_data:
     driver: local
