@@ -79,7 +79,7 @@ pub trait MessagesManagerTrait: Send + Sync {
     /// Get user data by author and storage key (for PQXDH inbox fetching)
     async fn user_data(
         &self,
-        author: zoe_wire_protocol::keys::Id,
+        author: zoe_wire_protocol::KeyId,
         storage_key: zoe_wire_protocol::StoreKey,
     ) -> Result<Option<MessageFull>>;
 }
@@ -712,7 +712,7 @@ impl MessagesManagerTrait for MessagesManager {
 
     async fn user_data(
         &self,
-        author: zoe_wire_protocol::keys::Id,
+        author: zoe_wire_protocol::KeyId,
         storage_key: zoe_wire_protocol::StoreKey,
     ) -> Result<Option<MessageFull>> {
         use tarpc::context;
@@ -727,7 +727,7 @@ impl MessagesManagerTrait for MessagesManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use zoe_wire_protocol::{Filter, Tag};
+    use zoe_wire_protocol::{Filter, KeyId, Tag};
 
     #[tokio::test]
     async fn test_filtered_stream_logic() {
@@ -773,7 +773,7 @@ mod tests {
         };
 
         let user_tag = Tag::User {
-            id: [0u8; 32],
+            id: KeyId::from_bytes([0u8; 32]),
             relays: vec![],
         };
 
@@ -973,7 +973,7 @@ mod tests {
         );
 
         // Test Author filter matching
-        let author_filter = Filter::Author(*keypair.public_key().id());
+        let author_filter = Filter::Author(KeyId::from(*keypair.public_key().id()));
         assert!(
             author_filter.matches(&full_message),
             "Author filter should match message from same author"
@@ -985,7 +985,8 @@ mod tests {
 
         // Test with different author
         let different_keypair = KeyPair::generate(&mut OsRng);
-        let different_author_filter = Filter::Author(*different_keypair.public_key().id());
+        let different_author_filter =
+            Filter::Author(KeyId::from(*different_keypair.public_key().id()));
         assert!(
             !different_author_filter.matches(&full_message),
             "Author filter should not match message from different author"

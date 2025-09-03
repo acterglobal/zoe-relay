@@ -21,6 +21,7 @@ use zoe_client::services::MessagesManagerTrait;
 use zoe_client::{RelayClient, RelayClientBuilder};
 use zoe_message_store::RedisMessageStorage;
 use zoe_relay::{RelayServer, RelayServiceRouter};
+use zoe_wire_protocol::BlobId;
 use zoe_wire_protocol::{
     Algorithm, KeyPair, Kind, Message, MessageFilters, MessageFull, Tag, VerifyingKey,
 };
@@ -245,7 +246,7 @@ mod tests {
         // Upload a blob
         let blob_hash = blob_service.upload_blob(test_data).await?;
         info!("📤 Uploaded blob with hash: {}", blob_hash);
-        assert!(!blob_hash.is_empty(), "Blob hash should not be empty");
+        // BlobId is always valid if upload succeeded, no need to check is_empty
 
         // Download the blob back
         let downloaded_data = blob_service.get_blob(&blob_hash).await?;
@@ -256,8 +257,8 @@ mod tests {
         );
 
         // Test downloading non-existent blob
-        let fake_hash = "nonexistent_hash_12345";
-        let result = blob_service.get_blob(fake_hash).await;
+        let fake_blob_id = BlobId::from_content(b"nonexistent_data");
+        let result = blob_service.get_blob(&fake_blob_id).await;
         assert!(result.is_err(), "Should fail to download non-existent blob");
 
         infra.cleanup().await?;
@@ -311,8 +312,8 @@ mod tests {
         let data2 = b"Client 2 data";
 
         let (hash1, hash2): (
-            Result<String, zoe_client::services::BlobError>,
-            Result<String, zoe_client::services::BlobError>,
+            Result<BlobId, zoe_client::services::BlobError>,
+            Result<BlobId, zoe_client::services::BlobError>,
         ) = tokio::join!(
             blob_service1.upload_blob(data1),
             blob_service2.upload_blob(data2)
@@ -914,7 +915,9 @@ mod tests {
         // Step 4: Client 2 subscribes to messages from client 1 to catch the group creation event
         // Note: The group creation message (root event) doesn't tag itself with Event tags,
         // so we need to subscribe to the author instead
-        let author_filter = zoe_wire_protocol::Filter::Author(*client1.public_key().id());
+        let author_filter = zoe_wire_protocol::Filter::Author(zoe_wire_protocol::KeyId::from(
+            *client1.public_key().id(),
+        ));
 
         messages_service2
             .ensure_contains_filter(author_filter)

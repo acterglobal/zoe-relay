@@ -5,7 +5,7 @@ use tarpc::{context, serde_transport};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio_util::codec::LengthDelimitedCodec;
 use zoe_wire_protocol::{
-    BlobError as WireError, BlobServiceClient, PostcardFormat, StreamPair, ZoeServices,
+    BlobError as WireError, BlobId, BlobServiceClient, PostcardFormat, StreamPair, ZoeServices,
 };
 
 #[cfg(any(feature = "mock", test))]
@@ -14,7 +14,7 @@ use mockall::{automock, predicate::*};
 #[derive(Debug, thiserror::Error)]
 pub enum BlobError {
     #[error("Blob not found: {hash}")]
-    NotFound { hash: String },
+    NotFound { hash: BlobId },
 
     #[error("IO error: {0}")]
     IoError(std::io::Error),
@@ -38,10 +38,10 @@ pub trait BlobStore: Send + Sync {
     type Error: std::error::Error + Send + Sync + 'static;
 
     /// Download a blob by its ID
-    async fn get_blob(&self, blob_id: &str) -> std::result::Result<Vec<u8>, Self::Error>;
+    async fn get_blob(&self, blob_id: &BlobId) -> std::result::Result<Vec<u8>, Self::Error>;
 
     /// Upload a blob and return its hash
-    async fn upload_blob(&self, blob: &[u8]) -> std::result::Result<String, Self::Error>;
+    async fn upload_blob(&self, blob: &[u8]) -> std::result::Result<BlobId, Self::Error>;
 }
 
 #[derive(Clone)]
@@ -73,22 +73,20 @@ impl BlobService {
 impl BlobStore for BlobService {
     type Error = BlobError;
 
-    async fn get_blob(&self, blob_id: &str) -> Result<Vec<u8>> {
+    async fn get_blob(&self, blob_id: &BlobId) -> Result<Vec<u8>> {
         let Some(blob) = self
             .client
-            .download(context::current(), blob_id.to_string())
+            .download(context::current(), *blob_id)
             .await
             .map_err(BlobError::RpcError)?
             .map_err(BlobError::WireError)?
         else {
-            return Err(BlobError::NotFound {
-                hash: blob_id.to_string(),
-            });
+            return Err(BlobError::NotFound { hash: *blob_id });
         };
         Ok(blob)
     }
 
-    async fn upload_blob(&self, blob: &[u8]) -> Result<String> {
+    async fn upload_blob(&self, blob: &[u8]) -> Result<BlobId> {
         let hash = self
             .client
             .upload(context::current(), blob.to_vec())
@@ -101,12 +99,12 @@ impl BlobStore for BlobService {
 
 impl BlobService {
     /// Get a blob by its ID (convenience method)
-    pub async fn get_blob(&self, blob_id: &str) -> Result<Vec<u8>> {
+    pub async fn get_blob(&self, blob_id: &BlobId) -> Result<Vec<u8>> {
         <Self as BlobStore>::get_blob(self, blob_id).await
     }
 
     /// Upload a blob and return its hash (convenience method)
-    pub async fn upload_blob(&self, blob: &[u8]) -> Result<String> {
+    pub async fn upload_blob(&self, blob: &[u8]) -> Result<BlobId> {
         <Self as BlobStore>::upload_blob(self, blob).await
     }
 }

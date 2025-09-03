@@ -14,6 +14,7 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 anyhow = { workspace = true }
 thiserror = { workspace = true }
+hex = { workspace = true }
 
 # Protocol handling with Tarpc
 tokio = { workspace = true }

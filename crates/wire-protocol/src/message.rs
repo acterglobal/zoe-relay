@@ -4,8 +4,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     crypto::{ChaCha20Poly1305Content, PqxdhEncryptedContent},
-    keys::Id as VerifyingKeyId,
-    Ed25519SelfEncryptedContent, EphemeralEcdhContent, MlDsaSelfEncryptedContent,
+    Ed25519SelfEncryptedContent, EphemeralEcdhContent, KeyId as VerifyingKeyId,
+    MlDsaSelfEncryptedContent,
 };
 use forward_compatible_enum::ForwardCompatibleEnum;
 
@@ -981,7 +981,10 @@ impl Eq for MessageFull {}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::keys::{KeyPair, VerifyingKey};
+    use crate::{
+        keys::{KeyPair, VerifyingKey},
+        KeyId,
+    };
     use rand::rngs::OsRng;
     // use signature::Signer; // Not needed since we use KeyPair.sign() method
 
@@ -1114,7 +1117,7 @@ mod tests {
             1714857600,
             Kind::Regular,
             vec![Tag::User {
-                id: [1u8; 32],
+                id: KeyId::from_bytes([1u8; 32]),
                 relays: vec!["relay1".to_string()],
             }],
         );
@@ -1146,7 +1149,7 @@ mod tests {
             1714857600,
             Kind::Regular,
             vec![Tag::User {
-                id: [1u8; 32],
+                id: KeyId::from_bytes([1u8; 32]),
                 relays: vec!["relay1".to_string()],
             }],
         );
@@ -1205,7 +1208,7 @@ mod tests {
                 relays: vec!["relay1".to_string()],
             },
             Tag::User {
-                id: [2u8; 32],
+                id: KeyId::from_bytes([2u8; 32]),
                 relays: vec!["relay2".to_string()],
             },
             Tag::Channel {
@@ -1489,7 +1492,7 @@ mod tests {
                     relays: vec!["relay1".to_string()],
                 },
                 Tag::User {
-                    id: [2u8; 32],
+                    id: KeyId::from_bytes([2u8; 32]),
                     relays: vec!["relay2".to_string()],
                 },
             ],

@@ -65,7 +65,7 @@
 //! # Ok(())
 //! # }
 //! ```
-use crate::Hash;
+use crate::{Hash, KeyId};
 use hex;
 use libcrux_ml_dsa::{
     ml_dsa_44,
@@ -81,9 +81,6 @@ use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use signature::{Signer, Verifier};
 use std::fmt;
-
-// A short hand hash or content of the inner signature or key
-pub type Id = [u8; 32];
 
 /// Error type for KeyPair serialization and deserialization operations
 #[derive(Debug, thiserror::Error)]
@@ -245,7 +242,7 @@ impl Ord for VerifyingKey {
             return std::cmp::Ordering::Greater;
         }
         // we only check the bytes if we are of the same type
-        self.id().cmp(other.id())
+        self.id().cmp(&other.id())
     }
 }
 
@@ -370,12 +367,12 @@ impl VerifyingKey {
         postcard::to_stdvec(self).expect("Failed to serialize VerifyingKey")
     }
 
-    pub fn id(&self) -> &Id {
+    pub fn id(&self) -> KeyId {
         match self {
-            VerifyingKey::Ed25519(key) => key.as_bytes(),
-            VerifyingKey::MlDsa44((_key, hash)) => hash.as_bytes(),
-            VerifyingKey::MlDsa65((_key, hash)) => hash.as_bytes(),
-            VerifyingKey::MlDsa87((_key, hash)) => hash.as_bytes(),
+            VerifyingKey::Ed25519(key) => KeyId::from_bytes(*key.as_bytes()),
+            VerifyingKey::MlDsa44((_key, hash)) => KeyId::from(*hash),
+            VerifyingKey::MlDsa65((_key, hash)) => KeyId::from(*hash),
+            VerifyingKey::MlDsa87((_key, hash)) => KeyId::from(*hash),
         }
     }
 
@@ -563,12 +560,12 @@ impl From<MLDSA87Signature> for Signature {
 }
 
 impl Signature {
-    pub fn id(&self) -> &Id {
+    pub fn id(&self) -> KeyId {
         match self {
-            Signature::Ed25519(sig) => sig.s_bytes(),
-            Signature::MlDsa44((_sig, hash)) => hash.as_bytes(),
-            Signature::MlDsa65((_sig, hash)) => hash.as_bytes(),
-            Signature::MlDsa87((_sig, hash)) => hash.as_bytes(),
+            Signature::Ed25519(sig) => KeyId::from_bytes(*sig.s_bytes()),
+            Signature::MlDsa44((_sig, hash)) => KeyId::from(*hash),
+            Signature::MlDsa65((_sig, hash)) => KeyId::from(*hash),
+            Signature::MlDsa87((_sig, hash)) => KeyId::from(*hash),
         }
     }
 }
@@ -603,7 +600,7 @@ impl PartialOrd for Signature {
         } else if my_key > other_key_idx {
             return Some(std::cmp::Ordering::Greater);
         }
-        self.id().partial_cmp(other.id())
+        self.id().partial_cmp(&other.id())
     }
 }
 
@@ -635,12 +632,12 @@ impl std::fmt::Debug for KeyPair {
 }
 
 impl KeyPair {
-    pub fn id(&self) -> &Id {
+    pub fn id(&self) -> KeyId {
         match self {
-            KeyPair::Ed25519(key) => key.as_bytes(),
-            KeyPair::MlDsa44(_key, hash) => hash.as_bytes(),
-            KeyPair::MlDsa65(_key, hash) => hash.as_bytes(),
-            KeyPair::MlDsa87(_key, hash) => hash.as_bytes(),
+            KeyPair::Ed25519(key) => KeyId::from_bytes(*key.as_bytes()),
+            KeyPair::MlDsa44(_key, hash) => KeyId::from(*hash),
+            KeyPair::MlDsa65(_key, hash) => KeyId::from(*hash),
+            KeyPair::MlDsa87(_key, hash) => KeyId::from(*hash),
         }
     }
 
@@ -1541,9 +1538,9 @@ mod tests {
             let verifying_key = keypair.public_key();
 
             // Test that signature can be verified
-            let is_valid = verifying_key.verify(message, &signature).unwrap();
+            verifying_key.verify(message, &signature).unwrap();
             assert_eq!(
-                is_valid,
+                (),
                 (),
                 "Signature should be valid for correct key and message"
             );
@@ -1716,9 +1713,9 @@ mod tests {
 
         // Test that matching key/signature pairs work
         for (key, sig) in verifying_keys.iter().zip(signatures.iter()) {
-            let is_valid = key.verify(message, sig).unwrap();
+            key.verify(message, sig).unwrap();
             assert_eq!(
-                is_valid,
+                (),
                 (),
                 "Matching key and signature should verify successfully"
             );
@@ -1838,7 +1835,7 @@ mod tests {
                     "Stored hash should match computed hash of encoded key"
                 );
                 assert_eq!(
-                    verifying_key.id(),
+                    verifying_key.id().as_bytes(),
                     computed_hash.as_bytes(),
                     "ID should be the blake3 hash of encoded key"
                 );
@@ -1856,7 +1853,7 @@ mod tests {
         match verifying_key {
             VerifyingKey::Ed25519(ref key) => {
                 assert_eq!(
-                    verifying_key.id(),
+                    verifying_key.id().as_bytes(),
                     key.as_bytes(),
                     "Ed25519 ID should be the raw key bytes"
                 );
@@ -1890,7 +1887,7 @@ mod tests {
         match ed25519_sig {
             Signature::Ed25519(ref sig) => {
                 assert_eq!(
-                    ed25519_sig.id(),
+                    ed25519_sig.id().as_bytes(),
                     sig.s_bytes(),
                     "Ed25519 signature ID should be s_bytes"
                 );
@@ -1911,7 +1908,7 @@ mod tests {
                     "Stored hash should match computed hash"
                 );
                 assert_eq!(
-                    ml_dsa_sig.id(),
+                    ml_dsa_sig.id().as_bytes(),
                     computed_hash.as_bytes(),
                     "ML-DSA signature ID should be blake3 hash"
                 );

@@ -6,8 +6,8 @@ use zoe_wire_protocol::{Hash, MessageFull, Tag};
 use super::migrations;
 use crate::error::{Result, StorageError};
 use crate::storage::{
-    MessageQuery, MessageStorage, RelaySyncStatus, StateStorage, StorageConfig, StorageStats,
-    SubscriptionState,
+    BlobStorage, BlobUploadStatus, MessageQuery, MessageStorage, RelaySyncStatus, StateStorage,
+    StorageConfig, StorageStats, SubscriptionState,
 };
 
 /// SQLite-based message storage with SQLCipher encryption
@@ -933,5 +933,271 @@ impl StateStorage for SqliteMessageStorage {
             conn.query_row("SELECT COUNT(*) FROM state_storage", [], |row| row.get(0))?;
 
         Ok(count as u64)
+    }
+}
+
+#[async_trait]
+impl BlobStorage for SqliteMessageStorage {
+    async fn mark_blob_uploaded(
+        &self,
+        blob_hash: &Hash,
+        relay_id: &Hash,
+        blob_size: u64,
+    ) -> Result<()> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| StorageError::Internal(format!("Failed to acquire database lock: {e}")))?;
+
+        let blob_hash_bytes = blob_hash.as_bytes();
+        let relay_id_bytes = relay_id.as_bytes();
+
+        conn.execute(
+            "INSERT OR REPLACE INTO blob_upload_status (blob_hash, relay_id, blob_size, uploaded_at) VALUES (?1, ?2, ?3, strftime('%s', 'now'))",
+            params![&blob_hash_bytes[..], &relay_id_bytes[..], blob_size as i64],
+        )?;
+
+        tracing::debug!(
+            "Marked blob {} as uploaded to relay {} (size: {} bytes)",
+            hex::encode(blob_hash_bytes),
+            hex::encode(relay_id_bytes),
+            blob_size
+        );
+
+        Ok(())
+    }
+
+    async fn is_blob_uploaded(&self, blob_hash: &Hash, relay_id: &Hash) -> Result<bool> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| StorageError::Internal(format!("Failed to acquire database lock: {e}")))?;
+
+        let blob_hash_bytes = blob_hash.as_bytes();
+        let relay_id_bytes = relay_id.as_bytes();
+
+        let exists: bool = conn
+            .query_row(
+                "SELECT 1 FROM blob_upload_status WHERE blob_hash = ?1 AND relay_id = ?2",
+                params![&blob_hash_bytes[..], &relay_id_bytes[..]],
+                |_| Ok(true),
+            )
+            .optional()?
+            .unwrap_or(false);
+
+        Ok(exists)
+    }
+
+    async fn get_unuploaded_blobs_for_relay(
+        &self,
+        relay_id: &Hash,
+        _limit: Option<usize>,
+    ) -> Result<Vec<Hash>> {
+        let _conn = self
+            .conn
+            .lock()
+            .map_err(|e| StorageError::Internal(format!("Failed to acquire database lock: {e}")))?;
+
+        let relay_id_bytes = relay_id.as_bytes();
+
+        // This is a placeholder implementation - in a real system, you'd need to track
+        // all blobs that should be uploaded (perhaps from a separate blobs table)
+        // For now, we return an empty list since we don't have a comprehensive blob registry
+        tracing::warn!(
+            "get_unuploaded_blobs_for_relay called for relay {} - returning empty list (no blob registry)",
+            hex::encode(relay_id_bytes)
+        );
+
+        Ok(Vec::new())
+    }
+
+    async fn get_blob_upload_status(&self, blob_hash: &Hash) -> Result<Vec<BlobUploadStatus>> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| StorageError::Internal(format!("Failed to acquire database lock: {e}")))?;
+
+        let mut stmt = conn.prepare(
+            "SELECT blob_hash, relay_id, uploaded_at, blob_size FROM blob_upload_status WHERE blob_hash = ?1"
+        )?;
+
+        let blob_hash_bytes = blob_hash.as_bytes();
+        let status_iter = stmt.query_map(params![&blob_hash_bytes[..]], |row| {
+            let blob_hash_bytes: Vec<u8> = row.get(0)?;
+            let relay_id_bytes: Vec<u8> = row.get(1)?;
+            let uploaded_at: i64 = row.get(2)?;
+            let blob_size: i64 = row.get(3)?;
+
+            let blob_hash = if blob_hash_bytes.len() == 32 {
+                let mut bytes = [0u8; 32];
+                bytes.copy_from_slice(&blob_hash_bytes);
+                Hash::from(bytes)
+            } else {
+                return Err(rusqlite::Error::InvalidColumnType(
+                    0,
+                    "blob_hash".to_string(),
+                    rusqlite::types::Type::Blob,
+                ));
+            };
+
+            let relay_id = if relay_id_bytes.len() == 32 {
+                let mut bytes = [0u8; 32];
+                bytes.copy_from_slice(&relay_id_bytes);
+                Hash::from(bytes)
+            } else {
+                return Err(rusqlite::Error::InvalidColumnType(
+                    1,
+                    "relay_id".to_string(),
+                    rusqlite::types::Type::Blob,
+                ));
+            };
+
+            Ok(BlobUploadStatus {
+                blob_hash,
+                relay_id,
+                uploaded_at: uploaded_at as u64,
+                blob_size: blob_size as u64,
+            })
+        })?;
+
+        let mut statuses = Vec::new();
+        for status in status_iter {
+            statuses.push(status?);
+        }
+
+        Ok(statuses)
+    }
+
+    async fn get_uploaded_blobs_for_relay(
+        &self,
+        relay_id: &Hash,
+        limit: Option<usize>,
+    ) -> Result<Vec<BlobUploadStatus>> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| StorageError::Internal(format!("Failed to acquire database lock: {e}")))?;
+
+        let relay_id_bytes = relay_id.as_bytes();
+        let limit_clause = limit.map(|l| format!(" LIMIT {}", l)).unwrap_or_default();
+
+        let query = format!(
+            "SELECT blob_hash, relay_id, uploaded_at, blob_size FROM blob_upload_status WHERE relay_id = ?1 ORDER BY uploaded_at DESC{}",
+            limit_clause
+        );
+
+        let mut stmt = conn.prepare(&query)?;
+
+        let status_iter = stmt.query_map(params![&relay_id_bytes[..]], |row| {
+            let blob_hash_bytes: Vec<u8> = row.get(0)?;
+            let relay_id_bytes: Vec<u8> = row.get(1)?;
+            let uploaded_at: i64 = row.get(2)?;
+            let blob_size: i64 = row.get(3)?;
+
+            let blob_hash = if blob_hash_bytes.len() == 32 {
+                let mut bytes = [0u8; 32];
+                bytes.copy_from_slice(&blob_hash_bytes);
+                Hash::from(bytes)
+            } else {
+                return Err(rusqlite::Error::InvalidColumnType(
+                    0,
+                    "blob_hash".to_string(),
+                    rusqlite::types::Type::Blob,
+                ));
+            };
+
+            let relay_id = if relay_id_bytes.len() == 32 {
+                let mut bytes = [0u8; 32];
+                bytes.copy_from_slice(&relay_id_bytes);
+                Hash::from(bytes)
+            } else {
+                return Err(rusqlite::Error::InvalidColumnType(
+                    1,
+                    "relay_id".to_string(),
+                    rusqlite::types::Type::Blob,
+                ));
+            };
+
+            Ok(BlobUploadStatus {
+                blob_hash,
+                relay_id,
+                uploaded_at: uploaded_at as u64,
+                blob_size: blob_size as u64,
+            })
+        })?;
+
+        let mut statuses = Vec::new();
+        for status in status_iter {
+            statuses.push(status?);
+        }
+
+        Ok(statuses)
+    }
+
+    async fn remove_blob_upload_record(
+        &self,
+        blob_hash: &Hash,
+        relay_id: Option<Hash>,
+    ) -> Result<u64> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| StorageError::Internal(format!("Failed to acquire database lock: {e}")))?;
+
+        let blob_hash_bytes = blob_hash.as_bytes();
+        let rows_affected = if let Some(relay_id) = relay_id {
+            let relay_id_bytes = relay_id.as_bytes();
+            conn.execute(
+                "DELETE FROM blob_upload_status WHERE blob_hash = ?1 AND relay_id = ?2",
+                params![&blob_hash_bytes[..], &relay_id_bytes[..]],
+            )?
+        } else {
+            conn.execute(
+                "DELETE FROM blob_upload_status WHERE blob_hash = ?1",
+                params![&blob_hash_bytes[..]],
+            )?
+        };
+
+        tracing::debug!(
+            "Removed {} blob upload records for hash {}",
+            rows_affected,
+            hex::encode(blob_hash_bytes)
+        );
+
+        Ok(rows_affected as u64)
+    }
+
+    async fn get_uploaded_blob_count_for_relay(&self, relay_id: &Hash) -> Result<u64> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| StorageError::Internal(format!("Failed to acquire database lock: {e}")))?;
+
+        let relay_id_bytes = relay_id.as_bytes();
+
+        let count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM blob_upload_status WHERE relay_id = ?1",
+            params![&relay_id_bytes[..]],
+            |row| row.get(0),
+        )?;
+
+        Ok(count as u64)
+    }
+
+    async fn get_uploaded_blob_size_for_relay(&self, relay_id: &Hash) -> Result<u64> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| StorageError::Internal(format!("Failed to acquire database lock: {e}")))?;
+
+        let relay_id_bytes = relay_id.as_bytes();
+
+        let total_size: Option<i64> = conn.query_row(
+            "SELECT SUM(blob_size) FROM blob_upload_status WHERE relay_id = ?1",
+            params![&relay_id_bytes[..]],
+            |row| row.get(0),
+        )?;
+
+        Ok(total_size.unwrap_or(0) as u64)
     }
 }

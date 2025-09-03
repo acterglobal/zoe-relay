@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tracing::{error, info};
 
-use zoe_wire_protocol::{BlobError, BlobHealth, BlobInfo, BlobResult, BlobService};
+use zoe_wire_protocol::{BlobError, BlobHealth, BlobId, BlobInfo, BlobResult, BlobService};
 
 use crate::BlobStoreError;
 
@@ -49,7 +49,7 @@ impl BlobService for BlobServiceImpl {
         })
     }
 
-    async fn upload(self, _context: tarpc::context::Context, data: Vec<u8>) -> BlobResult<String> {
+    async fn upload(self, _context: tarpc::context::Context, data: Vec<u8>) -> BlobResult<BlobId> {
         info!("Uploading blob of {} bytes", data.len());
 
         // Store the blob using add_bytes
@@ -63,22 +63,20 @@ impl BlobService for BlobServiceImpl {
 
         let hash = result.hash;
         info!("Successfully stored blob {}", hash);
-        Ok(hash.to_string())
+        Ok(BlobId::from_bytes(*hash.as_bytes()))
     }
 
     async fn download(
         self,
         _context: tarpc::context::Context,
-        hash: String,
+        hash: BlobId,
     ) -> BlobResult<Option<Vec<u8>>> {
         info!("Downloading blob: {}", hash);
 
-        let hash = hash
-            .parse::<Hash>()
-            .map_err(|_| BlobError::InvalidHash { hash: hash.clone() })?;
+        let iroh_hash = Hash::from(*hash.as_bytes());
 
         // Try to get the blob data
-        let data = match self.store.get_bytes(hash).await {
+        let data = match self.store.get_bytes(iroh_hash).await {
             Ok(bytes) => bytes,
             Err(_) => return Ok(None), // Blob not found
         };
@@ -94,18 +92,16 @@ impl BlobService for BlobServiceImpl {
     async fn get_info(
         self,
         _context: tarpc::context::Context,
-        hash: String,
+        hash: BlobId,
     ) -> BlobResult<Option<BlobInfo>> {
         info!("Getting blob info: {}", hash);
 
-        let hash_obj = hash
-            .parse::<Hash>()
-            .map_err(|_| BlobError::InvalidHash { hash: hash.clone() })?;
+        let iroh_hash = Hash::from(*hash.as_bytes());
 
         // Check if blob exists and get its size
         let exists = self
             .store
-            .has(hash_obj)
+            .has(iroh_hash)
             .await
             .map_err(|e| BlobError::StorageError {
                 message: e.to_string(),
@@ -116,7 +112,7 @@ impl BlobService for BlobServiceImpl {
         }
 
         // Get the blob size by retrieving the bytes
-        let size_bytes = match self.store.get_bytes(hash_obj).await {
+        let size_bytes = match self.store.get_bytes(iroh_hash).await {
             Ok(bytes) => bytes.len() as u64,
             Err(e) => {
                 error!("Failed to retrieve blob {} for size info: {}", hash, e);
@@ -138,7 +134,7 @@ impl BlobService for BlobServiceImpl {
     async fn check_blobs(
         self,
         _context: tarpc::context::Context,
-        hashes: Vec<String>,
+        hashes: Vec<BlobId>,
     ) -> BlobResult<Vec<bool>> {
         info!("Checking existence of {} blobs", hashes.len());
 
@@ -148,21 +144,13 @@ impl BlobService for BlobServiceImpl {
 
         let mut results = Vec::with_capacity(hashes.len());
 
-        for hash_str in hashes {
-            // Parse the hash string
-            let hash = match hash_str.parse::<Hash>() {
-                Ok(h) => h,
-                Err(_) => {
-                    // Invalid hash format - treat as not found
-                    results.push(false);
-                    continue;
-                }
-            };
+        for blob_id in hashes {
+            let iroh_hash = Hash::from(*blob_id.as_bytes());
 
             // Check if blob exists using the store's has method
             let exists = self
                 .store
-                .has(hash)
+                .has(iroh_hash)
                 .await
                 .map_err(|e| BlobError::StorageError {
                     message: e.to_string(),
@@ -228,13 +216,13 @@ mod tests {
             .await
             .unwrap();
 
-        // Verify hash is not empty
-        assert!(!hash.is_empty());
+        // Verify hash is valid (BlobId doesn't have is_empty, so just check it exists)
+        // The fact that upload succeeded means we have a valid hash
 
         // Download the blob
         let downloaded = service
             .clone()
-            .download(context::current(), hash.clone())
+            .download(context::current(), hash)
             .await
             .unwrap();
 
@@ -247,10 +235,13 @@ mod tests {
         let service = create_test_service().await;
 
         // Try to download a non-existent blob (valid hash format but doesn't exist)
-        let fake_hash = "b0a2b1c3d4e5f67890abcdef1234567890abcdef1234567890abcdef12345678";
+        let fake_hash_bytes =
+            hex::decode("b0a2b1c3d4e5f67890abcdef1234567890abcdef1234567890abcdef12345678")
+                .unwrap();
+        let fake_blob_id = BlobId::from_content(&fake_hash_bytes);
         let result = service
             .clone()
-            .download(context::current(), fake_hash.to_string())
+            .download(context::current(), fake_blob_id)
             .await
             .unwrap();
 
@@ -277,7 +268,7 @@ mod tests {
         // Get blob info
         let info = service
             .clone()
-            .get_info(context::current(), hash.clone())
+            .get_info(context::current(), hash)
             .await
             .unwrap();
 
@@ -296,10 +287,13 @@ mod tests {
         let service = create_test_service().await;
 
         // Try to get info for a non-existent blob
-        let fake_hash = "b0a2b1c3d4e5f67890abcdef1234567890abcdef1234567890abcdef12345678";
+        let fake_hash_bytes =
+            hex::decode("b0a2b1c3d4e5f67890abcdef1234567890abcdef1234567890abcdef12345678")
+                .unwrap();
+        let fake_blob_id = BlobId::from_content(&fake_hash_bytes);
         let info = service
             .clone()
-            .get_info(context::current(), fake_hash.to_string())
+            .get_info(context::current(), fake_blob_id)
             .await
             .unwrap();
 
@@ -333,7 +327,7 @@ mod tests {
         for (i, hash) in hashes.iter().enumerate() {
             let downloaded = service
                 .clone()
-                .download(context::current(), hash.clone())
+                .download(context::current(), *hash)
                 .await
                 .unwrap();
 
@@ -344,7 +338,7 @@ mod tests {
         for (i, hash) in hashes.iter().enumerate() {
             let info = service
                 .clone()
-                .get_info(context::current(), hash.clone())
+                .get_info(context::current(), *hash)
                 .await
                 .unwrap();
 
@@ -370,7 +364,7 @@ mod tests {
         // Download it back
         let downloaded = service
             .clone()
-            .download(context::current(), hash.clone())
+            .download(context::current(), hash)
             .await
             .unwrap();
 
@@ -406,7 +400,7 @@ mod tests {
 
         let downloaded = service
             .clone()
-            .download(context::current(), hash.clone())
+            .download(context::current(), hash)
             .await
             .unwrap();
 
@@ -448,12 +442,12 @@ mod tests {
         // Download in reverse order
         let downloaded2 = service
             .clone()
-            .download(context::current(), hash2.clone())
+            .download(context::current(), hash2)
             .await
             .unwrap();
         let downloaded1 = service
             .clone()
-            .download(context::current(), hash1.clone())
+            .download(context::current(), hash1)
             .await
             .unwrap();
 
@@ -493,7 +487,7 @@ mod tests {
         // Check the uploaded blob (should exist)
         let results = service
             .clone()
-            .check_blobs(context::current(), vec![hash.clone()])
+            .check_blobs(context::current(), vec![hash])
             .await
             .unwrap();
 
@@ -519,7 +513,7 @@ mod tests {
         // Check both hashes
         let multi_results = service
             .clone()
-            .check_blobs(context::current(), vec![hash.clone(), hash2.clone()])
+            .check_blobs(context::current(), vec![hash, hash2])
             .await
             .unwrap();
         assert_eq!(multi_results, vec![true, true]);
@@ -569,21 +563,26 @@ mod tests {
             .unwrap();
 
         // Step 3: Test that client blobs are not on server initially
-        let client_hashes = vec![
+        let client_hashes = [
             client_hash1.clone(),
             client_hash2.clone(),
             client_hash3.clone(),
         ];
+        let client_blob_ids = vec![
+            BlobId::from_content(&blob1_data),
+            BlobId::from_content(&blob2_data),
+            BlobId::from_content(&blob3_data),
+        ];
         let server_has_client_blobs = server
             .clone()
-            .check_blobs(context::current(), client_hashes.clone())
+            .check_blobs(context::current(), client_blob_ids.clone())
             .await
             .unwrap();
 
         assert_eq!(server_has_client_blobs, vec![false, false, false]);
 
         // Step 4: Manually sync client blobs to server (simulating RPC calls)
-        for hash in &client_hashes {
+        for (i, hash) in client_hashes.iter().enumerate() {
             let blob_data = client.get_blob(hash).await.unwrap().unwrap();
             let uploaded_hash = server
                 .clone()
@@ -592,47 +591,48 @@ mod tests {
                 .unwrap();
 
             // Verify the hash matches (content-based addressing)
-            assert_eq!(uploaded_hash, *hash);
+            assert_eq!(uploaded_hash, client_blob_ids[i]);
         }
 
         // Step 5: Verify server now has all client blobs
         let server_has_synced_blobs = server
             .clone()
-            .check_blobs(context::current(), client_hashes)
+            .check_blobs(context::current(), client_blob_ids.clone())
             .await
             .unwrap();
 
         assert_eq!(server_has_synced_blobs, vec![true, true, true]);
 
         // Step 6: Test downloading server blobs to client
-        let server_hashes = vec![server_hash1.clone(), server_hash2.clone()];
+        let server_hashes = vec![server_hash1, server_hash2];
 
         // Verify client doesn't have server blobs initially
-        assert!(!client.has_blob(&server_hash1).await.unwrap());
-        assert!(!client.has_blob(&server_hash2).await.unwrap());
+        assert!(!client.has_blob(&server_hash1.to_hex()).await.unwrap());
+        assert!(!client.has_blob(&server_hash2.to_hex()).await.unwrap());
 
         // Download server blobs to client
         for hash in &server_hashes {
             let blob_data = server
                 .clone()
-                .download(context::current(), hash.clone())
+                .download(context::current(), *hash)
                 .await
                 .unwrap()
                 .unwrap();
 
             let client_stored_hash = client.store_blob(blob_data).await.unwrap();
-            assert_eq!(client_stored_hash, *hash);
+            // Compare hex representations since client returns String and server returns BlobId
+            assert_eq!(client_stored_hash, hash.to_hex());
         }
 
         // Step 7: Verify client now has server blobs
-        assert!(client.has_blob(&server_hash1).await.unwrap());
-        assert!(client.has_blob(&server_hash2).await.unwrap());
+        assert!(client.has_blob(&server_hash1.to_hex()).await.unwrap());
+        assert!(client.has_blob(&server_hash2.to_hex()).await.unwrap());
 
         // Step 8: Verify data integrity
         let client_blob1 = client.get_blob(&client_hash1).await.unwrap().unwrap();
         let server_blob1 = server
             .clone()
-            .download(context::current(), client_hash1.clone())
+            .download(context::current(), client_blob_ids[0])
             .await
             .unwrap()
             .unwrap();
@@ -666,16 +666,21 @@ mod tests {
         let hash2 = client.store_blob(blob2_data.clone()).await.unwrap();
         let hash3 = client.store_blob(blob3_data.clone()).await.unwrap();
 
-        let local_hashes = vec![hash1.clone(), hash2.clone(), hash3.clone()];
+        let _local_hashes = [hash1.clone(), hash2.clone(), hash3.clone()];
+        let local_blob_ids = vec![
+            BlobId::from_content(&blob1_data),
+            BlobId::from_content(&blob2_data),
+            BlobId::from_content(&blob3_data),
+        ];
 
         // Step 2: Upload to remote using client upload method
-        let sync_result = client.upload_blobs(&server, &local_hashes).await.unwrap();
+        let sync_result = client.upload_blobs(&server, &local_blob_ids).await.unwrap();
 
         assert_eq!(sync_result.uploaded, 3);
         assert_eq!(sync_result.failed, 0);
 
         // Step 3: Verify remote has the blobs by trying to upload again (should upload 0)
-        let sync_result2 = client.upload_blobs(&server, &local_hashes).await.unwrap();
+        let sync_result2 = client.upload_blobs(&server, &local_blob_ids).await.unwrap();
 
         assert_eq!(sync_result2.uploaded, 0); // Already synced
         assert_eq!(sync_result2.failed, 0);
@@ -690,7 +695,7 @@ mod tests {
             .unwrap();
 
         // Verify client doesn't have it yet
-        assert!(!client.has_blob(&remote_hash).await.unwrap());
+        assert!(!client.has_blob(&remote_hash.to_hex()).await.unwrap());
 
         // Download it using client download method
         let download_result = client
@@ -702,8 +707,12 @@ mod tests {
         assert_eq!(download_result.failed, 0);
 
         // Verify client now has the blob
-        assert!(client.has_blob(&remote_hash).await.unwrap());
-        let retrieved_data = client.get_blob(&remote_hash).await.unwrap().unwrap();
+        assert!(client.has_blob(&remote_hash.to_hex()).await.unwrap());
+        let retrieved_data = client
+            .get_blob(&remote_hash.to_hex())
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(retrieved_data, remote_blob_data);
 
         // Step 5: Test download of already existing blob (should download 0)
@@ -731,15 +740,17 @@ mod tests {
 
         // Create multiple blobs for bulk sync testing
         let mut local_hashes = Vec::new();
+        let mut local_blob_ids = Vec::new();
         for i in 0..10 {
             let blob_data = format!("Bulk sync test blob {i}").into_bytes();
-            let hash = client.store_blob(blob_data).await.unwrap();
+            let hash = client.store_blob(blob_data.clone()).await.unwrap();
             local_hashes.push(hash);
+            local_blob_ids.push(BlobId::from_content(&blob_data));
         }
 
         // Test bulk upload efficiency using check_blobs
         let start_time = std::time::Instant::now();
-        let sync_result = client.upload_blobs(&server, &local_hashes).await.unwrap();
+        let sync_result = client.upload_blobs(&server, &local_blob_ids).await.unwrap();
         let sync_duration = start_time.elapsed();
 
         assert_eq!(sync_result.uploaded, 10);
@@ -748,7 +759,7 @@ mod tests {
         println!("Bulk upload of 10 blobs took: {sync_duration:?}");
 
         // Verify all blobs are now on remote by doing another upload (should be 0 uploads)
-        let sync_result2 = client.upload_blobs(&server, &local_hashes).await.unwrap();
+        let sync_result2 = client.upload_blobs(&server, &local_blob_ids).await.unwrap();
         assert_eq!(sync_result2.uploaded, 0);
         assert_eq!(sync_result2.failed, 0);
     }

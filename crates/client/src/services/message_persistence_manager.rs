@@ -478,7 +478,7 @@ impl<T: MessagesManagerTrait> MessagesManagerTrait for GenericMessagePersistence
 
     async fn user_data(
         &self,
-        author: zoe_wire_protocol::keys::Id,
+        author: zoe_wire_protocol::KeyId,
         storage_key: zoe_wire_protocol::StoreKey,
     ) -> Result<Option<MessageFull>> {
         self.messages_manager.user_data(author, storage_key).await

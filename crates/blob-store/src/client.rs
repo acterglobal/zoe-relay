@@ -4,12 +4,13 @@
 //! and can synchronize with remote blob stores via RPC.
 
 use futures::StreamExt;
+use hex;
 use iroh_blobs::{Hash, store::fs::FsStore};
 use std::path::PathBuf;
 use std::sync::Arc;
 use tarpc::context;
 use tracing::{error, info, warn};
-use zoe_wire_protocol::BlobService;
+use zoe_wire_protocol::{BlobId, BlobService};
 
 use crate::{BlobServiceImpl, BlobStoreError};
 
@@ -124,7 +125,7 @@ impl BlobClient {
         &self,
         remote: &BlobServiceImpl,
         hash: &str,
-    ) -> Result<String, BlobStoreError> {
+    ) -> Result<BlobId, BlobStoreError> {
         // Get the blob data locally
         let data = self
             .get_blob(hash)
@@ -151,14 +152,10 @@ impl BlobClient {
     pub async fn download(
         &self,
         remote: &BlobServiceImpl,
-        hash: &str,
+        hash: &BlobId,
     ) -> Result<bool, BlobStoreError> {
         // Download from remote
-        match remote
-            .clone()
-            .download(context::current(), hash.to_string())
-            .await
-        {
+        match remote.clone().download(context::current(), *hash).await {
             Ok(Some(data)) => {
                 // Store locally
                 let local_hash = self.store_blob(data).await?;
@@ -184,7 +181,7 @@ impl BlobClient {
     pub async fn upload_blobs(
         &self,
         remote: &BlobServiceImpl,
-        local_hashes: &[String],
+        local_hashes: &[BlobId],
     ) -> Result<SyncResult, BlobStoreError> {
         if local_hashes.is_empty() {
             return Ok(SyncResult {
@@ -217,7 +214,7 @@ impl BlobClient {
         // Upload blobs that the remote doesn't have
         for (hash, remote_has_blob) in local_hashes.iter().zip(remote_has.iter()) {
             if !remote_has_blob {
-                match self.upload(remote, hash).await {
+                match self.upload(remote, &hash.to_hex()).await {
                     Ok(_) => {
                         uploaded += 1;
                         info!("Successfully uploaded blob {} to remote", hash);
@@ -249,7 +246,7 @@ impl BlobClient {
     pub async fn download_blobs(
         &self,
         remote: &BlobServiceImpl,
-        remote_hashes: &[String],
+        remote_hashes: &[BlobId],
     ) -> Result<SyncResult, BlobStoreError> {
         info!("Downloading {} blobs from remote", remote_hashes.len());
 
@@ -266,7 +263,7 @@ impl BlobClient {
 
         for hash in remote_hashes {
             // Check if we already have it locally
-            if self.has_blob(hash).await? {
+            if self.has_blob(&hash.to_hex()).await? {
                 continue; // Skip if we already have it
             }
 
@@ -305,14 +302,31 @@ impl BlobClient {
     pub async fn sync(
         &self,
         remote: &BlobServiceImpl,
-        local_hashes: Option<&[String]>,
+        local_hashes: Option<&[BlobId]>,
     ) -> Result<SyncResult, BlobStoreError> {
         // Get hashes to sync - either provided ones or all local blobs
         let hashes_to_sync = match local_hashes {
             Some(hashes) => hashes.to_vec(),
             None => {
                 info!("No specific hashes provided, syncing all local blobs");
-                self.list_local_blobs().await?
+                // Convert string hashes to BlobId
+                let string_hashes = self.list_local_blobs().await?;
+                string_hashes
+                    .into_iter()
+                    .filter_map(|s| {
+                        if let Ok(bytes) = hex::decode(&s) {
+                            if bytes.len() == 32 {
+                                let mut array = [0u8; 32];
+                                array.copy_from_slice(&bytes);
+                                Some(BlobId::from_bytes(array))
+                            } else {
+                                None
+                            }
+                        } else {
+                            None
+                        }
+                    })
+                    .collect()
             }
         };
 
@@ -475,18 +489,23 @@ mod tests {
         let hash2 = client.store_blob(blob2_data.clone()).await.unwrap();
         let hash3 = client.store_blob(blob3_data.clone()).await.unwrap();
 
-        let local_hashes = vec![hash1.clone(), hash2.clone(), hash3.clone()];
+        let _local_hashes = [hash1.clone(), hash2.clone(), hash3.clone()];
+        let local_blob_ids = vec![
+            BlobId::from_content(&blob1_data),
+            BlobId::from_content(&blob2_data),
+            BlobId::from_content(&blob3_data),
+        ];
 
         // Verify remote doesn't have these blobs initially
         let remote_has = remote
             .clone()
-            .check_blobs(tarpc::context::current(), local_hashes.clone())
+            .check_blobs(tarpc::context::current(), local_blob_ids.clone())
             .await
             .unwrap();
         assert_eq!(remote_has, vec![false, false, false]);
 
         // Perform sync
-        let sync_result = client.sync(&remote, Some(&local_hashes)).await.unwrap();
+        let sync_result = client.sync(&remote, Some(&local_blob_ids)).await.unwrap();
 
         // All blobs should have been uploaded
         assert_eq!(sync_result.uploaded, 3);
@@ -496,7 +515,7 @@ mod tests {
         // Verify remote now has all blobs
         let remote_has_after = remote
             .clone()
-            .check_blobs(tarpc::context::current(), local_hashes)
+            .check_blobs(tarpc::context::current(), local_blob_ids.clone())
             .await
             .unwrap();
         assert_eq!(remote_has_after, vec![true, true, true]);
@@ -504,7 +523,7 @@ mod tests {
         // Verify data integrity
         let remote_blob1 = remote
             .clone()
-            .download(tarpc::context::current(), hash1)
+            .download(tarpc::context::current(), local_blob_ids[0])
             .await
             .unwrap()
             .unwrap();
@@ -540,18 +559,24 @@ mod tests {
             .await
             .unwrap();
 
-        let local_hashes = vec![hash1.clone(), hash2.clone(), hash3.clone(), hash4.clone()];
+        let _local_hashes = [hash1.clone(), hash2.clone(), hash3.clone(), hash4.clone()];
+        let local_blob_ids = vec![
+            BlobId::from_content(&blob1_data),
+            BlobId::from_content(&blob2_data),
+            BlobId::from_content(&blob3_data),
+            BlobId::from_content(&blob4_data),
+        ];
 
         // Verify remote has some but not all blobs initially
         let remote_has = remote
             .clone()
-            .check_blobs(tarpc::context::current(), local_hashes.clone())
+            .check_blobs(tarpc::context::current(), local_blob_ids.clone())
             .await
             .unwrap();
         assert_eq!(remote_has, vec![true, false, true, false]); // has 1&3, missing 2&4
 
         // Perform sync
-        let sync_result = client.sync(&remote, Some(&local_hashes)).await.unwrap();
+        let sync_result = client.sync(&remote, Some(&local_blob_ids)).await.unwrap();
 
         // Only the missing blobs should have been uploaded
         assert_eq!(sync_result.uploaded, 2); // blob2 and blob4
@@ -561,7 +586,7 @@ mod tests {
         // Verify remote now has all blobs
         let remote_has_after = remote
             .clone()
-            .check_blobs(tarpc::context::current(), local_hashes)
+            .check_blobs(tarpc::context::current(), local_blob_ids.clone())
             .await
             .unwrap();
         assert_eq!(remote_has_after, vec![true, true, true, true]);
@@ -569,7 +594,7 @@ mod tests {
         // Verify data integrity of newly uploaded blobs
         let remote_blob2 = remote
             .clone()
-            .download(tarpc::context::current(), hash2)
+            .download(tarpc::context::current(), local_blob_ids[1])
             .await
             .unwrap()
             .unwrap();
@@ -577,7 +602,7 @@ mod tests {
 
         let remote_blob4 = remote
             .clone()
-            .download(tarpc::context::current(), hash4)
+            .download(tarpc::context::current(), local_blob_ids[3])
             .await
             .unwrap()
             .unwrap();
@@ -610,21 +635,24 @@ mod tests {
             .unwrap();
 
         // Verify hashes match (content-based addressing)
-        assert_eq!(hash1, remote_hash1);
-        assert_eq!(hash2, remote_hash2);
+        let local_blob_id1 = BlobId::from_content(&blob1_data);
+        let local_blob_id2 = BlobId::from_content(&blob2_data);
+        assert_eq!(local_blob_id1, remote_hash1);
+        assert_eq!(local_blob_id2, remote_hash2);
 
-        let local_hashes = vec![hash1.clone(), hash2.clone()];
+        let _local_hashes = [hash1.clone(), hash2.clone()];
+        let local_blob_ids = vec![local_blob_id1, local_blob_id2];
 
         // Verify remote has all blobs initially
         let remote_has = remote
             .clone()
-            .check_blobs(tarpc::context::current(), local_hashes.clone())
+            .check_blobs(tarpc::context::current(), local_blob_ids.clone())
             .await
             .unwrap();
         assert_eq!(remote_has, vec![true, true]);
 
         // Perform sync
-        let sync_result = client.sync(&remote, Some(&local_hashes)).await.unwrap();
+        let sync_result = client.sync(&remote, Some(&local_blob_ids)).await.unwrap();
 
         // No blobs should have been uploaded
         assert_eq!(sync_result.uploaded, 0);
@@ -634,7 +662,7 @@ mod tests {
         // Verify remote still has all blobs
         let remote_has_after = remote
             .clone()
-            .check_blobs(tarpc::context::current(), local_hashes)
+            .check_blobs(tarpc::context::current(), local_blob_ids)
             .await
             .unwrap();
         assert_eq!(remote_has_after, vec![true, true]);
@@ -646,7 +674,7 @@ mod tests {
         let client = create_test_client().await;
         let remote = create_test_remote_service().await;
 
-        let empty_hashes: Vec<String> = vec![];
+        let empty_hashes: Vec<BlobId> = vec![];
 
         // Perform sync with empty input
         let sync_result = client.sync(&remote, Some(&empty_hashes)).await.unwrap();
@@ -664,14 +692,16 @@ mod tests {
         let remote = create_test_remote_service().await;
 
         let mut local_hashes = Vec::new();
+        let mut local_blob_ids = Vec::new();
         let mut blob_data = Vec::new();
 
         // Create 10 blobs
         for i in 0..10 {
             let data = format!("Large batch blob {i}").into_bytes();
             blob_data.push(data.clone());
-            let hash = client.store_blob(data).await.unwrap();
+            let hash = client.store_blob(data.clone()).await.unwrap();
             local_hashes.push(hash);
+            local_blob_ids.push(BlobId::from_content(&data));
         }
 
         // Pre-populate remote with every other blob (0, 2, 4, 6, 8)
@@ -684,7 +714,7 @@ mod tests {
         }
 
         // Perform sync
-        let sync_result = client.sync(&remote, Some(&local_hashes)).await.unwrap();
+        let sync_result = client.sync(&remote, Some(&local_blob_ids)).await.unwrap();
 
         // Should upload 5 blobs (the odd-numbered ones: 1, 3, 5, 7, 9)
         assert_eq!(sync_result.uploaded, 5);
@@ -694,7 +724,7 @@ mod tests {
         // Verify remote now has all blobs
         let remote_has_after = remote
             .clone()
-            .check_blobs(tarpc::context::current(), local_hashes)
+            .check_blobs(tarpc::context::current(), local_blob_ids)
             .await
             .unwrap();
         assert_eq!(remote_has_after, vec![true; 10]);
@@ -716,10 +746,15 @@ mod tests {
         let hash3 = client.store_blob(blob3_data.clone()).await.unwrap();
 
         // Verify remote doesn't have these blobs initially
-        let all_local_hashes = vec![hash1.clone(), hash2.clone(), hash3.clone()];
+        let _all_local_hashes = [hash1.clone(), hash2.clone(), hash3.clone()];
+        let all_local_blob_ids = vec![
+            BlobId::from_content(&blob1_data),
+            BlobId::from_content(&blob2_data),
+            BlobId::from_content(&blob3_data),
+        ];
         let remote_has = remote
             .clone()
-            .check_blobs(tarpc::context::current(), all_local_hashes.clone())
+            .check_blobs(tarpc::context::current(), all_local_blob_ids.clone())
             .await
             .unwrap();
         assert_eq!(remote_has, vec![false, false, false]);
@@ -735,7 +770,7 @@ mod tests {
         // Verify remote now has all blobs
         let remote_has_after = remote
             .clone()
-            .check_blobs(tarpc::context::current(), all_local_hashes)
+            .check_blobs(tarpc::context::current(), all_local_blob_ids.clone())
             .await
             .unwrap();
         assert_eq!(remote_has_after, vec![true, true, true]);
@@ -743,7 +778,7 @@ mod tests {
         // Verify data integrity
         let remote_blob2 = remote
             .clone()
-            .download(tarpc::context::current(), hash2)
+            .download(tarpc::context::current(), all_local_blob_ids[1])
             .await
             .unwrap()
             .unwrap();
@@ -779,10 +814,14 @@ mod tests {
         assert_eq!(sync_result.failed, 0);
 
         // Verify remote now has both blobs
-        let all_hashes = vec![hash1.clone(), hash2.clone()];
+        let _all_hashes = [hash1.clone(), hash2.clone()];
+        let all_blob_ids = vec![
+            BlobId::from_content(&blob1_data),
+            BlobId::from_content(&blob2_data),
+        ];
         let remote_has_after = remote
             .clone()
-            .check_blobs(tarpc::context::current(), all_hashes)
+            .check_blobs(tarpc::context::current(), all_blob_ids)
             .await
             .unwrap();
         assert_eq!(remote_has_after, vec![true, true]);

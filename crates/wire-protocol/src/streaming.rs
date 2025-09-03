@@ -1,10 +1,11 @@
 use serde::{Deserialize, Serialize};
+use std::hash::Hash as StdHash;
 use tarpc::{ClientMessage, Response};
 
-use crate::{keys::Id as KeyId, Hash, MessageFull, StoreKey, Tag};
+use crate::{Hash, KeyId, MessageFull, StoreKey, Tag};
 
 /// Unified filter type for different kinds of message filtering
-#[derive(Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, StdHash, Serialize, Deserialize)]
 pub enum Filter {
     /// Filter by message author
     Author(KeyId),
@@ -30,7 +31,7 @@ impl std::fmt::Debug for Filter {
 impl Filter {
     pub fn matches(&self, message: &MessageFull) -> bool {
         if let Filter::Author(author) = self {
-            return message.author().id() == author;
+            return message.author().id() == *author;
         }
         for t in message.tags() {
             match (t, &self) {
@@ -416,7 +417,7 @@ mod tests {
         let signing_key = ed25519_dalek::SigningKey::generate(&mut seed_rng);
         let verifying_key = signing_key.verifying_key();
 
-        *crate::keys::VerifyingKey::Ed25519(Box::new(verifying_key)).id()
+        crate::keys::VerifyingKey::Ed25519(Box::new(verifying_key)).id()
     }
 
     #[test]

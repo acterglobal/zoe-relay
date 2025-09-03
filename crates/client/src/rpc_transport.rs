@@ -61,7 +61,7 @@ impl<TarpcMsg> RpcMessageListener<TarpcMsg> {
         let is_targeted = message.tags().iter().any(|tag| {
             if let Tag::User { id, .. } = tag {
                 tracing::debug!("Checking tag user ID: {}", hex::encode(id));
-                id == &our_public_key
+                id.as_bytes() == &our_public_key
             } else {
                 false
             }

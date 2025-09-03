@@ -31,6 +31,7 @@ use crate::error::{ClientError, Result};
 #[cfg(any(feature = "mock", test))]
 use crate::services::MockBlobStore;
 use crate::services::{BlobService, BlobStore};
+use hex;
 use std::path::Path;
 use std::sync::Arc;
 use tokio::fs;
@@ -38,6 +39,7 @@ use tracing::{debug, info, warn};
 use zoe_app_primitives::FileRef;
 use zoe_blob_store::BlobClient;
 use zoe_encrypted_storage::{CompressionConfig, ConvergentEncryption};
+use zoe_wire_protocol::BlobId;
 
 // FileRef is now defined in zoe-app-primitives and imported above
 
@@ -133,7 +135,7 @@ impl<B: BlobStore> FileStorage<B> {
         // Push to remote blob service
         match self.remote_blob_service.upload_blob(&encrypted_data).await {
             Ok(remote_hash) => {
-                if remote_hash == blob_hash {
+                if remote_hash.to_hex() == blob_hash {
                     info!("File successfully pushed to remote storage: {}", blob_hash);
                 } else {
                     warn!(
@@ -217,7 +219,7 @@ impl<B: BlobStore> FileStorage<B> {
         // Push to remote blob service if available
         match self.remote_blob_service.upload_blob(&encrypted_data).await {
             Ok(remote_hash) => {
-                if remote_hash == blob_hash {
+                if remote_hash.to_hex() == blob_hash {
                     info!("Data successfully pushed to remote storage: {}", blob_hash);
                 } else {
                     warn!(
@@ -296,11 +298,22 @@ impl<B: BlobStore> FileStorage<B> {
             }
             None => {
                 // Try to fetch from remote if available
-                match self
-                    .remote_blob_service
-                    .get_blob(&stored_info.blob_hash)
-                    .await
-                {
+                // Convert string hash to BlobId
+                let blob_id = match hex::decode(&stored_info.blob_hash) {
+                    Ok(bytes) if bytes.len() == 32 => {
+                        let mut array = [0u8; 32];
+                        array.copy_from_slice(&bytes);
+                        BlobId::from_bytes(array)
+                    }
+                    _ => {
+                        return Err(ClientError::FileStorage(format!(
+                            "Invalid blob hash: {}",
+                            stored_info.blob_hash
+                        )));
+                    }
+                };
+
+                match self.remote_blob_service.get_blob(&blob_id).await {
                     Ok(remote_data) => {
                         info!("Successfully retrieved blob from remote storage");
                         // Store the fetched data locally for future use
@@ -443,12 +456,12 @@ impl FileStorage<MockBlobStore> {
         mock_blob_service.expect_upload_blob().returning(|data| {
             // Return a deterministic hash based on the data
             let hash = blake3::hash(data);
-            Ok(hex::encode(hash.as_bytes()))
+            Ok(BlobId::from(hash))
         });
 
         mock_blob_service.expect_get_blob().returning(|_| {
             Err(crate::services::BlobError::NotFound {
-                hash: "test".to_string(),
+                hash: BlobId::from_content(b"test"),
             })
         });
 

@@ -5,11 +5,14 @@ pub mod storage;
 #[cfg(test)]
 mod tests;
 
+#[cfg(test)]
+mod blob_storage_tests;
+
 pub use error::{Result, StorageError};
 pub use sqlite::SqliteMessageStorage;
 pub use storage::{
-    MessageQuery, MessageStorage, RelaySyncStatus, StateNamespace, StateStorage, StorageConfig,
-    StorageStats, SubscriptionState,
+    BlobStorage, BlobUploadStatus, MessageQuery, MessageStorage, RelaySyncStatus, StateNamespace,
+    StateStorage, StorageConfig, StorageStats, SubscriptionState,
 };
 
 // Storage factory for creating appropriate storage implementations

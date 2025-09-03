@@ -138,6 +138,7 @@ pub mod crypto;
 pub mod inbox;
 pub mod keys;
 pub mod message;
+pub mod primitives;
 pub mod relay;
 pub mod services;
 pub mod streaming;
@@ -154,6 +155,7 @@ pub use services::*;
 pub use streaming::*; // Re-export streaming protocol types
 pub use version::*; // Re-export protocol version negotiation types
 
+pub use primitives::*;
 // Re-export keys types for convenient access
 pub use keys::*;
 

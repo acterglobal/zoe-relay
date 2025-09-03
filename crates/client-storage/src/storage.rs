@@ -14,9 +14,9 @@ use mockall::{automock, predicate::*};
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum StateNamespace {
     /// PQXDH protocol session states for a specific verification key
-    PqxdhSession(zoe_wire_protocol::Id),
+    PqxdhSession(zoe_wire_protocol::KeyId),
     /// Group encryption session states for a specific client key
-    GroupSession(zoe_wire_protocol::Id),
+    GroupSession(zoe_wire_protocol::KeyId),
     // Any other namespace
     Custom(Vec<u8>),
 }
@@ -150,6 +150,19 @@ pub struct RelaySyncStatus {
     pub synced_at: u64,
 }
 
+/// Upload status for a blob on a specific relay
+#[derive(Debug, Clone)]
+pub struct BlobUploadStatus {
+    /// Hash of the blob content
+    pub blob_hash: Hash,
+    /// Hash of the relay server's Ed25519 public key (using VerifyingKey.id())
+    pub relay_id: Hash,
+    /// Unix timestamp when upload was confirmed
+    pub uploaded_at: u64,
+    /// Size of the blob in bytes
+    pub blob_size: u64,
+}
+
 /// Trait defining the storage interface for messages
 #[cfg_attr(any(feature = "mock", test), automock())]
 #[async_trait]
@@ -273,6 +286,65 @@ pub trait MessageStorage: Send + Sync {
     /// Delete subscription state for a specific relay
     async fn delete_subscription_state(&self, relay_id: &Hash)
     -> Result<bool, crate::StorageError>;
+}
+
+/// Trait defining the storage interface for blob upload tracking
+#[cfg_attr(any(feature = "mock", test), automock())]
+#[async_trait]
+pub trait BlobStorage: Send + Sync {
+    /// Mark a blob as uploaded to a specific relay
+    async fn mark_blob_uploaded(
+        &self,
+        blob_hash: &Hash,
+        relay_id: &Hash,
+        blob_size: u64,
+    ) -> Result<(), crate::StorageError>;
+
+    /// Check if a blob has been uploaded to a specific relay
+    async fn is_blob_uploaded(
+        &self,
+        blob_hash: &Hash,
+        relay_id: &Hash,
+    ) -> Result<bool, crate::StorageError>;
+
+    /// Get all blobs that have not been uploaded to a specific relay
+    async fn get_unuploaded_blobs_for_relay(
+        &self,
+        relay_id: &Hash,
+        limit: Option<usize>,
+    ) -> Result<Vec<Hash>, crate::StorageError>;
+
+    /// Get upload status for a specific blob across all relays
+    async fn get_blob_upload_status(
+        &self,
+        blob_hash: &Hash,
+    ) -> Result<Vec<BlobUploadStatus>, crate::StorageError>;
+
+    /// Get all blobs uploaded to a specific relay
+    async fn get_uploaded_blobs_for_relay(
+        &self,
+        relay_id: &Hash,
+        limit: Option<usize>,
+    ) -> Result<Vec<BlobUploadStatus>, crate::StorageError>;
+
+    /// Remove blob upload record (when blob is deleted)
+    async fn remove_blob_upload_record(
+        &self,
+        blob_hash: &Hash,
+        relay_id: Option<Hash>, // If None, remove from all relays
+    ) -> Result<u64, crate::StorageError>; // Returns number of records removed
+
+    /// Get total number of blobs uploaded to a specific relay
+    async fn get_uploaded_blob_count_for_relay(
+        &self,
+        relay_id: &Hash,
+    ) -> Result<u64, crate::StorageError>;
+
+    /// Get total storage size of blobs uploaded to a specific relay
+    async fn get_uploaded_blob_size_for_relay(
+        &self,
+        relay_id: &Hash,
+    ) -> Result<u64, crate::StorageError>;
 }
 
 /// Trait defining a key-value storage interface for arbitrary state data.

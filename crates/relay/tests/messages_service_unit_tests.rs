@@ -1,7 +1,7 @@
 use futures_util::StreamExt;
 use rand::rngs::OsRng;
 use zoe_wire_protocol::{
-    CatchUpRequest, Filter, FilterOperation, FilterUpdateRequest, KeyPair, Kind, Message,
+    CatchUpRequest, Filter, FilterOperation, FilterUpdateRequest, KeyId, KeyPair, Kind, Message,
     MessageFilters, MessageFull, Tag, VerifyingKey,
 };
 
@@ -61,12 +61,12 @@ async fn test_filter_operations_with_new_types() {
 
     // Test adding authors
     let alice_key = create_test_verifying_key(b"alice");
-    let add_authors = FilterOperation::add_authors(vec![*alice_key.id()]);
+    let add_authors = FilterOperation::add_authors(vec![KeyId::from(*alice_key.id())]);
     filters.apply_operation(&add_authors);
 
     // Check that author was added
     if let Some(filter_list) = &filters.filters {
-        assert!(filter_list.contains(&Filter::Author(*alice_key.id())));
+        assert!(filter_list.contains(&Filter::Author(KeyId::from(*alice_key.id()))));
     }
 
     // Test clear
@@ -167,7 +167,7 @@ async fn test_filter_update_request() {
     // Test FilterUpdateRequest with new operations
     let operations = vec![
         FilterOperation::add_channels(vec![b"general".to_vec(), b"tech".to_vec()]),
-        FilterOperation::add_authors(vec![*alice_key.id()]),
+        FilterOperation::add_authors(vec![KeyId::from(*alice_key.id())]),
         FilterOperation::add_events(vec![zoe_wire_protocol::hash(b"important")]),
     ];
 
@@ -182,7 +182,7 @@ async fn test_filter_update_request() {
     if let Some(filter_list) = &filters.filters {
         assert!(filter_list.contains(&Filter::Channel(b"general".to_vec())));
         assert!(filter_list.contains(&Filter::Channel(b"tech".to_vec())));
-        assert!(filter_list.contains(&Filter::Author(*alice_key.id())));
+        assert!(filter_list.contains(&Filter::Author(KeyId::from(*alice_key.id()))));
         assert!(filter_list.contains(&Filter::Event(zoe_wire_protocol::hash(b"important"))));
     } else {
         panic!("Expected filters to be Some");

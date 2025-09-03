@@ -129,7 +129,7 @@ async fn test_user_data_storage_and_lookup() -> Result<()> {
     info!("📡 Connected to message service for user data test");
 
     // Subscribe to user data messages FIRST
-    let user_filter = Filter::User(*client.public_key().id());
+    let user_filter = Filter::User(zoe_wire_protocol::KeyId::from(*client.public_key().id()));
 
     messages_service
         .ensure_contains_filter(user_filter)
@@ -170,7 +170,10 @@ async fn test_user_data_storage_and_lookup() -> Result<()> {
 
     // now we fetch the user data
     let user_data = messages_service
-        .user_data(*client.public_key().id(), StoreKey::CustomKey(3))
+        .user_data(
+            zoe_wire_protocol::KeyId::from(*client.public_key().id()),
+            StoreKey::CustomKey(3),
+        )
         .await?;
 
     // Collect user data messages

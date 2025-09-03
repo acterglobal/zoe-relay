@@ -1,3 +1,4 @@
+use crate::BlobId;
 use serde::{Deserialize, Serialize};
 
 /// Blob store service for file upload/download operations
@@ -7,20 +8,20 @@ pub trait BlobService {
     async fn health_check() -> BlobResult<BlobHealth>;
 
     /// Upload a blob and return its hash
-    async fn upload(data: Vec<u8>) -> BlobResult<String>;
+    async fn upload(data: Vec<u8>) -> BlobResult<BlobId>;
 
     /// Download a blob by its hash
-    async fn download(hash: String) -> BlobResult<Option<Vec<u8>>>;
+    async fn download(hash: BlobId) -> BlobResult<Option<Vec<u8>>>;
 
     /// Get information about a blob
-    async fn get_info(hash: String) -> BlobResult<Option<BlobInfo>>;
+    async fn get_info(hash: BlobId) -> BlobResult<Option<BlobInfo>>;
 
     // Bulk operations for sync
     /// Check which blobs the server already has stored.
     /// Returns a vec of `bool` in the same order as the input, where:
     /// - `true` means the server has the blob stored
     /// - `false` means the server doesn't have this blob yet
-    async fn check_blobs(hashes: Vec<String>) -> BlobResult<Vec<bool>>;
+    async fn check_blobs(hashes: Vec<BlobId>) -> BlobResult<Vec<bool>>;
 }
 
 /// Result type for blob operations
@@ -37,7 +38,7 @@ pub struct BlobHealth {
 /// Information about a stored blob
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BlobInfo {
-    pub hash: String,
+    pub hash: BlobId,
     pub size_bytes: u64,
     pub created_at: String,
 }
@@ -46,10 +47,10 @@ pub struct BlobInfo {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, thiserror::Error)]
 pub enum BlobError {
     #[error("Blob not found: {hash}")]
-    NotFound { hash: String },
+    NotFound { hash: BlobId },
 
     #[error("Invalid blob hash: {hash}")]
-    InvalidHash { hash: String },
+    InvalidHash { hash: BlobId },
 
     #[error("Storage error: {message}")]
     StorageError { message: String },

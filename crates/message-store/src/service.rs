@@ -4,7 +4,7 @@ use std::sync::Arc;
 use tokio::sync::{mpsc, RwLock};
 use tracing::{error, info, warn};
 use zoe_wire_protocol::{
-    keys::Id as KeyId, CatchUpRequest, CatchUpResponse, FilterOperation, FilterUpdateRequest, Hash,
+    CatchUpRequest, CatchUpResponse, FilterOperation, FilterUpdateRequest, Hash, KeyId,
     MessageError, MessageFilters, MessageFull, MessageService as MessageServiceRpc, PublishResult,
     StoreKey, StreamMessage, SubscriptionConfig,
 };

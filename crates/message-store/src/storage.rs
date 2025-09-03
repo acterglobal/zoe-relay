@@ -7,7 +7,7 @@ use redis::{
 };
 use tracing::{debug, error, info, trace, warn};
 use zoe_wire_protocol::{
-    Filter, Hash, Id as KeyId, MessageFilters, MessageFull, PublishResult, StoreKey, Tag,
+    Filter, Hash, KeyId, MessageFilters, MessageFull, PublishResult, StoreKey, Tag,
 };
 
 use crate::error::{MessageStoreError, Result};
@@ -253,9 +253,9 @@ impl RedisMessageStorage {
 
         // Collect all script arguments upfront
         let mut script_args = vec![
-            storage_value.to_vec(),         // ARGV[1] - message data
-            msg_id_bytes.to_vec(),          // ARGV[2] - message ID bytes
-            message.author().id().to_vec(), // ARGV[3] - author ID bytes
+            storage_value.to_vec(),                    // ARGV[1] - message data
+            msg_id_bytes.to_vec(),                     // ARGV[2] - message ID bytes
+            message.author().id().as_bytes().to_vec(), // ARGV[3] - author ID bytes
         ];
         script_args.push(
             ex_time
@@ -273,7 +273,7 @@ impl RedisMessageStorage {
                 }
                 Tag::User { id: user_id, .. } => {
                     script_args.push(USER_KEY.as_bytes().to_vec());
-                    script_args.push(user_id.to_vec());
+                    script_args.push(user_id.as_bytes().to_vec());
                 }
                 Tag::Channel { id: channel_id, .. } => {
                     script_args.push(CHANNEL_KEY.as_bytes().to_vec());
@@ -749,7 +749,7 @@ impl RedisMessageStorage {
                                     if let Some(filter_list) = &filters.filters {
                                         for filter in filter_list {
                                             if let Filter::Author(author_id) = filter {
-                                                if value == author_id {
+                                                if value == author_id.as_bytes() {
                                                     should_yield = true;
                                                     break 'meta;
                                                 }
@@ -761,7 +761,7 @@ impl RedisMessageStorage {
                                     if let Some(filter_list) = &filters.filters {
                                         for filter in filter_list {
                                             if let Filter::User(user_id) = filter {
-                                                if value == user_id {
+                                                if value == user_id.as_bytes() {
                                                     should_yield = true;
                                                     break 'meta;
                                                 }

@@ -11,7 +11,7 @@ sqlite = ["rusqlite", "refinery"]
 mock = ["mockall"]
 
 [dependencies]
-zoe-wire-protocol = { path = "../wire-protocol" }
+zoe-wire-protocol = { path = "../wire-protocol", features = ["rusqlite"] }
 
 # Async runtime
 tokio = { workspace = true }
@@ -48,6 +48,9 @@ tokio-test = { workspace = true }
 tempfile = { workspace = true }
 test-case = { workspace = true }
 serial_test = { workspace = true }
+
+# Mock testing support
+mockall = { workspace = true }
 
 # Crypto and utilities for tests
 rand = { workspace = true }

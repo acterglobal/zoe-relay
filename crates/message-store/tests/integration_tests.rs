@@ -3,8 +3,8 @@ use rand::rngs::OsRng;
 use std::{sync::Arc, time::SystemTime};
 use zoe_message_store::RedisMessageStorage;
 use zoe_wire_protocol::{
-    keys::Id as KeyId, Filter, FilterOperation, FilterUpdateRequest, KeyPair, Kind, Message,
-    MessageFilters, MessageFull, Tag, VerifyingKey,
+    Filter, FilterOperation, FilterUpdateRequest, KeyId, KeyPair, Kind, Message, MessageFilters,
+    MessageFull, Tag, VerifyingKey,
 };
 
 // Helper function to create test VerifyingKeys from byte arrays
@@ -20,7 +20,7 @@ fn create_test_verifying_key_id(bytes: &[u8]) -> KeyId {
     let signing_key = ed25519_dalek::SigningKey::generate(&mut seed_rng);
     let verifying_key = signing_key.verifying_key();
 
-    *VerifyingKey::Ed25519(Box::new(verifying_key)).id()
+    KeyId::from(*VerifyingKey::Ed25519(Box::new(verifying_key)).id())
 }
 
 async fn setup_test_storage() -> RedisMessageStorage {
@@ -777,14 +777,17 @@ async fn test_all_signature_types_comprehensive() {
     let ed25519_author_id = *ed25519_keypair.public_key().id();
     let ml_dsa_65_author_id = *ml_dsa_65_keypair.public_key().id();
 
-    println!("🔍 Ed25519 author ID: {}", hex::encode(ed25519_author_id));
+    println!(
+        "🔍 Ed25519 author ID: {}",
+        hex::encode(ed25519_author_id.as_bytes())
+    );
     println!(
         "🔍 ML-DSA-65 author ID: {}",
-        hex::encode(ml_dsa_65_author_id)
+        hex::encode(ml_dsa_65_author_id.as_bytes())
     );
 
     // Filter by Ed25519 author
-    let ed25519_filter = Filter::Author(ed25519_author_id);
+    let ed25519_filter = Filter::Author(KeyId::from(ed25519_author_id));
     let ed25519_author_stream = storage
         .catch_up(&ed25519_filter, None)
         .await
@@ -816,7 +819,7 @@ async fn test_all_signature_types_comprehensive() {
     );
 
     // Filter by ML-DSA-65 author
-    let ml_dsa_65_filter = Filter::Author(ml_dsa_65_author_id);
+    let ml_dsa_65_filter = Filter::Author(KeyId::from(ml_dsa_65_author_id));
     let ml_dsa_65_author_stream = storage
         .catch_up(&ml_dsa_65_filter, None)
         .await

@@ -35,6 +35,8 @@ use std::collections::BTreeMap;
 use std::collections::btree_map::Entry;
 use std::sync::Arc;
 
+use zoe_wire_protocol::KeyId;
+
 use tokio::sync::RwLock;
 use tokio::task::JoinHandle;
 
@@ -115,7 +117,7 @@ impl<S: StateStorage + 'static, M: MessagesManagerTrait + 'static> SessionManage
             storage.clone(),
             messages_manager.clone(),
             client_keypair.clone(),
-            StateNamespace::PqxdhSession(*client_keypair.id()),
+            StateNamespace::PqxdhSession(KeyId::from(*client_keypair.id())),
         )
         .await?;
 
@@ -202,7 +204,7 @@ impl<S: StateStorage + 'static, M: MessagesManagerTrait + 'static> SessionManage
                     self.storage.clone(),
                     protocol,
                     handler.clone(),
-                    StateNamespace::PqxdhSession(*self.client_keypair.id()),
+                    StateNamespace::PqxdhSession(KeyId::from(*self.client_keypair.id())),
                     true,
                 )
                 .await?;
@@ -220,11 +222,11 @@ impl<S: StateStorage + 'static, M: MessagesManagerTrait + 'static> SessionManage
         storage: Arc<S>,
         client_keypair: Arc<zoe_wire_protocol::KeyPair>,
     ) -> SessionManagerResult<(Arc<GroupManager>, JoinHandle<()>)> {
-        let namespace = StateNamespace::GroupSession(*client_keypair.id());
+        let namespace = StateNamespace::GroupSession(KeyId::from(*client_keypair.id()));
         let sessions: Vec<(Vec<u8>, zoe_state_machine::GroupSession)> = storage
             .list_namespace_data(&namespace)
             .await
-            .map_err(|e| SessionManagerError::Storage(e))?;
+            .map_err(SessionManagerError::Storage)?;
 
         let group_manager = Arc::new(
             GroupManager::builder()
@@ -406,7 +408,7 @@ mod tests {
 
     #[allow(dead_code)]
     fn create_test_namespace(keypair: &KeyPair) -> StateNamespace {
-        StateNamespace::PqxdhSession(*keypair.public_key().id())
+        StateNamespace::PqxdhSession(KeyId::from(*keypair.public_key().id()))
     }
 
     /// Test SessionManagerBuilder creation and configuration

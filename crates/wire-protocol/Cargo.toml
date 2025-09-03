@@ -10,6 +10,7 @@ license = "MIT OR Apache-2.0"
 default = []
 client = []
 server = []
+rusqlite = ["dep:rusqlite"]
 
 [dependencies]
 # Async runtime
@@ -77,6 +78,9 @@ async-trait = { workspace = true }
 
 # RPC framework
 tarpc = { workspace = true }
+
+# Optional database support
+rusqlite = { workspace = true, optional = true }
 
 [dev-dependencies]
 # Testing framework
