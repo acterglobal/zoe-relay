@@ -1,6 +1,20 @@
 [package]
 name = "zoe-wa-bot"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
+
+[[bin]]
+name = "zoe-wa-bot"
+path = "src/main.rs"
 
 [dependencies]
+zoe-client = { path = "../client", features = ["cli"] }
+whatsmeow = { path = "../whatsmeow" }
+zoe-app-primitives = { path = "../app-primitives" }
+tokio = { workspace = true}
+tokio-stream = { workspace = true}
+clap = { workspace = true}
+anyhow = { workspace = true }
+tracing = { workspace = true }
+serde = { workspace = true }
+chrono = { workspace = true }

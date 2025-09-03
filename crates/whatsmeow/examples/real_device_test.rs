@@ -2,6 +2,7 @@ use qrcode::render::unicode;
 use qrcode::QrCode;
 use std::io::{self, Write};
 use whatsmeow::{ConnectionStatus, WhatsAppBot};
+use tempfile::tempdir;
 
 /// Display a QR code in scannable ASCII format
 fn display_qr_code(qr_data: &str) {
@@ -94,7 +95,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Step 1: Create bot
     println!("\n1️⃣ Creating WhatsApp bot...");
-    let bot = WhatsAppBot::new()?;
+    let temp_dir = tempdir().unwrap();
+    let bot = ZoeWhatsAppBot::new(temp_dir.path().join("whatsapp.db").to_str().unwrap());
     println!("   ✅ Bot created successfully");
 
     // Step 2: Get QR code for authentication

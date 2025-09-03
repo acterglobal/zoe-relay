@@ -8356,11 +8356,14 @@ dependencies = [
  "anyhow",
  "bindgen",
  "chrono",
+ "lazy_static",
  "libc",
  "qrcode",
  "serde",
  "serde_json",
+ "tempfile",
  "tokio",
+ "tokio-stream",
 ]
 
 [[package]]
@@ -9418,6 +9421,18 @@ dependencies = [
 [[package]]
 name = "zoe-wa-bot"
 version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "clap",
+ "serde",
+ "tokio",
+ "tokio-stream",
+ "tracing",
+ "whatsmeow",
+ "zoe-app-primitives",
+ "zoe-client",
+]
 
 [[package]]
 name = "zoe-wire-protocol"

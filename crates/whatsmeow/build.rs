@@ -14,18 +14,40 @@ fn main() {
 
 fn setup_ffi() {
     let manifest_dir = env::var("CARGO_MANIFEST_DIR").unwrap();
-    let lib_path = PathBuf::from(&manifest_dir).join("libwhatsmeow.so");
+    let static_lib_path = PathBuf::from(&manifest_dir).join("libwhatsmeow.a");
+    let shared_lib_path = PathBuf::from(&manifest_dir).join("libwhatsmeow.so");
     let header_path = PathBuf::from(&manifest_dir).join("libwhatsmeow.h");
 
-    // Check if library files exist
-    if !lib_path.exists() || !header_path.exists() {
-        println!("cargo:warning=Go library not found. Run: go build -buildmode=c-shared -o libwhatsmeow.so whatsmeow.go");
+    // Prefer static library, fall back to shared
+    let (_lib_path, link_type) = if static_lib_path.exists() {
+        (static_lib_path, "static")
+    } else if shared_lib_path.exists() {
+        (shared_lib_path, "dylib")
+    } else {
+        println!("cargo:warning=Go library not found. Run one of:");
+        println!("cargo:warning=  Static: go build -buildmode=c-archive -o libwhatsmeow.a whatsmeow.go");
+        println!("cargo:warning=  Shared: go build -buildmode=c-shared -o libwhatsmeow.so whatsmeow.go");
+        return;
+    };
+
+    // Check if header exists
+    if !header_path.exists() {
+        println!("cargo:warning=Header file not found: {}", header_path.display());
         return;
     }
 
     // Tell Cargo to link the library
     println!("cargo:rustc-link-search=native={manifest_dir}");
-    println!("cargo:rustc-link-lib=dylib=whatsmeow");
+    println!("cargo:rustc-link-lib={}=whatsmeow", link_type);
+    
+    // For static linking, we need to link Go runtime dependencies
+    if link_type == "static" {
+        println!("cargo:rustc-link-lib=static=pthread");
+        println!("cargo:rustc-link-lib=static=dl");
+        println!("cargo:rustc-link-lib=static=m");
+        // Link libgcc and other Go runtime dependencies
+        println!("cargo:rustc-link-lib=dylib=gcc_s");
+    }
 
     // Link system libraries
     let target_os = env::var("CARGO_CFG_TARGET_OS").unwrap();
