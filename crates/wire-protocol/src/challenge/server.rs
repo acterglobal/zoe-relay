@@ -9,7 +9,7 @@ use rand::RngCore;
 use std::collections::BTreeSet;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tracing::{debug, info, warn};
+use tracing::{debug, warn};
 
 /// Performs a multi-challenge handshake with a client
 ///
@@ -51,31 +51,31 @@ use tracing::{debug, info, warn};
 ///     &server_keypair
 /// ).await?;
 ///
-/// info!("Verified {} keys after multi-challenge handshake", verified_keys.len());
+/// debug!("Verified {} keys after multi-challenge handshake", verified_keys.len());
 /// ```
 pub async fn perform_multi_challenge_handshake(
     mut send: SendStream,
     mut recv: RecvStream,
     server_keypair: &KeyPair,
 ) -> Result<BTreeSet<Vec<u8>>> {
-    info!("🔐 Starting multi-challenge handshake");
+    debug!("🔐 Starting multi-challenge handshake");
     send_result(&mut send, &ZoeChallengeResult::Next).await?;
 
     // Challenge 1: Key proof
-    info!("📝 Sending key challenge");
+    debug!("📝 Sending key challenge");
     let key_challenge = generate_key_challenge(server_keypair)?;
-    info!("🔧 Generated challenge, sending to client...");
+    debug!("🔧 Generated challenge, sending to client...");
     send_challenge(
         &mut send,
         &ZoeChallenge::Key(Box::new(key_challenge.clone())),
     )
     .await?;
-    info!("✅ Challenge sent, waiting for client response...");
+    debug!("✅ Challenge sent, waiting for client response...");
 
     // Receive key response
-    info!("📥 Waiting to receive key response from client...");
+    debug!("📥 Waiting to receive key response from client...");
     let key_response = receive_key_response(&mut recv).await?;
-    info!(
+    debug!(
         "✅ Received key response with {} proofs",
         key_response.key_proofs.len()
     );
@@ -93,11 +93,11 @@ pub async fn perform_multi_challenge_handshake(
     //  We can add more challenge types here (proof-of-work, etc.)
     // For now, we only have ML-DSA, so we send Accepted
 
-    info!("✅ All challenges completed successfully");
+    debug!("✅ All challenges completed successfully");
     let result = ZoeChallengeResult::Accepted;
     send_result(&mut send, &result).await?;
 
-    info!(
+    debug!(
         "✅ Multi-challenge handshake completed. Verified {} keys",
         keys.len()
     );
@@ -270,7 +270,7 @@ pub fn verify_key_proofs(
         KeyResult::PartialFailure { failed_indices }
     };
 
-    info!(
+    debug!(
         "Verification complete: {}/{} keys verified",
         verified_keys.len(),
         response.key_proofs.len()

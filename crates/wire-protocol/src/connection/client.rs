@@ -43,7 +43,7 @@ mod ed25519 {
                     // Verify it matches our expected key
                     if server_ed25519_key.to_bytes() == self.expected_server_key_ed25519.to_bytes()
                     {
-                        tracing::info!("✅ Server Ed25519 identity verified via certificate");
+                        tracing::debug!("✅ Server Ed25519 identity verified via certificate");
                         Ok(rustls::client::danger::ServerCertVerified::assertion())
                     } else {
                         tracing::error!("❌ Server Ed25519 key mismatch");

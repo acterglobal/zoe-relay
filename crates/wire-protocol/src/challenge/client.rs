@@ -6,7 +6,7 @@ use crate::{
 use anyhow::Result;
 use quinn::{RecvStream, SendStream};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tracing::{debug, info, warn};
+use tracing::{debug, warn};
 
 /// Performs the client side of the challenge-response handshake
 ///
@@ -45,7 +45,7 @@ use tracing::{debug, info, warn};
 ///     &[&personal_key, &work_key]
 /// ).await?;
 ///
-/// info!("Successfully verified {} out of {} keys", verified_count, 2);
+/// debug!("Successfully verified {} out of {} keys", verified_count, 2);
 /// ```
 pub async fn perform_client_challenge_handshake(
     mut send: SendStream,
@@ -53,7 +53,7 @@ pub async fn perform_client_challenge_handshake(
     server_public_key: &VerifyingKey,
     key_pairs: &[&KeyPair],
 ) -> Result<(usize, Vec<ZoeChallengeWarning>)> {
-    info!("🔐 Starting client-side multi-challenge handshake");
+    debug!("🔐 Starting client-side multi-challenge handshake");
 
     if key_pairs.is_empty() {
         return Err(anyhow::anyhow!("No keys provided for handshake"));
@@ -70,7 +70,7 @@ pub async fn perform_client_challenge_handshake(
 
         match result {
             ZoeChallengeResult::Accepted => {
-                info!("✅ All challenges completed successfully");
+                debug!("✅ All challenges completed successfully");
                 break;
             }
             ZoeChallengeResult::Warning(warning) => {
@@ -79,7 +79,7 @@ pub async fn perform_client_challenge_handshake(
                 continue; // we need to read for the next result
             }
             ZoeChallengeResult::Next => {
-                info!("➡️ Challenge accepted, waiting for next challenge");
+                debug!("➡️ Challenge accepted, waiting for next challenge");
                 // Continue to next iteration to receive next challenge
             }
             ZoeChallengeResult::Rejected(rejection) => {
@@ -93,35 +93,35 @@ pub async fn perform_client_challenge_handshake(
             }
         }
         // Step 1: Receive challenge from server
-        info!("📥 Waiting to receive challenge from server...");
+        debug!("📥 Waiting to receive challenge from server...");
         let challenge = receive_challenge(&mut recv).await?;
-        info!("✅ Received challenge from server");
+        debug!("✅ Received challenge from server");
 
         // Step 2: Handle different challenge types
         match challenge {
             ZoeChallenge::Key(key_challenge) => {
-                info!("📝 Received key challenge");
+                debug!("📝 Received key challenge");
 
                 // check the signature
                 let nonce = key_challenge.nonce;
                 let signature = &key_challenge.signature;
-                info!("🔍 Verifying server signature on challenge nonce...");
+                debug!("🔍 Verifying server signature on challenge nonce...");
                 if server_public_key.verify(&nonce, signature).is_err() {
                     return Err(anyhow::anyhow!(
                         "Invalid signature in challenge. Person-in-the-middle attack?"
                     ));
                 }
-                info!("✅ Server signature verified");
+                debug!("✅ Server signature verified");
 
                 // Create proofs for all keys
-                info!("🔧 Creating key proofs for {} keys...", key_pairs.len());
+                debug!("🔧 Creating key proofs for {} keys...", key_pairs.len());
                 let response = create_key_proofs(&key_challenge, key_pairs)?;
-                info!("✅ Created {} key proofs", response.key_proofs.len());
+                debug!("✅ Created {} key proofs", response.key_proofs.len());
 
                 // Send response directly (no wrapper enum)
-                info!("📤 Sending key response to server...");
+                debug!("📤 Sending key response to server...");
                 send_key_response(&mut send, &response).await?;
-                info!("✅ Key response sent");
+                debug!("✅ Key response sent");
             }
             ZoeChallenge::Unknown { discriminant, .. } => {
                 return Err(anyhow::anyhow!(
@@ -131,7 +131,7 @@ pub async fn perform_client_challenge_handshake(
         }
     }
 
-    info!(
+    debug!(
         "✅ Client-side multi-challenge handshake completed. {} keys verified",
         verified_count
     );
