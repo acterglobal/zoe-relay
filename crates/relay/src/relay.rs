@@ -104,36 +104,13 @@ use std::sync::Arc;
 use std::{net::SocketAddr, path::PathBuf};
 use zoe_blob_store::{BlobServiceImpl, BlobStoreError};
 use zoe_message_store::RedisMessageStorage;
-use zoe_wire_protocol::{CryptoError, VerifyingKey};
+use zoe_wire_protocol::{ConnectionInfo, CryptoError, VerifyingKey};
 
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tracing::{debug, error, info};
 use zoe_wire_protocol::{connection::server::create_server_endpoint, KeyPair, StreamPair};
 
 use crate::{RelayServiceRouter, Service, ServiceError, ServiceRouter};
-
-/// Information about an authenticated connection
-#[derive(Debug, Clone)]
-pub struct ConnectionInfo {
-    /// Set of ML-DSA public keys verified during challenge handshake (message authentication)
-    pub verified_keys: std::collections::BTreeSet<Vec<u8>>,
-    /// The remote address of the client
-    pub remote_address: SocketAddr,
-    /// Timestamp when the connection was established
-    pub connected_at: std::time::SystemTime,
-}
-
-impl ConnectionInfo {
-    /// Check if a specific ML-DSA public key has been verified for this connection
-    pub fn has_verified_ml_dsa_key(&self, public_key: &[u8]) -> bool {
-        self.verified_keys.contains(public_key)
-    }
-
-    /// Get the number of verified ML-DSA keys for this connection
-    pub fn verified_key_count(&self) -> usize {
-        self.verified_keys.len()
-    }
-}
 
 #[derive(Debug, thiserror::Error)]
 pub enum RelayServerBuilderError {
@@ -343,15 +320,19 @@ impl<R: ServiceRouter + 'static> RelayServer<R> {
             }
         };
 
-        // Create connection info with verified ML-DSA keys
-        let connection_info = ConnectionInfo {
+        // TODO: Extract client public key from TLS certificate
+        // For now, using a placeholder key - this should be extracted from the client's TLS certificate
+        let placeholder_transport_key = server_keypair.public_key(); // Temporary placeholder
+
+        // Create connection info with verified keys
+        let connection_info = ConnectionInfo::with_verified_keys(
+            placeholder_transport_key,
             verified_keys,
-            remote_address: remote_addr,
-            connected_at: std::time::SystemTime::now(),
-        };
+            remote_addr,
+        );
 
         info!(
-            "🔐 Connection established with {} verified ML-DSA keys",
+            "🔐 Connection established with {} verified keys",
             connection_info.verified_key_count()
         );
 

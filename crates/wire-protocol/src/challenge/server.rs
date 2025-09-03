@@ -1,12 +1,12 @@
 use super::{DEFAULT_CHALLENGE_TIMEOUT_SECS, MAX_PACKAGE_SIZE};
 use crate::{
-    KeyChallenge, KeyPair, KeyProof, KeyResponse, KeyResult, ZoeChallenge, ZoeChallengeRejection,
-    ZoeChallengeResult,
+    KeyChallenge, KeyPair, KeyProof, KeyResponse, KeyResult, VerifyingKey, ZoeChallenge,
+    ZoeChallengeRejection, ZoeChallengeResult,
 };
 use anyhow::Result;
 use quinn::{RecvStream, SendStream};
 use rand::RngCore;
-use std::collections::BTreeSet;
+use std::collections::HashSet;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tracing::{debug, warn};
@@ -57,7 +57,7 @@ pub async fn perform_multi_challenge_handshake(
     mut send: SendStream,
     mut recv: RecvStream,
     server_keypair: &KeyPair,
-) -> Result<BTreeSet<Vec<u8>>> {
+) -> Result<HashSet<VerifyingKey>> {
     debug!("🔐 Starting multi-challenge handshake");
     send_result(&mut send, &ZoeChallengeResult::Next).await?;
 
@@ -81,7 +81,7 @@ pub async fn perform_multi_challenge_handshake(
     );
 
     // Verify key proofs
-    let (keys, _key_result) = verify_key_proofs(&key_response, &key_challenge)?;
+    let (keys, _key_result) = verify_key_proofs(key_response, &key_challenge)?;
 
     if keys.is_empty() {
         // Key challenge failed - send rejection and close
@@ -222,9 +222,9 @@ pub async fn receive_key_response(recv: &mut RecvStream) -> Result<KeyResponse> 
 /// - Set of successfully verified public keys (as encoded bytes)
 /// - Key specific result indicating which proofs succeeded/failed
 pub fn verify_key_proofs(
-    response: &KeyResponse,
+    response: KeyResponse,
     challenge: &KeyChallenge,
-) -> Result<(BTreeSet<Vec<u8>>, KeyResult)> {
+) -> Result<(HashSet<VerifyingKey>, KeyResult)> {
     let challenge_data = challenge;
 
     // Check if challenge has expired
@@ -234,26 +234,26 @@ pub fn verify_key_proofs(
             "Challenge expired: current={}, expires={}",
             current_time, challenge_data.expires_at
         );
-        return Ok((BTreeSet::new(), KeyResult::AllFailed));
+        return Ok((HashSet::new(), KeyResult::AllFailed));
     }
 
-    let mut verified_keys = BTreeSet::new();
+    let mut verified_keys = HashSet::new();
     let mut failed_indices = Vec::new();
 
     // Prepare signature data: just the nonce (clients sign the nonce)
     let signature_data = challenge_data.nonce.to_vec();
+    let total_key_proofs = response.key_proofs.len();
+    debug!("Verifying {} key proofs", total_key_proofs);
 
-    debug!("Verifying {} key proofs", response.key_proofs.len());
-
-    for (index, key_proof) in response.key_proofs.iter().enumerate() {
-        match verify_single_key_proof(key_proof, &signature_data) {
+    for (index, key_proof) in response.key_proofs.into_iter().enumerate() {
+        match verify_single_key_proof(&key_proof, &signature_data) {
             Ok(()) => {
-                verified_keys.insert(key_proof.public_key.encode());
                 debug!(
                     "✅ Verified key proof {}: {}",
                     index,
                     hex::encode(&key_proof.public_key.encode()[..8])
                 );
+                verified_keys.insert(key_proof.public_key);
             }
             Err(e) => {
                 failed_indices.push(index);
@@ -273,7 +273,7 @@ pub fn verify_key_proofs(
     debug!(
         "Verification complete: {}/{} keys verified",
         verified_keys.len(),
-        response.key_proofs.len()
+        total_key_proofs
     );
 
     Ok((verified_keys, result))
@@ -470,17 +470,15 @@ mod tests {
 
         let response = create_key_proofs(&challenge, &client_keys).unwrap();
 
-        let (verified_keys, result) = verify_key_proofs(&response, &challenge).unwrap();
+        let (verified_keys, result) = verify_key_proofs(response, &challenge).unwrap();
 
         // Should verify both keys
         assert_eq!(verified_keys.len(), 2);
         assert!(matches!(result, KeyResult::AllValid));
 
         // Verified keys should match the client public keys
-        let client1_encoded = client_keypair1.public_key().encode();
-        let client2_encoded = client_keypair2.public_key().encode();
-        assert!(verified_keys.contains(&client1_encoded));
-        assert!(verified_keys.contains(&client2_encoded));
+        assert!(verified_keys.contains(&client_keypair1.public_key()));
+        assert!(verified_keys.contains(&client_keypair2.public_key()));
     }
 
     #[test]
@@ -508,7 +506,7 @@ mod tests {
             ],
         };
 
-        let (verified_keys, result) = verify_key_proofs(&response, &challenge).unwrap();
+        let (verified_keys, result) = verify_key_proofs(response, &challenge).unwrap();
 
         // Should verify only one key
         assert_eq!(verified_keys.len(), 1);
@@ -517,8 +515,7 @@ mod tests {
         );
 
         // Only the valid key should be verified
-        let client1_encoded = client_keypair1.public_key().encode();
-        assert!(verified_keys.contains(&client1_encoded));
+        assert!(verified_keys.contains(&client_keypair1.public_key()));
     }
 
     #[test]

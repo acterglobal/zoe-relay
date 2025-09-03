@@ -133,6 +133,7 @@
 pub mod blob;
 pub mod challenge;
 pub mod connection;
+pub mod connection_info;
 pub mod crypto;
 pub mod inbox;
 pub mod keys;
@@ -144,6 +145,7 @@ pub mod version;
 
 pub use blob::*;
 pub use challenge::*;
+pub use connection_info::*;
 pub use crypto::*;
 pub use inbox::*;
 pub use message::*;

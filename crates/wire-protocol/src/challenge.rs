@@ -1,7 +1,6 @@
 use crate::{Signature, VerifyingKey};
 use forward_compatible_enum::ForwardCompatibleEnum;
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeSet;
 
 #[cfg(feature = "server")]
 pub mod server;
@@ -487,119 +486,11 @@ impl KeyResult {
     }
 }
 
-/// Connection information extended with verified ML-DSA keys
-///
-/// This structure tracks both the ML-DSA-44 transport authentication and
-/// the ML-DSA keys verified during the challenge handshake. It provides
-/// the foundation for connection-scoped message authentication.
-///
-/// ## Authentication Layers
-///
-/// 1. **Transport Layer**: ML-DSA-44 mutual TLS provides connection-level identity
-/// 2. **Application Layer**: ML-DSA keys provide message-level authentication
-///
-/// The separation allows for different keys to be used for different purposes
-/// while maintaining a clear security model.
-#[derive(Debug, Clone)]
-pub struct ConnectionInfo {
-    /// The ML-DSA-44 public key from the client's TLS certificate
-    ///
-    /// This key identifies the client at the transport layer and is used
-    /// for QUIC connection authentication. It remains constant for the
-    /// lifetime of the connection.
-    pub client_public_key: VerifyingKey,
-
-    /// Set of ML-DSA public keys verified during challenge handshake
-    ///
-    /// These keys were proven during the initial handshake and can be used
-    /// for message-level authentication. The set is populated during the
-    /// challenge phase and remains immutable for the connection lifetime.
-    ///
-    /// Keys are stored as encoded bytes for efficient lookup and comparison.
-    /// Use `has_verified_ml_dsa_key()` for membership testing.
-    pub verified_ml_dsa_keys: BTreeSet<Vec<u8>>,
-
-    /// The remote network address of the client
-    pub remote_address: std::net::SocketAddr,
-
-    /// Timestamp when the connection was established
-    pub connected_at: std::time::SystemTime,
-}
-
-impl ConnectionInfo {
-    /// Check if a specific ML-DSA public key has been verified for this connection
-    ///
-    /// This is the primary method for checking message authentication permissions.
-    /// Services should call this before processing messages that require specific
-    /// key possession proofs.
-    ///
-    /// # Parameters
-    ///
-    /// * `public_key` - The encoded ML-DSA public key to check
-    ///
-    /// # Returns
-    ///
-    /// `true` if the key was successfully verified during handshake, `false` otherwise
-    ///
-    /// # Example
-    ///
-    /// ```rust
-    /// use zoe_wire_protocol::ConnectionInfo;
-    ///
-    /// // In a message service handler
-    /// if !connection_info.has_verified_ml_dsa_key(&required_key) {
-    ///     return Err(MessageError::VerificationRequired {
-    ///         public_key_hex: hex::encode(&required_key)
-    ///     });
-    /// }
-    /// ```
-    pub fn has_verified_ml_dsa_key(&self, public_key: &[u8]) -> bool {
-        self.verified_ml_dsa_keys.contains(public_key)
-    }
-
-    /// Get the number of verified ML-DSA keys for this connection
-    ///
-    /// Useful for logging and debugging connection capabilities.
-    ///
-    /// # Returns
-    ///
-    /// The count of ML-DSA keys that were successfully verified during handshake
-    pub fn verified_key_count(&self) -> usize {
-        self.verified_ml_dsa_keys.len()
-    }
-
-    /// Get all verified ML-DSA public keys as hex strings (for logging/debugging)
-    ///
-    /// Returns a vector of hex-encoded key prefixes for human-readable logging.
-    /// Only the first 8 bytes of each key are included for brevity.
-    ///
-    /// # Returns
-    ///
-    /// Vector of hex strings representing the first 8 bytes of each verified key
-    ///
-    /// # Example
-    ///
-    /// ```rust
-    /// use zoe_wire_protocol::ConnectionInfo;
-    ///
-    /// let key_previews = connection_info.verified_keys_hex();
-    /// info!("Connection has verified keys: {:?}", key_previews);
-    /// // Output: ["a1b2c3d4...", "e5f6g7h8..."]
-    /// ```
-    pub fn verified_keys_hex(&self) -> Vec<String> {
-        self.verified_ml_dsa_keys
-            .iter()
-            .map(|key| {
-                let preview_len = std::cmp::min(8, key.len());
-                hex::encode(&key[..preview_len])
-            })
-            .collect()
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ConnectionInfo;
+    use std::collections::HashSet;
 
     #[test]
     fn test_ml_dsa_result_success_check() {
@@ -630,23 +521,32 @@ mod tests {
 
     #[test]
     fn test_connection_info_key_verification() {
-        let mut verified_keys = BTreeSet::new();
-        verified_keys.insert(vec![1, 2, 3, 4]);
-        verified_keys.insert(vec![5, 6, 7, 8]);
-
-        let connection_info = ConnectionInfo {
-            client_public_key: {
-                use crate::KeyPair;
-                KeyPair::generate(&mut rand::thread_rng()).public_key()
-            },
-            verified_ml_dsa_keys: verified_keys,
-            remote_address: "127.0.0.1:8080".parse().unwrap(),
-            connected_at: std::time::SystemTime::now(),
+        let keypair1 = {
+            use crate::KeyPair;
+            KeyPair::generate_ed25519(&mut rand::thread_rng())
+        };
+        let keypair2 = {
+            use crate::KeyPair;
+            KeyPair::generate_ml_dsa65(&mut rand::thread_rng())
         };
 
-        assert!(connection_info.has_verified_ml_dsa_key(&[1, 2, 3, 4]));
-        assert!(connection_info.has_verified_ml_dsa_key(&[5, 6, 7, 8]));
-        assert!(!connection_info.has_verified_ml_dsa_key(&[9, 10, 11, 12]));
+        let mut verified_keys = HashSet::new();
+        verified_keys.insert(keypair1.public_key());
+        verified_keys.insert(keypair2.public_key());
+
+        let transport_key = {
+            use crate::KeyPair;
+            KeyPair::generate(&mut rand::thread_rng()).public_key()
+        };
+        let connection_info = ConnectionInfo::with_verified_keys(
+            transport_key,
+            verified_keys,
+            "127.0.0.1:8080".parse().unwrap(),
+        );
+
+        assert!(connection_info.has_verified_key(&keypair1.public_key()));
+        assert!(connection_info.has_verified_key(&keypair2.public_key()));
+
         assert_eq!(connection_info.verified_key_count(), 2);
     }
 }

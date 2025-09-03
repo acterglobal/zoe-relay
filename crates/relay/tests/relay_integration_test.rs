@@ -103,7 +103,7 @@ impl Service for EchoService {
         } = self;
         println!(
             "🔗 Echo service handling connection with {} verified keys",
-            connection_info.verified_keys.len(),
+            connection_info.verified_keys().len(),
         );
 
         // Echo everything back

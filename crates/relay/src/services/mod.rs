@@ -1,12 +1,13 @@
 pub mod blob;
 pub mod messages;
 
-use crate::{ConnectionInfo, Service, ServiceError, ServiceRouter};
+use crate::{Service, ServiceError, ServiceRouter};
 use async_trait::async_trait;
 pub use blob::{BlobService, BlobServiceError};
 pub use messages::{MessagesService, MessagesServiceError};
 use zoe_blob_store::BlobServiceImpl;
 use zoe_message_store::RedisMessageStorage;
+use zoe_wire_protocol::ConnectionInfo;
 use zoe_wire_protocol::StreamPair;
 pub use zoe_wire_protocol::ZoeServices;
 

@@ -90,7 +90,7 @@
 
 use async_trait::async_trait;
 
-use crate::ConnectionInfo;
+use zoe_wire_protocol::ConnectionInfo;
 use zoe_wire_protocol::StreamPair;
 
 /// A service that handles a specific type of connection
