@@ -33,12 +33,11 @@
 //! explaining what might be wrong.
 
 use clap::{Parser, arg, command};
-use rand::rngs::OsRng;
 use std::{net::SocketAddr, path::PathBuf};
 use tempfile::TempDir;
 use tracing::{error, info};
-use zoe_client::{Client, client::ClientSecret};
-use zoe_wire_protocol::{KeyPair, VerifyingKey};
+use zoe_client::{Client, util::resolve_to_socket_addr};
+use zoe_wire_protocol::VerifyingKey;
 
 #[cfg(debug_assertions)]
 const IS_DEBUG: bool = true;
@@ -71,14 +70,6 @@ fn parse_verifying_key(hex_str: &str) -> Result<VerifyingKey, String> {
     Ok(key)
 }
 
-/// Generate a random encryption key for storage
-fn generate_encryption_key() -> [u8; 32] {
-    let mut key = [0u8; 32];
-    use rand::RngCore;
-    OsRng.fill_bytes(&mut key);
-    key
-}
-
 #[tokio::main]
 pub async fn main() -> Result<(), Box<dyn std::error::Error>> {
     if !IS_DEBUG {
@@ -104,15 +95,19 @@ pub async fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!("🚀 Starting Zoe Client Connection Test");
     info!("📍 Target server: {}", args.relay_address);
 
-    // Parse server address
-    let server_addr: SocketAddr = args
-        .relay_address
-        .parse()
-        .map_err(|e| format!("Invalid server address '{}': {}", args.relay_address, e))?;
+    let server_addr: SocketAddr = match resolve_to_socket_addr(&args.relay_address).await {
+        Ok(addr) => addr,
+        Err(e) => {
+            error!("Invalid server address or failed to resolve: {e}");
+            std::process::exit(1);
+        }
+    };
 
+    // Parse server address
     let server_public_key = args.server_key;
 
     let mut builder = Client::builder();
+    builder.server_info(server_public_key, server_addr);
     if let Some(persist_path) = args.persist_path {
         info!("💾 Using persistent storage at: {}", persist_path.display());
         error!("persistence not yet implemented");
@@ -122,7 +117,6 @@ pub async fn main() -> Result<(), Box<dyn std::error::Error>> {
     } else {
         // ephemeral mode
 
-        let client_keypair = KeyPair::generate(&mut OsRng);
         let temp_dir = TempDir::new()?;
         // Create temporary directories for storage
 
@@ -130,21 +124,14 @@ pub async fn main() -> Result<(), Box<dyn std::error::Error>> {
             "💾 Using temporary storage at: {}",
             temp_dir.path().display()
         );
-        let media_storage_path = temp_dir.path().join("media");
-        let db_storage_path = temp_dir.path().join("client.db");
-        // Create client secret
-        let client_secret = ClientSecret::new(client_keypair, server_public_key, server_addr);
-
-        // Generate encryption key for storage
-        let encryption_key = generate_encryption_key();
+        let media_storage_path = temp_dir.path().join("blobs");
+        let db_storage_path = temp_dir.path().join("db");
 
         info!("🔧 Building client...");
 
-        // Build the client
-        builder.client_secret(client_secret);
-        builder.media_storage_path(media_storage_path.to_string_lossy().to_string());
-        builder.db_storage_path(db_storage_path.to_string_lossy().to_string());
-        builder.encryption_key(encryption_key);
+        // Build the clien
+        builder.media_storage_dir_pathbuf(media_storage_path);
+        builder.db_storage_dir_pathbuf(db_storage_path);
     }
 
     let client_result = builder.build().await;

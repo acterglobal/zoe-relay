@@ -111,7 +111,12 @@ impl ClientBuilder {
     /// Set the storage database path (convenience method)
     #[cfg_attr(feature = "frb-api", frb)]
     pub fn db_storage_dir(&mut self, path: String) {
-        self.db_storage_dir = Some(PathBuf::from(path));
+        self.db_storage_dir_pathbuf(PathBuf::from(path));
+    }
+
+    #[cfg_attr(feature = "frb-api", frb(ignore))]
+    pub fn db_storage_dir_pathbuf(&mut self, path: PathBuf) {
+        self.db_storage_dir = Some(path);
     }
 
     /// Set the encryption key for storage

@@ -9,6 +9,8 @@ pub mod relay_client;
 pub mod rpc_transport;
 pub mod services;
 pub mod session_manager;
+pub mod util;
+
 #[cfg(feature = "frb-api")]
 pub use frb_api::*;
 

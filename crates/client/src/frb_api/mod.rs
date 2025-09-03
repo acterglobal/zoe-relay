@@ -5,6 +5,14 @@ mod for_std;
 #[allow(unused_imports)]
 pub use for_std::*;
 
+// initialize for frb
+pub fn frb_init() {
+    // Initialize Rustls crypto provider before any TLS operations
+    rustls::crypto::aws_lc_rs::default_provider()
+        .install_default()
+        .expect("Failed to install crypto provider");
+}
+
 // Key conversion utilities - work with hex strings instead of raw types
 #[frb]
 pub fn create_signing_key_random() -> String {
