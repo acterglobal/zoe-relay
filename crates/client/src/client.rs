@@ -133,6 +133,12 @@ impl ClientBuilder {
             ));
         };
 
+        let Some(db_storage_dir) = self.db_storage_dir else {
+            return Err(ClientError::BuildError(
+                "DB storage dir is required".to_string(),
+            ));
+        };
+
         let Some(server_public_key) = self.server_public_key else {
             return Err(ClientError::BuildError(
                 "Server public key is required".to_string(),
@@ -165,11 +171,7 @@ impl ClientBuilder {
         // Run all operations on separate tasks to avoid stack buildup
         let fs_path = media_storage_dir.to_path_buf().join(&user_id_hex);
         let storage_config = StorageConfig {
-            database_path: self
-                .db_storage_dir
-                .unwrap_or_default()
-                .join(&user_id_hex)
-                .join("db.sqlite"),
+            database_path: db_storage_dir.join(&user_id_hex).join("db.sqlite"),
             max_query_limit: None,
             enable_wal_mode: false,
             cache_size_kb: None,
