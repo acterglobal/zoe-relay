@@ -151,12 +151,12 @@ impl std::fmt::Display for NetworkAddress {
     }
 }
 
-/// Connection information for a service
+/// Relay address information for a service
 ///
 /// Contains the public key and network addresses needed to connect to a service.
 /// This structure is designed to be compact and suitable for QR code encoding.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct ConnectionInfo {
+pub struct RelayAddress {
     /// Public key of the service
     ///
     /// Used to verify the service's identity during the connection handshake.
@@ -177,7 +177,7 @@ pub struct ConnectionInfo {
     pub name: Option<String>,
 }
 
-impl ConnectionInfo {
+impl RelayAddress {
     /// Create a new connection info with minimal required fields
     pub fn new(public_key: VerifyingKey) -> Self {
         Self {
@@ -305,7 +305,7 @@ mod tests {
 
         let keypair = KeyPair::generate_ed25519(&mut rand::thread_rng());
         let public_key = keypair.public_key();
-        let info = ConnectionInfo::new(public_key)
+        let info = RelayAddress::new(public_key)
             .with_address(NetworkAddress::dns("relay.example.com"))
             .with_address(NetworkAddress::ipv4_with_port(
                 Ipv4Addr::new(192, 168, 1, 100),
@@ -325,7 +325,7 @@ mod tests {
         let keypair = KeyPair::generate_ed25519(&mut rand::thread_rng());
         let public_key = keypair.public_key();
         let info =
-            ConnectionInfo::new(public_key).with_address(NetworkAddress::dns("relay.example.com"));
+            RelayAddress::new(public_key).with_address(NetworkAddress::dns("relay.example.com"));
 
         assert_eq!(info.display_name(), "relay.example.com");
     }
@@ -336,7 +336,7 @@ mod tests {
 
         let keypair = KeyPair::generate_ed25519(&mut rand::thread_rng());
         let public_key = keypair.public_key();
-        let info = ConnectionInfo::new(public_key)
+        let info = RelayAddress::new(public_key)
             .with_address(NetworkAddress::dns_with_port("relay1.example.com", 8443))
             .with_address(NetworkAddress::dns_with_port("relay2.example.com", 9443))
             .with_address(NetworkAddress::ipv4_with_port(
@@ -362,12 +362,12 @@ mod tests {
 
         let keypair = KeyPair::generate_ed25519(&mut rand::thread_rng());
         let public_key = keypair.public_key();
-        let info = ConnectionInfo::new(public_key)
+        let info = RelayAddress::new(public_key)
             .with_address(NetworkAddress::dns("relay.example.com"))
             .with_name("Test Relay");
 
         let serialized = postcard::to_stdvec(&info).unwrap();
-        let deserialized: ConnectionInfo = postcard::from_bytes(&serialized).unwrap();
+        let deserialized: RelayAddress = postcard::from_bytes(&serialized).unwrap();
         assert_eq!(info, deserialized);
     }
 }

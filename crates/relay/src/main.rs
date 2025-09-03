@@ -6,7 +6,7 @@ use std::{
     path::PathBuf,
 };
 use tracing::info;
-use zoe_app_primitives::{display_qr_code, ConnectionInfo, NetworkAddress, QrOptions};
+use zoe_app_primitives::{display_qr_code, NetworkAddress, QrOptions, RelayAddress};
 use zoe_relay::ZoeRelayServer;
 use zoe_wire_protocol::{Algorithm, KeyPair, VerifyingKey};
 
@@ -230,7 +230,7 @@ fn display_relay_qr_code(
     server_name: Option<&str>,
 ) -> Result<()> {
     // Create connection info starting with the public key
-    let mut connection_info = ConnectionInfo::new(public_key.clone());
+    let mut relay_info = RelayAddress::new(public_key.clone());
 
     // Add the bind address only if it's externally accessible (not localhost/127.0.0.1)
     let bind_is_external = match bind_address.ip() {
@@ -243,33 +243,32 @@ fn display_relay_qr_code(
             std::net::IpAddr::V4(ipv4) => NetworkAddress::ipv4_with_port(ipv4, bind_address.port()),
             std::net::IpAddr::V6(ipv6) => NetworkAddress::ipv6_with_port(ipv6, bind_address.port()),
         };
-        connection_info = connection_info.with_address(bind_network_address);
+        relay_info = relay_info.with_address(bind_network_address);
     }
 
     // Add all external addresses
-    connection_info =
-        connection_info.with_addresses(external_addresses.iter().filter_map(|addr_str| {
-            parse_external_address(addr_str)
-                .inspect_err(
-                    |e| tracing::warn!(error=?e, "Failed to parse external address '{}'", addr_str),
-                )
-                .ok()
-        }));
+    relay_info = relay_info.with_addresses(external_addresses.iter().filter_map(|addr_str| {
+        parse_external_address(addr_str)
+            .inspect_err(
+                |e| tracing::warn!(error=?e, "Failed to parse external address '{}'", addr_str),
+            )
+            .ok()
+    }));
 
     // Set the server name if provided
     if let Some(name) = server_name {
-        connection_info = connection_info.with_name(name);
+        relay_info = relay_info.with_name(name);
     }
 
-    if connection_info.addresses.is_empty() {
+    if relay_info.addresses.is_empty() {
         tracing::warn!("Skipping QR code display because no addresses are available");
     } else {
         // Log the total number of addresses in the QR code
         tracing::trace!(
             "QR code will contain {} total addresses",
-            connection_info.addresses.len()
+            relay_info.addresses.len()
         );
-        for (i, addr) in connection_info.addresses.iter().enumerate() {
+        for (i, addr) in relay_info.addresses.iter().enumerate() {
             tracing::info!("  Address {}: {}", i + 1, addr);
         }
 
@@ -280,15 +279,15 @@ fn display_relay_qr_code(
             .with_footer("Scan with Zoe client to connect");
 
         // Show all addresses that are actually in the QR code
-        if !connection_info.addresses.is_empty() {
-            let address_display: Vec<String> = connection_info
+        if !relay_info.addresses.is_empty() {
+            let address_display: Vec<String> = relay_info
                 .addresses
                 .iter()
                 .map(|addr| addr.to_string())
                 .collect();
             options = options.with_subtitle(format!(
                 "Addresses ({}): {}",
-                connection_info.addresses.len(),
+                relay_info.addresses.len(),
                 address_display.join(", ")
             ));
         }
@@ -298,7 +297,7 @@ fn display_relay_qr_code(
         }
 
         // Display the QR code using the helper function
-        if let Err(e) = display_qr_code(&connection_info, &options) {
+        if let Err(e) = display_qr_code(&relay_info, &options) {
             tracing::error!(error=?e, "❌ Failed to generate QR code");
         }
     }
@@ -661,37 +660,37 @@ mod tests {
 
         // This would normally display the QR code, but we can't easily test that
         // Instead, let's test the logic by manually creating the connection info
-        let mut connection_info = ConnectionInfo::new(public_key.clone());
+        let mut relay_info = RelayAddress::new(public_key.clone());
 
         // Add bind address (external)
         let bind_network_address =
             NetworkAddress::ipv4_with_port(Ipv4Addr::new(203, 0, 113, 1), 8080);
-        connection_info = connection_info.with_address(bind_network_address);
+        relay_info = relay_info.with_address(bind_network_address);
 
         // Add external addresses
         for addr_str in &external_addresses {
             if let Ok(network_addr) = parse_external_address(addr_str) {
-                connection_info = connection_info.with_address(network_addr);
+                relay_info = relay_info.with_address(network_addr);
             }
         }
 
         // Should have 4 addresses total (1 bind + 3 external)
-        assert_eq!(connection_info.addresses.len(), 4);
+        assert_eq!(relay_info.addresses.len(), 4);
 
         // Verify specific addresses are present
-        assert!(connection_info
+        assert!(relay_info
             .addresses
             .contains(&NetworkAddress::ipv4_with_port(
                 Ipv4Addr::new(203, 0, 113, 1),
                 8080
             )));
-        assert!(connection_info
+        assert!(relay_info
             .addresses
             .contains(&NetworkAddress::dns("relay.example.com")));
-        assert!(connection_info
+        assert!(relay_info
             .addresses
             .contains(&NetworkAddress::dns_with_port("relay.example.com", 8443)));
-        assert!(connection_info
+        assert!(relay_info
             .addresses
             .contains(&NetworkAddress::dns_with_port("backup.example.org", 9443)));
     }
@@ -710,7 +709,7 @@ mod tests {
         let external_addresses = vec!["relay.example.com:8443".to_string()];
 
         // Manually create the connection info to test the logic
-        let mut connection_info = ConnectionInfo::new(public_key.clone());
+        let mut relay_info = RelayAddress::new(public_key.clone());
 
         // Don't add localhost bind address (it should be excluded)
         let bind_is_external =
@@ -720,20 +719,20 @@ mod tests {
         // Add external addresses
         for addr_str in &external_addresses {
             if let Ok(network_addr) = parse_external_address(addr_str) {
-                connection_info = connection_info.with_address(network_addr);
+                relay_info = relay_info.with_address(network_addr);
             }
         }
 
         // Should have 1 address total (0 bind + 1 external)
-        assert_eq!(connection_info.addresses.len(), 1);
+        assert_eq!(relay_info.addresses.len(), 1);
 
         // Verify localhost is not present
-        assert!(!connection_info
+        assert!(!relay_info
             .addresses
             .contains(&NetworkAddress::ipv4_with_port(Ipv4Addr::LOCALHOST, 8080)));
 
         // Verify external address is present
-        assert!(connection_info
+        assert!(relay_info
             .addresses
             .contains(&NetworkAddress::dns_with_port("relay.example.com", 8443)));
     }
