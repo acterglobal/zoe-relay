@@ -796,7 +796,7 @@ mod tests {
             header: MessageV0Header {
                 sender: keypair.public_key(),
                 when: 1640995200,
-                kind: Kind::Emphemeral(3600), // 1 hour TTL
+                kind: Kind::Ephemeral(3600), // 1 hour TTL
                 tags: vec![channel_tag],
             },
             content: Content::Raw(b"test message".to_vec()),
@@ -815,7 +815,7 @@ mod tests {
             header: MessageV0Header {
                 sender: keypair.public_key(),
                 when: 1640995200,
-                kind: Kind::Emphemeral(3600),
+                kind: Kind::Ephemeral(3600),
                 tags: vec![user_tag],
             },
             content: Content::Raw(b"test message".to_vec()),

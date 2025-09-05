@@ -63,7 +63,7 @@ pub enum Kind {
     /// if a number larger than 0 is provided, this is the maximum seconds the event should be
     /// stored for in case someone asks. If the timestamp + seconds is smaller than the current
     /// server time, the event might be discarded without even forwarding it.
-    Emphemeral(u32),
+    Ephemeral(u32),
     /// This is an event that should be stored in a specific store
     Store(StoreKey),
     /// This is an event that should clear a specific store
@@ -861,7 +861,7 @@ impl MessageFull {
     pub fn storage_timeout(&self) -> Option<u64> {
         match &*self.message {
             Message::MessageV0(msg) => match msg.header.kind {
-                Kind::Emphemeral(timeout) if timeout > 0 => Some(timeout as u64),
+                Kind::Ephemeral(timeout) if timeout > 0 => Some(timeout as u64),
                 _ => None,
             },
         }
@@ -1250,7 +1250,7 @@ mod tests {
             Content::Raw(postcard::to_stdvec(&complex_content).unwrap()),
             pk,
             1714857600,
-            Kind::Emphemeral(10),
+            Kind::Ephemeral(10),
             vec![],
         );
 

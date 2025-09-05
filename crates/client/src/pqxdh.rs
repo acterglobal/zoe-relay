@@ -89,7 +89,7 @@
 //! ## Security Features
 //!
 //! - **Post-Quantum Resistance**: Uses CRYSTALS-Kyber for key encapsulation
-//! - **Forward Secrecy**: Each session uses emphemeral keys
+//! - **Forward Secrecy**: Each session uses ephemeral keys
 //! - **Replay Protection**: Sequence numbers prevent message replay attacks
 //! - **Unlinkability**: Randomized channel IDs prevent traffic analysis
 //! - **Authentication**: All messages are cryptographically signed
@@ -271,7 +271,7 @@ type PqxdhSessionId = [u8; 32];
 /// - **Serializable**: Can be persisted and restored across application restarts
 ///
 /// ## Security Properties
-/// - Forward secrecy through emphemeral key material
+/// - Forward secrecy through ephemeral key material
 /// - Replay protection via sequence numbering
 /// - Unlinkability through randomized channel identifiers
 /// - Post-quantum resistance via CRYSTALS-Kyber
@@ -870,7 +870,7 @@ impl<T: crate::services::MessagesManagerTrait> PqxdhProtocolHandler<T> {
             .await
     }
 
-    pub async fn send_emphemeral_message<U>(
+    pub async fn send_ephemeral_message<U>(
         &self,
         session_id: &PqxdhSessionId,
         message: &U,
@@ -879,7 +879,7 @@ impl<T: crate::services::MessagesManagerTrait> PqxdhProtocolHandler<T> {
     where
         U: serde::Serialize + for<'de> serde::Deserialize<'de> + Clone,
     {
-        self.send_message_inner(session_id, message, Kind::Emphemeral(timeout))
+        self.send_message_inner(session_id, message, Kind::Ephemeral(timeout))
             .await
     }
 
@@ -1047,7 +1047,7 @@ impl<T: crate::services::MessagesManagerTrait> PqxdhProtocolHandler<T> {
             Content::PqxdhEncrypted(pqxdh_content),
             self.client_keypair.public_key(),
             timestamp,
-            Kind::Emphemeral(0),
+            Kind::Ephemeral(0),
             target_tags,
         );
 
@@ -1878,9 +1878,9 @@ mod tests {
         }
     }
 
-    /// Test emphemeral message functionality
+    /// Test ephemeral message functionality
     #[tokio::test]
-    async fn test_send_emphemeral_message() {
+    async fn test_send_ephemeral_message() {
         let mut mock_manager = MockMessagesManagerTrait::new();
         let keypair = Arc::new(create_test_keypair());
 
@@ -1922,9 +1922,9 @@ mod tests {
         )
         .await;
 
-        let message = "Emphemeral message".to_string();
+        let message = "Ephemeral message".to_string();
         let result = handler
-            .send_emphemeral_message(&session_id, &message, 60)
+            .send_ephemeral_message(&session_id, &message, 60)
             .await;
 
         assert!(result.is_ok());

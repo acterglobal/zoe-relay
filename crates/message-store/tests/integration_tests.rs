@@ -487,7 +487,7 @@ async fn test_comprehensive_scenario() {
 //     // Manually set the message to be expired by setting when to past and timeout
 //     let Message::MessageV0(ref mut msg_v0) = message.message().as_mut();
 //     msg_v0.header.when = expired_time;
-//     msg_v0.header.kind = Kind::Emphemeral(1); // 1 second timeout, way past
+//     msg_v0.header.kind = Kind::Ephemeral(1); // 1 second timeout, way past
 
 //     let publish_result = storage.store_message(&message).await?;
 

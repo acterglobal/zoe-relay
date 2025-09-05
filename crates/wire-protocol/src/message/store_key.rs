@@ -8,21 +8,20 @@ use serde::{Deserialize, Serialize};
 ///
 /// Reserved ranges:
 /// - 10000-10999: Core PQXDH protocols (group invites, direct messages, etc.)
+/// - 10000-10999: Ephemeral group invites (randomized within this range)
 /// - 11000-11999: PQXDH RPC services
 /// - 15001-19999: Available for custom/experimental PQXDH protocols
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 #[serde(from = "u32", into = "u32")]
 #[repr(u32)]
 pub enum PqxdhInboxProtocol {
-    // Core protocols (10000-10999) - commented until implemented
-    // GroupInvite = 0,            // 10000 - PQXDH group invitations
-    // DirectMessage = 1,          // 10001 - PQXDH direct messaging
-    // FileTransfer = 2,           // 10002 - PQXDH file transfer
-    // VideoCallInvite = 3,        // 10003 - PQXDH video call invitations
-
+    // Reserved for Core protocols (10000-10999)
     // RPC services (11000-11999)
     EchoService = 1000, // 11000 - Echo/ping RPC service
-
+    /// 12000-12999 - Ephemeral Inboxes, using a randomized value in this range
+    /// expected to only live for a short time and a specific purpose or connection
+    /// like sharing a group invite
+    Ephemeral(u32),
     // Custom protocols (anything else)
     CustomProtocol(u32), // 15001+ - Custom PQXDH protocols
 }
@@ -65,14 +64,12 @@ pub enum StoreKey {
 impl From<u32> for PqxdhInboxProtocol {
     fn from(value: u32) -> Self {
         match value {
-            // Core protocols - commented until implemented
-            // 0 => PqxdhInboxProtocol::GroupInvite,
-            // 1 => PqxdhInboxProtocol::DirectMessage,
-            // 2 => PqxdhInboxProtocol::FileTransfer,
-            // 3 => PqxdhInboxProtocol::VideoCallInvite,
 
             // RPC services (1000-1999 maps to 11000-11999)
             1000 => PqxdhInboxProtocol::EchoService,
+
+            // Ephemeral protocols (0- 999 maps to 12000-12999)
+            2000..=2999 => PqxdhInboxProtocol::Ephemeral(value - 2000),
 
             // Everything else is custom
             a => PqxdhInboxProtocol::CustomProtocol(a),
@@ -83,6 +80,7 @@ impl From<u32> for PqxdhInboxProtocol {
 impl std::fmt::Display for PqxdhInboxProtocol {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            PqxdhInboxProtocol::Ephemeral(id) => write!(f, "Ephemeral({id})"),
             PqxdhInboxProtocol::EchoService => write!(f, "EchoService"),
             PqxdhInboxProtocol::CustomProtocol(a) => write!(f, "CustomProtocol({a})"),
         }
@@ -92,11 +90,8 @@ impl std::fmt::Display for PqxdhInboxProtocol {
 impl From<&PqxdhInboxProtocol> for u32 {
     fn from(val: &PqxdhInboxProtocol) -> Self {
         match val {
-            // Core protocols - commented until implemented
-            // PqxdhInboxProtocol::GroupInvite => 0,
-            // PqxdhInboxProtocol::DirectMessage => 1,
-            // PqxdhInboxProtocol::FileTransfer => 2,
-            // PqxdhInboxProtocol::VideoCallInvite => 3,
+            // Core protocols (0-999 maps to 10000-10999)
+            PqxdhInboxProtocol::Ephemeral(id) => *id,
 
             // RPC services
             PqxdhInboxProtocol::EchoService => 1000,
