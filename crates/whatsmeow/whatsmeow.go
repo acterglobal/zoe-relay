@@ -3,6 +3,7 @@ package main
 /*
 #include <stdlib.h>
 #include <stdint.h>
+#include <stdbool.h>
 
 // Forward declarations for Rust callback functions
 typedef struct {
