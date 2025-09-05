@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
-use zoe_wire_protocol::{Hash, MessageFilters, MessageFull, Tag, VerifyingKey};
+use zoe_wire_protocol::{Hash, KeyId, MessageFilters, MessageFull, Tag, VerifyingKey};
 
 #[cfg(any(feature = "mock", test))]
 use mockall::{automock, predicate::*};
@@ -155,8 +155,8 @@ pub struct RelaySyncStatus {
 pub struct BlobUploadStatus {
     /// Hash of the blob content
     pub blob_hash: Hash,
-    /// Hash of the relay server's Ed25519 public key (using VerifyingKey.id())
-    pub relay_id: Hash,
+    /// ID of the relay server (using VerifyingKey.id())
+    pub relay_id: KeyId,
     /// Unix timestamp when upload was confirmed
     pub uploaded_at: u64,
     /// Size of the blob in bytes
@@ -331,19 +331,19 @@ pub trait BlobStorage: Send + Sync {
     async fn remove_blob_upload_record(
         &self,
         blob_hash: &Hash,
-        relay_id: Option<Hash>, // If None, remove from all relays
+        relay_id: Option<KeyId>, // If None, remove from all relays
     ) -> Result<u64, crate::StorageError>; // Returns number of records removed
 
     /// Get total number of blobs uploaded to a specific relay
     async fn get_uploaded_blob_count_for_relay(
         &self,
-        relay_id: &Hash,
+        relay_id: &KeyId,
     ) -> Result<u64, crate::StorageError>;
 
     /// Get total storage size of blobs uploaded to a specific relay
     async fn get_uploaded_blob_size_for_relay(
         &self,
-        relay_id: &Hash,
+        relay_id: &KeyId,
     ) -> Result<u64, crate::StorageError>;
 }
 

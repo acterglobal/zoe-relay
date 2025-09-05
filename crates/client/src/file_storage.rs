@@ -28,9 +28,9 @@
 //! ```
 
 use crate::error::{ClientError, Result};
+use crate::services::BlobStore;
 #[cfg(any(feature = "mock", test))]
 use crate::services::MockBlobStore;
-use crate::services::{BlobService, BlobStore};
 use hex;
 use std::path::Path;
 use std::sync::Arc;
@@ -45,7 +45,7 @@ use zoe_wire_protocol::BlobId;
 
 /// High-level file storage client that encrypts files and stores them as blobs
 #[derive(Clone)]
-pub struct FileStorage<B: BlobStore = BlobService> {
+pub struct FileStorage<B: BlobStore> {
     blob_client: BlobClient,
     remote_blob_service: Arc<B>,
     compression_config: CompressionConfig,

@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use rusqlite::{Connection, OptionalExtension, params};
 use std::sync::{Arc, Mutex};
-use zoe_wire_protocol::{Hash, MessageFull, Tag};
+use zoe_wire_protocol::{Hash, KeyId, MessageFull, Tag};
 
 use super::migrations;
 use crate::error::{Result, StorageError};
@@ -1043,7 +1043,7 @@ impl BlobStorage for SqliteMessageStorage {
             let relay_id = if relay_id_bytes.len() == 32 {
                 let mut bytes = [0u8; 32];
                 bytes.copy_from_slice(&relay_id_bytes);
-                Hash::from(bytes)
+                KeyId(Hash::from(bytes))
             } else {
                 return Err(rusqlite::Error::InvalidColumnType(
                     1,
@@ -1109,7 +1109,7 @@ impl BlobStorage for SqliteMessageStorage {
             let relay_id = if relay_id_bytes.len() == 32 {
                 let mut bytes = [0u8; 32];
                 bytes.copy_from_slice(&relay_id_bytes);
-                Hash::from(bytes)
+                KeyId(Hash::from(bytes))
             } else {
                 return Err(rusqlite::Error::InvalidColumnType(
                     1,
@@ -1137,7 +1137,7 @@ impl BlobStorage for SqliteMessageStorage {
     async fn remove_blob_upload_record(
         &self,
         blob_hash: &Hash,
-        relay_id: Option<Hash>,
+        relay_id: Option<KeyId>,
     ) -> Result<u64> {
         let conn = self
             .conn
@@ -1167,7 +1167,7 @@ impl BlobStorage for SqliteMessageStorage {
         Ok(rows_affected as u64)
     }
 
-    async fn get_uploaded_blob_count_for_relay(&self, relay_id: &Hash) -> Result<u64> {
+    async fn get_uploaded_blob_count_for_relay(&self, relay_id: &KeyId) -> Result<u64> {
         let conn = self
             .conn
             .lock()
@@ -1184,7 +1184,7 @@ impl BlobStorage for SqliteMessageStorage {
         Ok(count as u64)
     }
 
-    async fn get_uploaded_blob_size_for_relay(&self, relay_id: &Hash) -> Result<u64> {
+    async fn get_uploaded_blob_size_for_relay(&self, relay_id: &KeyId) -> Result<u64> {
         let conn = self
             .conn
             .lock()

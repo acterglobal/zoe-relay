@@ -1,4 +1,5 @@
 use crate::error::Result;
+use crate::services::BlobService;
 use crate::{ClientError, FileStorage, RelayClient, RelayClientBuilder};
 use rand::Rng;
 use zoe_client_storage::{SqliteMessageStorage, StorageConfig};
@@ -194,7 +195,7 @@ impl ClientBuilder {
 
         let fs = FileStorage::new(
             &fs_path,
-            relay_client.blob_service().await?.clone(),
+            Arc::clone(relay_client.blob_service().await?),
             CompressionConfig::default(),
         )
         .await?;
@@ -216,7 +217,7 @@ impl ClientBuilder {
 #[cfg_attr(feature = "frb-api", frb(opaque))]
 pub struct Client {
     client_secret: Arc<ClientSecret>,
-    fs: Arc<FileStorage>,
+    fs: Arc<FileStorage<BlobService>>,
     relay_client: RelayClient,
 }
 

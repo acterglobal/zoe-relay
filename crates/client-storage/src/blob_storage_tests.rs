@@ -1,6 +1,6 @@
 use crate::{BlobStorage, BlobUploadStatus, SqliteMessageStorage, StorageConfig};
 use tempfile::TempDir;
-use zoe_wire_protocol::Hash;
+use zoe_wire_protocol::{Hash, KeyId};
 
 #[cfg(test)]
 mod tests {
@@ -10,6 +10,10 @@ mod tests {
         let mut bytes = [0u8; 32];
         bytes[0] = value;
         Hash::from(bytes)
+    }
+
+    fn create_test_key_id(value: u8) -> KeyId {
+        KeyId(create_test_hash(value))
     }
 
     async fn create_test_storage() -> (SqliteMessageStorage, TempDir) {
@@ -34,7 +38,7 @@ mod tests {
     #[tokio::test]
     async fn test_mark_blob_uploaded() {
         let (storage, _temp_dir) = create_test_storage().await;
-        let relay_id = create_test_hash(1);
+        let relay_id = create_test_key_id(1);
         let blob_hash = create_test_hash(2);
         let blob_size = 1024;
 
@@ -47,7 +51,7 @@ mod tests {
     #[tokio::test]
     async fn test_is_blob_uploaded() {
         let (storage, _temp_dir) = create_test_storage().await;
-        let relay_id = create_test_hash(1);
+        let relay_id = create_test_key_id(1);
         let blob_hash = create_test_hash(2);
         let blob_size = 2048;
 
@@ -71,8 +75,8 @@ mod tests {
     #[tokio::test]
     async fn test_get_blob_upload_status() {
         let (storage, _temp_dir) = create_test_storage().await;
-        let relay_id1 = create_test_hash(1);
-        let relay_id2 = create_test_hash(2);
+        let relay_id1 = create_test_key_id(1);
+        let relay_id2 = create_test_key_id(2);
         let blob_hash = create_test_hash(3);
         let blob_size = 4096;
 
@@ -93,7 +97,7 @@ mod tests {
         assert_eq!(statuses.len(), 2);
 
         // Check that both relays are present
-        let relay_ids: Vec<Hash> = statuses.iter().map(|s| s.relay_id).collect();
+        let relay_ids: Vec<KeyId> = statuses.iter().map(|s| s.relay_id).collect();
         assert!(relay_ids.contains(&relay_id1));
         assert!(relay_ids.contains(&relay_id2));
 
@@ -108,8 +112,8 @@ mod tests {
     #[tokio::test]
     async fn test_get_uploaded_blobs_for_relay() {
         let (storage, _temp_dir) = create_test_storage().await;
-        let relay_id = create_test_hash(1);
-        let other_relay_id = create_test_hash(2);
+        let relay_id = create_test_key_id(1);
+        let other_relay_id = create_test_key_id(2);
 
         let blob_hash1 = create_test_hash(3);
         let blob_hash2 = create_test_hash(4);
@@ -145,7 +149,7 @@ mod tests {
     #[tokio::test]
     async fn test_get_uploaded_blobs_for_relay_with_limit() {
         let (storage, _temp_dir) = create_test_storage().await;
-        let relay_id = create_test_hash(1);
+        let relay_id = create_test_key_id(1);
         let blob_size = 1024;
 
         // Upload multiple blobs
@@ -169,8 +173,8 @@ mod tests {
     #[tokio::test]
     async fn test_remove_blob_upload_record_specific_relay() {
         let (storage, _temp_dir) = create_test_storage().await;
-        let relay_id1 = create_test_hash(1);
-        let relay_id2 = create_test_hash(2);
+        let relay_id1 = create_test_key_id(1);
+        let relay_id2 = create_test_key_id(2);
         let blob_hash = create_test_hash(3);
         let blob_size = 1024;
 
@@ -209,8 +213,8 @@ mod tests {
     #[tokio::test]
     async fn test_remove_blob_upload_record_all_relays() {
         let (storage, _temp_dir) = create_test_storage().await;
-        let relay_id1 = create_test_hash(1);
-        let relay_id2 = create_test_hash(2);
+        let relay_id1 = create_test_key_id(1);
+        let relay_id2 = create_test_key_id(2);
         let blob_hash = create_test_hash(3);
         let blob_size = 1024;
 
@@ -247,8 +251,8 @@ mod tests {
     #[tokio::test]
     async fn test_get_unuploaded_blobs_for_relay() {
         let (storage, _temp_dir) = create_test_storage().await;
-        let relay_id = create_test_hash(1);
-        let other_relay_id = create_test_hash(2);
+        let relay_id = create_test_key_id(1);
+        let other_relay_id = create_test_key_id(2);
         let blob_size = 1024;
 
         // Upload some blobs
@@ -280,8 +284,8 @@ mod tests {
     #[tokio::test]
     async fn test_get_uploaded_blob_count_for_relay() {
         let (storage, _temp_dir) = create_test_storage().await;
-        let relay_id = create_test_hash(1);
-        let other_relay_id = create_test_hash(2);
+        let relay_id = create_test_key_id(1);
+        let other_relay_id = create_test_key_id(2);
         let blob_size = 1024;
 
         // Upload blobs to different relays
@@ -313,7 +317,7 @@ mod tests {
     #[tokio::test]
     async fn test_get_uploaded_blob_size_for_relay() {
         let (storage, _temp_dir) = create_test_storage().await;
-        let relay_id = create_test_hash(1);
+        let relay_id = create_test_key_id(1);
         let blob_size = 1024;
 
         // Upload blobs with different sizes
@@ -336,7 +340,7 @@ mod tests {
     #[tokio::test]
     async fn test_mark_blob_uploaded_replace_existing() {
         let (storage, _temp_dir) = create_test_storage().await;
-        let relay_id = create_test_hash(1);
+        let relay_id = create_test_key_id(1);
         let blob_hash = create_test_hash(2);
         let blob_size1 = 1024;
         let blob_size2 = 2048;
@@ -365,7 +369,7 @@ mod tests {
     #[tokio::test]
     async fn test_blob_upload_status_struct() {
         let blob_hash = create_test_hash(1);
-        let relay_id = create_test_hash(2);
+        let relay_id = create_test_key_id(2);
         let uploaded_at = 1234567890;
         let blob_size = 4096;
 
@@ -385,7 +389,7 @@ mod tests {
     #[tokio::test]
     async fn test_concurrent_blob_operations() {
         let (storage, _temp_dir) = create_test_storage().await;
-        let relay_id = create_test_hash(1);
+        let relay_id = create_test_key_id(1);
 
         // Test concurrent uploads
         let mut handles = Vec::new();
