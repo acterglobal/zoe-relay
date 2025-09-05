@@ -926,6 +926,15 @@ impl MessageFull {
     pub fn encrypted_content(&self) -> Option<&ChaCha20Poly1305Content> {
         self.content().as_encrypted()
     }
+
+    /// Check if this message is expired based on its timeout and current time
+    pub fn is_expired(&self, current_time: u64) -> bool {
+        if let Some(timeout) = self.storage_timeout() {
+            let expiration_time = self.when().saturating_add(timeout);
+            return expiration_time < current_time;
+        }
+        false
+    }
 }
 
 impl MessageFull {

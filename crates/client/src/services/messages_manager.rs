@@ -82,6 +82,15 @@ pub trait MessagesManagerTrait: Send + Sync {
         author: zoe_wire_protocol::KeyId,
         storage_key: zoe_wire_protocol::StoreKey,
     ) -> Result<Option<MessageFull>>;
+
+    /// Check which messages the server already has and return their global stream IDs.
+    /// Returns a vec of `Option<String>` in the same order as the input, where:
+    /// - `Some(stream_id)` means the server has the message with that global stream ID
+    /// - `None` means the server doesn't have this message yet
+    async fn check_messages(
+        &self,
+        message_ids: Vec<zoe_wire_protocol::MessageId>,
+    ) -> Result<Vec<Option<String>>>;
 }
 
 /// Comprehensive message event that covers all message flows for persistence and monitoring.
@@ -719,6 +728,18 @@ impl MessagesManagerTrait for MessagesManager {
         let result = self
             .messages_service
             .user_data(context::current(), author, storage_key)
+            .await?;
+        Ok(result?)
+    }
+
+    async fn check_messages(
+        &self,
+        message_ids: Vec<zoe_wire_protocol::MessageId>,
+    ) -> Result<Vec<Option<String>>> {
+        use tarpc::context;
+        let result = self
+            .messages_service
+            .check_messages(context::current(), message_ids)
             .await?;
         Ok(result?)
     }

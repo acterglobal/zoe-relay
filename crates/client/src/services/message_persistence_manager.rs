@@ -483,6 +483,13 @@ impl<T: MessagesManagerTrait> MessagesManagerTrait for GenericMessagePersistence
     ) -> Result<Option<MessageFull>> {
         self.messages_manager.user_data(author, storage_key).await
     }
+
+    async fn check_messages(
+        &self,
+        message_ids: Vec<zoe_wire_protocol::MessageId>,
+    ) -> Result<Vec<Option<String>>> {
+        self.messages_manager.check_messages(message_ids).await
+    }
 }
 
 #[cfg(test)]

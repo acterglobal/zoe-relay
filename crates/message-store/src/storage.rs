@@ -180,6 +180,13 @@ impl RedisMessageStorage {
 type RedisStreamResult = Vec<(String, Vec<(String, Vec<(Vec<u8>, Vec<u8>)>)>)>;
 
 impl RedisMessageStorage {
+    /// Check if a message is expired based on raw expiration time
+    /// This is used when we only have the expiration timestamp from Redis metadata
+    /// and matches the logic in MessageFull::is_expired()
+    fn is_expired_from_timestamp(expiration_time: u64, current_time: u64) -> bool {
+        expiration_time < current_time
+    }
+
     /// Create a new Redis storage instance
     pub async fn new(redis_url: String) -> Result<Self> {
         debug!("Connecting to Redis at {}", redis_url);
@@ -221,17 +228,19 @@ impl RedisMessageStorage {
         let mut conn = { self.conn.lock().await.clone() };
 
         // Check expiration early to avoid unnecessary work
+        let current_time = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_secs();
+
+        if message.is_expired(current_time) {
+            debug!("Message is expired, ignoring to store");
+            return Ok(PublishResult::Expired);
+        }
+
+        // Prepare expiration data for Redis storage
         let (ex_time, timeout_str) = if let Some(timeout) = message.storage_timeout() {
             if timeout > 0 {
                 let expiration_time = message.when().saturating_add(timeout);
-                if expiration_time
-                    < std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)?
-                        .as_secs()
-                {
-                    debug!("Message is expired, ignoring to store");
-                    return Ok(PublishResult::Expired);
-                }
                 (Some(expiration_time), timeout.to_string())
             } else {
                 (None, String::new())
@@ -570,7 +579,7 @@ impl RedisMessageStorage {
                                         }
                                     };
                                     let current_time = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_secs();
-                                    if expiration_time < current_time {
+                                    if Self::is_expired_from_timestamp(expiration_time, current_time) {
                                         // the message is expired, we don't yield it
                                         debug!("Message is expired, ignoring to yield in catch up");
                                         continue 'messages;
@@ -724,7 +733,7 @@ impl RedisMessageStorage {
                                         }
                                     };
                                     let current_time = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_secs();
-                                    if expiration_time < current_time {
+                                    if Self::is_expired_from_timestamp(expiration_time, current_time) {
                                         // the message is expired, we don't yield it
                                         debug!("Message is expired, ignoring to yield in regular listen");
                                         continue 'messages;

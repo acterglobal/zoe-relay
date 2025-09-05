@@ -17,9 +17,8 @@ use zoe_wire_protocol::{
 use crate::error::{ClientError, Result};
 use crate::services::{MessageEvent, MessagesManager, MessagesManagerTrait};
 
-// Constants for offline message processing
-const OFFLINE_PROCESSING_INTERVAL_SECS: u64 = 30;
-const OFFLINE_PROCESSING_BATCH_SIZE: usize = 50;
+// Constants for catch-up processing
+const CATCH_UP_BATCH_SIZE: usize = 50;
 
 /// Connection state for a relay
 #[derive(Debug, Clone)]
@@ -70,8 +69,8 @@ pub struct MultiRelayMessageManager<S: MessageStorage> {
     global_messages_tx: broadcast::Sender<StreamMessage>,
     /// Global catch-up response broadcaster
     global_catchup_tx: broadcast::Sender<CatchUpResponse>,
-    /// Background task for processing offline messages from storage
-    offline_processor_task: JoinHandle<()>,
+    /// Map of active catch-up tasks by relay ID
+    catch_up_tasks: Arc<RwLock<BTreeMap<KeyId, JoinHandle<()>>>>,
 }
 
 impl<S: MessageStorage + 'static> MultiRelayMessageManager<S> {
@@ -82,16 +81,7 @@ impl<S: MessageStorage + 'static> MultiRelayMessageManager<S> {
         let (global_catchup_tx, _) = broadcast::channel(1000);
 
         let relay_connections = Arc::new(RwLock::new(BTreeMap::new()));
-
-        // Start background task for processing offline messages from storage
-        let offline_processor_task = {
-            let connections = Arc::clone(&relay_connections);
-            let storage_clone = Arc::clone(&storage);
-
-            tokio::spawn(async move {
-                Self::offline_message_processor(connections, storage_clone).await;
-            })
-        };
+        let catch_up_tasks = Arc::new(RwLock::new(BTreeMap::new()));
 
         Self {
             relay_connections,
@@ -99,12 +89,22 @@ impl<S: MessageStorage + 'static> MultiRelayMessageManager<S> {
             global_events_tx,
             global_messages_tx,
             global_catchup_tx,
-            offline_processor_task,
+            catch_up_tasks,
         }
     }
 
     /// Add a relay connection to the manager
-    pub async fn add_relay(&self, relay_id: KeyId, manager: Arc<MessagesManager>) -> Result<()> {
+    ///
+    /// # Arguments
+    /// * `relay_id` - The unique identifier for the relay
+    /// * `manager` - The messages manager for this relay
+    /// * `should_catch_up` - Whether to start catching up on historical messages
+    pub async fn add_relay(
+        &self,
+        relay_id: KeyId,
+        manager: Arc<MessagesManager>,
+        should_catch_up: bool,
+    ) -> Result<()> {
         let connection = RelayConnection {
             manager: Arc::clone(&manager),
             connection_state: ConnectionState::Connected,
@@ -123,11 +123,28 @@ impl<S: MessageStorage + 'static> MultiRelayMessageManager<S> {
             hex::encode(relay_id.as_bytes())
         );
 
+        // Start catch-up task if requested
+        if should_catch_up {
+            self.start_catch_up_task(relay_id, manager).await?;
+        }
+
         Ok(())
     }
 
     /// Remove a relay connection
     pub async fn remove_relay(&self, relay_id: &KeyId) -> Option<Arc<MessagesManager>> {
+        // Cancel any active catch-up task for this relay
+        {
+            let mut tasks = self.catch_up_tasks.write().await;
+            if let Some(task) = tasks.remove(relay_id) {
+                task.abort();
+                tracing::debug!(
+                    "Cancelled catch-up task for relay: {}",
+                    hex::encode(relay_id.as_bytes())
+                );
+            }
+        }
+
         let mut connections = self.relay_connections.write().await;
         let removed = connections.remove(relay_id);
 
@@ -163,65 +180,118 @@ impl<S: MessageStorage + 'static> MultiRelayMessageManager<S> {
         !self.get_connected_relay_ids().await.is_empty()
     }
 
-    /// Background task that processes offline messages from storage
-    async fn offline_message_processor(
-        connections: Arc<RwLock<BTreeMap<KeyId, RelayConnection>>>,
-        storage: Arc<S>,
-    ) {
-        let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(
-            OFFLINE_PROCESSING_INTERVAL_SECS,
-        ));
+    /// Start a catch-up task for a specific relay
+    async fn start_catch_up_task(
+        &self,
+        relay_id: KeyId,
+        manager: Arc<MessagesManager>,
+    ) -> Result<()> {
+        let storage = Arc::clone(&self.storage);
+        let tasks = Arc::clone(&self.catch_up_tasks);
 
-        loop {
-            interval.tick().await;
+        let task = tokio::spawn(async move {
+            tracing::info!(
+                "Starting catch-up task for relay: {}",
+                hex::encode(relay_id.as_bytes())
+            );
 
-            // Get all connected relays
-            let connected_relays = {
-                let connections_guard = connections.read().await;
-                connections_guard
-                    .iter()
-                    .filter_map(|(relay_id, connection)| {
-                        if matches!(connection.connection_state, ConnectionState::Connected) {
-                            Some((*relay_id, Arc::clone(&connection.manager)))
-                        } else {
-                            None
-                        }
-                    })
-                    .collect::<Vec<_>>()
-            };
-
-            if connected_relays.is_empty() {
-                tracing::debug!("No connected relays, skipping offline message processing");
-                continue;
-            }
-
-            // Process unsynced messages for each connected relay
-            for (relay_id, manager) in connected_relays {
-                if let Err(e) = Self::process_unsynced_messages_for_relay::<MessagesManager>(
-                    &storage,
-                    &relay_id,
-                    &manager,
-                    OFFLINE_PROCESSING_BATCH_SIZE,
-                )
-                .await
-                {
+            match Self::process_all_unsynced_messages_for_relay::<MessagesManager>(
+                &storage,
+                &relay_id,
+                &manager,
+                CATCH_UP_BATCH_SIZE,
+            )
+            .await
+            {
+                Ok(total_processed) => {
+                    tracing::info!(
+                        "Catch-up completed for relay: {} ({} messages processed)",
+                        hex::encode(relay_id.as_bytes()),
+                        total_processed
+                    );
+                }
+                Err(e) => {
                     tracing::warn!(
-                        "Failed to process unsynced messages for relay {}: {}",
+                        "Catch-up failed for relay {}: {}",
                         hex::encode(relay_id.as_bytes()),
                         e
                     );
                 }
             }
+
+            // Remove this task from the active tasks map when done
+            let mut tasks_guard = tasks.write().await;
+            tasks_guard.remove(&relay_id);
+        });
+
+        // Store the task handle
+        {
+            let mut tasks_guard = self.catch_up_tasks.write().await;
+            tasks_guard.insert(relay_id, task);
         }
+
+        Ok(())
     }
 
-    /// Process unsynced messages for a specific relay
-    async fn process_unsynced_messages_for_relay<M: MessagesManagerTrait>(
+    /// Process all unsynced messages for a specific relay in batches
+    /// Returns the total number of messages processed
+    async fn process_all_unsynced_messages_for_relay<M: MessagesManagerTrait>(
         storage: &Arc<S>,
         relay_id: &KeyId,
         manager: &Arc<M>,
         batch_size: usize,
-    ) -> Result<()> {
+    ) -> Result<usize> {
+        let mut total_processed = 0;
+        let mut batch_count = 0;
+
+        loop {
+            tracing::debug!(
+                "Processing batch {} for relay {} (batch size: {})",
+                batch_count,
+                hex::encode(relay_id.as_bytes()),
+                batch_size
+            );
+
+            let batch_result = Self::process_unsynced_messages_batch_for_relay(
+                storage, relay_id, manager, batch_size,
+            )
+            .await?;
+
+            let Some(batch_processed) = batch_result else {
+                // No more messages to process - we're done
+                tracing::debug!(
+                    "No unsynced messages left for relay {}, stopping catch-up after {} batches",
+                    hex::encode(relay_id.as_bytes()),
+                    batch_count
+                );
+                break;
+            };
+
+            total_processed += batch_processed;
+            batch_count += 1;
+
+            tracing::debug!(
+                "Batch {} complete: {} messages processed for relay {}",
+                batch_count,
+                batch_processed,
+                hex::encode(relay_id.as_bytes())
+            );
+        }
+
+        Ok(total_processed)
+    }
+
+    /// Process a single batch of unsynced messages for a specific relay
+    /// Returns:
+    /// - Ok(Some(count)) if messages were processed (count = number successfully processed)
+    /// - Ok(None) if no unsynced messages were found (indicates completion)
+    /// - Err(_) if there was an error
+    async fn process_unsynced_messages_batch_for_relay<M: MessagesManagerTrait>(
+        storage: &Arc<S>,
+        relay_id: &KeyId,
+        manager: &Arc<M>,
+        batch_size: usize,
+    ) -> Result<Option<usize>> {
         // Convert KeyId to Hash for storage API
         let relay_key_id = relay_id;
 
@@ -232,64 +302,136 @@ impl<S: MessageStorage + 'static> MultiRelayMessageManager<S> {
             .map_err(|e| ClientError::Generic(format!("Failed to get unsynced messages: {}", e)))?;
 
         if unsynced_messages.is_empty() {
-            return Ok(());
+            return Ok(None); // No messages to process - indicates completion
         }
 
-        tracing::info!(
-            "Processing {} unsynced messages for relay {}",
-            unsynced_messages.len(),
+        let batch_message_count = unsynced_messages.len();
+        tracing::debug!(
+            "Processing batch of {} unsynced messages for relay {}",
+            batch_message_count,
             hex::encode(relay_id.as_bytes())
         );
 
-        // Try to send each message
-        for message in unsynced_messages {
-            match manager.publish(message.clone()).await {
-                Ok(result) => {
-                    // Extract global stream ID from result
-                    let global_stream_id = match result {
-                        PublishResult::StoredNew { global_stream_id } => global_stream_id,
-                        PublishResult::AlreadyExists { global_stream_id } => global_stream_id,
-                        PublishResult::Expired => {
-                            tracing::warn!(
-                                "Message expired: {}",
-                                hex::encode(message.id().as_bytes())
-                            );
-                            continue;
-                        }
-                    };
+        // Filter out expired messages and delete them immediately from storage
+        let mut valid_messages = Vec::new();
+        let mut expired_count = 0;
 
-                    // Mark as synced in storage
-                    if let Err(e) = storage
-                        .mark_message_synced(message.id(), relay_key_id, &global_stream_id)
-                        .await
-                    {
-                        tracing::error!(
-                            "Failed to mark message {} as synced to relay {}: {}",
-                            hex::encode(message.id().as_bytes()),
-                            hex::encode(relay_id.as_bytes()),
-                            e
-                        );
-                    } else {
-                        tracing::debug!(
-                            "Successfully sent and marked message {} as synced to relay {}",
-                            hex::encode(message.id().as_bytes()),
-                            hex::encode(relay_id.as_bytes())
-                        );
-                    }
+        let current_time = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+
+        for message in unsynced_messages {
+            if message.is_expired(current_time) {
+                // Delete expired message immediately
+                if let Err(e) = storage.delete_message(message.id()).await {
+                    tracing::error!(
+                        "Failed to delete expired message {} from storage: {}. Continuing with other messages.",
+                        hex::encode(message.id().as_bytes()),
+                        e
+                    );
+                    // Continue processing other messages even if this deletion failed
                 }
+                expired_count += 1;
+                continue;
+            } else {
+                valid_messages.push(message);
+            }
+        }
+
+        // If all messages were expired, return Some(0) to indicate we processed a batch
+        // but didn't sync any messages (they were expired and removed)
+        if valid_messages.is_empty() {
+            tracing::debug!(
+                "All {} messages in batch were expired and removed for relay {}",
+                expired_count,
+                hex::encode(relay_id.as_bytes())
+            );
+            return Ok(Some(0));
+        }
+
+        // Now check which valid messages already exist on the server
+        let message_ids: Vec<_> = valid_messages.iter().map(|msg| *msg.id()).collect();
+
+        tracing::debug!(
+            "Checking existence of {} valid messages on relay {} ({} expired messages removed)",
+            message_ids.len(),
+            hex::encode(relay_id.as_bytes()),
+            expired_count
+        );
+
+        let existence_results = manager.check_messages(message_ids).await?;
+        let mut processed_count = 0;
+        // Process messages based on existence check results
+        for (message, existence_result) in valid_messages.iter().zip(existence_results.iter()) {
+            if let Some(global_stream_id) = existence_result {
+                // Message already exists on server, just mark as synced
+                if let Err(e) = storage
+                    .mark_message_synced(message.id(), relay_key_id, global_stream_id)
+                    .await
+                {
+                    tracing::error!(
+                        "Failed to mark existing message {} as synced to relay {}: {}",
+                        hex::encode(message.id().as_bytes()),
+                        hex::encode(relay_id.as_bytes()),
+                        e
+                    );
+                } else {
+                    tracing::debug!(
+                        "Message {} already exists on relay {}, marked as synced",
+                        hex::encode(message.id().as_bytes()),
+                        hex::encode(relay_id.as_bytes())
+                    );
+                    processed_count += 1;
+                }
+                continue;
+            }
+
+            // Message doesn't exist, need to send it
+            let global_stream_id = match manager.publish(message.clone()).await {
+                Ok(result) => match result {
+                    PublishResult::StoredNew { global_stream_id } => global_stream_id,
+                    PublishResult::AlreadyExists { global_stream_id } => global_stream_id,
+                    PublishResult::Expired => {
+                        tracing::warn!("Message expired: {}", hex::encode(message.id().as_bytes()));
+                        continue;
+                    }
+                },
                 Err(e) => {
-                    tracing::warn!(
+                    tracing::error!(
                         "Failed to send message {} to relay {}: {}",
                         hex::encode(message.id().as_bytes()),
                         hex::encode(relay_id.as_bytes()),
                         e
                     );
-                    // Message remains unsynced in storage, will be retried next time
+                    continue;
                 }
+            };
+
+            // Mark as synced in storage
+            if let Err(e) = storage
+                .mark_message_synced(message.id(), relay_key_id, &global_stream_id)
+                .await
+            {
+                tracing::error!(
+                    "Failed to mark message {} as synced to relay {}: {}",
+                    hex::encode(message.id().as_bytes()),
+                    hex::encode(relay_id.as_bytes()),
+                    e
+                );
             }
+            processed_count += 1;
         }
 
-        Ok(())
+        tracing::debug!(
+            "Batch complete: {}/{} valid messages successfully processed for relay {} ({} expired messages removed)",
+            processed_count,
+            valid_messages.len(),
+            hex::encode(relay_id.as_bytes()),
+            expired_count
+        );
+
+        Ok(Some(processed_count))
     }
 }
 
@@ -542,11 +684,58 @@ impl<S: MessageStorage + 'static> MessagesManagerTrait for MultiRelayMessageMana
 
         Ok(None) // Not found on any relay
     }
+
+    /// Check which messages exist on any connected relay
+    /// Returns the first successful result from any relay
+    async fn check_messages(
+        &self,
+        message_ids: Vec<zoe_wire_protocol::MessageId>,
+    ) -> Result<Vec<Option<String>>> {
+        let connections = self.relay_connections.read().await;
+
+        // Try each connected relay until we get a successful response
+        for (relay_id, connection) in connections.iter() {
+            if matches!(connection.connection_state, ConnectionState::Connected) {
+                match connection.manager.check_messages(message_ids.clone()).await {
+                    Ok(result) => {
+                        tracing::debug!(
+                            "Successfully checked {} messages on relay {}",
+                            message_ids.len(),
+                            hex::encode(relay_id.as_bytes())
+                        );
+                        return Ok(result);
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            "Failed to check messages on relay {}: {}",
+                            hex::encode(relay_id.as_bytes()),
+                            e
+                        );
+                        continue;
+                    }
+                }
+            }
+        }
+
+        // If no relay is available, return None for all messages (assume they don't exist)
+        tracing::warn!("No connected relays available for checking messages");
+        Ok(vec![None; message_ids.len()])
+    }
 }
 
 impl<S: MessageStorage> Drop for MultiRelayMessageManager<S> {
     fn drop(&mut self) {
-        self.offline_processor_task.abort();
+        // Cancel all active catch-up tasks
+        if let Ok(mut tasks) = self.catch_up_tasks.try_write() {
+            for (relay_id, task) in tasks.iter() {
+                task.abort();
+                tracing::debug!(
+                    "Cancelled catch-up task for relay during drop: {}",
+                    hex::encode(relay_id.as_bytes())
+                );
+            }
+            tasks.clear();
+        }
     }
 }
 
@@ -693,7 +882,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_storage_based_offline_processing() {
+    async fn test_catch_up_processing() {
         use crate::services::messages_manager::MockMessagesManagerTrait;
 
         // Create a message that will be "unsynced" for a relay
@@ -722,6 +911,13 @@ mod tests {
 
         // Create a mock messages manager that will succeed
         let mut mock_manager = MockMessagesManagerTrait::new();
+
+        // Mock check_messages to return that the message doesn't exist (None)
+        mock_manager
+            .expect_check_messages()
+            .times(1)
+            .returning(|_| Ok(vec![None])); // Message doesn't exist, needs to be sent
+
         mock_manager.expect_publish().times(1).returning(|_| {
             Ok(PublishResult::StoredNew {
                 global_stream_id: "test_stream_123".to_string(),
@@ -730,8 +926,8 @@ mod tests {
 
         let mock_manager = Arc::new(mock_manager);
 
-        // Test the offline processing function directly
-        let result = MultiRelayMessageManager::process_unsynced_messages_for_relay(
+        // Test the catch-up processing function directly
+        let result = MultiRelayMessageManager::process_unsynced_messages_batch_for_relay(
             &storage,
             &relay_id,
             &mock_manager,
@@ -739,9 +935,463 @@ mod tests {
         )
         .await;
 
+        assert!(result.is_ok(), "Catch-up processing should succeed");
+
+        // Verify that we processed exactly 1 message
+        assert_eq!(
+            result.unwrap(),
+            Some(1),
+            "Should have processed exactly 1 message"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_batched_catch_up_processing() {
+        use crate::services::messages_manager::MockMessagesManagerTrait;
+
+        // Create multiple test messages
+        let test_messages: Vec<MessageFull> = (0u64..5u64)
+            .map(|i| {
+                let mut rng = rand::thread_rng();
+                let keypair = KeyPair::generate(&mut rng);
+                let message = Message::new_v0(
+                    Content::raw(format!("Test message {}", i).as_bytes().to_vec()),
+                    keypair.public_key(),
+                    1234567890u64 + i,
+                    Kind::Regular,
+                    vec![],
+                );
+                MessageFull::new(message, &keypair).unwrap()
+            })
+            .collect();
+
+        let relay_id = KeyId::from([1u8; 32]);
+        let relay_key_id = relay_id;
+
+        // Mock storage to return messages in batches
+        let mut mock_storage = MockMessageStorage::new();
+
+        // First call returns 2 messages (batch size 2)
+        let messages_batch_1 = vec![test_messages[0].clone(), test_messages[1].clone()];
+        mock_storage
+            .expect_get_unsynced_messages_for_relay()
+            .with(
+                mockall::predicate::eq(relay_key_id),
+                mockall::predicate::eq(Some(2)),
+            )
+            .times(1)
+            .returning(move |_, _| Ok(messages_batch_1.clone()));
+
+        // Second call returns 2 more messages
+        let messages_batch_2 = vec![test_messages[2].clone(), test_messages[3].clone()];
+        mock_storage
+            .expect_get_unsynced_messages_for_relay()
+            .with(
+                mockall::predicate::eq(relay_key_id),
+                mockall::predicate::eq(Some(2)),
+            )
+            .times(1)
+            .returning(move |_, _| Ok(messages_batch_2.clone()));
+
+        // Third call returns 1 message
+        let messages_batch_3 = vec![test_messages[4].clone()];
+        mock_storage
+            .expect_get_unsynced_messages_for_relay()
+            .with(
+                mockall::predicate::eq(relay_key_id),
+                mockall::predicate::eq(Some(2)),
+            )
+            .times(1)
+            .returning(move |_, _| Ok(messages_batch_3.clone()));
+
+        // Fourth call returns 0 messages (indicating we're done)
+        mock_storage
+            .expect_get_unsynced_messages_for_relay()
+            .with(
+                mockall::predicate::eq(relay_key_id),
+                mockall::predicate::eq(Some(2)),
+            )
+            .times(1)
+            .returning(move |_, _| Ok(vec![]));
+
+        // Mock successful message sync marking for all 5 messages
+        mock_storage
+            .expect_mark_message_synced()
+            .times(5)
+            .returning(|_, _, _| Ok(()));
+
+        let storage = Arc::new(mock_storage);
+
+        // Create a mock messages manager that will succeed for all messages
+        let mut mock_manager = MockMessagesManagerTrait::new();
+
+        // Mock check_messages for each batch:
+        // Batch 1: 2 messages, both don't exist (need to send)
+        mock_manager
+            .expect_check_messages()
+            .times(1)
+            .returning(|_| Ok(vec![None, None]));
+
+        // Batch 2: 2 messages, both don't exist (need to send)
+        mock_manager
+            .expect_check_messages()
+            .times(1)
+            .returning(|_| Ok(vec![None, None]));
+
+        // Batch 3: 1 message, doesn't exist (need to send)
+        mock_manager
+            .expect_check_messages()
+            .times(1)
+            .returning(|_| Ok(vec![None]));
+
+        mock_manager.expect_publish().times(5).returning(|_| {
+            Ok(PublishResult::StoredNew {
+                global_stream_id: "test_stream_123".to_string(),
+            })
+        });
+
+        let mock_manager = Arc::new(mock_manager);
+
+        // Test the full batched catch-up processing
+        let result = MultiRelayMessageManager::process_all_unsynced_messages_for_relay(
+            &storage,
+            &relay_id,
+            &mock_manager,
+            2, // batch size of 2
+        )
+        .await;
+
+        assert!(result.is_ok(), "Batched catch-up processing should succeed");
+
+        // Verify that we processed all 5 messages across 4 batches (2+2+1+0)
+        assert_eq!(
+            result.unwrap(),
+            5,
+            "Should have processed exactly 5 messages total"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_efficient_catch_up_with_existing_messages() {
+        use crate::services::messages_manager::MockMessagesManagerTrait;
+
+        // Create 3 test messages
+        let test_messages: Vec<MessageFull> = (0u64..3u64)
+            .map(|i| {
+                let mut rng = rand::thread_rng();
+                let keypair = KeyPair::generate(&mut rng);
+                let message = Message::new_v0(
+                    Content::raw(format!("Test message {}", i).as_bytes().to_vec()),
+                    keypair.public_key(),
+                    1234567890u64 + i,
+                    Kind::Regular,
+                    vec![],
+                );
+                MessageFull::new(message, &keypair).unwrap()
+            })
+            .collect();
+
+        let relay_id = KeyId::from([1u8; 32]);
+        let relay_key_id = relay_id;
+
+        // Extract message IDs before creating closures
+        let message_ids = vec![
+            *test_messages[0].id(),
+            *test_messages[1].id(),
+            *test_messages[2].id(),
+        ];
+
+        // Mock storage to return 3 unsynced messages
+        let mut mock_storage = MockMessageStorage::new();
+        mock_storage
+            .expect_get_unsynced_messages_for_relay()
+            .with(
+                mockall::predicate::eq(relay_key_id),
+                mockall::predicate::eq(Some(3)),
+            )
+            .times(1)
+            .returning(move |_, _| Ok(test_messages.clone()));
+
+        // Second call returns empty (indicating we're done)
+        mock_storage
+            .expect_get_unsynced_messages_for_relay()
+            .with(
+                mockall::predicate::eq(relay_key_id),
+                mockall::predicate::eq(Some(3)),
+            )
+            .times(1)
+            .returning(move |_, _| Ok(vec![]));
+
+        // Mock successful message sync marking for all 3 messages
+        mock_storage
+            .expect_mark_message_synced()
+            .times(3)
+            .returning(|_, _, _| Ok(()));
+
+        let storage = Arc::new(mock_storage);
+
+        // Create a mock messages manager
+        let mut mock_manager = MockMessagesManagerTrait::new();
+
+        // Mock check_messages to return:
+        // - Message 0: already exists (Some("existing_stream_1"))
+        // - Message 1: doesn't exist (None)
+        // - Message 2: already exists (Some("existing_stream_2"))
+        mock_manager
+            .expect_check_messages()
+            .with(mockall::predicate::eq(message_ids))
+            .times(1)
+            .returning(|_| {
+                Ok(vec![
+                    Some("existing_stream_1".to_string()), // Message 0 exists
+                    None,                                  // Message 1 doesn't exist
+                    Some("existing_stream_2".to_string()), // Message 2 exists
+                ])
+            });
+
+        // Mock publish to be called only once (for message 1 that doesn't exist)
+        mock_manager.expect_publish().times(1).returning(|_| {
+            Ok(PublishResult::StoredNew {
+                global_stream_id: "new_stream_123".to_string(),
+            })
+        });
+
+        let mock_manager = Arc::new(mock_manager);
+
+        // Test the efficient batch processing
+        let result = MultiRelayMessageManager::process_all_unsynced_messages_for_relay(
+            &storage,
+            &relay_id,
+            &mock_manager,
+            3, // batch size of 3
+        )
+        .await;
+
         assert!(
             result.is_ok(),
-            "Processing unsynced messages should succeed"
+            "Efficient catch-up processing should succeed"
+        );
+
+        // Verify that we processed all 3 messages:
+        // - 2 were marked as synced without sending (already existed)
+        // - 1 was sent and then marked as synced
+        assert_eq!(
+            result.unwrap(),
+            3,
+            "Should have processed exactly 3 messages total"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_expired_message_handling() {
+        use crate::services::messages_manager::MockMessagesManagerTrait;
+        use zoe_wire_protocol::Kind;
+
+        // Create test messages - one expired, one valid
+        let mut rng = rand::thread_rng();
+        let keypair = KeyPair::generate(&mut rng);
+
+        // Create an expired ephemeral message (timeout of 1 second, created 2 seconds ago)
+        let expired_message = {
+            let past_timestamp = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs()
+                .saturating_sub(2); // 2 seconds ago
+
+            let message = Message::new_v0(
+                Content::raw(b"Expired message".to_vec()),
+                keypair.public_key(),
+                past_timestamp,
+                Kind::Emphemeral(1), // 1 second timeout - should be expired
+                vec![],
+            );
+            MessageFull::new(message, &keypair).unwrap()
+        };
+
+        // Create a valid regular message
+        let valid_message = {
+            let message = Message::new_v0(
+                Content::raw(b"Valid message".to_vec()),
+                keypair.public_key(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_secs(),
+                Kind::Regular,
+                vec![],
+            );
+            MessageFull::new(message, &keypair).unwrap()
+        };
+
+        let test_messages = vec![expired_message.clone(), valid_message.clone()];
+        let relay_id = KeyId::from([1u8; 32]);
+        let relay_key_id = relay_id;
+
+        // Mock storage to return both messages initially
+        let mut mock_storage = MockMessageStorage::new();
+        mock_storage
+            .expect_get_unsynced_messages_for_relay()
+            .with(
+                mockall::predicate::eq(relay_key_id),
+                mockall::predicate::eq(Some(2)),
+            )
+            .times(1)
+            .returning(move |_, _| Ok(test_messages.clone()));
+
+        // Second call returns empty (indicating we're done)
+        mock_storage
+            .expect_get_unsynced_messages_for_relay()
+            .with(
+                mockall::predicate::eq(relay_key_id),
+                mockall::predicate::eq(Some(2)),
+            )
+            .times(1)
+            .returning(move |_, _| Ok(vec![]));
+
+        // Mock deletion of expired message
+        let expired_id = *expired_message.id();
+        mock_storage
+            .expect_delete_message()
+            .with(mockall::predicate::eq(expired_id))
+            .times(1)
+            .returning(|_| Ok(true));
+
+        // Mock successful message sync marking for the valid message only
+        mock_storage
+            .expect_mark_message_synced()
+            .times(1)
+            .returning(|_, _, _| Ok(()));
+
+        let storage = Arc::new(mock_storage);
+
+        // Create a mock messages manager
+        let mut mock_manager = MockMessagesManagerTrait::new();
+
+        // Mock check_messages for the valid message only (expired message filtered out)
+        let valid_message_id = *valid_message.id();
+        mock_manager
+            .expect_check_messages()
+            .with(mockall::predicate::eq(vec![valid_message_id]))
+            .times(1)
+            .returning(|_| Ok(vec![None])); // Valid message doesn't exist, needs to be sent
+
+        // Mock publish to be called only for the valid message
+        mock_manager.expect_publish().times(1).returning(|_| {
+            Ok(PublishResult::StoredNew {
+                global_stream_id: "valid_stream_123".to_string(),
+            })
+        });
+
+        let mock_manager = Arc::new(mock_manager);
+
+        // Test the batch processing with expired messages
+        let result = MultiRelayMessageManager::process_all_unsynced_messages_for_relay(
+            &storage,
+            &relay_id,
+            &mock_manager,
+            2, // batch size of 2
+        )
+        .await;
+
+        assert!(
+            result.is_ok(),
+            "Processing with expired messages should succeed"
+        );
+
+        // Verify that we processed only 1 message (the valid one)
+        // The expired message should have been removed from storage
+        assert_eq!(
+            result.unwrap(),
+            1,
+            "Should have processed exactly 1 valid message (expired message removed)"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_all_expired_messages_batch() {
+        use crate::services::messages_manager::MockMessagesManagerTrait;
+        use zoe_wire_protocol::Kind;
+
+        // Create test messages - all expired
+        let mut rng = rand::thread_rng();
+        let keypair = KeyPair::generate(&mut rng);
+
+        let expired_messages: Vec<MessageFull> = (0..3)
+            .map(|i| {
+                let past_timestamp = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_secs()
+                    .saturating_sub(10); // 10 seconds ago
+
+                let message = Message::new_v0(
+                    Content::raw(format!("Expired message {}", i).as_bytes().to_vec()),
+                    keypair.public_key(),
+                    past_timestamp,
+                    Kind::Emphemeral(1), // 1 second timeout - all should be expired
+                    vec![],
+                );
+                MessageFull::new(message, &keypair).unwrap()
+            })
+            .collect();
+
+        let relay_id = KeyId::from([1u8; 32]);
+        let relay_key_id = relay_id;
+
+        // Mock storage to return all expired messages
+        let mut mock_storage = MockMessageStorage::new();
+        mock_storage
+            .expect_get_unsynced_messages_for_relay()
+            .with(
+                mockall::predicate::eq(relay_key_id),
+                mockall::predicate::eq(Some(3)),
+            )
+            .times(1)
+            .returning(move |_, _| Ok(expired_messages.clone()));
+
+        // Second call returns empty (indicating we're done)
+        mock_storage
+            .expect_get_unsynced_messages_for_relay()
+            .with(
+                mockall::predicate::eq(relay_key_id),
+                mockall::predicate::eq(Some(3)),
+            )
+            .times(1)
+            .returning(move |_, _| Ok(vec![]));
+
+        // Mock deletion of all expired messages
+        mock_storage
+            .expect_delete_message()
+            .times(3)
+            .returning(|_| Ok(true));
+
+        let storage = Arc::new(mock_storage);
+
+        // Create a mock messages manager - no expectations for check_messages or publish
+        // since all messages are expired and filtered out
+        let mock_manager = MockMessagesManagerTrait::new();
+        let mock_manager = Arc::new(mock_manager);
+
+        // Test the batch processing with all expired messages
+        let result = MultiRelayMessageManager::process_all_unsynced_messages_for_relay(
+            &storage,
+            &relay_id,
+            &mock_manager,
+            3, // batch size of 3
+        )
+        .await;
+
+        assert!(
+            result.is_ok(),
+            "Processing all expired messages should succeed"
+        );
+
+        // Verify that we processed 0 messages (all were expired and removed)
+        assert_eq!(
+            result.unwrap(),
+            0,
+            "Should have processed 0 messages (all were expired and removed)"
         );
     }
 }
