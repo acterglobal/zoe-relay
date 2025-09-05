@@ -296,7 +296,7 @@ pub trait BlobStorage: Send + Sync {
     async fn mark_blob_uploaded(
         &self,
         blob_hash: &Hash,
-        relay_id: &Hash,
+        relay_id: &KeyId,
         blob_size: u64,
     ) -> Result<(), crate::StorageError>;
 
@@ -304,13 +304,13 @@ pub trait BlobStorage: Send + Sync {
     async fn is_blob_uploaded(
         &self,
         blob_hash: &Hash,
-        relay_id: &Hash,
+        relay_id: &KeyId,
     ) -> Result<bool, crate::StorageError>;
 
     /// Get all blobs that have not been uploaded to a specific relay
     async fn get_unuploaded_blobs_for_relay(
         &self,
-        relay_id: &Hash,
+        relay_id: &KeyId,
         limit: Option<usize>,
     ) -> Result<Vec<Hash>, crate::StorageError>;
 

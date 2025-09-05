@@ -941,7 +941,7 @@ impl BlobStorage for SqliteMessageStorage {
     async fn mark_blob_uploaded(
         &self,
         blob_hash: &Hash,
-        relay_id: &Hash,
+        relay_id: &KeyId,
         blob_size: u64,
     ) -> Result<()> {
         let conn = self
@@ -967,7 +967,7 @@ impl BlobStorage for SqliteMessageStorage {
         Ok(())
     }
 
-    async fn is_blob_uploaded(&self, blob_hash: &Hash, relay_id: &Hash) -> Result<bool> {
+    async fn is_blob_uploaded(&self, blob_hash: &Hash, relay_id: &KeyId) -> Result<bool> {
         let conn = self
             .conn
             .lock()
@@ -990,7 +990,7 @@ impl BlobStorage for SqliteMessageStorage {
 
     async fn get_unuploaded_blobs_for_relay(
         &self,
-        relay_id: &Hash,
+        relay_id: &KeyId,
         _limit: Option<usize>,
     ) -> Result<Vec<Hash>> {
         let _conn = self

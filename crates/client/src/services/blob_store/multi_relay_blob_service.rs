@@ -1,30 +1,43 @@
 use super::BlobStore;
 use crate::services::BlobError;
 use async_trait::async_trait;
+use futures::future::join_all;
 use std::collections::HashMap;
+use std::sync::Arc;
+use tokio::sync::RwLock;
 use zoe_client_storage::{BlobStorage, BlobUploadStatus};
 use zoe_wire_protocol::{BlobId, KeyId};
 /// Multi-relay blob service that manages blob uploads across multiple relays
 /// and tracks upload status using persistent storage
 pub struct MultiRelayBlobService<S: BlobStorage> {
-    /// Map of relay ID to blob service for that relay
-    relay_services: HashMap<KeyId, Box<dyn BlobStore>>,
+    /// Map of relay ID to blob service for that relay (thread-safe)
+    relay_services: Arc<RwLock<HashMap<KeyId, Arc<dyn BlobStore>>>>,
     /// Storage for tracking blob upload status
-    storage: S,
+    storage: Arc<S>,
 }
 
 impl<S: BlobStorage> MultiRelayBlobService<S> {
     /// Create a new multi-relay blob service
-    pub fn new(storage: S) -> Self {
+    pub fn new(storage: Arc<S>) -> Self {
         Self {
-            relay_services: HashMap::new(),
+            relay_services: Arc::new(RwLock::new(HashMap::new())),
+            storage,
+        }
+    }
+    pub fn new_with_relays(
+        storage: Arc<S>,
+        relay_services: impl IntoIterator<Item = (KeyId, Arc<dyn BlobStore>)>,
+    ) -> Self {
+        Self {
+            relay_services: Arc::new(RwLock::new(HashMap::from_iter(relay_services))),
             storage,
         }
     }
 
     /// Add a relay blob service
-    pub fn add_relay(&mut self, relay_id: KeyId, service: Box<dyn BlobStore>) {
-        self.relay_services.insert(relay_id, service);
+    pub async fn add_relay(&self, relay_id: KeyId, service: Arc<dyn BlobStore>) {
+        let mut services = self.relay_services.write().await;
+        services.insert(relay_id, service);
         tracing::info!(
             "Added blob service for relay: {}",
             hex::encode(relay_id.as_bytes())
@@ -32,8 +45,9 @@ impl<S: BlobStorage> MultiRelayBlobService<S> {
     }
 
     /// Remove a relay blob service
-    pub fn remove_relay(&mut self, relay_id: &KeyId) -> Option<Box<dyn BlobStore>> {
-        let removed = self.relay_services.remove(relay_id);
+    pub async fn remove_relay(&self, relay_id: &KeyId) -> Option<Arc<dyn BlobStore>> {
+        let mut services = self.relay_services.write().await;
+        let removed = services.remove(relay_id);
         if removed.is_some() {
             tracing::info!(
                 "Removed blob service for relay: {}",
@@ -44,8 +58,9 @@ impl<S: BlobStorage> MultiRelayBlobService<S> {
     }
 
     /// Get all configured relay IDs
-    pub fn get_relay_ids(&self) -> Vec<KeyId> {
-        self.relay_services.keys().cloned().collect()
+    pub async fn get_relay_ids(&self) -> Vec<KeyId> {
+        let services = self.relay_services.read().await;
+        services.keys().cloned().collect()
     }
 
     /// Check if a blob has been uploaded to a specific relay
@@ -77,12 +92,15 @@ impl<S: BlobStorage> MultiRelayBlobService<S> {
         blob: &[u8],
         relay_id: &KeyId,
     ) -> Result<BlobId, BlobError> {
-        let service = self.relay_services.get(relay_id).ok_or_else(|| {
-            BlobError::SerializationError(format!(
-                "No service for relay: {}",
-                hex::encode(relay_id.as_bytes())
-            ))
-        })?;
+        let service = {
+            let services = self.relay_services.read().await;
+            services.get(relay_id).cloned().ok_or_else(|| {
+                BlobError::SerializationError(format!(
+                    "No service for relay: {}",
+                    hex::encode(relay_id.as_bytes())
+                ))
+            })?
+        };
 
         // Upload the blob
         let blob_hash = service.upload_blob(blob).await?;
@@ -103,131 +121,200 @@ impl<S: BlobStorage> MultiRelayBlobService<S> {
         Ok(blob_hash)
     }
 
-    /// Upload a blob to all configured relays
+    async fn upload_blob_to_single_relay_and_mark_as_uploaded(
+        blob: &[u8],
+        service: Arc<dyn BlobStore>,
+        relay_id: &KeyId,
+        storage: Arc<S>,
+    ) -> Result<BlobId, BlobError> {
+        match service.upload_blob(&blob).await {
+            Ok(blob_hash) => {
+                // Mark as uploaded in storage
+                match storage
+                    .mark_blob_uploaded(&blob_hash, &relay_id, blob.len() as u64)
+                    .await
+                {
+                    Ok(()) => {
+                        tracing::info!(
+                            "Successfully uploaded blob {} to relay {} (size: {} bytes)",
+                            blob_hash,
+                            hex::encode(relay_id.as_bytes()),
+                            blob.len()
+                        );
+                        Ok(blob_hash)
+                    }
+                    Err(e) => {
+                        tracing::error!("Failed to mark blob as uploaded in storage: {}", e);
+                        Err(BlobError::SerializationError(format!("Storage error: {e}")))
+                    }
+                }
+            }
+            Err(e) => {
+                tracing::warn!(
+                    "Failed to upload blob to relay {}: {}",
+                    hex::encode(relay_id.as_bytes()),
+                    e
+                );
+                Err(e)
+            }
+        }
+    }
+
+    /// Upload a blob to all configured relays (in parallel)
     pub async fn upload_blob_to_all_relays(
         &self,
         blob: &[u8],
     ) -> Result<HashMap<KeyId, Result<BlobId, BlobError>>, BlobError> {
-        let mut results = HashMap::new();
-
-        for (relay_id, service) in &self.relay_services {
-            let result = match service.upload_blob(blob).await {
-                Ok(blob_hash) => {
-                    // Mark as uploaded in storage
-                    match self
-                        .storage
-                        .mark_blob_uploaded(&blob_hash, relay_id, blob.len() as u64)
-                        .await
-                    {
-                        Ok(()) => {
-                            tracing::info!(
-                                "Successfully uploaded blob {} to relay {} (size: {} bytes)",
-                                blob_hash,
-                                hex::encode(relay_id.as_bytes()),
-                                blob.len()
-                            );
-                            Ok(blob_hash)
-                        }
-                        Err(e) => {
-                            tracing::error!("Failed to mark blob as uploaded in storage: {}", e);
-                            Err(BlobError::SerializationError(format!("Storage error: {e}")))
-                        }
-                    }
-                }
-                Err(e) => {
-                    tracing::warn!(
-                        "Failed to upload blob to relay {}: {}",
-                        hex::encode(relay_id.as_bytes()),
-                        e
-                    );
-                    Err(e)
-                }
-            };
-
-            results.insert(*relay_id, result);
+        // Clone the services to avoid holding the lock during async operations
+        let services = {
+            let services = self.relay_services.read().await;
+            services.clone()
+        };
+        // only one relay, so just upload to it, don't do the memory overhead of parallel uploads
+        if services.len() == 1 {
+            let (relay_id, service) = services.into_iter().next().unwrap();
+            return Ok(HashMap::from([(relay_id, service.upload_blob(blob).await)]));
         }
 
-        Ok(results)
+        // Share blob data across all parallel uploads to avoid memory duplication
+        let shared_blob = Arc::<[u8]>::from(blob);
+
+        // Create futures for parallel execution
+        let upload_futures = services.into_iter().map(|(relay_id, service)| {
+            let blob = Arc::clone(&shared_blob);
+            let storage = Arc::clone(&self.storage);
+
+            async move {
+                (
+                    relay_id,
+                    Self::upload_blob_to_single_relay_and_mark_as_uploaded(
+                        &blob, service, &relay_id, storage,
+                    )
+                    .await,
+                )
+            }
+        });
+
+        // Execute all uploads in parallel
+        let results = join_all(upload_futures).await;
+
+        // Convert results back to HashMap
+        Ok(results.into_iter().collect())
     }
 
-    /// Upload a blob to relays where it hasn't been uploaded yet
+    /// Upload a blob to relays where it hasn't been uploaded yet (in parallel)
     pub async fn upload_blob_to_missing_relays(
         &self,
         blob: &[u8],
     ) -> Result<HashMap<KeyId, Result<BlobId, BlobError>>, BlobError> {
-        let mut results = HashMap::new();
+        // Share blob data across all operations to avoid memory duplication
+        let shared_blob = Arc::<[u8]>::from(blob);
 
-        // Calculate blob hash first to check existing uploads
-        // We'll use the first successful upload to get the hash, or calculate it ourselves
-        let mut blob_hash_opt: Option<BlobId> = None;
+        // Clone the services to avoid holding the lock during async operations
+        let services = {
+            let services = self.relay_services.read().await;
+            services.clone()
+        };
 
-        for (relay_id, service) in &self.relay_services {
-            // Check if already uploaded
-            if let Some(blob_hash) = blob_hash_opt {
-                match self.storage.is_blob_uploaded(&blob_hash, relay_id).await {
-                    Ok(true) => {
-                        tracing::debug!(
-                            "Blob {} already uploaded to relay {}",
-                            blob_hash,
-                            hex::encode(relay_id.as_bytes())
-                        );
-                        results.insert(*relay_id, Ok(blob_hash));
-                        continue;
-                    }
-                    Ok(false) => {
-                        // Need to upload
-                    }
-                    Err(e) => {
-                        tracing::error!("Storage error checking upload status: {}", e);
-                        results.insert(
-                            *relay_id,
-                            Err(BlobError::SerializationError(format!("Storage error: {e}"))),
-                        );
-                        continue;
-                    }
-                }
-            }
-
-            // Upload the blob
-            let result = match service.upload_blob(blob).await {
-                Ok(blob_hash) => {
-                    blob_hash_opt = Some(blob_hash);
-
+        // First, try to get the blob hash by uploading to the first relay
+        // This is needed to check upload status on other relays
+        let blob_hash = if let Some((first_relay_id, first_service)) = services.iter().next() {
+            match first_service.upload_blob(&shared_blob).await {
+                Ok(hash) => {
                     // Mark as uploaded in storage
-                    match self
+                    if let Err(e) = self
                         .storage
-                        .mark_blob_uploaded(&blob_hash, relay_id, blob.len() as u64)
+                        .mark_blob_uploaded(&hash, first_relay_id, shared_blob.len() as u64)
                         .await
                     {
-                        Ok(()) => {
-                            tracing::info!(
-                                "Successfully uploaded blob {} to relay {} (size: {} bytes)",
-                                blob_hash,
-                                hex::encode(relay_id.as_bytes()),
-                                blob.len()
+                        tracing::error!("Failed to mark blob as uploaded in storage: {}", e);
+                    }
+                    Some(hash)
+                }
+                Err(_) => None,
+            }
+        } else {
+            return Ok(HashMap::new()); // No services configured
+        };
+
+        // Share blob data across all parallel uploads to avoid memory duplication
+        let shared_blob = Arc::<[u8]>::from(blob);
+
+        // Now check all relays in parallel and upload where needed
+        let upload_futures = services.into_iter().map(|(relay_id, service)| {
+            let blob = Arc::clone(&shared_blob);
+            let storage = Arc::clone(&self.storage);
+
+            async move {
+                // If we have a blob hash, check if already uploaded
+                if let Some(hash) = blob_hash {
+                    match storage.is_blob_uploaded(&hash, &relay_id).await {
+                        Ok(true) => {
+                            tracing::debug!(
+                                "Blob {} already uploaded to relay {}",
+                                hash,
+                                hex::encode(relay_id.as_bytes())
                             );
-                            Ok(blob_hash)
+                            return (relay_id, Ok(hash));
+                        }
+                        Ok(false) => {
+                            // Need to upload - continue below
                         }
                         Err(e) => {
-                            tracing::error!("Failed to mark blob as uploaded in storage: {}", e);
-                            Err(BlobError::SerializationError(format!("Storage error: {e}")))
+                            tracing::error!("Storage error checking upload status: {}", e);
+                            return (
+                                relay_id,
+                                Err(BlobError::SerializationError(format!("Storage error: {e}"))),
+                            );
                         }
                     }
                 }
-                Err(e) => {
-                    tracing::warn!(
-                        "Failed to upload blob to relay {}: {}",
-                        hex::encode(relay_id.as_bytes()),
-                        e
-                    );
-                    Err(e)
-                }
-            };
 
-            results.insert(*relay_id, result);
-        }
+                // Upload the blob
+                let result = match service.upload_blob(&blob).await {
+                    Ok(blob_hash) => {
+                        // Mark as uploaded in storage
+                        match storage
+                            .mark_blob_uploaded(&blob_hash, &relay_id, blob.len() as u64)
+                            .await
+                        {
+                            Ok(()) => {
+                                tracing::info!(
+                                    "Successfully uploaded blob {} to relay {} (size: {} bytes)",
+                                    blob_hash,
+                                    hex::encode(relay_id.as_bytes()),
+                                    blob.len()
+                                );
+                                Ok(blob_hash)
+                            }
+                            Err(e) => {
+                                tracing::error!(
+                                    "Failed to mark blob as uploaded in storage: {}",
+                                    e
+                                );
+                                Err(BlobError::SerializationError(format!("Storage error: {e}")))
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            "Failed to upload blob to relay {}: {}",
+                            hex::encode(relay_id.as_bytes()),
+                            e
+                        );
+                        Err(e)
+                    }
+                };
 
-        Ok(results)
+                (relay_id, result)
+            }
+        });
+
+        // Execute all uploads in parallel
+        let results = join_all(upload_futures).await;
+
+        // Convert results back to HashMap
+        Ok(results.into_iter().collect())
     }
 
     /// Download a blob from any available relay (tries relays in order)
@@ -237,7 +324,13 @@ impl<S: BlobStorage> MultiRelayBlobService<S> {
     ) -> Result<Vec<u8>, BlobError> {
         let mut last_error = BlobError::NotFound { hash: *blob_hash };
 
-        for (relay_id, service) in &self.relay_services {
+        // Clone the services to avoid holding the lock during async operations
+        let services = {
+            let services = self.relay_services.read().await;
+            services.clone()
+        };
+
+        for (relay_id, service) in services {
             match service.get_blob(blob_hash).await {
                 Ok(blob_data) => {
                     tracing::debug!(
@@ -404,27 +497,27 @@ mod tests {
             .expect_is_blob_uploaded()
             .returning(|_, _| Ok(false));
 
-        let service = MultiRelayBlobService::new(mock_storage);
-        assert_eq!(service.get_relay_ids().len(), 0);
+        let service = MultiRelayBlobService::new(Arc::new(mock_storage));
+        assert_eq!(service.get_relay_ids().await.len(), 0);
     }
 
     #[tokio::test]
     async fn test_add_remove_relay() {
         let mock_storage = MockBlobStorage::new();
-        let mut service = MultiRelayBlobService::new(mock_storage);
+        let service = MultiRelayBlobService::new(Arc::new(mock_storage));
 
         let relay_id = create_test_key_id(1);
         let mock_blob_store = MockBlobStoreImpl::new();
 
         // Add relay
-        service.add_relay(relay_id, Box::new(mock_blob_store));
-        assert_eq!(service.get_relay_ids().len(), 1);
-        assert!(service.get_relay_ids().contains(&relay_id));
+        service.add_relay(relay_id, Arc::new(mock_blob_store)).await;
+        assert_eq!(service.get_relay_ids().await.len(), 1);
+        assert!(service.get_relay_ids().await.contains(&relay_id));
 
         // Remove relay
-        let removed = service.remove_relay(&relay_id);
+        let removed = service.remove_relay(&relay_id).await;
         assert!(removed.is_some());
-        assert_eq!(service.get_relay_ids().len(), 0);
+        assert_eq!(service.get_relay_ids().await.len(), 0);
     }
 
     #[tokio::test]
@@ -436,11 +529,11 @@ mod tests {
             .times(1)
             .returning(|_, _, _| Ok(()));
 
-        let mut service = MultiRelayBlobService::new(mock_storage);
+        let service = MultiRelayBlobService::new(Arc::new(mock_storage));
         let relay_id = create_test_key_id(1);
         let mock_blob_store = MockBlobStoreImpl::new();
 
-        service.add_relay(relay_id, Box::new(mock_blob_store));
+        service.add_relay(relay_id, Arc::new(mock_blob_store)).await;
 
         let test_data = b"hello world";
         let result = service.upload_blob_to_relay(test_data, &relay_id).await;
@@ -459,11 +552,11 @@ mod tests {
             .times(1)
             .returning(|_, _, _| Err(StorageError::Internal("Storage failure".to_string())));
 
-        let mut service = MultiRelayBlobService::new(mock_storage);
+        let service = MultiRelayBlobService::new(Arc::new(mock_storage));
         let relay_id = create_test_key_id(1);
         let mock_blob_store = MockBlobStoreImpl::new();
 
-        service.add_relay(relay_id, Box::new(mock_blob_store));
+        service.add_relay(relay_id, Arc::new(mock_blob_store)).await;
 
         let test_data = b"hello world";
         let result = service.upload_blob_to_relay(test_data, &relay_id).await;
@@ -483,15 +576,19 @@ mod tests {
             .times(2)
             .returning(|_, _, _| Ok(()));
 
-        let mut service = MultiRelayBlobService::new(mock_storage);
+        let service = MultiRelayBlobService::new(Arc::new(mock_storage));
 
         let relay_id1 = create_test_key_id(1);
         let relay_id2 = create_test_key_id(2);
         let mock_blob_store1 = MockBlobStoreImpl::new();
         let mock_blob_store2 = MockBlobStoreImpl::new();
 
-        service.add_relay(relay_id1, Box::new(mock_blob_store1));
-        service.add_relay(relay_id2, Box::new(mock_blob_store2));
+        service
+            .add_relay(relay_id1, Arc::new(mock_blob_store1))
+            .await;
+        service
+            .add_relay(relay_id2, Arc::new(mock_blob_store2))
+            .await;
 
         let test_data = b"hello world";
         let results = service.upload_blob_to_all_relays(test_data).await.unwrap();
@@ -509,7 +606,7 @@ mod tests {
             .times(1) // Only one successful upload
             .returning(|_, _, _| Ok(()));
 
-        let mut service = MultiRelayBlobService::new(mock_storage);
+        let service = MultiRelayBlobService::new(Arc::new(mock_storage));
 
         let relay_id1 = create_test_key_id(1);
         let relay_id2 = create_test_key_id(2);
@@ -519,8 +616,12 @@ mod tests {
         // Make the second store fail
         mock_blob_store2.set_should_fail(true).await;
 
-        service.add_relay(relay_id1, Box::new(mock_blob_store1));
-        service.add_relay(relay_id2, Box::new(mock_blob_store2));
+        service
+            .add_relay(relay_id1, Arc::new(mock_blob_store1))
+            .await;
+        service
+            .add_relay(relay_id2, Arc::new(mock_blob_store2))
+            .await;
 
         let test_data = b"hello world";
         let results = service.upload_blob_to_all_relays(test_data).await.unwrap();
@@ -534,19 +635,24 @@ mod tests {
     async fn test_upload_blob_to_missing_relays() {
         let mut mock_storage = MockBlobStorage::new();
 
-        // Only expect mark_blob_uploaded since is_blob_uploaded is only called
-        // when we already have a blob hash from a previous upload
+        // Expect mark_blob_uploaded for the initial upload
         mock_storage
             .expect_mark_blob_uploaded()
             .times(1)
             .returning(|_, _, _| Ok(()));
 
-        let mut service = MultiRelayBlobService::new(mock_storage);
+        // Expect is_blob_uploaded to be called for the relay to check if already uploaded
+        mock_storage
+            .expect_is_blob_uploaded()
+            .times(1)
+            .returning(|_, _| Ok(true)); // Return true to indicate already uploaded
+
+        let service = MultiRelayBlobService::new(Arc::new(mock_storage));
 
         let relay_id = create_test_key_id(1);
         let mock_blob_store = MockBlobStoreImpl::new();
 
-        service.add_relay(relay_id, Box::new(mock_blob_store));
+        service.add_relay(relay_id, Arc::new(mock_blob_store)).await;
 
         let test_data = b"hello world";
         let results = service
@@ -561,7 +667,7 @@ mod tests {
     #[tokio::test]
     async fn test_download_blob_from_any_relay() {
         let mock_storage = MockBlobStorage::new();
-        let mut service = MultiRelayBlobService::new(mock_storage);
+        let service = MultiRelayBlobService::new(Arc::new(mock_storage));
 
         let relay_id = create_test_key_id(1);
         let mock_blob_store = MockBlobStoreImpl::new();
@@ -570,7 +676,7 @@ mod tests {
         let test_data = b"hello world";
         let blob_hash = mock_blob_store.upload_blob(test_data).await.unwrap();
 
-        service.add_relay(relay_id, Box::new(mock_blob_store));
+        service.add_relay(relay_id, Arc::new(mock_blob_store)).await;
 
         let result = service.download_blob_from_any_relay(&blob_hash).await;
 
@@ -581,12 +687,12 @@ mod tests {
     #[tokio::test]
     async fn test_download_blob_not_found() {
         let mock_storage = MockBlobStorage::new();
-        let mut service = MultiRelayBlobService::new(mock_storage);
+        let service = MultiRelayBlobService::new(Arc::new(mock_storage));
 
         let relay_id = create_test_key_id(1);
         let mock_blob_store = MockBlobStoreImpl::new();
 
-        service.add_relay(relay_id, Box::new(mock_blob_store));
+        service.add_relay(relay_id, Arc::new(mock_blob_store)).await;
 
         let nonexistent_hash = BlobId::from_content(b"nonexistent");
         let result = service
@@ -609,7 +715,7 @@ mod tests {
             .times(1)
             .returning(|_, _| Ok(true));
 
-        let service = MultiRelayBlobService::new(mock_storage);
+        let service = MultiRelayBlobService::new(Arc::new(mock_storage));
         let relay_id = create_test_key_id(1);
 
         // Create a proper hex-encoded hash string
@@ -639,7 +745,7 @@ mod tests {
             .times(1)
             .returning(move |_| Ok(expected_status.clone()));
 
-        let service = MultiRelayBlobService::new(mock_storage);
+        let service = MultiRelayBlobService::new(Arc::new(mock_storage));
 
         let test_hash = create_test_hash(2);
         let blob_id = BlobId::from(test_hash);
@@ -666,7 +772,7 @@ mod tests {
             .times(1)
             .returning(|_| Ok(1024));
 
-        let service = MultiRelayBlobService::new(mock_storage);
+        let service = MultiRelayBlobService::new(Arc::new(mock_storage));
 
         let result = service.get_relay_blob_stats(&relay_id).await;
 
@@ -686,7 +792,7 @@ mod tests {
             .times(1)
             .returning(|_, _| Ok(2));
 
-        let service = MultiRelayBlobService::new(mock_storage);
+        let service = MultiRelayBlobService::new(Arc::new(mock_storage));
 
         // Create a proper hex-encoded hash string
         let test_hash = create_test_hash(2);
@@ -706,12 +812,12 @@ mod tests {
             .times(1)
             .returning(|_, _, _| Ok(()));
 
-        let mut service = MultiRelayBlobService::new(mock_storage);
+        let service = MultiRelayBlobService::new(Arc::new(mock_storage));
 
         let relay_id = create_test_key_id(1);
         let mock_blob_store = MockBlobStoreImpl::new();
 
-        service.add_relay(relay_id, Box::new(mock_blob_store));
+        service.add_relay(relay_id, Arc::new(mock_blob_store)).await;
 
         let test_data = b"hello world";
 
@@ -732,7 +838,7 @@ mod tests {
     #[tokio::test]
     async fn test_blob_store_trait_upload_failure() {
         let mock_storage = MockBlobStorage::new();
-        let service = MultiRelayBlobService::new(mock_storage);
+        let service = MultiRelayBlobService::new(Arc::new(mock_storage));
         // No relays added, so upload should fail
 
         let test_data = b"hello world";
@@ -751,7 +857,7 @@ mod tests {
     #[tokio::test]
     async fn test_upload_to_nonexistent_relay() {
         let mock_storage = MockBlobStorage::new();
-        let service = MultiRelayBlobService::new(mock_storage);
+        let service = MultiRelayBlobService::new(Arc::new(mock_storage));
 
         let relay_id = create_test_key_id(1);
         let test_data = b"hello world";
