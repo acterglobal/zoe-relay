@@ -95,6 +95,19 @@ pub enum KeyPairError {
     InvalidKeyData(String),
 }
 
+/// Error type for VerifyingKey PEM operations
+#[derive(Debug, thiserror::Error)]
+pub enum VerifyingKeyError {
+    #[error("Failed to serialize VerifyingKey: {0}")]
+    SerializationError(String),
+    #[error("Failed to deserialize VerifyingKey: {0}")]
+    DeserializationError(String),
+    #[error("Failed to parse PEM: {0}")]
+    PemParseError(String),
+    #[error("Invalid PEM label: expected 'ZOE PUBLIC KEY', got '{0}'")]
+    InvalidPemLabel(String),
+}
+
 /// Cryptographic algorithm identifier
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Algorithm {
@@ -384,6 +397,75 @@ impl VerifyingKey {
         let bytes = hex::decode(hex).map_err(|e| format!("Invalid hex: {}", e))?;
         let key: VerifyingKey =
             postcard::from_bytes(&bytes).map_err(|e| format!("Invalid key data: {}", e))?;
+        Ok(key)
+    }
+
+    /// Export the VerifyingKey to PEM format.
+    ///
+    /// This method serializes the key using postcard format and then encodes it
+    /// as a PEM block with the label "ZOE PUBLIC KEY". This provides a standardized
+    /// text format that's compatible with many cryptographic tools and libraries.
+    ///
+    /// # Returns
+    ///
+    /// A `Result<String, VerifyingKeyError>` containing the PEM-encoded key or an error.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use zoe_wire_protocol::{KeyPair, VerifyingKey};
+    /// use rand::rngs::OsRng;
+    ///
+    /// let keypair = KeyPair::generate_ed25519(&mut OsRng);
+    /// let verifying_key = keypair.public_key();
+    /// let pem_string = verifying_key.to_pem().unwrap();
+    /// println!("Public key PEM:\n{}", pem_string);
+    /// ```
+    pub fn to_pem(&self) -> Result<String, VerifyingKeyError> {
+        let key_bytes = postcard::to_stdvec(self)
+            .map_err(|e| VerifyingKeyError::SerializationError(e.to_string()))?;
+
+        let pem = Pem::new("ZOE PUBLIC KEY", key_bytes);
+        Ok(encode(&pem))
+    }
+
+    /// Import a VerifyingKey from PEM format.
+    ///
+    /// This method parses a PEM-encoded string and deserializes it back to a
+    /// `VerifyingKey`. The PEM block should have the label "ZOE PUBLIC KEY".
+    ///
+    /// # Arguments
+    ///
+    /// * `pem_string` - A string containing the PEM-encoded public key
+    ///
+    /// # Returns
+    ///
+    /// A `Result<VerifyingKey, VerifyingKeyError>` containing the decoded key or an error.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use zoe_wire_protocol::{KeyPair, VerifyingKey};
+    /// use rand::rngs::OsRng;
+    ///
+    /// let original_keypair = KeyPair::generate_ed25519(&mut OsRng);
+    /// let original_key = original_keypair.public_key();
+    /// let pem_string = original_key.to_pem().unwrap();
+    ///
+    /// let restored_key = VerifyingKey::from_pem(&pem_string).unwrap();
+    /// assert_eq!(original_key.encode(), restored_key.encode());
+    /// ```
+    pub fn from_pem(pem_string: &str) -> Result<VerifyingKey, VerifyingKeyError> {
+        let pem =
+            pem::parse(pem_string).map_err(|e| VerifyingKeyError::PemParseError(e.to_string()))?;
+
+        if pem.tag() != "ZOE PUBLIC KEY" {
+            return Err(VerifyingKeyError::InvalidPemLabel(pem.tag().to_string()));
+        }
+
+        let key = postcard::from_bytes(pem.contents())
+            .map_err(|e| VerifyingKeyError::DeserializationError(e.to_string()))?;
+
         Ok(key)
     }
 }
@@ -1732,6 +1814,192 @@ mod tests {
                     );
                 }
             }
+        }
+    }
+
+    #[test]
+    fn test_verifying_key_pem_round_trip() {
+        let keys = create_test_verifying_keys();
+
+        for original_key in &keys {
+            // Test PEM encoding/decoding round trip
+            let pem_string = original_key.to_pem().expect("Should encode to PEM");
+
+            // Verify it's valid PEM format
+            assert!(
+                pem_string.contains("-----BEGIN ZOE PUBLIC KEY-----"),
+                "Should contain PEM begin marker with correct label"
+            );
+            assert!(
+                pem_string.contains("-----END ZOE PUBLIC KEY-----"),
+                "Should contain PEM end marker with correct label"
+            );
+
+            // Verify PEM structure
+            assert!(
+                pem_string.lines().count() >= 3,
+                "PEM should have at least begin, content, and end lines"
+            );
+
+            let restored_key = VerifyingKey::from_pem(&pem_string).expect("Should decode from PEM");
+
+            // Verify the keys are functionally equivalent
+            assert_eq!(
+                original_key.encode(),
+                restored_key.encode(),
+                "Keys should be identical after PEM round trip"
+            );
+
+            assert_eq!(
+                original_key.algorithm(),
+                restored_key.algorithm(),
+                "Algorithms should be identical after PEM round trip"
+            );
+
+            assert_eq!(
+                original_key.id(),
+                restored_key.id(),
+                "Key IDs should be identical after PEM round trip"
+            );
+
+            // Test that multiple encodings are deterministic
+            let pem_string2 = restored_key.to_pem().expect("Should encode to PEM again");
+            assert_eq!(
+                pem_string, pem_string2,
+                "Multiple PEM encodings should be identical"
+            );
+        }
+    }
+
+    #[test]
+    fn test_verifying_key_pem_error_cases() {
+        // Test invalid PEM format
+        let invalid_pem = "not a pem file";
+        let result = VerifyingKey::from_pem(invalid_pem);
+        assert!(result.is_err(), "Should fail to parse invalid PEM format");
+        assert!(
+            matches!(result.unwrap_err(), VerifyingKeyError::PemParseError(_)),
+            "Should return PemParseError for invalid format"
+        );
+
+        // Test wrong PEM label
+        let wrong_label_pem = "-----BEGIN WRONG LABEL-----\nZGF0YQ==\n-----END WRONG LABEL-----";
+        let result = VerifyingKey::from_pem(wrong_label_pem);
+        assert!(result.is_err(), "Should fail with wrong PEM label");
+        assert!(
+            matches!(result.unwrap_err(), VerifyingKeyError::InvalidPemLabel(_)),
+            "Should return InvalidPemLabel error"
+        );
+
+        // Test invalid key data in PEM
+        let invalid_data_pem =
+            "-----BEGIN ZOE PUBLIC KEY-----\ninvalid_base64_data!\n-----END ZOE PUBLIC KEY-----";
+        let result = VerifyingKey::from_pem(invalid_data_pem);
+        assert!(result.is_err(), "Should fail with invalid key data");
+        // Note: This could be either PemParseError or DeserializationError depending on where it fails
+    }
+
+    #[test]
+    fn test_verifying_key_pem_compatibility_with_different_algorithms() {
+        let keys = create_test_verifying_keys();
+
+        // Test that each algorithm type can be encoded/decoded via PEM
+        for key in &keys {
+            let pem = key.to_pem().expect("Should encode to PEM");
+            let restored = VerifyingKey::from_pem(&pem).expect("Should decode from PEM");
+
+            // Verify algorithm-specific properties are preserved
+            match (key, &restored) {
+                (VerifyingKey::Ed25519(_), VerifyingKey::Ed25519(_)) => {
+                    assert_eq!(key.encode(), restored.encode(), "Ed25519 keys should match");
+                }
+                (VerifyingKey::MlDsa44(_), VerifyingKey::MlDsa44(_)) => {
+                    assert_eq!(
+                        key.encode(),
+                        restored.encode(),
+                        "ML-DSA-44 keys should match"
+                    );
+                }
+                (VerifyingKey::MlDsa65(_), VerifyingKey::MlDsa65(_)) => {
+                    assert_eq!(
+                        key.encode(),
+                        restored.encode(),
+                        "ML-DSA-65 keys should match"
+                    );
+                }
+                (VerifyingKey::MlDsa87(_), VerifyingKey::MlDsa87(_)) => {
+                    assert_eq!(
+                        key.encode(),
+                        restored.encode(),
+                        "ML-DSA-87 keys should match"
+                    );
+                }
+                _ => panic!("Algorithm type changed during PEM round trip"),
+            }
+        }
+    }
+
+    #[test]
+    fn test_verifying_key_pem_whitespace_handling() {
+        let key = create_test_verifying_keys()[0].clone();
+        let pem = key.to_pem().expect("Should encode to PEM");
+
+        // Test with extra whitespace
+        let pem_with_whitespace = format!("  \n\t{}\n  \t", pem);
+        let restored = VerifyingKey::from_pem(&pem_with_whitespace)
+            .expect("Should handle whitespace gracefully");
+
+        assert_eq!(
+            key.encode(),
+            restored.encode(),
+            "Should handle extra whitespace in PEM"
+        );
+
+        // Test with different line endings
+        let pem_crlf = pem.replace('\n', "\r\n");
+        let restored_crlf =
+            VerifyingKey::from_pem(&pem_crlf).expect("Should handle CRLF line endings");
+
+        assert_eq!(
+            key.encode(),
+            restored_crlf.encode(),
+            "Should handle CRLF line endings"
+        );
+    }
+
+    #[test]
+    fn test_verifying_key_pem_consistency_with_keypair_pem() {
+        let keypairs = create_test_keypairs();
+
+        for keypair in &keypairs {
+            let verifying_key = keypair.public_key();
+            let verifying_key_pem = verifying_key
+                .to_pem()
+                .expect("Should encode VerifyingKey to PEM");
+
+            // Verify the PEM uses the same label format as KeyPair PEM
+            assert!(
+                verifying_key_pem.contains("ZOE PUBLIC KEY"),
+                "VerifyingKey PEM should use consistent ZOE label format"
+            );
+
+            // Verify round trip works
+            let restored_key = VerifyingKey::from_pem(&verifying_key_pem)
+                .expect("Should decode VerifyingKey from PEM");
+
+            assert_eq!(
+                verifying_key.encode(),
+                restored_key.encode(),
+                "VerifyingKey PEM round trip should preserve key data"
+            );
+
+            // Verify the restored key can still verify signatures
+            let message = b"test message for PEM verification";
+            let signature = keypair.sign(message);
+
+            restored_key
+                .verify(message, &signature)
+                .expect("Restored key should be able to verify signatures");
         }
     }
 

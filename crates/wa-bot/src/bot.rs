@@ -1,9 +1,9 @@
 /// WhatsApp bot functionality
 use anyhow::Result;
-use tracing::{info, warn};
-use whatsmeow::{ConnectionStatus, WhatsAppBot, MessageEvent};
-use zoe_app_primitives::{QrOptions, display_qr_code};
 use tokio_stream::Stream;
+use tracing::{info, warn};
+use whatsmeow::{ConnectionStatus, MessageEvent, WhatsAppBot};
+use zoe_app_primitives::{QrOptions, display_qr_code};
 
 /// WhatsApp bot wrapper with connection management
 pub struct ZoeWhatsAppBot {
@@ -155,17 +155,17 @@ impl ZoeWhatsAppBot {
     }
 
     /// Get a stream of incoming WhatsApp messages
-    /// 
+    ///
     /// This returns a stream that yields `MessageEvent` objects for all incoming messages.
     /// The stream will continue until `stop_message_stream()` is called or the bot is dropped.
-    /// 
+    ///
     /// # Example
     /// ```rust,no_run
     /// use tokio_stream::StreamExt;
-    /// 
+    ///
     /// let bot = ZoeWhatsAppBot::new()?;
     /// let mut message_stream = bot.message_stream()?;
-    /// 
+    ///
     /// while let Some(message) = message_stream.next().await {
     ///     println!("Received message: {} from {}", message.content, message.sender);
     /// }
@@ -176,7 +176,7 @@ impl ZoeWhatsAppBot {
     }
 
     /// Stop the message stream
-    /// 
+    ///
     /// This will stop receiving new messages and clean up the message handler.
     pub fn stop_message_stream(&self) -> Result<()> {
         info!("🛑 Stopping WhatsApp message stream");

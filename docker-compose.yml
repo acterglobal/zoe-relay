@@ -17,16 +17,20 @@ services:
       - ZOERELAY_INTERFACE=0.0.0.0
       - ZOERELAY_EXTERNAL_ADDRESSES=${ZOERELAY_EXTERNAL_ADDRESSES:-localhost}
       - ZOERELAY_NAME=${ZOERELAY_NAME:-Zoe Relay Server}
+      # Key export for other services
+      - ZOERELAY_EXPORT_PUBLIC_KEY_TO=/shared/keys
       # Logging
       - RUST_LOG=${RUST_LOG:-info}
       - ZOERELAY_REDIS_URL=${ZOERELAY_REDIS_URL:-redis://zoe-redis:6379}
     volumes:
-      # Persistent storage for server keys and blob data
-      - zoe_data:/app/data
+      # Persistent storage for server keys and blob data (private to relay)
+      - zoe_relay_data:/app/data
+      # Shared read-only volume for public key export (separate from private data)
+      - zoe_shared_keys:/shared/keys
       # Optional: custom configuration
       # - ./config:/app/config:ro
     healthcheck:
-      test: ["CMD-SHELL", "timeout 5 bash -c '</dev/udp/localhost/13908' || exit 1"]
+      test: ["CMD-SHELL", "test -f /shared/keys/zoe_relay_server_public_key.pem && timeout 5 bash -c '</dev/udp/localhost/13908' || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -43,19 +47,20 @@ services:
       zoe-relay:
         condition: service_healthy
     environment:
-      # Relay connection - automatically discover relay server
+      # Relay connection
       - ZOE_RELAY_ADDRESS=zoe-relay:13908
-      - ZOE_SERVER_KEY=${ZOE_SERVER_KEY:-}  # Will be auto-generated if not provided
+      - ZOE_SERVER_KEY_FILE=/shared/keys/zoe_relay_server_public_key.pem
+      - ZOE_EPHEMERAL=true
       # WhatsApp configuration
       - WHATSAPP_DB_PATH=/app/data/whatsapp.db
       - MAX_CONNECTION_ATTEMPTS=${MAX_CONNECTION_ATTEMPTS:-10}
       # Logging
       - RUST_LOG=${RUST_LOG:-info}
-      # Bot mode - can be overridden
-      - BOT_MODE=${BOT_MODE:-bridge}  # bridge, listen, or custom command
     volumes:
       # Persistent storage for WhatsApp database and bot data
       - zoe_wa_bot_data:/app/data
+      # Shared read-only volume to read server public key (no access to relay private data)
+      - zoe_shared_keys:/shared/keys:ro
     healthcheck:
       test: ["CMD", "./zoe-wa-bot", "--help"]
       interval: 30s
@@ -64,21 +69,8 @@ services:
       start_period: 15s
     networks:
       - zoe-network
-    # Override command based on BOT_MODE environment variable
-    command: >
-      sh -c '
-        case "$${BOT_MODE}" in
-          "listen")
-            exec ./zoe-wa-bot --server-key "$${ZOE_SERVER_KEY}" --relay-address "$${ZOE_RELAY_ADDRESS}" listen --show-timestamps
-            ;;
-          "bridge")
-            exec ./zoe-wa-bot --server-key "$${ZOE_SERVER_KEY}" --relay-address "$${ZOE_RELAY_ADDRESS}"
-            ;;
-          *)
-            exec ./zoe-wa-bot --server-key "$${ZOE_SERVER_KEY}" --relay-address "$${ZOE_RELAY_ADDRESS}" $${BOT_MODE}
-            ;;
-        esac
-      '
+    # Simple command - all configuration via environment variables
+    command: ["./zoe-wa-bot"]
 
   zoe-redis:
     image: redis:7-alpine
@@ -102,8 +94,12 @@ networks:
         - subnet: 172.20.0.0/16
 
 volumes:
-  # Persistent storage for relay server data (keys, blobs, etc.)
-  zoe_data:
+  # Persistent storage for relay server data (keys, blobs, etc.) - private to relay
+  zoe_relay_data:
+    driver: local
+  
+  # Shared volume for public key exchange only - separate from private data
+  zoe_shared_keys:
     driver: local
   
   # Persistent storage for WhatsApp bot data (database, session, etc.)

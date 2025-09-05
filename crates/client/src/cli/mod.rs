@@ -8,17 +8,26 @@ use zoe_wire_protocol::VerifyingKey;
 #[derive(Parser, Debug)]
 pub struct RelayClientArgs {
     /// Relay server address (e.g., "127.0.0.1:8080")
-    #[arg(short, long, default_value = "127.0.0.1:13908")]
+    #[arg(
+        short,
+        long,
+        env = "ZOE_RELAY_ADDRESS",
+        default_value = "127.0.0.1:13908"
+    )]
     pub relay_address: String,
 
-    /// Server public key in hex format (optional - will generate random for demo)
-    #[arg(short, long, value_parser = parse_verifying_key)]
-    pub server_key: VerifyingKey,
+    /// Server public key in hex format
+    #[arg(short, long, value_parser = parse_verifying_key, conflicts_with = "server_key_file")]
+    pub server_key: Option<VerifyingKey>,
+
+    /// Path to file containing server public key in hex format
+    #[arg(long, env = "ZOE_SERVER_KEY_FILE", conflicts_with = "server_key")]
+    pub server_key_file: Option<PathBuf>,
 
     #[arg(short, long, conflicts_with = "ephemeral")]
     pub persist_path: Option<PathBuf>,
 
-    #[arg(short, long, conflicts_with = "persist_path")]
+    #[arg(short, long, env = "ZOE_EPHEMERAL", conflicts_with = "persist_path")]
     pub ephemeral: bool,
 }
 
@@ -60,8 +69,27 @@ pub async fn full_cli_client(args: RelayClientArgs) -> Result<Client, ClientErro
         }
     };
 
-    // Parse server address
-    let server_public_key = args.server_key;
+    // Get server public key from either direct argument or file
+    let server_public_key = if let Some(file_path) = args.server_key_file {
+        info!("📖 Reading server public key from: {}", file_path.display());
+        let content = std::fs::read_to_string(&file_path).map_err(|e| {
+            ClientError::BuildError(format!(
+                "Failed to read key file {}: {e}",
+                file_path.display()
+            ))
+        })?;
+        VerifyingKey::from_pem(&content).map_err(|e| {
+            ClientError::BuildError(format!(
+                "Failed to parse key file {}: {e}",
+                file_path.display()
+            ))
+        })?
+    } else if let Some(key) = args.server_key {
+        key
+    } else {
+        error!("Must specify either --server-key or --server-key-file");
+        std::process::exit(1);
+    };
 
     let mut builder = Client::builder();
     builder.server_info(server_public_key, server_addr);

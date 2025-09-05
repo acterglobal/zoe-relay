@@ -1,10 +1,10 @@
 use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
-use std::ffi::{CStr, CString};
-use tokio::sync::{oneshot, mpsc};
-use tokio_stream::{Stream, wrappers::UnboundedReceiverStream};
 use std::collections::HashMap;
+use std::ffi::{CStr, CString};
 use std::sync::{Arc, Mutex};
+use tokio::sync::{mpsc, oneshot};
+use tokio_stream::{wrappers::UnboundedReceiverStream, Stream};
 
 /// Connection status for WhatsApp client
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -189,7 +189,10 @@ mod mock_ffi {
         let _ = tx.send(Ok("msg_mock_123".to_string()));
     }
 
-    pub unsafe fn whatsmeow_register_message_handler(_client_ptr: usize, _callback_handle: usize) -> bool {
+    pub unsafe fn whatsmeow_register_message_handler(
+        _client_ptr: usize,
+        _callback_handle: usize,
+    ) -> bool {
         true // Mock always succeeds
     }
 
@@ -340,7 +343,10 @@ mod ffi_wrapper {
         super::whatsmeow_send_message_async(client_ptr, chat_jid, text, callback_handle)
     }
 
-    pub unsafe fn whatsmeow_register_message_handler(client_ptr: usize, callback_handle: usize) -> bool {
+    pub unsafe fn whatsmeow_register_message_handler(
+        client_ptr: usize,
+        callback_handle: usize,
+    ) -> bool {
         super::whatsmeow_register_message_handler(client_ptr, callback_handle)
     }
 
@@ -406,7 +412,7 @@ use mock_ffi as ffi_wrapper;
 
 // Global registry for message stream senders
 lazy_static::lazy_static! {
-    static ref MESSAGE_SENDERS: Arc<Mutex<HashMap<usize, mpsc::UnboundedSender<MessageEvent>>>> = 
+    static ref MESSAGE_SENDERS: Arc<Mutex<HashMap<usize, mpsc::UnboundedSender<MessageEvent>>>> =
         Arc::new(Mutex::new(HashMap::new()));
 }
 
@@ -615,45 +621,49 @@ impl WhatsAppBot {
     /// Get a stream of incoming messages
     pub fn message_stream(&self) -> Result<impl Stream<Item = MessageEvent>> {
         let (tx, rx) = mpsc::unbounded_channel();
-        
+
         // Store the sender in the global registry using client_ptr as key
         {
-            let mut senders = MESSAGE_SENDERS.lock().map_err(|_| anyhow!("Failed to lock message senders"))?;
+            let mut senders = MESSAGE_SENDERS
+                .lock()
+                .map_err(|_| anyhow!("Failed to lock message senders"))?;
             senders.insert(self.client_ptr, tx);
         }
-        
+
         // Register the message handler with Go
-        let success = unsafe { 
-            ffi_wrapper::whatsmeow_register_message_handler(self.client_ptr, self.client_ptr) 
+        let success = unsafe {
+            ffi_wrapper::whatsmeow_register_message_handler(self.client_ptr, self.client_ptr)
         };
-        
+
         if !success {
             // Clean up on failure
-            let mut senders = MESSAGE_SENDERS.lock().map_err(|_| anyhow!("Failed to lock message senders"))?;
+            let mut senders = MESSAGE_SENDERS
+                .lock()
+                .map_err(|_| anyhow!("Failed to lock message senders"))?;
             senders.remove(&self.client_ptr);
             return Err(anyhow!("Failed to register message handler"));
         }
-        
+
         Ok(UnboundedReceiverStream::new(rx))
     }
 
     /// Stop the message stream
     pub fn stop_message_stream(&self) -> Result<()> {
         // Unregister the message handler
-        let success = unsafe { 
-            ffi_wrapper::whatsmeow_unregister_message_handler(self.client_ptr) 
-        };
-        
+        let success = unsafe { ffi_wrapper::whatsmeow_unregister_message_handler(self.client_ptr) };
+
         // Remove from registry
         {
-            let mut senders = MESSAGE_SENDERS.lock().map_err(|_| anyhow!("Failed to lock message senders"))?;
+            let mut senders = MESSAGE_SENDERS
+                .lock()
+                .map_err(|_| anyhow!("Failed to lock message senders"))?;
             senders.remove(&self.client_ptr);
         }
-        
+
         if !success {
             return Err(anyhow!("Failed to unregister message handler"));
         }
-        
+
         Ok(())
     }
 
@@ -674,7 +684,12 @@ impl WhatsAppBot {
         let handle = Box::into_raw(Box::new(tx)) as usize;
 
         unsafe {
-            ffi_wrapper::whatsmeow_send_message_async(self.client_ptr, chat_jid.as_ptr(), text.as_ptr(), handle);
+            ffi_wrapper::whatsmeow_send_message_async(
+                self.client_ptr,
+                chat_jid.as_ptr(),
+                text.as_ptr(),
+                handle,
+            );
         }
 
         rx.await
@@ -861,8 +876,10 @@ mod tests {
         #[test]
         fn bot_creation() {
             let temp_dir = tempdir().unwrap();
-            let bot = WhatsAppBot::new(temp_dir.path().join("whatsapp.db").to_str().unwrap());
-            assert!(bot.is_ok());
+            let bot =
+                WhatsAppBot::new(temp_dir.path().join("whatsapp.db").to_str().unwrap()).unwrap();
+            // Bot creation succeeded if we got here without panicking
+            assert_eq!(bot.client_ptr != 0, true);
         }
 
         #[test]
@@ -1103,45 +1120,45 @@ mod tests {
 
         #[tokio::test]
         async fn connect_operation() {
-                
             let temp_dir = tempdir().unwrap();
-            let bot = WhatsAppBot::new(temp_dir.path().join("whatsapp.db").to_str().unwrap());
+            let bot =
+                WhatsAppBot::new(temp_dir.path().join("whatsapp.db").to_str().unwrap()).unwrap();
             let result = bot.connect().await;
             assert!(result.is_ok());
         }
 
         #[tokio::test]
         async fn disconnect_operation() {
-                
             let temp_dir = tempdir().unwrap();
-            let bot = WhatsAppBot::new(temp_dir.path().join("whatsapp.db").to_str().unwrap());
+            let bot =
+                WhatsAppBot::new(temp_dir.path().join("whatsapp.db").to_str().unwrap()).unwrap();
             let result = bot.disconnect().await;
             assert!(result.is_ok());
         }
 
         #[tokio::test]
         async fn connection_status_check() {
-                
             let temp_dir = tempdir().unwrap();
-            let bot = WhatsAppBot::new(temp_dir.path().join("whatsapp.db").to_str().unwrap());
+            let bot =
+                WhatsAppBot::new(temp_dir.path().join("whatsapp.db").to_str().unwrap()).unwrap();
             let status = bot.get_connection_status().await.unwrap();
             assert_eq!(status, ConnectionStatus::Disconnected); // Mock returns disconnected by default
         }
 
         #[tokio::test]
         async fn connection_status_boolean_check() {
-                
             let temp_dir = tempdir().unwrap();
-            let bot = WhatsAppBot::new(temp_dir.path().join("whatsapp.db").to_str().unwrap());
+            let bot =
+                WhatsAppBot::new(temp_dir.path().join("whatsapp.db").to_str().unwrap()).unwrap();
             let connected = bot.is_connected().await.unwrap();
             assert!(!connected); // Mock returns disconnected by default
         }
 
         #[tokio::test]
         async fn qr_code_generation() {
-                
             let temp_dir = tempdir().unwrap();
-            let bot = WhatsAppBot::new(temp_dir.path().join("whatsapp.db").to_str().unwrap());
+            let bot =
+                WhatsAppBot::new(temp_dir.path().join("whatsapp.db").to_str().unwrap()).unwrap();
             let qr_code = bot.get_qr_code().await.unwrap();
             assert!(qr_code.contains("MOCK_QR_CODE_FOR_TESTING"));
             assert!(qr_code.starts_with("https://wa.me/qr/"));
@@ -1149,9 +1166,9 @@ mod tests {
 
         #[tokio::test]
         async fn text_message_sending() {
-                
             let temp_dir = tempdir().unwrap();
-            let bot = WhatsAppBot::new(temp_dir.path().join("whatsapp.db").to_str().unwrap());
+            let bot =
+                WhatsAppBot::new(temp_dir.path().join("whatsapp.db").to_str().unwrap()).unwrap();
             let message_id = bot
                 .send_message("test@s.whatsapp.net", "Hello, World!")
                 .await
@@ -1161,9 +1178,9 @@ mod tests {
 
         #[tokio::test]
         async fn image_message_sending() {
-                
             let temp_dir = tempdir().unwrap();
-            let bot = WhatsAppBot::new(temp_dir.path().join("whatsapp.db").to_str().unwrap());
+            let bot =
+                WhatsAppBot::new(temp_dir.path().join("whatsapp.db").to_str().unwrap()).unwrap();
             let message_id = bot
                 .send_image(
                     "test@s.whatsapp.net",
@@ -1177,9 +1194,9 @@ mod tests {
 
         #[tokio::test]
         async fn image_message_sending_no_caption() {
-                
             let temp_dir = tempdir().unwrap();
-            let bot = WhatsAppBot::new(temp_dir.path().join("whatsapp.db").to_str().unwrap());
+            let bot =
+                WhatsAppBot::new(temp_dir.path().join("whatsapp.db").to_str().unwrap()).unwrap();
             let message_id = bot
                 .send_image("test@s.whatsapp.net", "/path/to/image.jpg", None)
                 .await
@@ -1189,9 +1206,9 @@ mod tests {
 
         #[tokio::test]
         async fn contacts_retrieval() {
-                
             let temp_dir = tempdir().unwrap();
-            let bot = WhatsAppBot::new(temp_dir.path().join("whatsapp.db").to_str().unwrap());
+            let bot =
+                WhatsAppBot::new(temp_dir.path().join("whatsapp.db").to_str().unwrap()).unwrap();
             let contacts = bot.get_contacts().await.unwrap();
 
             assert_eq!(contacts.len(), 2);
@@ -1206,9 +1223,9 @@ mod tests {
 
         #[tokio::test]
         async fn groups_retrieval() {
-                
             let temp_dir = tempdir().unwrap();
-            let bot = WhatsAppBot::new(temp_dir.path().join("whatsapp.db").to_str().unwrap());
+            let bot =
+                WhatsAppBot::new(temp_dir.path().join("whatsapp.db").to_str().unwrap()).unwrap();
             let groups = bot.get_groups().await.unwrap();
 
             assert_eq!(groups.len(), 1);
@@ -1224,9 +1241,9 @@ mod tests {
 
         #[tokio::test]
         async fn recent_messages_retrieval() {
-                
             let temp_dir = tempdir().unwrap();
-            let bot = WhatsAppBot::new(temp_dir.path().join("whatsapp.db").to_str().unwrap());
+            let bot =
+                WhatsAppBot::new(temp_dir.path().join("whatsapp.db").to_str().unwrap()).unwrap();
             let messages = bot
                 .get_recent_messages("test@s.whatsapp.net", 10)
                 .await
@@ -1242,9 +1259,9 @@ mod tests {
 
         #[tokio::test]
         async fn group_creation() {
-                
             let temp_dir = tempdir().unwrap();
-            let bot = WhatsAppBot::new(temp_dir.path().join("whatsapp.db").to_str().unwrap());
+            let bot =
+                WhatsAppBot::new(temp_dir.path().join("whatsapp.db").to_str().unwrap()).unwrap();
             let participants = vec!["user1@s.whatsapp.net", "user2@s.whatsapp.net"];
             let group = bot
                 .create_group("New Test Group", &participants)
@@ -1258,9 +1275,9 @@ mod tests {
 
         #[tokio::test]
         async fn group_joining() {
-                
             let temp_dir = tempdir().unwrap();
-            let bot = WhatsAppBot::new(temp_dir.path().join("whatsapp.db").to_str().unwrap());
+            let bot =
+                WhatsAppBot::new(temp_dir.path().join("whatsapp.db").to_str().unwrap()).unwrap();
             let group = bot
                 .join_group("https://chat.whatsapp.com/invite/123")
                 .await
@@ -1276,18 +1293,18 @@ mod tests {
 
         #[tokio::test]
         async fn message_read_marking() {
-                
             let temp_dir = tempdir().unwrap();
-            let bot = WhatsAppBot::new(temp_dir.path().join("whatsapp.db").to_str().unwrap());
+            let bot =
+                WhatsAppBot::new(temp_dir.path().join("whatsapp.db").to_str().unwrap()).unwrap();
             let result = bot.mark_read("test@s.whatsapp.net", "msg_123").await;
             assert!(result.is_ok());
         }
 
         #[tokio::test]
         async fn concurrent_operations() {
-                
             let temp_dir = tempdir().unwrap();
-            let bot = WhatsAppBot::new(temp_dir.path().join("whatsapp.db").to_str().unwrap());
+            let bot =
+                WhatsAppBot::new(temp_dir.path().join("whatsapp.db").to_str().unwrap()).unwrap();
 
             // Test that multiple async operations can run concurrently
             let (status, qr_code, contacts) = tokio::join!(

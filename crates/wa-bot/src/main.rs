@@ -1,9 +1,9 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
-use tracing::{error, info};
 use tokio_stream::StreamExt;
+use tracing::{error, info};
 use zoe_client::cli::{RelayClientArgs, full_cli_client, main_setup};
-use zoe_wa_bot::{ZoeWhatsAppBot, should_display_message, extract_name_from_jid};
+use zoe_wa_bot::{ZoeWhatsAppBot, extract_name_from_jid, should_display_message};
 
 #[derive(Parser, Debug)]
 #[command(name = "zoe-wa-bot")]
@@ -36,23 +36,23 @@ enum Commands {
         /// Show message timestamps
         #[arg(long)]
         show_timestamps: bool,
-        
+
         /// Show message IDs
         #[arg(long)]
         show_ids: bool,
-        
+
         /// Filter messages by sender (partial match)
         #[arg(long)]
         filter_sender: Option<String>,
-        
+
         /// Filter messages by chat (partial match)
         #[arg(long)]
         filter_chat: Option<String>,
-        
+
         /// Only show messages from groups
         #[arg(long)]
         groups_only: bool,
-        
+
         /// Only show direct messages (not from groups)
         #[arg(long)]
         dm_only: bool,
@@ -137,19 +137,19 @@ async fn main() -> Result<()> {
         }
     }
 
-        info!("🎯 Zoe WhatsApp Bot is ready!");
+    info!("🎯 Zoe WhatsApp Bot is ready!");
     info!("📱 WhatsApp: Connected");
     info!("🔗 Zoe Network: Connected");
-    
+
     // Handle subcommands
     match args.command {
-        Some(Commands::Listen { 
-            show_timestamps, 
-            show_ids, 
-            filter_sender, 
-            filter_chat, 
-            groups_only, 
-            dm_only 
+        Some(Commands::Listen {
+            show_timestamps,
+            show_ids,
+            filter_sender,
+            filter_chat,
+            groups_only,
+            dm_only,
         }) => {
             run_listen_command(
                 &whatsapp_bot,
@@ -159,24 +159,25 @@ async fn main() -> Result<()> {
                 filter_chat,
                 groups_only,
                 dm_only,
-            ).await?;
+            )
+            .await?;
         }
         None => {
             // Default behavior - run as bridge bot
             info!("🔄 Bot running in bridge mode... Press Ctrl+C to stop");
             info!("💡 Use 'zoe-wa-bot listen' to just monitor messages");
-            
+
             // TODO: Implement bot logic here
             // - Listen for WhatsApp messages
             // - Bridge messages to/from Zoe network
             // - Handle commands and interactions
-            
+
             // Keep the bot running
             tokio::signal::ctrl_c().await?;
             info!("🛑 Shutdown signal received. Stopping bot...");
         }
     }
-    
+
     Ok(())
 }
 
@@ -191,13 +192,13 @@ async fn run_listen_command(
     dm_only: bool,
 ) -> Result<()> {
     info!("👂 Starting WhatsApp message listener...");
-    
+
     // Validate conflicting options
     if groups_only && dm_only {
         error!("❌ Cannot use both --groups-only and --dm-only");
         return Err(anyhow::anyhow!("Conflicting filter options"));
     }
-    
+
     // Start message stream
     let mut message_stream = match whatsapp_bot.message_stream() {
         Ok(stream) => {
@@ -209,13 +210,13 @@ async fn run_listen_command(
             return Err(e);
         }
     };
-    
+
     // Print filter information
     print_filter_info(&filter_sender, &filter_chat, groups_only, dm_only);
-    
+
     info!("🔄 Listening for messages... Press Ctrl+C to stop");
     println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-    
+
     // Handle messages and shutdown signal concurrently
     tokio::select! {
         _ = async {
@@ -232,12 +233,12 @@ async fn run_listen_command(
             info!("🛑 Shutdown signal received. Stopping listener...");
         }
     }
-    
+
     // Clean up message stream
     if let Err(e) = whatsapp_bot.stop_message_stream() {
         error!("⚠️ Failed to stop message stream cleanly: {}", e);
     }
-    
+
     info!("👋 Message listener stopped");
     Ok(())
 }
@@ -250,23 +251,23 @@ fn print_filter_info(
     dm_only: bool,
 ) {
     let mut filters = Vec::new();
-    
+
     if let Some(sender) = filter_sender {
         filters.push(format!("sender contains '{}'", sender));
     }
-    
+
     if let Some(chat) = filter_chat {
         filters.push(format!("chat contains '{}'", chat));
     }
-    
+
     if groups_only {
         filters.push("groups only".to_string());
     }
-    
+
     if dm_only {
         filters.push("direct messages only".to_string());
     }
-    
+
     if !filters.is_empty() {
         info!("🔍 Active filters: {}", filters.join(", "));
     } else {
@@ -275,31 +276,26 @@ fn print_filter_info(
 }
 
 /// Display a message in the terminal with formatting
-fn display_message(
-    message: &whatsmeow::MessageEvent,
-    show_timestamps: bool,
-    show_ids: bool,
-) {
+fn display_message(message: &whatsmeow::MessageEvent, show_timestamps: bool, show_ids: bool) {
     use chrono::{DateTime, Utc};
-    
+
     let mut output = String::new();
-    
+
     // Add timestamp if requested
     if show_timestamps {
-        let datetime = DateTime::from_timestamp(message.timestamp, 0)
-            .unwrap_or_else(|| Utc::now());
+        let datetime = DateTime::from_timestamp(message.timestamp, 0).unwrap_or_else(|| Utc::now());
         output.push_str(&format!("[{}] ", datetime.format("%H:%M:%S")));
     }
-    
+
     // Add message ID if requested
     if show_ids {
         output.push_str(&format!("[{}] ", &message.id[..8])); // Show first 8 chars of ID
     }
-    
+
     // Determine message source type
     let is_group = message.chat.contains("-") && message.chat.contains("@g.us");
     let source_icon = if is_group { "👥" } else { "👤" };
-    
+
     // Format sender name (extract from JID)
     let sender_name = extract_name_from_jid(&message.sender);
     let chat_name = if is_group {
@@ -307,7 +303,7 @@ fn display_message(
     } else {
         sender_name.clone()
     };
-    
+
     // Add message type icon
     let type_icon = match message.message_type.as_str() {
         "text" => "💬",
@@ -317,7 +313,7 @@ fn display_message(
         "document" => "📄",
         _ => "📨",
     };
-    
+
     // Build the message display
     if is_group {
         output.push_str(&format!(
@@ -330,11 +326,11 @@ fn display_message(
             source_icon, type_icon, sender_name, message.content
         ));
     }
-    
+
     // Add "from me" indicator
     if message.is_from_me {
         output.push_str(" (sent by me)");
     }
-    
+
     println!("{}", output);
 }

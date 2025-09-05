@@ -1,8 +1,8 @@
 use qrcode::render::unicode;
 use qrcode::QrCode;
 use std::io::{self, Write};
-use whatsmeow::{ConnectionStatus, WhatsAppBot};
 use tempfile::tempdir;
+use whatsmeow::{ConnectionStatus, WhatsAppBot};
 
 /// Display a QR code in scannable ASCII format
 fn display_qr_code(qr_data: &str) {

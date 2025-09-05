@@ -25,21 +25,28 @@ fn setup_ffi() {
         (shared_lib_path, "dylib")
     } else {
         println!("cargo:warning=Go library not found. Run one of:");
-        println!("cargo:warning=  Static: go build -buildmode=c-archive -o libwhatsmeow.a whatsmeow.go");
-        println!("cargo:warning=  Shared: go build -buildmode=c-shared -o libwhatsmeow.so whatsmeow.go");
+        println!(
+            "cargo:warning=  Static: go build -buildmode=c-archive -o libwhatsmeow.a whatsmeow.go"
+        );
+        println!(
+            "cargo:warning=  Shared: go build -buildmode=c-shared -o libwhatsmeow.so whatsmeow.go"
+        );
         return;
     };
 
     // Check if header exists
     if !header_path.exists() {
-        println!("cargo:warning=Header file not found: {}", header_path.display());
+        println!(
+            "cargo:warning=Header file not found: {}",
+            header_path.display()
+        );
         return;
     }
 
     // Tell Cargo to link the library
     println!("cargo:rustc-link-search=native={manifest_dir}");
     println!("cargo:rustc-link-lib={}=whatsmeow", link_type);
-    
+
     // For static linking, we need to link Go runtime dependencies
     if link_type == "static" {
         println!("cargo:rustc-link-lib=static=pthread");
