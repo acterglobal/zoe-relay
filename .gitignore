@@ -6,6 +6,8 @@ zoe-redis-data/
 test-redis-data/
 target
 .env
-messages.db
-*.db.*
 *.bin
+**/*.db
+**/*.db.*
+crates/whatsmeow/libwhatsmeow.a
+crates/whatsmeow/libwhatsmeow.so
