@@ -168,7 +168,9 @@ async fn test_filter_update_request() {
     let operations = vec![
         FilterOperation::add_channels(vec![b"general".to_vec(), b"tech".to_vec()]),
         FilterOperation::add_authors(vec![KeyId::from(*alice_key.id())]),
-        FilterOperation::add_events(vec![zoe_wire_protocol::hash(b"important")]),
+        FilterOperation::add_events(vec![zoe_wire_protocol::MessageId::from_content(
+            b"important",
+        )]),
     ];
 
     let filter_request = FilterUpdateRequest { operations };
@@ -183,7 +185,11 @@ async fn test_filter_update_request() {
         assert!(filter_list.contains(&Filter::Channel(b"general".to_vec())));
         assert!(filter_list.contains(&Filter::Channel(b"tech".to_vec())));
         assert!(filter_list.contains(&Filter::Author(KeyId::from(*alice_key.id()))));
-        assert!(filter_list.contains(&Filter::Event(zoe_wire_protocol::hash(b"important"))));
+        assert!(
+            filter_list.contains(&Filter::Event(zoe_wire_protocol::MessageId::from_content(
+                b"important"
+            )))
+        );
     } else {
         panic!("Expected filters to be Some");
     }

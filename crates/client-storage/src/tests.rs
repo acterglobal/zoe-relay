@@ -5,7 +5,8 @@ mod integration_tests {
     use rand::rngs::OsRng;
     use tempfile::TempDir;
     use zoe_wire_protocol::{
-        Content, Hash, KeyPair, Kind, Message, MessageFull, MessageV0, MessageV0Header, Tag,
+        Content, KeyId, KeyPair, Kind, Message, MessageFull, MessageId, MessageV0, MessageV0Header,
+        Tag,
     };
 
     // Helper function to create a test message
@@ -121,8 +122,8 @@ mod integration_tests {
             .unwrap();
 
         // Try to retrieve a non-existent message
-        let fake_hash = Hash::from_bytes([0u8; 32]);
-        let result = storage.get_message(&fake_hash).await.unwrap();
+        let fake_message_id = MessageId::from_bytes([0u8; 32]);
+        let result = storage.get_message(&fake_message_id).await.unwrap();
         assert!(result.is_none());
     }
 
@@ -415,8 +416,8 @@ mod integration_tests {
         // Create relay keys and their IDs
         let relay1_key = KeyPair::generate(&mut OsRng).public_key();
         let relay2_key = KeyPair::generate(&mut OsRng).public_key();
-        let relay1_id = Hash::from(*relay1_key.id());
-        let relay2_id = Hash::from(*relay2_key.id());
+        let relay1_id: KeyId = relay1_key.id();
+        let relay2_id: KeyId = relay2_key.id();
 
         // Initially, all messages should be unsynced for both relays
         let unsynced_relay1 = storage
@@ -489,8 +490,8 @@ mod integration_tests {
         // Create relay keys and their IDs
         let relay1_key = KeyPair::generate(&mut OsRng).public_key();
         let relay2_key = KeyPair::generate(&mut OsRng).public_key();
-        let relay1_id = Hash::from(*relay1_key.id());
-        let relay2_id = Hash::from(*relay2_key.id());
+        let relay1_id: KeyId = relay1_key.id();
+        let relay2_id: KeyId = relay2_key.id();
 
         // Initially, no sync status
         let sync_status = storage.get_message_sync_status(message.id()).await.unwrap();
@@ -537,7 +538,7 @@ mod integration_tests {
 
         // Create relay key
         let relay_key = KeyPair::generate(&mut OsRng).public_key();
-        let relay_id = Hash::from(*relay_key.id());
+        let relay_id: KeyId = relay_key.id();
 
         // Initially, no messages have sync status
         let message1_status = storage
@@ -597,7 +598,7 @@ mod integration_tests {
 
         // Create relay key
         let relay_key = KeyPair::generate(&mut OsRng).public_key();
-        let relay_id = Hash::from(*relay_key.id());
+        let relay_id: KeyId = relay_key.id();
 
         // Mark as synced with initial stream ID
         storage
@@ -638,7 +639,7 @@ mod integration_tests {
         }
 
         let relay_key = KeyPair::generate(&mut OsRng).public_key();
-        let relay_id = Hash::from(*relay_key.id());
+        let relay_id: KeyId = relay_key.id();
 
         // Test unsynced messages with limit
         let unsynced_limited = storage

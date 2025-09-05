@@ -8,7 +8,7 @@ use tokio_stream::wrappers::BroadcastStream;
 use tracing::{debug, error, warn};
 use zoe_client_storage::{MessageStorage, SubscriptionState};
 use zoe_wire_protocol::{
-    CatchUpResponse, Filter, Hash, MessageFull, PublishResult, StreamMessage, VerifyingKey,
+    CatchUpResponse, Filter, KeyId, MessageFull, PublishResult, StreamMessage, VerifyingKey,
 };
 
 use super::messages_manager::{
@@ -53,7 +53,7 @@ use super::messages_manager::{
 /// ```
 pub struct GenericMessagePersistenceManagerBuilder<T: MessagesManagerTrait> {
     storage: Option<Arc<dyn MessageStorage>>,
-    relay_id: Option<Hash>,
+    relay_id: Option<KeyId>,
     buffer_size: Option<usize>,
     autosubscribe: bool,
     _phantom: std::marker::PhantomData<T>,
@@ -88,14 +88,14 @@ impl<T: MessagesManagerTrait> GenericMessagePersistenceManagerBuilder<T> {
     }
 
     /// Set the relay ID (hash of public key) for sync tracking
-    pub fn relay_id(mut self, relay_id: Hash) -> Self {
+    pub fn relay_id(mut self, relay_id: KeyId) -> Self {
         self.relay_id = Some(relay_id);
         self
     }
 
     /// Set the relay public key for sync tracking (convenience method that computes the ID)
     pub fn relay_pubkey(mut self, relay_pubkey: VerifyingKey) -> Self {
-        self.relay_id = Some(Hash::from(*relay_pubkey.id()));
+        self.relay_id = Some(relay_pubkey.id());
         self
     }
 
@@ -229,7 +229,7 @@ impl<T: MessagesManagerTrait> GenericMessagePersistenceManager<T> {
     /// Load subscription state from storage for a specific relay
     pub async fn load_subscription_state(
         storage: &dyn MessageStorage,
-        relay_id: &Hash,
+        relay_id: &KeyId,
     ) -> Result<Option<SubscriptionState>> {
         storage
             .get_subscription_state(relay_id)
@@ -240,7 +240,7 @@ impl<T: MessagesManagerTrait> GenericMessagePersistenceManager<T> {
     /// Load all subscription states from storage
     pub async fn load_all_subscription_states(
         storage: &dyn MessageStorage,
-    ) -> Result<std::collections::HashMap<Hash, SubscriptionState>> {
+    ) -> Result<std::collections::HashMap<KeyId, SubscriptionState>> {
         storage.get_all_subscription_states().await.map_err(|e| {
             ClientError::Generic(format!("Failed to load all subscription states: {}", e))
         })
@@ -258,7 +258,7 @@ impl<T: MessagesManagerTrait> GenericMessagePersistenceManager<T> {
     async fn new(
         storage: Arc<dyn MessageStorage>,
         messages_manager: Arc<T>,
-        relay_id: Hash,
+        relay_id: KeyId,
     ) -> Result<Self> {
         // Get the message events stream before spawning the task to avoid lifetime issues
         let events_stream = messages_manager.message_events_stream();
@@ -319,7 +319,7 @@ impl<T: MessagesManagerTrait> GenericMessagePersistenceManager<T> {
     async fn handle_message_event(
         storage: &dyn MessageStorage,
         event: &MessageEvent,
-        relay_id: &Hash,
+        relay_id: &KeyId,
     ) -> Result<()> {
         match event {
             MessageEvent::MessageReceived {
@@ -526,16 +526,16 @@ mod tests {
     async fn test_builder_relay_pubkey_conversion() {
         let keypair = KeyPair::generate(&mut OsRng);
         let pubkey = keypair.public_key();
-        let expected_hash = Hash::from(*pubkey.id());
+        let expected_key_id = pubkey.id();
 
         let builder = MessagePersistenceManagerBuilder::new().relay_pubkey(pubkey);
 
-        assert_eq!(builder.relay_id, Some(expected_hash));
+        assert_eq!(builder.relay_id, Some(expected_key_id));
     }
 
     #[tokio::test]
     async fn test_builder_configuration() {
-        let relay_id = Hash::from([1u8; 32]);
+        let relay_id = KeyId::from_bytes([1u8; 32]);
         let buffer_size = 2000;
 
         let builder = MessagePersistenceManagerBuilder::new()
@@ -552,7 +552,7 @@ mod tests {
     async fn test_message_received_persistence() {
         let mut mock_storage = MockMessageStorage::new();
         let message = create_test_message("Test message");
-        let relay_id = Hash::from([1u8; 32]);
+        let relay_id = KeyId::from_bytes([1u8; 32]);
         let stream_height = "100".to_string();
 
         // Set up expectations
@@ -584,7 +584,7 @@ mod tests {
     #[tokio::test]
     async fn test_message_sent_persistence() {
         let mut mock_storage = MockMessageStorage::new();
-        let relay_id = Hash::from([1u8; 32]);
+        let relay_id = KeyId::from_bytes([1u8; 32]);
         let message = create_test_message("Sent message");
         let publish_result = PublishResult::StoredNew {
             global_stream_id: "200".to_string(),
@@ -613,7 +613,7 @@ mod tests {
     #[tokio::test]
     async fn test_catch_up_message_persistence() {
         let mut mock_storage = MockMessageStorage::new();
-        let relay_id = Hash::from([1u8; 32]);
+        let relay_id = KeyId::from_bytes([1u8; 32]);
         let message = create_test_message("Catch-up message");
         let request_id = 42;
 
@@ -640,7 +640,7 @@ mod tests {
     #[tokio::test]
     async fn test_stream_height_update_no_persistence() {
         let mock_storage = MockMessageStorage::new();
-        let relay_id = Hash::from([1u8; 32]);
+        let relay_id = KeyId::from_bytes([1u8; 32]);
 
         // Stream height updates should not trigger any storage calls
         let event = MessageEvent::StreamHeightUpdate {
@@ -657,7 +657,7 @@ mod tests {
     #[tokio::test]
     async fn test_catch_up_completed_no_persistence() {
         let mock_storage = MockMessageStorage::new();
-        let relay_id = Hash::from([1u8; 32]);
+        let relay_id = KeyId::from_bytes([1u8; 32]);
 
         // Catch-up completed events should not trigger any storage calls
         let event = MessageEvent::CatchUpCompleted { request_id: 123 };
@@ -672,7 +672,7 @@ mod tests {
     #[tokio::test]
     async fn test_storage_error_handling() {
         let mut mock_storage = MockMessageStorage::new();
-        let relay_id = Hash::from([1u8; 32]);
+        let relay_id = KeyId::from_bytes([1u8; 32]);
         let message = create_test_message("Error test message");
 
         // Set up storage to return an error
@@ -706,7 +706,7 @@ mod tests {
     #[tokio::test]
     async fn test_load_subscription_state() {
         let mut mock_storage = MockMessageStorage::new();
-        let relay_id = Hash::from([4u8; 32]);
+        let relay_id = KeyId::from_bytes([4u8; 32]);
         let expected_state = SubscriptionState {
             latest_stream_height: Some("500".to_string()),
             current_filters: MessageFilters {
@@ -737,8 +737,8 @@ mod tests {
     #[tokio::test]
     async fn test_load_all_subscription_states() {
         let mut mock_storage = MockMessageStorage::new();
-        let relay_id1 = Hash::from([5u8; 32]);
-        let relay_id2 = Hash::from([6u8; 32]);
+        let relay_id1 = KeyId::from_bytes([5u8; 32]);
+        let relay_id2 = KeyId::from_bytes([6u8; 32]);
 
         let mut expected_states = HashMap::new();
         expected_states.insert(
@@ -830,12 +830,12 @@ mod tests {
         // Test various error scenarios that might occur
 
         // Test with invalid relay ID (all zeros)
-        let zero_relay_id = Hash::from([0u8; 32]);
-        assert_eq!(zero_relay_id, Hash::from([0u8; 32]));
+        let zero_relay_id = KeyId::from_bytes([0u8; 32]);
+        assert_eq!(zero_relay_id, KeyId::from_bytes([0u8; 32]));
 
         // Test with maximum relay ID (all 255s)
-        let max_relay_id = Hash::from([255u8; 32]);
-        assert_eq!(max_relay_id, Hash::from([255u8; 32]));
+        let max_relay_id = KeyId::from_bytes([255u8; 32]);
+        assert_eq!(max_relay_id, KeyId::from_bytes([255u8; 32]));
 
         // Test subscription state edge cases
         let empty_state = SubscriptionState::default();
@@ -890,7 +890,7 @@ mod tests {
         async fn test_generic_builder_with_mock_messages_manager() {
             let mut mock_storage = MockMessageStorage::new();
             let mut mock_messages_manager = MockMessagesManagerTrait::new();
-            let relay_id = Hash::from([1u8; 32]);
+            let relay_id = KeyId::from_bytes([1u8; 32]);
 
             // Set up storage expectations
             mock_storage.expect_store_message().returning(|_| Ok(()));
@@ -937,7 +937,7 @@ mod tests {
         async fn test_subscription_state_wiring_with_mock() {
             let mut mock_storage = MockMessageStorage::new();
             let mut mock_messages_manager = MockMessagesManagerTrait::new();
-            let relay_id = Hash::from([2u8; 32]);
+            let relay_id = KeyId::from_bytes([2u8; 32]);
 
             // Set up initial subscription state in storage
             let initial_state = SubscriptionState {
@@ -1004,7 +1004,7 @@ mod tests {
         async fn test_message_sync_tracking_with_mock() {
             let mut mock_storage = MockMessageStorage::new();
             let mut mock_messages_manager = MockMessagesManagerTrait::new();
-            let relay_id = Hash::from([3u8; 32]);
+            let relay_id = KeyId::from_bytes([3u8; 32]);
             let test_message = create_test_message("sync test message");
             let message_id = *test_message.id();
 
@@ -1062,8 +1062,8 @@ mod tests {
         #[tokio::test]
         async fn test_multiple_relay_sync_status() {
             let mut mock_storage = MockMessageStorage::new();
-            let relay_id1 = Hash::from([4u8; 32]);
-            let relay_id2 = Hash::from([5u8; 32]);
+            let relay_id1 = KeyId::from_bytes([4u8; 32]);
+            let relay_id2 = KeyId::from_bytes([5u8; 32]);
 
             // Set up multiple subscription states
             let mut all_states = HashMap::new();
@@ -1115,7 +1115,7 @@ mod tests {
 
             // Test building without storage should fail
             let result = TestPersistenceManagerBuilder::new()
-                .relay_id(Hash::from([6u8; 32]))
+                .relay_id(KeyId::from_bytes([6u8; 32]))
                 .build_with_messages_manager(Arc::new(mock_messages_manager))
                 .await;
 
@@ -1153,7 +1153,7 @@ mod tests {
                 .returning(move || subscriber.clone());
 
             // Build the persistence manager
-            let relay_id = Hash::from([10u8; 32]);
+            let relay_id = KeyId::from_bytes([10u8; 32]);
             let persistence_manager = TestPersistenceManagerBuilder::new()
                 .storage(Arc::new(mock_storage))
                 .relay_id(relay_id)
@@ -1174,7 +1174,7 @@ mod tests {
         async fn test_background_task_error_resilience() {
             let mut mock_storage = MockMessageStorage::new();
             let mut mock_messages_manager = MockMessagesManagerTrait::new();
-            let relay_id = Hash::from([7u8; 32]);
+            let relay_id = KeyId::from_bytes([7u8; 32]);
 
             // Set up storage to fail on first message, succeed on second
             let mut call_count = 0;
@@ -1243,7 +1243,7 @@ mod tests {
         async fn test_stream_height_update_persistence() {
             let mut mock_storage = MockMessageStorage::new();
             let mut mock_messages_manager = MockMessagesManagerTrait::new();
-            let relay_id = Hash::from([9u8; 32]);
+            let relay_id = KeyId::from_bytes([9u8; 32]);
 
             // Create a real SharedObservable for subscription state with AsyncLock
             let initial_state = SubscriptionState {
@@ -1317,7 +1317,7 @@ mod tests {
         async fn test_stream_event_filtering_and_processing() {
             let mut mock_storage = MockMessageStorage::new();
             let mut mock_messages_manager = MockMessagesManagerTrait::new();
-            let relay_id = Hash::from([8u8; 32]);
+            let relay_id = KeyId::from_bytes([8u8; 32]);
 
             // Set up expectations for different event types
             mock_storage
@@ -1388,7 +1388,7 @@ mod tests {
         async fn test_subscription_state_persistence_on_updates() {
             let mut mock_storage = MockMessageStorage::new();
             let mut mock_messages_manager = MockMessagesManagerTrait::new();
-            let relay_id = Hash::from([11u8; 32]);
+            let relay_id = KeyId::from_bytes([11u8; 32]);
 
             // Create a real SharedObservable for subscription state with AsyncLock
             let initial_state = SubscriptionState {
@@ -1467,7 +1467,7 @@ mod tests {
         #[tokio::test]
         async fn test_subscription_state_loading_on_startup() {
             let mut mock_storage = MockMessageStorage::new();
-            let relay_id = Hash::from([12u8; 32]);
+            let relay_id = KeyId::from_bytes([12u8; 32]);
 
             // Set up initial subscription state in storage
             let stored_state = SubscriptionState {
@@ -1498,7 +1498,7 @@ mod tests {
         #[tokio::test]
         async fn test_subscription_state_error_handling() {
             let mut mock_storage = MockMessageStorage::new();
-            let relay_id = Hash::from([13u8; 32]);
+            let relay_id = KeyId::from_bytes([13u8; 32]);
 
             // Set up storage to return an error
             mock_storage
@@ -1524,7 +1524,7 @@ mod tests {
         async fn test_subscription_state_persistence_error_resilience() {
             let mut mock_storage = MockMessageStorage::new();
             let mut mock_messages_manager = MockMessagesManagerTrait::new();
-            let relay_id = Hash::from([14u8; 32]);
+            let relay_id = KeyId::from_bytes([14u8; 32]);
 
             // Create a real SharedObservable for subscription state with AsyncLock
             let initial_state = SubscriptionState::default();

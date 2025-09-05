@@ -1,8 +1,7 @@
-use blake3::Hash;
 use serde::{Deserialize, Serialize};
 
 use zoe_app_primitives::GroupActivityEvent;
-use zoe_wire_protocol::{ChaCha20Poly1305Content, EncryptionKey};
+use zoe_wire_protocol::{ChaCha20Poly1305Content, EncryptionKey, MessageId};
 
 // GroupState and GroupMember are now unified in app-primitives
 // Re-export them here for backwards compatibility
@@ -112,7 +111,7 @@ impl GroupSession {
 pub struct GroupStateSnapshot {
     pub state: GroupState,
     pub snapshot_at: u64,
-    pub snapshot_event_id: Hash,
+    pub snapshot_event_id: MessageId,
 }
 
 // All GroupState implementation methods are now in app-primitives

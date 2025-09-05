@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use rusqlite::{Connection, OptionalExtension, params};
 use std::sync::{Arc, Mutex};
-use zoe_wire_protocol::{Hash, KeyId, MessageFull, Tag};
+use zoe_wire_protocol::{Hash, KeyId, MessageFull, MessageId, Tag};
 
 use super::migrations;
 use crate::error::{Result, StorageError};
@@ -298,7 +298,7 @@ impl MessageStorage for SqliteMessageStorage {
         Ok(())
     }
 
-    async fn get_message(&self, id: &Hash) -> Result<Option<MessageFull>> {
+    async fn get_message(&self, id: &MessageId) -> Result<Option<MessageFull>> {
         let conn = self
             .conn
             .lock()
@@ -321,7 +321,7 @@ impl MessageStorage for SqliteMessageStorage {
         }
     }
 
-    async fn delete_message(&self, id: &Hash) -> Result<bool> {
+    async fn delete_message(&self, id: &MessageId) -> Result<bool> {
         let conn = self
             .conn
             .lock()
@@ -466,8 +466,8 @@ impl MessageStorage for SqliteMessageStorage {
 
     async fn mark_message_synced(
         &self,
-        message_id: &Hash,
-        relay_id: &Hash,
+        message_id: &MessageId,
+        relay_id: &KeyId,
         global_stream_id: &str,
     ) -> Result<()> {
         let conn = self
@@ -495,7 +495,7 @@ impl MessageStorage for SqliteMessageStorage {
 
     async fn get_unsynced_messages_for_relay(
         &self,
-        relay_id: &Hash,
+        relay_id: &KeyId,
         limit: Option<usize>,
     ) -> Result<Vec<MessageFull>> {
         let conn = self
@@ -542,7 +542,10 @@ impl MessageStorage for SqliteMessageStorage {
         Ok(messages)
     }
 
-    async fn get_message_sync_status(&self, message_id: &Hash) -> Result<Vec<RelaySyncStatus>> {
+    async fn get_message_sync_status(
+        &self,
+        message_id: &MessageId,
+    ) -> Result<Vec<RelaySyncStatus>> {
         let conn = self
             .conn
             .lock()
@@ -568,7 +571,7 @@ impl MessageStorage for SqliteMessageStorage {
             let relay_id = if relay_id_bytes.len() == 32 {
                 let mut array = [0u8; 32];
                 array.copy_from_slice(&relay_id_bytes);
-                Hash::from(array)
+                KeyId::from_bytes(array)
             } else {
                 return Err(StorageError::Internal(format!(
                     "Invalid relay ID length: expected 32 bytes, got {}",
@@ -590,7 +593,7 @@ impl MessageStorage for SqliteMessageStorage {
 
     async fn store_subscription_state(
         &self,
-        relay_id: &Hash,
+        relay_id: &KeyId,
         state: &SubscriptionState,
     ) -> Result<()> {
         let conn = self
@@ -616,7 +619,7 @@ impl MessageStorage for SqliteMessageStorage {
         Ok(())
     }
 
-    async fn get_subscription_state(&self, relay_id: &Hash) -> Result<Option<SubscriptionState>> {
+    async fn get_subscription_state(&self, relay_id: &KeyId) -> Result<Option<SubscriptionState>> {
         let conn = self
             .conn
             .lock()
@@ -646,7 +649,7 @@ impl MessageStorage for SqliteMessageStorage {
 
     async fn get_all_subscription_states(
         &self,
-    ) -> Result<std::collections::HashMap<Hash, SubscriptionState>> {
+    ) -> Result<std::collections::HashMap<KeyId, SubscriptionState>> {
         let conn = self
             .conn
             .lock()
@@ -669,7 +672,7 @@ impl MessageStorage for SqliteMessageStorage {
             let relay_id = if relay_id_bytes.len() == 32 {
                 let mut array = [0u8; 32];
                 array.copy_from_slice(&relay_id_bytes);
-                Hash::from(array)
+                KeyId::from_bytes(array)
             } else {
                 return Err(StorageError::Internal(format!(
                     "Invalid relay ID length: expected 32 bytes, got {}",
@@ -687,7 +690,7 @@ impl MessageStorage for SqliteMessageStorage {
         Ok(states)
     }
 
-    async fn delete_subscription_state(&self, relay_id: &Hash) -> Result<bool> {
+    async fn delete_subscription_state(&self, relay_id: &KeyId) -> Result<bool> {
         let conn = self
             .conn
             .lock()

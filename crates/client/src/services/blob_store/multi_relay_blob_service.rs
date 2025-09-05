@@ -127,11 +127,11 @@ impl<S: BlobStorage> MultiRelayBlobService<S> {
         relay_id: &KeyId,
         storage: Arc<S>,
     ) -> Result<BlobId, BlobError> {
-        match service.upload_blob(&blob).await {
+        match service.upload_blob(blob).await {
             Ok(blob_hash) => {
                 // Mark as uploaded in storage
                 match storage
-                    .mark_blob_uploaded(&blob_hash, &relay_id, blob.len() as u64)
+                    .mark_blob_uploaded(&blob_hash, relay_id, blob.len() as u64)
                     .await
                 {
                     Ok(()) => {
@@ -173,7 +173,14 @@ impl<S: BlobStorage> MultiRelayBlobService<S> {
         // only one relay, so just upload to it, don't do the memory overhead of parallel uploads
         if services.len() == 1 {
             let (relay_id, service) = services.into_iter().next().unwrap();
-            return Ok(HashMap::from([(relay_id, service.upload_blob(blob).await)]));
+            let result = Self::upload_blob_to_single_relay_and_mark_as_uploaded(
+                blob,
+                service,
+                &relay_id,
+                Arc::clone(&self.storage),
+            )
+            .await;
+            return Ok(HashMap::from([(relay_id, result)]));
         }
 
         // Share blob data across all parallel uploads to avoid memory duplication

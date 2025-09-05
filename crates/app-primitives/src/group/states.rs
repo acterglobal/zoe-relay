@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashSet};
-use zoe_wire_protocol::{Hash, VerifyingKey};
+use zoe_wire_protocol::{MessageId, VerifyingKey};
 
 use super::events::roles::GroupRole;
 use super::events::{GroupActivityEvent, GroupSettings};
@@ -575,7 +575,7 @@ pub struct GroupMember {
 pub struct GroupState {
     /// The group identifier - this is the Blake3 hash of the CreateGroup message
     /// Also serves as the root event ID (used as channel tag)
-    pub group_id: Hash,
+    pub group_id: MessageId,
 
     /// Current group name
     pub name: String,
@@ -594,7 +594,7 @@ pub struct GroupState {
     pub membership: GroupMembership,
 
     /// Event history for this group (event ID -> event details)
-    pub event_history: Vec<Hash>,
+    pub event_history: Vec<MessageId>,
 
     /// Last processed event timestamp (for ordering)
     pub last_event_timestamp: u64,
@@ -660,7 +660,7 @@ impl GroupState {
     /// );
     /// ```
     pub fn new(
-        group_id: Hash,
+        group_id: MessageId,
         name: String,
         settings: GroupSettings,
         metadata: Vec<Metadata>,
@@ -695,7 +695,7 @@ impl GroupState {
 
     /// Create a GroupState from existing GroupInfo (for compatibility)
     pub fn from_group_info(
-        group_id: Hash,
+        group_id: MessageId,
         group_info: &super::events::GroupInfo,
         creator: VerifyingKey,
         timestamp: u64,
@@ -803,7 +803,7 @@ impl GroupState {
     pub fn apply_event<T>(
         &mut self,
         event: &GroupActivityEvent<T>,
-        event_id: Hash,
+        event_id: MessageId,
         sender: VerifyingKey,
         timestamp: u64,
     ) -> GroupStateResult<()> {
@@ -1155,7 +1155,7 @@ mod tests {
     use crate::{IdentityInfo, IdentityType, Metadata, Permission};
 
     use rand::rngs::OsRng;
-    use zoe_wire_protocol::{Hash, KeyPair, VerifyingKey};
+    use zoe_wire_protocol::{KeyPair, VerifyingKey};
 
     // Helper functions for creating test data
     fn create_test_verifying_key() -> VerifyingKey {
@@ -1163,8 +1163,8 @@ mod tests {
         keypair.public_key()
     }
 
-    fn create_test_hash(seed: u8) -> Hash {
-        Hash::from([seed; 32])
+    fn create_test_message_id(seed: u8) -> MessageId {
+        MessageId::from_bytes([seed; 32])
     }
 
     fn create_test_group_key_info() -> GroupKeyInfo {
@@ -1349,7 +1349,7 @@ mod tests {
     #[test]
     fn test_group_state_new() {
         let creator_key = create_test_verifying_key();
-        let group_id = create_test_hash(1);
+        let group_id = create_test_message_id(1);
         let timestamp = 1234567890;
 
         let metadata = vec![
@@ -1389,7 +1389,7 @@ mod tests {
     #[test]
     fn test_group_state_from_group_info() {
         let creator_key = create_test_verifying_key();
-        let group_id = create_test_hash(2);
+        let group_id = create_test_message_id(2);
         let group_info = create_test_group_info();
         let timestamp = 1234567890;
 
@@ -1406,7 +1406,7 @@ mod tests {
     #[test]
     fn test_group_state_to_group_info() {
         let creator_key = create_test_verifying_key();
-        let group_id = create_test_hash(3);
+        let group_id = create_test_message_id(3);
         let group_state = GroupState::new(
             group_id,
             "Test Group".to_string(),
@@ -1430,7 +1430,7 @@ mod tests {
         let creator_key = create_test_verifying_key();
         let other_key = create_test_verifying_key();
         let group_state = GroupState::new(
-            create_test_hash(4),
+            create_test_message_id(4),
             "Test".to_string(),
             GroupSettings::default(),
             vec![],
@@ -1446,7 +1446,7 @@ mod tests {
     fn test_group_state_get_member_role() {
         let creator_key = create_test_verifying_key();
         let group_state = GroupState::new(
-            create_test_hash(5),
+            create_test_message_id(5),
             "Test".to_string(),
             GroupSettings::default(),
             vec![],
@@ -1467,7 +1467,7 @@ mod tests {
     fn test_group_state_get_members() {
         let creator_key = create_test_verifying_key();
         let group_state = GroupState::new(
-            create_test_hash(6),
+            create_test_message_id(6),
             "Test".to_string(),
             GroupSettings::default(),
             vec![],
@@ -1496,7 +1496,7 @@ mod tests {
         ];
 
         let group_state_with_desc = GroupState::new(
-            create_test_hash(7),
+            create_test_message_id(7),
             "Test".to_string(),
             GroupSettings::default(),
             metadata_with_desc,
@@ -1516,7 +1516,7 @@ mod tests {
         }];
 
         let group_state_no_desc = GroupState::new(
-            create_test_hash(8),
+            create_test_message_id(8),
             "Test".to_string(),
             GroupSettings::default(),
             metadata_no_desc,
@@ -1544,7 +1544,7 @@ mod tests {
         ];
 
         let group_state = GroupState::new(
-            create_test_hash(9),
+            create_test_message_id(9),
             "Test".to_string(),
             GroupSettings::default(),
             metadata,
@@ -1565,7 +1565,7 @@ mod tests {
         let creator_key = create_test_verifying_key();
         let new_member_key = create_test_verifying_key();
         let mut group_state = GroupState::new(
-            create_test_hash(10),
+            create_test_message_id(10),
             "Test".to_string(),
             GroupSettings::default(),
             vec![],
@@ -1574,7 +1574,7 @@ mod tests {
         );
 
         let activity_event = GroupActivityEvent::Activity(());
-        let event_id = create_test_hash(11);
+        let event_id = create_test_message_id(11);
 
         // New member announces participation
         let result =
@@ -1599,7 +1599,7 @@ mod tests {
     fn test_group_state_apply_update_group_event() {
         let creator_key = create_test_verifying_key();
         let mut group_state = GroupState::new(
-            create_test_hash(12),
+            create_test_message_id(12),
             "Original Name".to_string(),
             GroupSettings::default(),
             vec![],
@@ -1616,7 +1616,7 @@ mod tests {
 
         let update_event: GroupActivityEvent<()> =
             GroupActivityEvent::UpdateGroup(new_group_info.clone());
-        let event_id = create_test_hash(13);
+        let event_id = create_test_message_id(13);
 
         let result = group_state.apply_event(&update_event, event_id, creator_key.clone(), 1001);
 
@@ -1632,7 +1632,7 @@ mod tests {
         let creator_key = create_test_verifying_key();
         let member_key = create_test_verifying_key();
         let mut group_state = GroupState::new(
-            create_test_hash(14),
+            create_test_message_id(14),
             "Test".to_string(),
             GroupSettings::default(),
             vec![],
@@ -1645,7 +1645,7 @@ mod tests {
         group_state
             .apply_event(
                 &activity_event,
-                create_test_hash(15),
+                create_test_message_id(15),
                 member_key.clone(),
                 1001,
             )
@@ -1658,8 +1658,12 @@ mod tests {
         let leave_event: GroupActivityEvent<()> = GroupActivityEvent::LeaveGroup {
             message: Some("Goodbye".to_string()),
         };
-        let result =
-            group_state.apply_event(&leave_event, create_test_hash(16), member_key.clone(), 1002);
+        let result = group_state.apply_event(
+            &leave_event,
+            create_test_message_id(16),
+            member_key.clone(),
+            1002,
+        );
 
         assert!(result.is_ok());
         assert!(!group_state.is_member(&member_key));
@@ -1672,7 +1676,7 @@ mod tests {
         let creator_key = create_test_verifying_key();
         let member_key = create_test_verifying_key();
         let mut group_state = GroupState::new(
-            create_test_hash(17),
+            create_test_message_id(17),
             "Test".to_string(),
             GroupSettings::default(),
             vec![],
@@ -1685,7 +1689,7 @@ mod tests {
         group_state
             .apply_event(
                 &activity_event,
-                create_test_hash(18),
+                create_test_message_id(18),
                 member_key.clone(),
                 1001,
             )
@@ -1698,8 +1702,12 @@ mod tests {
             role: GroupRole::Admin,
         };
 
-        let result =
-            group_state.apply_event(&assign_role_event, create_test_hash(19), creator_key, 1002);
+        let result = group_state.apply_event(
+            &assign_role_event,
+            create_test_message_id(19),
+            creator_key,
+            1002,
+        );
 
         assert!(result.is_ok());
         assert_eq!(
@@ -1713,7 +1721,7 @@ mod tests {
     fn test_group_state_apply_event_timestamp_ordering() {
         let creator_key = create_test_verifying_key();
         let mut group_state = GroupState::new(
-            create_test_hash(20),
+            create_test_message_id(20),
             "Test".to_string(),
             GroupSettings::default(),
             vec![],
@@ -1726,7 +1734,7 @@ mod tests {
         // Try to apply event with older timestamp
         let result = group_state.apply_event(
             &activity_event,
-            create_test_hash(21),
+            create_test_message_id(21),
             creator_key,
             999, // Older than creation timestamp
         );
@@ -1745,7 +1753,7 @@ mod tests {
     fn test_group_state_check_permission_success() {
         let creator_key = create_test_verifying_key();
         let group_state = GroupState::new(
-            create_test_hash(22),
+            create_test_message_id(22),
             "Test".to_string(),
             GroupSettings::default(),
             vec![],
@@ -1769,7 +1777,7 @@ mod tests {
         let creator_key = create_test_verifying_key();
         let member_key = create_test_verifying_key();
         let mut group_state = GroupState::new(
-            create_test_hash(23),
+            create_test_message_id(23),
             "Test".to_string(),
             GroupSettings::default(),
             vec![],
@@ -1782,7 +1790,7 @@ mod tests {
         group_state
             .apply_event(
                 &activity_event,
-                create_test_hash(24),
+                create_test_message_id(24),
                 member_key.clone(),
                 1001,
             )
@@ -1808,7 +1816,7 @@ mod tests {
         let creator_key = create_test_verifying_key();
         let non_member_key = create_test_verifying_key();
         let group_state = GroupState::new(
-            create_test_hash(25),
+            create_test_message_id(25),
             "Test".to_string(),
             GroupSettings::default(),
             vec![],
@@ -1860,7 +1868,7 @@ mod tests {
         let creator_key = create_test_verifying_key();
         let non_member_key = create_test_verifying_key();
         let mut group_state = GroupState::new(
-            create_test_hash(26),
+            create_test_message_id(26),
             "Test".to_string(),
             GroupSettings::default(),
             vec![],
@@ -1869,8 +1877,12 @@ mod tests {
         );
 
         let leave_event: GroupActivityEvent<()> = GroupActivityEvent::LeaveGroup { message: None };
-        let result =
-            group_state.apply_event(&leave_event, create_test_hash(27), non_member_key, 1001);
+        let result = group_state.apply_event(
+            &leave_event,
+            create_test_message_id(27),
+            non_member_key,
+            1001,
+        );
 
         assert!(result.is_err());
         match result.unwrap_err() {
@@ -1884,7 +1896,7 @@ mod tests {
         let creator_key = create_test_verifying_key();
         let non_member_key = create_test_verifying_key();
         let mut group_state = GroupState::new(
-            create_test_hash(28),
+            create_test_message_id(28),
             "Test".to_string(),
             GroupSettings::default(),
             vec![],
@@ -1898,8 +1910,12 @@ mod tests {
             role: GroupRole::Admin,
         };
 
-        let result =
-            group_state.apply_event(&assign_role_event, create_test_hash(29), creator_key, 1001);
+        let result = group_state.apply_event(
+            &assign_role_event,
+            create_test_message_id(29),
+            creator_key,
+            1001,
+        );
 
         assert!(result.is_err());
         match result.unwrap_err() {
@@ -1914,7 +1930,7 @@ mod tests {
         let member_key = create_test_verifying_key();
         let target_key = create_test_verifying_key();
         let mut group_state = GroupState::new(
-            create_test_hash(30),
+            create_test_message_id(30),
             "Test".to_string(),
             GroupSettings::default(),
             vec![],
@@ -1927,7 +1943,7 @@ mod tests {
         group_state
             .apply_event(
                 &activity_event,
-                create_test_hash(31),
+                create_test_message_id(31),
                 member_key.clone(),
                 1001,
             )
@@ -1935,7 +1951,7 @@ mod tests {
         group_state
             .apply_event(
                 &activity_event,
-                create_test_hash(32),
+                create_test_message_id(32),
                 target_key.clone(),
                 1002,
             )
@@ -1950,7 +1966,7 @@ mod tests {
 
         let result = group_state.apply_event(
             &assign_role_event,
-            create_test_hash(33),
+            create_test_message_id(33),
             member_key, // Regular member, not owner
             1003,
         );
@@ -2024,7 +2040,7 @@ mod tests {
     fn test_postcard_serialization_group_state() {
         let creator_key = create_test_verifying_key();
         let group_state = GroupState::new(
-            create_test_hash(34),
+            create_test_message_id(34),
             "Serialization Test Group".to_string(),
             GroupSettings::default(),
             vec![
@@ -2064,7 +2080,7 @@ mod tests {
 
         // Create group
         let mut group_state = GroupState::new(
-            create_test_hash(35),
+            create_test_message_id(35),
             "Lifecycle Test Group".to_string(),
             GroupSettings::default(),
             vec![Metadata::Description("Full lifecycle test".to_string())],
@@ -2080,7 +2096,7 @@ mod tests {
         group_state
             .apply_event(
                 &activity_event,
-                create_test_hash(36),
+                create_test_message_id(36),
                 member1_key.clone(),
                 1001,
             )
@@ -2094,7 +2110,7 @@ mod tests {
         group_state
             .apply_event(
                 &activity_event,
-                create_test_hash(37),
+                create_test_message_id(37),
                 member2_key.clone(),
                 1002,
             )
@@ -2111,7 +2127,7 @@ mod tests {
         group_state
             .apply_event(
                 &promote_event,
-                create_test_hash(38),
+                create_test_message_id(38),
                 creator_key.clone(),
                 1003,
             )
@@ -2131,7 +2147,7 @@ mod tests {
         group_state
             .apply_event(
                 &promote_event2,
-                create_test_hash(39),
+                create_test_message_id(39),
                 creator_key.clone(),
                 1004,
             )
@@ -2162,7 +2178,7 @@ mod tests {
         group_state
             .apply_event(
                 &update_event,
-                create_test_hash(40),
+                create_test_message_id(40),
                 creator_key.clone(),
                 1005,
             )
@@ -2179,7 +2195,7 @@ mod tests {
         group_state
             .apply_event(
                 &leave_event,
-                create_test_hash(41),
+                create_test_message_id(41),
                 member2_key.clone(),
                 1006,
             )
@@ -2202,7 +2218,7 @@ mod tests {
         let creator_key = create_test_verifying_key();
         let member_key = create_test_verifying_key();
         let mut group_state = GroupState::new(
-            create_test_hash(42),
+            create_test_message_id(42),
             "Concurrent Test".to_string(),
             GroupSettings::default(),
             vec![],
@@ -2215,7 +2231,7 @@ mod tests {
         group_state
             .apply_event(
                 &activity_event,
-                create_test_hash(43),
+                create_test_message_id(43),
                 member_key.clone(),
                 1001,
             )
@@ -2232,7 +2248,7 @@ mod tests {
         group_state
             .apply_event(
                 &activity_event,
-                create_test_hash(44),
+                create_test_message_id(44),
                 member_key.clone(),
                 1010,
             )

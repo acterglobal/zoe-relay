@@ -4,7 +4,7 @@ use std::{sync::Arc, time::SystemTime};
 use zoe_message_store::RedisMessageStorage;
 use zoe_wire_protocol::{
     Filter, FilterOperation, FilterUpdateRequest, KeyId, KeyPair, Kind, Message, MessageFilters,
-    MessageFull, Tag, VerifyingKey,
+    MessageFull, MessageId, Tag, VerifyingKey,
 };
 
 // Helper function to create test VerifyingKeys from byte arrays
@@ -111,14 +111,16 @@ async fn test_generic_filter_operations() {
     }
 
     // Test Add events
-    let add_events =
-        FilterOperation::add_events(vec![blake3::hash(b"important"), blake3::hash(b"urgent")]);
+    let add_events = FilterOperation::add_events(vec![
+        MessageId::from_content(b"important"),
+        MessageId::from_content(b"urgent"),
+    ]);
     filters.apply_operation(&add_events);
 
     // Check that events were added
     if let Some(filter_list) = &filters.filters {
-        assert!(filter_list.contains(&Filter::Event(blake3::hash(b"important"))));
-        assert!(filter_list.contains(&Filter::Event(blake3::hash(b"urgent"))));
+        assert!(filter_list.contains(&Filter::Event(MessageId::from_content(b"important"))));
+        assert!(filter_list.contains(&Filter::Event(MessageId::from_content(b"urgent"))));
     }
 
     // Test Clear operation
@@ -148,7 +150,7 @@ async fn test_atomic_multi_field_operations() {
     let operations = vec![
         FilterOperation::add_channels(vec![b"general".to_vec(), b"tech".to_vec()]),
         FilterOperation::add_authors(vec![alice_key]),
-        FilterOperation::add_events(vec![blake3::hash(b"important")]),
+        FilterOperation::add_events(vec![MessageId::from_content(b"important")]),
         FilterOperation::add_users(vec![user1_key]),
     ];
 
@@ -162,7 +164,7 @@ async fn test_atomic_multi_field_operations() {
         assert!(filter_list.contains(&Filter::Channel(b"general".to_vec())));
         assert!(filter_list.contains(&Filter::Channel(b"tech".to_vec())));
         assert!(filter_list.contains(&Filter::Author(alice_key)));
-        assert!(filter_list.contains(&Filter::Event(blake3::hash(b"important"))));
+        assert!(filter_list.contains(&Filter::Event(MessageId::from_content(b"important"))));
         assert!(filter_list.contains(&Filter::User(user1_key)));
     } else {
         panic!("Expected filters to be Some");
@@ -297,7 +299,7 @@ async fn test_filter_update_request() {
     let operations = vec![
         FilterOperation::add_channels(vec![b"general".to_vec(), b"tech".to_vec()]),
         FilterOperation::remove_authors(vec![create_test_verifying_key_id(b"spammer")]),
-        FilterOperation::add_events(vec![blake3::hash(b"important")]),
+        FilterOperation::add_events(vec![MessageId::from_content(b"important")]),
     ];
 
     let filter_request = FilterUpdateRequest { operations };
@@ -314,7 +316,7 @@ async fn test_filter_update_request() {
     if let Some(filter_list) = &filters.filters {
         assert!(filter_list.contains(&Filter::Channel(b"general".to_vec())));
         assert!(filter_list.contains(&Filter::Channel(b"tech".to_vec())));
-        assert!(filter_list.contains(&Filter::Event(blake3::hash(b"important"))));
+        assert!(filter_list.contains(&Filter::Event(MessageId::from_content(b"important"))));
         // Authors should not contain the "spammer" we tried to remove
         assert!(!filter_list.iter().any(|f| matches!(f, Filter::Author(_))));
     } else {
@@ -774,8 +776,8 @@ async fn test_all_signature_types_comprehensive() {
     }
 
     // Test author filtering with different signature types
-    let ed25519_author_id = *ed25519_keypair.public_key().id();
-    let ml_dsa_65_author_id = *ml_dsa_65_keypair.public_key().id();
+    let ed25519_author_id = ed25519_keypair.public_key().id();
+    let ml_dsa_65_author_id = ml_dsa_65_keypair.public_key().id();
 
     println!(
         "🔍 Ed25519 author ID: {}",
@@ -787,7 +789,7 @@ async fn test_all_signature_types_comprehensive() {
     );
 
     // Filter by Ed25519 author
-    let ed25519_filter = Filter::Author(KeyId::from(ed25519_author_id));
+    let ed25519_filter = Filter::Author(ed25519_author_id);
     let ed25519_author_stream = storage
         .catch_up(&ed25519_filter, None)
         .await
@@ -819,7 +821,7 @@ async fn test_all_signature_types_comprehensive() {
     );
 
     // Filter by ML-DSA-65 author
-    let ml_dsa_65_filter = Filter::Author(KeyId::from(ml_dsa_65_author_id));
+    let ml_dsa_65_filter = Filter::Author(ml_dsa_65_author_id);
     let ml_dsa_65_author_stream = storage
         .catch_up(&ml_dsa_65_filter, None)
         .await

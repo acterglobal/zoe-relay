@@ -1,7 +1,6 @@
 // ChaCha20-Poly1305 and AES-GCM functionality moved to crypto module
-use blake3::Hash;
 use serde::Serialize;
-use zoe_wire_protocol::{KeyPair, VerifyingKey};
+use zoe_wire_protocol::{KeyPair, MessageId, VerifyingKey};
 // Random number generation imports removed - no longer needed
 // Temporary import for Ed25519 workaround in create_role_update_event
 
@@ -37,7 +36,7 @@ pub enum GroupDataUpdate {
 pub struct GroupManager {
     /// All group states managed by this DGA instance
     /// Key is the Blake3 hash of the CreateGroup message (which serves as both group ID and root event ID)
-    pub(crate) groups: Arc<RwLock<HashMap<Hash, GroupSession>>>,
+    pub(crate) groups: Arc<RwLock<HashMap<MessageId, GroupSession>>>,
 
     broadcast_channel: Sender<GroupDataUpdate>,
 }
@@ -47,7 +46,7 @@ pub struct GroupManager {
 pub struct CreateGroupResult {
     /// The created group's unique identifier (Blake3 hash of the CreateGroup message)
     /// This is also the root event ID used as channel tag for subsequent events
-    pub group_id: Hash,
+    pub group_id: MessageId,
     /// The full message that was created
     pub message: MessageFull,
 }
@@ -199,7 +198,7 @@ impl GroupManager {
     /// The group_id parameter should be the Blake3 hash of the CreateGroup message
     pub async fn create_group_event_message<T>(
         &self,
-        group_id: Hash,
+        group_id: MessageId,
         event: GroupActivityEvent<T>,
         sender: &KeyPair,
         timestamp: u64,
@@ -330,7 +329,7 @@ impl GroupManager {
     }
 
     /// Find a group by looking for Event tags in the message
-    async fn find_group_by_event_tag(&self, tags: &[Tag]) -> GroupResult<Hash> {
+    async fn find_group_by_event_tag(&self, tags: &[Tag]) -> GroupResult<MessageId> {
         let groups = self.groups.read().await;
         for tag in tags {
             if let Tag::Event { id, .. } = tag
@@ -345,25 +344,25 @@ impl GroupManager {
     }
 
     /// Get a group's current state
-    pub async fn get_group_state(&self, group_id: &Hash) -> Option<GroupState> {
+    pub async fn get_group_state(&self, group_id: &MessageId) -> Option<GroupState> {
         let groups = self.groups.read().await;
         groups.get(group_id).map(|session| session.state.clone())
     }
 
     /// Get a group session (state + encryption)
-    pub async fn get_group_session(&self, group_id: &Hash) -> Option<GroupSession> {
+    pub async fn get_group_session(&self, group_id: &MessageId) -> Option<GroupSession> {
         let groups = self.groups.read().await;
         groups.get(group_id).cloned()
     }
 
     /// Get all managed group sessions
-    pub async fn get_all_group_sessions(&self) -> HashMap<Hash, GroupSession> {
+    pub async fn get_all_group_sessions(&self) -> HashMap<MessageId, GroupSession> {
         let groups = self.groups.read().await;
         groups.clone()
     }
 
     /// Get all managed groups (state only, for backward compatibility)
-    pub async fn get_all_groups(&self) -> HashMap<Hash, GroupState> {
+    pub async fn get_all_groups(&self) -> HashMap<MessageId, GroupState> {
         let groups = self.groups.read().await;
         groups
             .iter()
@@ -372,7 +371,7 @@ impl GroupManager {
     }
 
     /// Check if a user is a member of a specific group
-    pub async fn is_member(&self, group_id: &Hash, user: &VerifyingKey) -> bool {
+    pub async fn is_member(&self, group_id: &MessageId, user: &VerifyingKey) -> bool {
         let groups = self.groups.read().await;
         groups
             .get(group_id)
@@ -381,7 +380,11 @@ impl GroupManager {
     }
 
     /// Get a user's role in a specific group
-    pub async fn get_member_role(&self, group_id: &Hash, user: &VerifyingKey) -> Option<GroupRole> {
+    pub async fn get_member_role(
+        &self,
+        group_id: &MessageId,
+        user: &VerifyingKey,
+    ) -> Option<GroupRole> {
         let groups = self.groups.read().await;
         groups
             .get(group_id)
@@ -399,7 +402,7 @@ impl GroupManager {
     }
 
     /// Add a complete group session
-    pub async fn add_group_session(&self, group_id: Hash, session: GroupSession) {
+    pub async fn add_group_session(&self, group_id: MessageId, session: GroupSession) {
         self.groups.write().await.insert(group_id, session.clone());
         let _ = self
             .broadcast_channel
@@ -407,7 +410,7 @@ impl GroupManager {
     }
 
     /// Remove a group session
-    pub async fn remove_group_session(&self, group_id: &Hash) -> Option<GroupSession> {
+    pub async fn remove_group_session(&self, group_id: &MessageId) -> Option<GroupSession> {
         if let Some(session) = self.groups.write().await.remove(group_id) {
             let _ = self
                 .broadcast_channel
@@ -421,7 +424,7 @@ impl GroupManager {
     /// Update a group session's encryption key (for key rotation)
     pub async fn rotate_group_key(
         &self,
-        group_id: &Hash,
+        group_id: &MessageId,
         new_key: EncryptionKey,
     ) -> GroupResult<()> {
         let mut groups = self.groups.write().await;
@@ -443,7 +446,7 @@ impl GroupManager {
 
     /// Create a subscription filter for a specific group
     /// This returns the Event tag that should be used to subscribe to group events
-    pub async fn create_group_subscription_filter(&self, group_id: &Hash) -> GroupResult<Tag> {
+    pub async fn create_group_subscription_filter(&self, group_id: &MessageId) -> GroupResult<Tag> {
         // Verify the group exists
         let groups = self.groups.read().await;
         if !groups.contains_key(group_id) {

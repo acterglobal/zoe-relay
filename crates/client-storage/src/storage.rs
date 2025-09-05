@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
-use zoe_wire_protocol::{Hash, KeyId, MessageFilters, MessageFull, Tag, VerifyingKey};
+use zoe_wire_protocol::{Hash, KeyId, MessageFilters, MessageFull, MessageId, Tag, VerifyingKey};
 
 #[cfg(any(feature = "mock", test))]
 use mockall::{automock, predicate::*};
@@ -142,8 +142,8 @@ impl SubscriptionState {
 /// Sync status for a message on a specific relay
 #[derive(Debug, Clone)]
 pub struct RelaySyncStatus {
-    /// Hash of the relay server's Ed25519 public key (using VerifyingKey.id())
-    pub relay_id: Hash,
+    /// ID of the relay server (using VerifyingKey.id())
+    pub relay_id: KeyId,
     /// Global stream ID where the message was confirmed
     pub global_stream_id: String,
     /// Unix timestamp when sync was confirmed
@@ -171,10 +171,11 @@ pub trait MessageStorage: Send + Sync {
     async fn store_message(&self, message: &MessageFull) -> Result<(), crate::StorageError>;
 
     /// Retrieve a message by its ID
-    async fn get_message(&self, id: &Hash) -> Result<Option<MessageFull>, crate::StorageError>;
+    async fn get_message(&self, id: &MessageId)
+    -> Result<Option<MessageFull>, crate::StorageError>;
 
     /// Delete a message by its ID
-    async fn delete_message(&self, id: &Hash) -> Result<bool, crate::StorageError>;
+    async fn delete_message(&self, id: &MessageId) -> Result<bool, crate::StorageError>;
 
     /// Query messages with various filters
     async fn query_messages(
@@ -185,22 +186,22 @@ pub trait MessageStorage: Send + Sync {
     /// Mark a message as synced to a relay with its global stream ID
     async fn mark_message_synced(
         &self,
-        message_id: &Hash,
-        relay_id: &Hash,
+        message_id: &MessageId,
+        relay_id: &KeyId,
         global_stream_id: &str,
     ) -> Result<(), crate::StorageError>;
 
     /// Get all messages that are not yet synced to a specific relay
     async fn get_unsynced_messages_for_relay(
         &self,
-        relay_id: &Hash,
+        relay_id: &KeyId,
         limit: Option<usize>,
     ) -> Result<Vec<MessageFull>, crate::StorageError>;
 
     /// Get sync status for a specific message across all relays
     async fn get_message_sync_status(
         &self,
-        message_id: &Hash,
+        message_id: &MessageId,
     ) -> Result<Vec<RelaySyncStatus>, crate::StorageError>;
 
     /// Get messages by author with optional limit
@@ -268,24 +269,26 @@ pub trait MessageStorage: Send + Sync {
     /// Store the subscription state for a specific relay
     async fn store_subscription_state(
         &self,
-        relay_id: &Hash,
+        relay_id: &KeyId,
         state: &SubscriptionState,
     ) -> Result<(), crate::StorageError>;
 
     /// Get the subscription state for a specific relay
     async fn get_subscription_state(
         &self,
-        relay_id: &Hash,
+        relay_id: &KeyId,
     ) -> Result<Option<SubscriptionState>, crate::StorageError>;
 
     /// Get all stored subscription states (for all relays)
     async fn get_all_subscription_states(
         &self,
-    ) -> Result<std::collections::HashMap<Hash, SubscriptionState>, crate::StorageError>;
+    ) -> Result<std::collections::HashMap<KeyId, SubscriptionState>, crate::StorageError>;
 
     /// Delete subscription state for a specific relay
-    async fn delete_subscription_state(&self, relay_id: &Hash)
-    -> Result<bool, crate::StorageError>;
+    async fn delete_subscription_state(
+        &self,
+        relay_id: &KeyId,
+    ) -> Result<bool, crate::StorageError>;
 }
 
 /// Trait defining the storage interface for blob upload tracking

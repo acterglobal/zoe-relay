@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::hash::Hash as StdHash;
 use tarpc::{ClientMessage, Response};
 
-use crate::{Hash, KeyId, MessageFull, StoreKey, Tag};
+use crate::{KeyId, MessageFull, MessageId, StoreKey, Tag};
 
 /// Unified filter type for different kinds of message filtering
 #[derive(Clone, PartialEq, Eq, StdHash, Serialize, Deserialize)]
@@ -12,7 +12,7 @@ pub enum Filter {
     /// Filter by channel ID
     Channel(Vec<u8>),
     /// Filter by event ID
-    Event(Hash),
+    Event(MessageId),
     /// Filter by user key (for user-targeted messages)
     User(KeyId),
 }
@@ -117,12 +117,12 @@ impl FilterOperation {
     }
 
     /// Add events to the filter
-    pub fn add_events(events: Vec<Hash>) -> Self {
+    pub fn add_events(events: Vec<MessageId>) -> Self {
         Self::Add(events.into_iter().map(Filter::Event).collect())
     }
 
     /// Remove events from the filter
-    pub fn remove_events(events: Vec<Hash>) -> Self {
+    pub fn remove_events(events: Vec<MessageId>) -> Self {
         Self::Remove(events.into_iter().map(Filter::Event).collect())
     }
 
@@ -217,7 +217,7 @@ pub trait MessageService {
     async fn publish(message: MessageFull) -> Result<PublishResult, MessageError>;
 
     /// Retrieve a specific message by its ID
-    async fn message(id: Hash) -> Result<Option<MessageFull>, MessageError>;
+    async fn message(id: MessageId) -> Result<Option<MessageFull>, MessageError>;
 
     /// Retrieve a specific user's data by their key and storage key
     async fn user_data(
@@ -230,7 +230,9 @@ pub trait MessageService {
     /// Returns a vec of `Option<String>` in the same order as the input, where:
     /// - `Some(stream_id)` means the server has the message with that global stream ID
     /// - `None` means the server doesn't have this message yet
-    async fn check_messages(message_ids: Vec<Hash>) -> Result<Vec<Option<String>>, MessageError>;
+    async fn check_messages(
+        message_ids: Vec<MessageId>,
+    ) -> Result<Vec<Option<String>>, MessageError>;
 
     /// Start the subscription
     async fn subscribe(config: SubscriptionConfig) -> Result<(), MessageError>; // Returns nothing
@@ -344,7 +346,7 @@ impl CatchUpRequest {
 
     /// Convenience constructor for event catch-up
     pub fn for_event(
-        event_id: Hash,
+        event_id: MessageId,
         since: Option<String>,
         max_messages: Option<usize>,
         request_id: u32,
@@ -425,7 +427,7 @@ mod tests {
         // Test that Filter variants work correctly
         let author = Filter::Author(create_test_verifying_key_id(b"alice"));
         let channel = Filter::Channel(b"general".to_vec());
-        let event = Filter::Event(blake3::hash(b"important"));
+        let event = Filter::Event(MessageId::from_content(b"important"));
         let user = Filter::User(create_test_verifying_key_id(b"bob"));
 
         // Test Debug formatting works

@@ -4,8 +4,8 @@ use std::sync::Arc;
 use tokio::sync::{mpsc, RwLock};
 use tracing::{error, info, warn};
 use zoe_wire_protocol::{
-    CatchUpRequest, CatchUpResponse, FilterOperation, FilterUpdateRequest, Hash, KeyId,
-    MessageError, MessageFilters, MessageFull, MessageService as MessageServiceRpc, PublishResult,
+    CatchUpRequest, CatchUpResponse, FilterOperation, FilterUpdateRequest, KeyId, MessageError,
+    MessageFilters, MessageFull, MessageId, MessageService as MessageServiceRpc, PublishResult,
     StoreKey, StreamMessage, SubscriptionConfig,
 };
 
@@ -238,7 +238,7 @@ impl MessageServiceRpc for MessagesRpcService {
     async fn message(
         self,
         _context: ::tarpc::context::Context,
-        id: Hash,
+        id: MessageId,
     ) -> Result<Option<MessageFull>, MessageError> {
         self.store
             .get_message(id.as_bytes())
@@ -261,7 +261,7 @@ impl MessageServiceRpc for MessagesRpcService {
     async fn check_messages(
         self,
         _context: ::tarpc::context::Context,
-        message_ids: Vec<Hash>,
+        message_ids: Vec<MessageId>,
     ) -> Result<Vec<Option<String>>, MessageError> {
         self.store
             .check_messages(&message_ids)

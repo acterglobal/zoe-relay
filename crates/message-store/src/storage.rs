@@ -7,7 +7,7 @@ use redis::{
 };
 use tracing::{debug, error, info, trace, warn};
 use zoe_wire_protocol::{
-    Filter, Hash, KeyId, MessageFilters, MessageFull, PublishResult, StoreKey, Tag,
+    Filter, KeyId, MessageFilters, MessageFull, MessageId, PublishResult, StoreKey, Tag,
 };
 
 use crate::error::{MessageStoreError, Result};
@@ -442,7 +442,7 @@ impl RedisMessageStorage {
     /// Returns a vec of `Option<String>` in the same order as the input, where:
     /// - `Some(stream_id)` means the server has the message with that global stream ID  
     /// - `None` means the server doesn't have this message yet
-    pub async fn check_messages(&self, message_ids: &[Hash]) -> Result<Vec<Option<String>>> {
+    pub async fn check_messages(&self, message_ids: &[MessageId]) -> Result<Vec<Option<String>>> {
         if message_ids.is_empty() {
             return Ok(vec![]);
         }

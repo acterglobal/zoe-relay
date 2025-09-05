@@ -1,10 +1,10 @@
 use crate::{KeyPair, Signature, VerifyError, VerifyingKey};
-use blake3::{Hash, Hasher};
+use blake3::Hasher;
 use serde::{Deserialize, Serialize};
 
 use crate::{
     crypto::{ChaCha20Poly1305Content, PqxdhEncryptedContent},
-    Ed25519SelfEncryptedContent, EphemeralEcdhContent, KeyId as VerifyingKeyId,
+    Ed25519SelfEncryptedContent, EphemeralEcdhContent, KeyId as VerifyingKeyId, MessageId,
     MlDsaSelfEncryptedContent,
 };
 use forward_compatible_enum::ForwardCompatibleEnum;
@@ -17,7 +17,7 @@ pub enum Tag {
     Protected, // may not be forwarded, unless the other end is authenticated as the author, may it be accepted
     Event {
         // referes to another event in some form
-        id: Hash,
+        id: MessageId,
         #[serde(default)]
         relays: Vec<String>,
     },
@@ -757,7 +757,7 @@ pub struct MessageFull {
     /// - **Tamper-evident**: Changes to messagd change the ID
     /// - **Content-addressed**: Can be used to retrieve the message
     #[serde(skip_serializing)]
-    id: Hash, // FIXNE we could and should compute this on the fly and caceh it
+    id: MessageId, // FIXNE we could and should compute this on the fly and caceh it
 
     /// Cryptographic signature over the serialized message.
     ///
@@ -827,13 +827,13 @@ impl MessageFull {
         let mut hasher = Hasher::new();
         hasher.update(message_bytes);
         Ok(Self {
-            id: hasher.finalize(),
+            id: MessageId::new(hasher.finalize()),
             message,
             signature,
         })
     }
 
-    pub fn id(&self) -> &Hash {
+    pub fn id(&self) -> &MessageId {
         &self.id
     }
 
@@ -983,7 +983,7 @@ mod tests {
     use super::*;
     use crate::{
         keys::{KeyPair, VerifyingKey},
-        KeyId,
+        Hash, KeyId,
     };
     use rand::rngs::OsRng;
     // use signature::Signer; // Not needed since we use KeyPair.sign() method
@@ -1093,7 +1093,7 @@ mod tests {
             vec![
                 Tag::Protected,
                 Tag::Event {
-                    id: make_hash(),
+                    id: MessageId::new(make_hash()),
                     relays: vec!["relay1".to_string()],
                 },
             ],
@@ -1204,7 +1204,7 @@ mod tests {
         let tags = [
             Tag::Protected,
             Tag::Event {
-                id: make_hash(),
+                id: MessageId::new(make_hash()),
                 relays: vec!["relay1".to_string()],
             },
             Tag::User {
@@ -1289,7 +1289,7 @@ mod tests {
             event_id_bytes[0] = i as u8;
             let event_id = blake3::Hash::from(event_id_bytes);
             tags.push(Tag::Event {
-                id: event_id,
+                id: MessageId::new(event_id),
                 relays: Vec::new(),
             });
 
@@ -1458,7 +1458,7 @@ mod tests {
             vec![
                 Tag::Protected,
                 Tag::Event {
-                    id: make_hash(),
+                    id: MessageId::new(make_hash()),
                     relays: vec!["relay1".to_string()],
                 },
             ],
@@ -1488,7 +1488,7 @@ mod tests {
             vec![
                 Tag::Protected,
                 Tag::Event {
-                    id: make_hash(),
+                    id: MessageId::new(make_hash()),
                     relays: vec!["relay1".to_string()],
                 },
                 Tag::User {
