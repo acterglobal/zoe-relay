@@ -44,14 +44,14 @@ const config: Config = {
   },
 
   // Set the production url of your site here
-  url: 'https://acter.github.io',
+  url: 'https://acterglobal.github.io',
   // Set the /<baseUrl>/ pathname under which your site is served
   // For GitHub pages deployment, it is often '/<projectName>/'
   baseUrl: process.env.NODE_ENV === 'development' ? '/' : '/zoe-relay/',
 
   // GitHub pages deployment config.
   // If you aren't using GitHub pages, you don't need these.
-  organizationName: 'acter', // Usually your GitHub org/user name.
+  organizationName: 'acterglobal', // Usually your GitHub org/user name.
   projectName: 'zoe-relay', // Usually your repo name.
 
   onBrokenLinks: 'warn', // Changed to warn for now since rustdoc doesn't exist yet
@@ -73,7 +73,7 @@ const config: Config = {
           sidebarPath: './sidebars.ts',
           // Please change this to your repo.
           // Remove this to remove the "edit this page" links.
-          editUrl: 'https://github.com/acter/zoe-relay/tree/main/docs/',
+          editUrl: 'https://github.com/acterglobal/zoe-relay/tree/main/docs/',
           // Using Docusaurus built-in code import instead of custom plugin
         },
         blog: false, // Disable blog for now
@@ -106,7 +106,7 @@ const config: Config = {
           position: 'left',
         },
         {
-          href: 'https://github.com/acter/zoe-relay',
+          href: 'https://github.com/acterglobal/zoe-relay',
           label: 'GitHub',
           position: 'right',
         },
@@ -142,7 +142,7 @@ const config: Config = {
           items: [
             {
               label: 'GitHub',
-              href: 'https://github.com/acter/zoe-relay',
+              href: 'https://github.com/acterglobal/zoe-relay',
             },
           ],
         },
