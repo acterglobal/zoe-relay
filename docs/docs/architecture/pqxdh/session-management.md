@@ -36,4 +36,4 @@ Sessions have a limited lifetime and are cleaned up automatically to maintain se
 - Sessions should be reused when possible to amortize setup costs
 - Automatic cleanup prevents memory leaks in long-running applications
 
-For implementation details, see the [Rust API documentation](https://acterglobal.github.io/zoe-relay/rustdoc/).
+For implementation details, see the [Rust API documentation](/zoe-relay/rustdoc/).

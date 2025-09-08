@@ -42,4 +42,4 @@ The implementation includes comprehensive error handling for:
 - Cryptographic failures
 - Protocol violations
 
-For complete implementation details, refer to the [Rust API documentation](https://acterglobal.github.io/zoe-relay/rustdoc/).
+For complete implementation details, refer to the [Rust API documentation](/zoe-relay/rustdoc/).

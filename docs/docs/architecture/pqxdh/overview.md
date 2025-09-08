@@ -34,4 +34,4 @@ The PQXDH implementation in Zoe Relay provides:
 - Session establishment for encrypted messaging
 - Ephemeral key management for forward secrecy
 
-For detailed API documentation, see the [Rust API docs](https://acterglobal.github.io/zoe-relay/rustdoc/).
+For detailed API documentation, see the [Rust API docs](/zoe-relay/rustdoc/).
