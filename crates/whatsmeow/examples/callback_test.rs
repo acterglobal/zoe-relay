@@ -1,5 +1,5 @@
-use whatsmeow::WhatsAppBot;
 use tempfile::tempdir;
+use whatsmeow::WhatsAppBot;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {

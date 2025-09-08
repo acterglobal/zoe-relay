@@ -9740,13 +9740,18 @@ dependencies = [
  "anyhow",
  "chrono",
  "clap",
+ "futures",
+ "hex",
  "serde",
+ "serde_json",
  "tokio",
  "tokio-stream",
  "tracing",
  "whatsmeow",
  "zoe-app-primitives",
  "zoe-client",
+ "zoe-client-storage",
+ "zoe-wire-protocol",
 ]
 
 [[package]]

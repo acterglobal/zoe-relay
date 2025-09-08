@@ -1,8 +1,8 @@
 use anyhow::Result;
 use qrcode::render::unicode;
 use qrcode::QrCode;
-use whatsmeow::WhatsAppBot;
 use tempfile::tempdir;
+use whatsmeow::WhatsAppBot;
 
 #[tokio::main]
 async fn main() -> Result<()> {

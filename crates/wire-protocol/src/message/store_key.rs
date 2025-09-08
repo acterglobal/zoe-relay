@@ -18,6 +18,10 @@ pub enum PqxdhInboxProtocol {
     // Reserved for Core protocols (10000-10999)
     // RPC services (11000-11999)
     EchoService = 1000, // 11000 - Echo/ping RPC service
+
+    // WhatsApp Bot Protocol 11202
+    WhatsAppBot = 1202,
+
     /// 12000-12999 - Ephemeral Inboxes, using a randomized value in this range
     /// expected to only live for a short time and a specific purpose or connection
     /// like sharing a group invite
@@ -67,6 +71,9 @@ impl From<u32> for PqxdhInboxProtocol {
             // RPC services (1000-1999 maps to 11000-11999)
             1000 => PqxdhInboxProtocol::EchoService,
 
+            // Bot services (1200-1299)
+            1202 => PqxdhInboxProtocol::WhatsAppBot,
+
             // Ephemeral protocols (0- 999 maps to 12000-12999)
             2000..=2999 => PqxdhInboxProtocol::Ephemeral(value - 2000),
 
@@ -81,6 +88,7 @@ impl std::fmt::Display for PqxdhInboxProtocol {
         match self {
             PqxdhInboxProtocol::Ephemeral(id) => write!(f, "Ephemeral({id})"),
             PqxdhInboxProtocol::EchoService => write!(f, "EchoService"),
+            PqxdhInboxProtocol::WhatsAppBot => write!(f, "WhatsAppBot"),
             PqxdhInboxProtocol::CustomProtocol(a) => write!(f, "CustomProtocol({a})"),
         }
     }
@@ -94,6 +102,9 @@ impl From<&PqxdhInboxProtocol> for u32 {
 
             // RPC services
             PqxdhInboxProtocol::EchoService => 1000,
+
+            // Bot services
+            PqxdhInboxProtocol::WhatsAppBot => 1202,
 
             // Custom protocols
             PqxdhInboxProtocol::CustomProtocol(a) => *a,

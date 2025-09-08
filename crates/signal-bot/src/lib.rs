@@ -38,7 +38,6 @@ use presage_store_sqlite::SqliteStore;
 use std::path::PathBuf;
 use tokio::time::{Duration, sleep};
 use tracing::{error, info};
-use uuid;
 use zoe_app_primitives::{QrOptions, display_qr_code_from_string};
 
 pub use presage;
@@ -408,11 +407,10 @@ impl SignalBot {
                 let sender = format!("{:?}", content.metadata.sender);
 
                 // Apply filters
-                if let Some(filter) = filter_sender {
-                    if !sender.contains(filter) {
+                if let Some(filter) = filter_sender
+                    && !sender.contains(filter) {
                         return Ok(()); // Skip this message
                     }
-                }
 
                 // For now, we don't have group detection in Signal like WhatsApp
                 // So groups_only and dm_only filters are not implemented yet
@@ -459,18 +457,16 @@ impl SignalBot {
                             }
                         }
                     }
+                } else if show_timestamps || show_ids {
+                    display_signal_message(
+                        &sender,
+                        "[Non-text message]",
+                        timestamp,
+                        show_timestamps,
+                        show_ids,
+                    );
                 } else {
-                    if show_timestamps || show_ids {
-                        display_signal_message(
-                            &sender,
-                            "[Non-text message]",
-                            timestamp,
-                            show_timestamps,
-                            show_ids,
-                        );
-                    } else {
-                        info!("📱 {}: [Non-text message]", sender);
-                    }
+                    info!("📱 {}: [Non-text message]", sender);
                 }
             }
             ContentBody::SynchronizeMessage(_) => {

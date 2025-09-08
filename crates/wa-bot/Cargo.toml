@@ -9,15 +9,20 @@ path = "src/main.rs"
 
 [dependencies]
 zoe-client = { path = "../client", features = ["cli"] }
+zoe-client-storage = { path = "../client-storage" }
+zoe-wire-protocol = { path = "../wire-protocol" }
 whatsmeow = { path = "../whatsmeow" }
 zoe-app-primitives = { path = "../app-primitives" }
 tokio = { workspace = true}
 tokio-stream = { workspace = true}
+futures = { workspace = true}
 clap = { workspace = true}
 anyhow = { workspace = true }
 tracing = { workspace = true }
 serde = { workspace = true }
+serde_json = { workspace = true }
 chrono = { workspace = true }
+hex = { workspace = true }
 
 [dev-dependencies]
 whatsmeow = { path = "../whatsmeow", features = ["mock-ffi"] }

@@ -1,10 +1,10 @@
 /// Integration tests for the WhatsApp bot
 use anyhow::Result;
-use zoe_wa_bot::{ZoeWhatsAppBot, extract_name_from_jid, should_display_message};
+use zoe_wa_bot::{WhatsAppBot, WhatsAppBotExt, extract_name_from_jid, should_display_message};
 
 #[tokio::test]
 async fn test_bot_initialization() -> Result<()> {
-    let bot = ZoeWhatsAppBot::new()?;
+    let bot = WhatsAppBot::new("test.db")?;
 
     // Should be able to get connection status
     let _status = bot.get_connection_status().await?;
@@ -17,7 +17,7 @@ async fn test_bot_initialization() -> Result<()> {
 
 #[tokio::test]
 async fn test_qr_code_display_flow() -> Result<()> {
-    let bot = ZoeWhatsAppBot::new()?;
+    let bot = WhatsAppBot::new("test.db")?;
 
     // Should show QR code since bot is disconnected in test mode
     let qr_displayed = bot.show_qr_code_if_needed().await?;
@@ -31,7 +31,7 @@ async fn test_qr_code_display_flow() -> Result<()> {
 
 #[tokio::test]
 async fn test_connection_operations() -> Result<()> {
-    let bot = ZoeWhatsAppBot::new()?;
+    let bot = WhatsAppBot::new("test.db")?;
 
     // Test connection attempt
     bot.connect().await?;
@@ -45,7 +45,7 @@ async fn test_connection_operations() -> Result<()> {
 
 #[tokio::test]
 async fn test_message_sending() -> Result<()> {
-    let bot = ZoeWhatsAppBot::new()?;
+    let bot = WhatsAppBot::new("test.db")?;
 
     let message_id = bot
         .send_message("test@s.whatsapp.net", "Test message")
@@ -59,18 +59,18 @@ async fn test_message_sending() -> Result<()> {
 
 #[tokio::test]
 async fn test_inner_access() -> Result<()> {
-    let bot = ZoeWhatsAppBot::new()?;
-    let inner = bot.inner();
+    let bot = WhatsAppBot::new("test.db")?;
+    // WhatsAppBot is now used directly, no inner() method needed
 
-    // Should be able to access inner bot methods
-    let _status = inner.get_connection_status().await?;
+    // Should be able to access bot methods directly
+    let _status = bot.get_connection_status().await?;
 
     Ok(())
 }
 
 #[tokio::test]
 async fn test_concurrent_operations() -> Result<()> {
-    let bot = ZoeWhatsAppBot::new()?;
+    let bot = WhatsAppBot::new("test.db")?;
 
     // Test that multiple async operations can run concurrently
     let (status_result, qr_result, message_result) = tokio::join!(
@@ -93,7 +93,7 @@ async fn test_concurrent_operations() -> Result<()> {
 #[tokio::test]
 async fn test_custom_db_path() -> Result<()> {
     // Test creating bot with custom database path
-    let bot = ZoeWhatsAppBot::new_with_db_path("/tmp/test_whatsapp.db")?;
+    let bot = WhatsAppBot::new("/tmp/test_whatsapp.db")?;
 
     // Should still work normally
     let _status = bot.get_connection_status().await?;
@@ -104,7 +104,7 @@ async fn test_custom_db_path() -> Result<()> {
 #[tokio::test]
 async fn test_message_stream_creation() -> Result<()> {
     // Test creating a message stream
-    let bot = ZoeWhatsAppBot::new()?;
+    let bot = WhatsAppBot::new("test.db")?;
 
     // Should be able to create a message stream
     let _stream = bot.message_stream()?;
@@ -120,7 +120,7 @@ async fn test_message_stream_lifecycle() -> Result<()> {
     use tokio::time::{Duration, timeout};
     use tokio_stream::StreamExt;
 
-    let bot = ZoeWhatsAppBot::new()?;
+    let bot = WhatsAppBot::new("test.db")?;
 
     // Create message stream
     let mut stream = bot.message_stream()?;

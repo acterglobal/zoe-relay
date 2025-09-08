@@ -1,5 +1,5 @@
 use crate::error::Result;
-use crate::{ClientError, FileStorage, RelayClient, RelayClientBuilder};
+use crate::{ClientError, FileStorage, RelayClient, RelayClientBuilder, SessionManager};
 use rand::Rng;
 use zoe_client_storage::{SqliteMessageStorage, StorageConfig};
 use zoe_wire_protocol::{KeyPair, VerifyingKey};
@@ -365,6 +365,36 @@ impl Client {
     #[cfg_attr(feature = "frb-api", frb(ignore))]
     pub fn blob_client(&self) -> &BlobClient {
         self.fs.blob_client()
+    }
+
+    /// Get access to the session manager for PQXDH operations
+    ///
+    /// This provides access to the underlying session manager which handles
+    /// PQXDH protocol handlers and state management.
+    ///
+    /// # Returns
+    ///
+    /// A reference to the `SessionManager`
+    #[cfg_attr(feature = "frb-api", frb(ignore))]
+    pub async fn session_manager(
+        &self,
+    ) -> &SessionManager<
+        zoe_client_storage::SqliteMessageStorage,
+        crate::services::MessagePersistenceManager,
+    > {
+        self.relay_client.session_manager().await
+    }
+
+    /// Get the client's public key for PQXDH connections
+    ///
+    /// This returns the public key that other clients can use to establish
+    /// PQXDH connections with this client.
+    ///
+    /// # Returns
+    ///
+    /// The client's public `VerifyingKey`
+    pub fn public_key(&self) -> zoe_wire_protocol::VerifyingKey {
+        self.relay_client.public_key()
     }
 
     pub async fn close(&self) {
