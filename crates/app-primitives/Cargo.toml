@@ -3,6 +3,10 @@ name = "zoe-app-primitives"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+whatsappbot = ["tarpc"]
+signalbot = []
+
 [dependencies]
 # Cryptographic types
 libcrux-ml-dsa = { workspace = true }
@@ -26,6 +30,9 @@ forward-compatible-enum = { path = "../forward-compatible-enum" }
 
 # QR code generation
 qrcode = "0.14"
+
+# RPC framework for whatsappbot feature
+tarpc = { workspace = true, features = ["serde-transport"], optional = true }
 
 [dev-dependencies]
 # Testing utilities
