@@ -52,4 +52,4 @@ Messages are stored temporarily on relay servers and persistently on clients:
 - **Client Storage**: Long-term message history
 - **Metadata**: Minimal information for routing
 
-For detailed implementation information, see the [Rust API Documentation](/zoe-relay/rustdoc/).
+For detailed implementation information, see the [Rust API Documentation](https://acterglobal.github.io/zoe-relay/rustdoc/).

@@ -83,4 +83,4 @@ let request = VerificationHandshakeRequest {
 };
 ```
 
-For complete API documentation, see the [Rust API docs](/zoe-relay/rustdoc/zoe_wire_protocol/).
+For complete API documentation, see the [Rust API docs](https://acterglobal.github.io/zoe-relay/rustdoc/zoe_wire_protocol/).

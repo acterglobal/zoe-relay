@@ -36,4 +36,4 @@ Postcard serialization provides:
 - Small message sizes
 - Minimal memory allocation
 
-For detailed API documentation, see the [Rust API docs](/zoe-relay/rustdoc/).
+For detailed API documentation, see the [Rust API docs](https://acterglobal.github.io/zoe-relay/rustdoc/).

@@ -43,4 +43,4 @@ All messages undergo validation before processing:
 - Protocol version checks
 - Size limits
 
-For complete message specifications, see the [Rust API documentation](/zoe-relay/rustdoc/).
+For complete message specifications, see the [Rust API documentation](https://acterglobal.github.io/zoe-relay/rustdoc/).

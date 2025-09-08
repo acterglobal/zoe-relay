@@ -27,7 +27,7 @@ Zoe Relay is a messaging relay system that enables secure, private communication
 
 ## API Documentation
 
-For detailed API documentation, see the [Rust API Documentation](/zoe-relay/rustdoc/).
+For detailed API documentation, see the [Rust API Documentation](https://acterglobal.github.io/zoe-relay/rustdoc/).
 
 ## Contributing
 

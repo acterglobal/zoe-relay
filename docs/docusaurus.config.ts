@@ -101,7 +101,7 @@ const config: Config = {
           label: 'Documentation',
         },
         {
-          href: process.env.NODE_ENV === 'development' ? '/rustdoc/' : '/zoe-relay/rustdoc/',
+          href: 'https://acterglobal.github.io/zoe-relay/rustdoc/',
           label: 'Rust API Docs',
           position: 'left',
         },
@@ -133,7 +133,7 @@ const config: Config = {
           items: [
             {
               label: 'Rust API Documentation',
-              href: process.env.NODE_ENV === 'development' ? '/rustdoc/' : '/zoe-relay/rustdoc/',
+              href: 'https://acterglobal.github.io/zoe-relay/rustdoc/',
             },
           ],
         },

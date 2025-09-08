@@ -83,4 +83,4 @@ let emojis = derive_emoji_verification(&shared_secret);
 println!("Verification emojis: {:?}", emojis);
 ```
 
-For complete API documentation, see the [Rust API docs](/zoe-relay/rustdoc/zoe_app_primitives/).
+For complete API documentation, see the [Rust API docs](https://acterglobal.github.io/zoe-relay/rustdoc/zoe_app_primitives/).

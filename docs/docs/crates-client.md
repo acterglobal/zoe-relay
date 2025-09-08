@@ -57,4 +57,4 @@ let message = client.create_message(content).await?;
 client.send_message(message).await?;
 ```
 
-For complete API documentation, see the [Rust API docs](/zoe-relay/rustdoc/zoe_client/).
+For complete API documentation, see the [Rust API docs](https://acterglobal.github.io/zoe-relay/rustdoc/zoe_client/).
