@@ -1,5 +1,7 @@
 ---
+id: crates-app-primitives
 title: App Primitives
+sidebar_label: App Primitives
 ---
 
 # App Primitives Crate
@@ -20,17 +22,7 @@ This crate contains:
 
 The invitation system handles secure group invitations:
 
-import CodeBlock from '@theme/CodeBlock';
-import InvitationPrimitivesSource from '!!raw-loader!../src/invitation.rs';
-
-<details>
-<summary>View Full Invitation Implementation</summary>
-
-<CodeBlock language="rust" title="crates/app-primitives/src/invitation.rs">
-{InvitationPrimitivesSource}
-</CodeBlock>
-
-</details>
+For the complete invitation implementation, see the [Rust API documentation](/zoe-relay/rustdoc/zoe_app_primitives/invitation/).
 
 Here's a key function from the invitation system:
 

@@ -1,5 +1,7 @@
 ---
+id: crates-client
 title: Client
+sidebar_label: Client
 ---
 
 # Client Crate

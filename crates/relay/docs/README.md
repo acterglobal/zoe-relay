@@ -1,5 +1,7 @@
 ---
+id: crates-relay
 title: Relay
+sidebar_label: Relay
 ---
 
 # Relay Crate

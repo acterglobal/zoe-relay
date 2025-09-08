@@ -1,5 +1,7 @@
 ---
+id: crates-wire-protocol
 title: Wire Protocol
+sidebar_label: Wire Protocol
 ---
 
 # Wire Protocol Crate
@@ -36,12 +38,7 @@ pub struct Message {
 
 Group invitation message types:
 
-import CodeBlock from '@theme/CodeBlock';
-import InvitationSource from '!!raw-loader!../src/invitation.rs';
-
-<CodeBlock language="rust" title="crates/wire-protocol/src/invitation.rs">
-{InvitationSource}
-</CodeBlock>
+For the complete invitation protocol implementation, see the [Rust API documentation](/zoe-relay/rustdoc/zoe_wire_protocol/invitation/).
 
 ### PQXDH Protocol
 
