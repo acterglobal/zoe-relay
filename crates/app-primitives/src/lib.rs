@@ -160,10 +160,10 @@
 //!
 //! This crate is designed to integrate seamlessly with other parts of the Zoe ecosystem:
 //!
-//! - **[`zoe-wire-protocol`]**: Network communication and encryption
-//! - **[`zoe-state-machine`]**: Higher-level state management and event processing
-//! - **[`zoe-message-store`]**: Persistent storage for events and messages
-//! - **[`zoe-client`]**: Application-level client implementations
+//! - **`zoe-wire-protocol`**: Network communication and encryption
+//! - **`zoe-state-machine`**: Higher-level state management and event processing
+//! - **`zoe-message-store`**: Persistent storage for events and messages
+//! - **`zoe-client`**: Application-level client implementations
 //!
 //! The types defined here serve as the interface contracts between these layers,
 //! ensuring compatibility and consistency across the entire system.
