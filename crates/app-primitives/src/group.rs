@@ -147,11 +147,11 @@
 //! ## 🔄 State Transitions
 //!
 //! Group state changes through well-defined events:
-//! 1. **Creation**: [`GroupManagementEvent::UpdateGroup`] with initial [`GroupInfo`]
+//! 1. **Creation**: [`GroupActivityEvent::UpdateGroup`] with initial [`GroupInfo`]
 //! 2. **Member Activity**: Any [`GroupActivityEvent`] announces participation
-//! 3. **Role Changes**: [`GroupManagementEvent::AssignRole`] updates permissions
-//! 4. **Group Updates**: [`GroupManagementEvent::UpdateGroup`] modifies group info
-//! 5. **Member Departure**: [`GroupManagementEvent::LeaveGroup`] removes from active list
+//! 3. **Role Changes**: [`GroupActivityEvent::AssignRole`] updates permissions
+//! 4. **Group Updates**: [`GroupActivityEvent::UpdateGroup`] modifies group info
+//! 5. **Member Departure**: [`GroupActivityEvent::LeaveGroup`] removes from active list
 //!
 //! Each event is cryptographically signed and encrypted, ensuring authenticity and confidentiality.
 //!

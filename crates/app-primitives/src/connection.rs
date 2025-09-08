@@ -27,7 +27,7 @@ pub enum NetworkAddress {
 
     /// IPv6 address with optional port
     ///
-    /// Examples: "::1", "[::1]:8443"
+    /// Examples: "::1", "\[::1\]:8443"
     /// If no port is specified, the default port should be used.
     Ipv6 {
         address: Ipv6Addr,
