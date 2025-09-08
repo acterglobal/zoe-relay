@@ -51,6 +51,8 @@ services:
       - ZOE_RELAY_ADDRESS=zoe-relay:13908
       - ZOE_SERVER_KEY_FILE=/shared/keys/zoe_relay_server_public_key.pem
       - ZOE_EPHEMERAL=true
+      # Health check
+      - ZOE_HEALTH_CHECK_PORT=8081
       # WhatsApp configuration
       - WHATSAPP_DB_PATH=/app/data/whatsapp.db
       - MAX_CONNECTION_ATTEMPTS=${MAX_CONNECTION_ATTEMPTS:-10}
@@ -62,7 +64,7 @@ services:
       # Shared read-only volume to read server public key (no access to relay private data)
       - zoe_shared_keys:/shared/keys:ro
     healthcheck:
-      test: ["CMD", "./zoe-wa-bot", "--help"]
+      test: ["CMD", "./zoe-wa-bot", "health-check"]
       interval: 30s
       timeout: 10s
       retries: 3

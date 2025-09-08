@@ -59,7 +59,7 @@ pub fn extract_name_from_jid(jid: &str) -> String {
     }
 
     // For regular JIDs, just use the phone number part
-    if name_part.len() > 10 {
+    if name_part.len() >= 10 {
         format!("+{}", name_part)
     } else {
         name_part.to_string()

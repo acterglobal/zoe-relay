@@ -1,4 +1,5 @@
 use whatsmeow::WhatsAppBot;
+use tempfile::tempdir;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -8,7 +9,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Step 1: Create bot
     println!("\n1️⃣ Creating WhatsApp bot...");
     let temp_dir = tempdir().unwrap();
-    let bot = ZoeWhatsAppBot::new(temp_dir.path().join("whatsapp.db").to_str().unwrap());
+    let bot = WhatsAppBot::new(temp_dir.path().join("whatsapp.db").to_str().unwrap())?;
     println!("   ✅ Bot created successfully");
 
     // Step 2: Test connection status (should work without QR)

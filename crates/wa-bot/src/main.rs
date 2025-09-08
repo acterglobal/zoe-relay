@@ -2,7 +2,10 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 use tokio_stream::StreamExt;
 use tracing::{error, info};
-use zoe_client::cli::{RelayClientArgs, full_cli_client, main_setup};
+use zoe_client::cli::{
+    RelayClientArgs, RelayClientDefaultCommands, full_cli_client, main_setup, run_default_command,
+    run_with_health_check,
+};
 use zoe_wa_bot::{ZoeWhatsAppBot, extract_name_from_jid, should_display_message};
 
 #[derive(Parser, Debug)]
@@ -26,11 +29,14 @@ struct ZoeWhatsappBotArgs {
     skip_whatsapp_setup: bool,
 
     #[command(subcommand)]
-    command: Option<Commands>,
+    command: Commands,
 }
 
 #[derive(Subcommand, Debug)]
 enum Commands {
+    /// Common relay client commands
+    #[command(flatten)]
+    Default(RelayClientDefaultCommands),
     /// Listen for incoming WhatsApp messages and display them in the terminal
     Listen {
         /// Show message timestamps
@@ -67,11 +73,34 @@ async fn main() -> Result<()> {
 
     let args = ZoeWhatsappBotArgs::parse();
 
+    // Extract health check port from relay args
+    let health_check_port = args.relay_args.health_check_port;
+
+    // Run with health check support
+    run_with_health_check(
+        health_check_port,
+        || async move { run_whatsapp_bot(args).await },
+    )
+    .await
+    .map_err(|e| anyhow::anyhow!("Bot failed: {}", e))
+}
+
+async fn run_whatsapp_bot(args: ZoeWhatsappBotArgs) -> Result<(), Box<dyn std::error::Error>> {
+    let arg = match args.command {
+        Commands::Default(default_cmd) => {
+            run_default_command(&default_cmd).await?;
+            return Ok(());
+        },
+        _ => args.command
+    };
+
     info!("🚀 Starting Zoe WhatsApp Bot");
 
     // Initialize Zoe client
     info!("🔗 Connecting to Zoe network...");
-    let _zoe_client = full_cli_client(args.relay_args).await?;
+    let _zoe_client = full_cli_client(args.relay_args)
+        .await
+        .map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
     info!("✅ Connected to Zoe network");
 
     // Initialize WhatsApp bot
@@ -89,7 +118,7 @@ async fn main() -> Result<()> {
         }
         Err(e) => {
             error!("❌ Failed to initialize WhatsApp bot: {}", e);
-            return Err(e);
+            return Err(e.into());
         }
     };
 
@@ -120,11 +149,11 @@ async fn main() -> Result<()> {
                             args.max_connection_attempts
                         );
                         error!("💡 Try scanning the QR code again or restart the bot");
-                        return Err(anyhow::anyhow!("WhatsApp connection timeout"));
+                        return Err(anyhow::anyhow!("WhatsApp connection timeout").into());
                     }
                     Err(e) => {
                         error!("❌ Error while waiting for WhatsApp connection: {}", e);
-                        return Err(e);
+                        return Err(e.into());
                     }
                 }
             } else {
@@ -133,7 +162,7 @@ async fn main() -> Result<()> {
         }
         Err(e) => {
             error!("❌ Failed to check WhatsApp connection: {}", e);
-            return Err(e);
+            return Err(e.into());
         }
     }
 
@@ -142,15 +171,15 @@ async fn main() -> Result<()> {
     info!("🔗 Zoe Network: Connected");
 
     // Handle subcommands
-    match args.command {
-        Some(Commands::Listen {
+    match arg {
+        Commands::Listen {
             show_timestamps,
             show_ids,
             filter_sender,
             filter_chat,
             groups_only,
             dm_only,
-        }) => {
+        } => {
             run_listen_command(
                 &whatsapp_bot,
                 show_timestamps,
@@ -162,20 +191,7 @@ async fn main() -> Result<()> {
             )
             .await?;
         }
-        None => {
-            // Default behavior - run as bridge bot
-            info!("🔄 Bot running in bridge mode... Press Ctrl+C to stop");
-            info!("💡 Use 'zoe-wa-bot listen' to just monitor messages");
-
-            // TODO: Implement bot logic here
-            // - Listen for WhatsApp messages
-            // - Bridge messages to/from Zoe network
-            // - Handle commands and interactions
-
-            // Keep the bot running
-            tokio::signal::ctrl_c().await?;
-            info!("🛑 Shutdown signal received. Stopping bot...");
-        }
+        Commands::Default(_) => unreachable!("already implementing at the function start."),
     }
 
     Ok(())

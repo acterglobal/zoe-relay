@@ -68,8 +68,8 @@ RUN mkdir -p /app/data && chown -R zoe:zoe /app
 USER zoe
 
 # Health check - check if the binary can start and show help
-HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD ./zoe-wa-bot --help > /dev/null || exit 1
+HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
+    CMD ./zoe-wa-bot health-check > /dev/null || exit 1
 
 # Default command - can be overridden
 CMD ["./zoe-wa-bot"]

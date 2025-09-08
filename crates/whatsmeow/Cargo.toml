@@ -22,4 +22,5 @@ tempfile = { workspace = true }
 
 [features]
 default = []
+mock-ffi = []
 e2e-real-ffi = []

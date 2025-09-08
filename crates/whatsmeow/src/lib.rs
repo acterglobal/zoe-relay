@@ -127,7 +127,7 @@ unsafe extern "C" {
 }
 
 // Mock implementations for testing
-#[cfg(test)]
+#[cfg(feature = "mock-ffi")]
 mod mock_ffi {
     use super::*;
     use std::sync::atomic::{AtomicBool, Ordering};
@@ -309,7 +309,7 @@ mod mock_ffi {
 }
 
 // Wrapper functions that choose between real FFI and mocks
-#[cfg(not(test))]
+#[cfg(not(feature = "mock-ffi"))]
 mod ffi_wrapper {
     #[allow(unused_imports)]
     use super::*;
@@ -407,7 +407,7 @@ mod ffi_wrapper {
     }
 }
 
-#[cfg(test)]
+#[cfg(feature = "mock-ffi")]
 use mock_ffi as ffi_wrapper;
 
 // Global registry for message stream senders
@@ -879,7 +879,7 @@ mod tests {
             let bot =
                 WhatsAppBot::new(temp_dir.path().join("whatsapp.db").to_str().unwrap()).unwrap();
             // Bot creation succeeded if we got here without panicking
-            assert_eq!(bot.client_ptr != 0, true);
+            assert!(bot.client_ptr != 0);
         }
 
         #[test]
@@ -1395,15 +1395,15 @@ mod tests {
             println!("=====================================");
 
             // Check if we're using real FFI or mocks
-            #[cfg(test)]
+            #[cfg(feature = "mock-ffi")]
             {
                 println!("ℹ️  Running in MOCK MODE (simulated QR codes)");
                 println!("   📝 Note: This will show 'https://wa.me/qr/MOCK_QR_CODE_FOR_TESTING'");
-                println!("   🎯 For real QR codes, build without test mode");
+                println!("   🎯 For real QR codes, build with --features e2e-real-ffi");
                 println!();
             }
 
-            #[cfg(not(test))]
+            #[cfg(not(feature = "mock-ffi"))]
             {
                 println!("🚀 Running in REAL MODE (actual WhatsApp servers)");
                 println!("   📱 This will generate a real scannable QR code");
