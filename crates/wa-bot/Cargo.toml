@@ -12,10 +12,11 @@ zoe-client = { path = "../client", features = ["cli"] }
 zoe-client-storage = { path = "../client-storage" }
 zoe-wire-protocol = { path = "../wire-protocol" }
 whatsmeow = { path = "../whatsmeow" }
-zoe-app-primitives = { path = "../app-primitives" }
+zoe-app-primitives = { path = "../app-primitives", features = ["whatsappbot"] }
 tokio = { workspace = true}
 tokio-stream = { workspace = true}
 futures = { workspace = true}
+futures-util = { workspace = true }
 clap = { workspace = true}
 anyhow = { workspace = true }
 tracing = { workspace = true }
@@ -23,6 +24,10 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 chrono = { workspace = true }
 hex = { workspace = true }
+tarpc = { workspace = true, features = ["serde-transport"] }
+tokio-util = { workspace = true }
+postcard = { workspace = true }
+async-trait = { workspace = true }
 
 [dev-dependencies]
 whatsmeow = { path = "../whatsmeow", features = ["mock-ffi"] }

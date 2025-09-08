@@ -397,7 +397,11 @@ impl<T: crate::services::MessagesManagerTrait + 'static> PqxdhProtocolHandler<T>
             .await?;
 
         // Create the transport with the stream and client
-        Ok(PqxdhTarpcTransport::new(session_id, Box::pin(stream), self.clone()))
+        Ok(PqxdhTarpcTransport::new(
+            session_id,
+            Box::pin(stream),
+            self.clone(),
+        ))
     }
 
     /// Sends a message to an established session (CLIENTS ONLY)

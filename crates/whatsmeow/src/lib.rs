@@ -85,6 +85,7 @@ struct CStatusResponse {
 
 // External Go functions via CGO
 #[cfg(not(test))]
+#[allow(unused)]
 unsafe extern "C" {
     fn whatsmeow_init(db_path: *const libc::c_char) -> usize;
     fn whatsmeow_connect_async(client_ptr: usize, callback_handle: usize);

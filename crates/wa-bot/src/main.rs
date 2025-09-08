@@ -8,8 +8,11 @@ use zoe_client::cli::{
     run_with_health_check,
 };
 use zoe_wa_bot::{
-    BridgeEvent, MessageHandlerConfig, WhatsAppBot, WhatsAppBotExt, ZoeBridgeBot,
-    ZoeWhatsAppBotBuilder, connect_whatsapp_bot, extract_name_from_jid, should_display_message,
+    WhatsAppBot, ZoeWhatsAppBotBuilder,
+    bot::ZoeBridgeBot,
+    bridge_event::BridgeEvent,
+    connectable::{WhatsAppBotExt, connect_whatsapp_bot},
+    util::{extract_name_from_jid, should_display_message},
 };
 use zoe_wire_protocol::{PqxdhInboxProtocol, VerifyingKey};
 
@@ -326,9 +329,13 @@ async fn run_bridge_command(
                             display_message(&message, show_timestamps, show_ids);
                         }
                     }
-                    BridgeEvent::PqxdhConnection { session_id, data } => {
-                        if let Err(e) = bridge_bot.handle_pqxdh_connection(session_id, data).await {
+                    BridgeEvent::PqxdhConnection { session_id, raw_data } => {
+                        if let Err(e) = bridge_bot.setup_pqxdh_connection(session_id, raw_data).await {
                             error!("❌ Failed to handle PQXDH connection: {}", e);
+                            // Try to clean up the session on connection error
+                            if let Err(cleanup_err) = bridge_bot.handle_pqxdh_connection_loss(&session_id).await {
+                                error!("❌ Failed to clean up failed session {}: {}", hex::encode(session_id), cleanup_err);
+                            }
                         }
                     }
                     BridgeEvent::Error(err) => {
@@ -350,6 +357,14 @@ async fn run_bridge_command(
         error!("⚠️ Failed to stop WhatsApp message stream cleanly: {}", e);
     }
 
+    // Clean up all active sessions
+    info!("🧹 Cleaning up all active sessions...");
+    if let Err(e) = bridge_bot.cleanup_all_sessions().await {
+        error!("⚠️ Failed to clean up all sessions: {}", e);
+    } else {
+        info!("✅ All sessions cleaned up successfully");
+    }
+
     info!("👋 Bridge mode stopped");
     Ok(())
 }
@@ -364,16 +379,6 @@ async fn run_listen_command(
     groups_only: bool,
     dm_only: bool,
 ) -> Result<()> {
-    // Create message handler configuration
-    let message_config = MessageHandlerConfig {
-        show_timestamps,
-        show_ids,
-        filter_sender: filter_sender.clone(),
-        filter_chat: filter_chat.clone(),
-        groups_only,
-        dm_only,
-    };
-
     // Print filter information
     print_filter_info(&filter_sender, &filter_chat, groups_only, dm_only);
 
@@ -381,7 +386,7 @@ async fn run_listen_command(
     println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
 
     // Start the listen stream
-    let mut listen_stream = listen_bot.run_listen(message_config).await?;
+    let mut listen_stream = listen_bot.run_listen().await?;
 
     // Handle messages and shutdown signal concurrently
     tokio::select! {

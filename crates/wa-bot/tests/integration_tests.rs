@@ -1,6 +1,10 @@
 /// Integration tests for the WhatsApp bot
 use anyhow::Result;
-use zoe_wa_bot::{WhatsAppBot, WhatsAppBotExt, extract_name_from_jid, should_display_message};
+use zoe_wa_bot::{
+    WhatsAppBot,
+    connectable::WhatsAppBotExt,
+    util::{extract_name_from_jid, should_display_message},
+};
 
 #[tokio::test]
 async fn test_bot_initialization() -> Result<()> {
