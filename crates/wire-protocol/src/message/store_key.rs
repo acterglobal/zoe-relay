@@ -64,7 +64,6 @@ pub enum StoreKey {
 impl From<u32> for PqxdhInboxProtocol {
     fn from(value: u32) -> Self {
         match value {
-
             // RPC services (1000-1999 maps to 11000-11999)
             1000 => PqxdhInboxProtocol::EchoService,
 
