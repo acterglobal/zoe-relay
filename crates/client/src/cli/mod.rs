@@ -1,25 +1,50 @@
 use crate::{Client, ClientError, util::resolve_to_socket_addr};
-use clap::Parser;
+use clap::{Parser, Subcommand};
 use std::{net::SocketAddr, path::PathBuf};
 use tempfile::TempDir;
-use tracing::{error, info};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::{TcpListener, TcpStream};
+use tracing::{error, info, warn};
 use zoe_wire_protocol::VerifyingKey;
 
 #[derive(Parser, Debug)]
 pub struct RelayClientArgs {
     /// Relay server address (e.g., "127.0.0.1:8080")
-    #[arg(short, long, default_value = "127.0.0.1:13908")]
+    #[arg(
+        short,
+        long,
+        env = "ZOE_RELAY_ADDRESS",
+        default_value = "127.0.0.1:13908"
+    )]
     pub relay_address: String,
 
-    /// Server public key in hex format (optional - will generate random for demo)
-    #[arg(short, long, value_parser = parse_verifying_key)]
-    pub server_key: VerifyingKey,
+    /// Server public key in hex format
+    #[arg(short, long, value_parser = parse_verifying_key, conflicts_with = "server_key_file")]
+    pub server_key: Option<VerifyingKey>,
+
+    /// Path to file containing server public key in hex format
+    #[arg(long, env = "ZOE_SERVER_KEY_FILE", conflicts_with = "server_key")]
+    pub server_key_file: Option<PathBuf>,
 
     #[arg(short, long, conflicts_with = "ephemeral")]
     pub persist_path: Option<PathBuf>,
 
-    #[arg(short, long, conflicts_with = "persist_path")]
+    #[arg(short, long, env = "ZOE_EPHEMERAL", conflicts_with = "persist_path")]
     pub ephemeral: bool,
+
+    /// Enable health check server on specified port
+    #[arg(long, env = "ZOE_HEALTH_CHECK_PORT")]
+    pub health_check_port: Option<u16>,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum RelayClientDefaultCommands {
+    /// Perform health check (for Docker health checks)
+    HealthCheck {
+        /// Health check port (defaults to ZOE_HEALTH_CHECK_PORT env var or 8080)
+        #[arg(long, env = "ZOE_HEALTH_CHECK_PORT", default_value = "8080")]
+        port: u16,
+    },
 }
 
 /// Helper function to parse hex string to VerifyingKey (simplified for demo)
@@ -48,6 +73,14 @@ pub async fn main_setup() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+pub async fn run_default_command(
+    cmd: &RelayClientDefaultCommands,
+) -> Result<(), Box<dyn std::error::Error>> {
+    match cmd {
+        RelayClientDefaultCommands::HealthCheck { port } => run_health_check_command(*port).await,
+    }
+}
+
 pub async fn full_cli_client(args: RelayClientArgs) -> Result<Client, ClientError> {
     info!("🚀 Starting Zoe Client Connection Test");
     info!("📍 Target server: {}", args.relay_address);
@@ -60,8 +93,27 @@ pub async fn full_cli_client(args: RelayClientArgs) -> Result<Client, ClientErro
         }
     };
 
-    // Parse server address
-    let server_public_key = args.server_key;
+    // Get server public key from either direct argument or file
+    let server_public_key = if let Some(file_path) = args.server_key_file {
+        info!("📖 Reading server public key from: {}", file_path.display());
+        let content = std::fs::read_to_string(&file_path).map_err(|e| {
+            ClientError::BuildError(format!(
+                "Failed to read key file {}: {e}",
+                file_path.display()
+            ))
+        })?;
+        VerifyingKey::from_pem(&content).map_err(|e| {
+            ClientError::BuildError(format!(
+                "Failed to parse key file {}: {e}",
+                file_path.display()
+            ))
+        })?
+    } else if let Some(key) = args.server_key {
+        key
+    } else {
+        error!("Must specify either --server-key or --server-key-file");
+        std::process::exit(1);
+    };
 
     let mut builder = Client::builder();
     builder.server_info(server_public_key, server_addr);
@@ -92,4 +144,142 @@ pub async fn full_cli_client(args: RelayClientArgs) -> Result<Client, ClientErro
     }
 
     builder.build().await
+}
+
+/// Health check server that responds to ping requests
+pub struct HealthCheckServer {
+    listener: TcpListener,
+    port: u16,
+}
+
+impl HealthCheckServer {
+    /// Create a new health check server on the specified port
+    pub async fn new(port: u16) -> Result<Self, std::io::Error> {
+        let addr = SocketAddr::from(([127, 0, 0, 1], port));
+        let listener = TcpListener::bind(addr).await?;
+        info!("🏥 Health check server listening on {}", addr);
+        Ok(Self { listener, port })
+    }
+
+    /// Get the port the server is listening on
+    pub fn port(&self) -> u16 {
+        self.port
+    }
+
+    /// Run the health check server
+    pub async fn run(&self) -> Result<(), std::io::Error> {
+        loop {
+            match self.listener.accept().await {
+                Ok((stream, addr)) => {
+                    tokio::spawn(async move {
+                        if let Err(e) = handle_health_check_connection(stream).await {
+                            warn!("Health check connection error from {}: {}", addr, e);
+                        }
+                    });
+                }
+                Err(e) => {
+                    error!("Failed to accept health check connection: {}", e);
+                    return Err(e);
+                }
+            }
+        }
+    }
+}
+
+/// Handle a single health check connection
+async fn handle_health_check_connection(mut stream: TcpStream) -> Result<(), std::io::Error> {
+    let mut buffer = [0; 1024];
+
+    // Read the request
+    let bytes_read = stream.read(&mut buffer).await?;
+    if bytes_read == 0 {
+        return Ok(()); // Connection closed
+    }
+
+    let request = String::from_utf8_lossy(&buffer[..bytes_read]);
+    let request = request.trim();
+
+    // Simple protocol: respond to "ping" with "pong"
+    let response = match request {
+        "ping" => "pong\n",
+        "health" => "ok\n",
+        "status" => "running\n",
+        _ => "unknown\n",
+    };
+
+    // Send response
+    stream.write_all(response.as_bytes()).await?;
+    stream.flush().await?;
+
+    Ok(())
+}
+
+/// Run a bot with health check support
+/// This function combines the main bot logic with a health check server
+pub async fn run_with_health_check<F, Fut>(
+    health_check_port: Option<u16>,
+    main_task: F,
+) -> Result<(), Box<dyn std::error::Error>>
+where
+    F: FnOnce() -> Fut,
+    Fut: std::future::Future<Output = Result<(), Box<dyn std::error::Error>>>,
+{
+    if let Some(port) = health_check_port {
+        // Create health check server
+        let health_server = HealthCheckServer::new(port).await?;
+        info!("🏥 Health check enabled on port {}", port);
+
+        // Run both the main task and health check server concurrently
+        tokio::select! {
+            result = main_task() => {
+                info!("🛑 Main task completed");
+                result
+            }
+            result = health_server.run() => {
+                error!("🏥 Health check server stopped unexpectedly");
+                result.map_err(|e| Box::new(e) as Box<dyn std::error::Error>)
+            }
+        }
+    } else {
+        // Run only the main task
+        main_task().await
+    }
+}
+
+/// Simple health check client for testing
+pub async fn health_check_ping(port: u16) -> Result<String, std::io::Error> {
+    let addr = SocketAddr::from(([127, 0, 0, 1], port));
+    let mut stream = TcpStream::connect(addr).await?;
+
+    // Send ping
+    stream.write_all(b"ping").await?;
+    stream.flush().await?;
+
+    // Read response
+    let mut buffer = [0; 1024];
+    let bytes_read = stream.read(&mut buffer).await?;
+
+    Ok(String::from_utf8_lossy(&buffer[..bytes_read])
+        .trim()
+        .to_string())
+}
+
+/// Perform a health check and exit with appropriate code
+/// This is designed to be used as a Docker health check command
+pub async fn run_health_check_command(port: u16) -> Result<(), Box<dyn std::error::Error>> {
+    match health_check_ping(port).await {
+        Ok(response) => {
+            if response == "pong" {
+                println!("healthy");
+                std::process::exit(0);
+            } else {
+                eprintln!("unexpected response: {}", response);
+                std::process::exit(1);
+            }
+        }
+        Err(e) => {
+            eprintln!("health check failed: {}", e);
+            std::process::exit(1);
+        }
+    }
 }

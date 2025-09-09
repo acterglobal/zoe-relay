@@ -3,6 +3,28 @@ name = "zoe-signal-bot"
 version = "0.1.0"
 edition = "2024"
 
+[[bin]]
+name = "signal-bot"
+path = "src/main.rs"
+
 [dependencies]
 presage = { git = "https://github.com/whisperfish/presage" }
-presage-store-sled = { git = "https://github.com/whisperfish/presage" }
+presage-store-sqlite = { git = "https://github.com/whisperfish/presage" }
+tokio = { version = "1.0", features = ["full"] }
+tokio-stream = "0.1"
+anyhow = "1.0"
+serde = { version = "1.0", features = ["derive"] }
+postcard = { workspace = true }
+url = "2.0"
+clap = { version = "4.0", features = ["derive"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+uuid = { version = "1.0", features = ["v4"] }
+chrono = { version = "0.4", features = ["serde"] }
+dirs = "5.0"
+futures = "0.3"
+zoe-client = { path = "../client", features = ["cli"] }
+zoe-app-primitives = { path = "../app-primitives" }
+
+[dev-dependencies]
+tempfile = "3.0"

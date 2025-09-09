@@ -191,6 +191,7 @@
 //! - Review the state machine crate for event processing patterns
 
 pub mod connection;
+pub mod extra;
 pub mod file;
 pub mod group;
 pub mod identity;

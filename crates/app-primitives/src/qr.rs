@@ -100,10 +100,10 @@ pub fn generate_qr_data<T: Serialize>(data: &T) -> QrResult<Vec<u8>> {
     Ok(serialized)
 }
 
-/// Generate a QR code and return the visual representation as a string
+/// Generate a QR code and return the visual representation as a string from structured data
 ///
-/// This function creates a QR code from the provided data and returns it as
-/// a string that can be printed to the console.
+/// This function creates a QR code from structured data using postcard serialization
+/// and returns it as a string that can be printed to the console.
 ///
 /// # Arguments
 /// * `data` - The data to encode (must implement Serialize)
@@ -203,9 +203,105 @@ pub fn generate_qr_string<T: Serialize>(data: &T, options: &QrOptions) -> QrResu
     Ok(result)
 }
 
-/// Display a QR code to stdout
+/// Generate a QR code from plain text and return the visual representation as a string
 ///
-/// This is a convenience function that generates and prints a QR code directly.
+/// This function creates a QR code from plain text (like URLs) without serialization
+/// and returns it as a string that can be printed to the console.
+///
+/// # Arguments
+/// * `text` - The plain text to encode in the QR code
+/// * `options` - Display options for the QR code
+///
+/// # Returns
+/// * `QrResult<String>` - The QR code as a printable string
+///
+/// # Examples
+/// ```
+/// use zoe_app_primitives::qr::{generate_qr_string_from_text, QrOptions};
+///
+/// let url = "https://signal.org/#eu_EQIlw-O0NmftmVoqUlKZiwlqcTMG0ybgChE8XQtjn2WSHw";
+/// let options = QrOptions::new("📱 SIGNAL LINKING").with_footer("Scan with Signal app");
+/// let qr_string = generate_qr_string_from_text(url, &options).unwrap();
+/// println!("{}", qr_string);
+/// ```
+pub fn generate_qr_string_from_text(text: &str, options: &QrOptions) -> QrResult<String> {
+    let qr_code = QrCode::new(text)?;
+
+    let image = qr_code
+        .render::<unicode::Dense1x2>()
+        .dark_color(unicode::Dense1x2::Light)
+        .light_color(unicode::Dense1x2::Dark)
+        .build();
+
+    let mut result = String::new();
+    let border_char = "─";
+    let border = border_char.repeat(options.border_width);
+
+    // Top border
+    result.push_str(&format!("┌{}┐\n", border));
+
+    // Title
+    result.push_str(&format!(
+        "│{:^width$}│\n",
+        options.title,
+        width = options.border_width
+    ));
+
+    // Subtitle lines
+    if !options.subtitle_lines.is_empty() {
+        result.push_str(&format!("├{}┤\n", border));
+        for subtitle in &options.subtitle_lines {
+            result.push_str(&format!(
+                "│{:^width$}│\n",
+                subtitle,
+                width = options.border_width
+            ));
+        }
+    }
+
+    // Separator before QR code
+    result.push_str(&format!("├{}┤\n", border));
+
+    // QR code
+    for line in image.lines() {
+        // Calculate the visual width of the QR line (Unicode characters may have different widths)
+        let line_visual_width = line.chars().count();
+
+        // Calculate padding needed to center the QR code within the border
+        let total_padding = options.border_width.saturating_sub(line_visual_width);
+        let left_padding = total_padding / 2;
+        let right_padding = total_padding - left_padding;
+
+        // Create the padded line with proper spacing
+        let padded_line = format!(
+            "{}{}{}",
+            " ".repeat(left_padding),
+            line,
+            " ".repeat(right_padding)
+        );
+
+        result.push_str(&format!("│{}│\n", padded_line));
+    }
+
+    // Separator after QR code
+    result.push_str(&format!("├{}┤\n", border));
+
+    // Footer
+    result.push_str(&format!(
+        "│{:^width$}│\n",
+        options.footer,
+        width = options.border_width
+    ));
+
+    // Bottom border
+    result.push_str(&format!("└{}┘", border));
+
+    Ok(result)
+}
+
+/// Display a QR code to stdout from structured data
+///
+/// This function generates a QR code from structured data using postcard serialization.
 ///
 /// # Arguments
 /// * `data` - The data to encode (must implement Serialize)
@@ -230,6 +326,34 @@ pub fn generate_qr_string<T: Serialize>(data: &T, options: &QrOptions) -> QrResu
 /// ```
 pub fn display_qr_code<T: Serialize>(data: &T, options: &QrOptions) -> QrResult<()> {
     let qr_string = generate_qr_string(data, options)?;
+    println!("{}", qr_string);
+    Ok(())
+}
+
+/// Display a QR code to stdout from a plain string
+///
+/// This function generates a QR code from a plain string (like URLs) without serialization.
+/// Use this for simple text data like URLs, connection strings, etc.
+///
+/// # Arguments
+/// * `text` - The plain text to encode in the QR code
+/// * `options` - Display options for the QR code
+///
+/// # Returns
+/// * `QrResult<()>` - Success or error
+///
+/// # Examples
+/// ```
+/// use zoe_app_primitives::qr::{display_qr_code_from_string, QrOptions};
+///
+/// let url = "https://signal.org/#eu_EQIlw-O0NmftmVoqUlKZiwlqcTMG0ybgChE8XQtjn2WSHw";
+/// let options = QrOptions::new("📱 SIGNAL LINKING")
+///     .with_subtitle("Scan with Signal mobile app")
+///     .with_footer("Link expires in 10 minutes");
+/// display_qr_code_from_string(url, &options).unwrap();
+/// ```
+pub fn display_qr_code_from_string(text: &str, options: &QrOptions) -> QrResult<()> {
+    let qr_string = generate_qr_string_from_text(text, options)?;
     println!("{}", qr_string);
     Ok(())
 }
@@ -522,5 +646,66 @@ mod tests {
         assert!(full_text.contains("└"));
         assert!(full_text.contains("├"));
         assert!(full_text.contains("┤"));
+    }
+
+    #[test]
+    fn test_generate_qr_string_from_text() {
+        let url = "https://signal.org/#eu_EQIlw-O0NmftmVoqUlKZiwlqcTMG0ybgChE8XQtjn2WSHw";
+        let options = QrOptions::new("📱 SIGNAL LINKING")
+            .with_subtitle("Scan with Signal mobile app")
+            .with_footer("Link expires in 10 minutes");
+
+        let qr_string = generate_qr_string_from_text(url, &options).unwrap();
+
+        // Verify the string contains expected elements
+        assert!(qr_string.contains("📱 SIGNAL LINKING"));
+        assert!(qr_string.contains("Scan with Signal mobile app"));
+        assert!(qr_string.contains("Link expires in 10 minutes"));
+        assert!(qr_string.contains("┌"));
+        assert!(qr_string.contains("└"));
+    }
+
+    #[test]
+    fn test_display_qr_code_from_string() {
+        let url = "https://example.com/test";
+        let options = QrOptions::new("TEST QR")
+            .with_subtitle("Test subtitle")
+            .with_footer("Test footer");
+
+        // This should not panic and should work correctly
+        let result = display_qr_code_from_string(url, &options);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_qr_string_from_text_formatting() {
+        let text = "Simple test text";
+        let options = QrOptions::new("📱 TEXT QR")
+            .with_subtitle("Line 1")
+            .with_subtitle("Line 2")
+            .with_footer("Footer text")
+            .with_border_width(50);
+
+        let qr_string = generate_qr_string_from_text(text, &options).unwrap();
+        let lines: Vec<&str> = qr_string.lines().collect();
+
+        // Should have top border
+        assert!(lines[0].starts_with("┌"));
+        assert!(lines[0].ends_with("┐"));
+
+        // Should have title
+        assert!(lines[1].contains("📱 TEXT QR"));
+
+        // Should have subtitles
+        assert!(lines.iter().any(|line| line.contains("Line 1")));
+        assert!(lines.iter().any(|line| line.contains("Line 2")));
+
+        // Should have footer
+        assert!(lines.iter().any(|line| line.contains("Footer text")));
+
+        // Should have bottom border
+        let last_line = lines.last().unwrap();
+        assert!(last_line.starts_with("└"));
+        assert!(last_line.ends_with("┘"));
     }
 }

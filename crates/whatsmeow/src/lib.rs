@@ -1,7 +1,10 @@
 use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::ffi::{CStr, CString};
-use tokio::sync::oneshot;
+use std::sync::{Arc, Mutex};
+use tokio::sync::{mpsc, oneshot};
+use tokio_stream::{wrappers::UnboundedReceiverStream, Stream};
 
 /// Connection status for WhatsApp client
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -33,6 +36,19 @@ pub struct MessageInfo {
     pub timestamp: u64,
     pub message_type: String,
     pub content: String,
+}
+
+/// WhatsApp message event (for streaming)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MessageEvent {
+    pub id: String,
+    pub chat: String,
+    pub sender: String,
+    pub timestamp: i64,
+    #[serde(rename = "type")]
+    pub message_type: String,
+    pub content: String,
+    pub is_from_me: bool,
 }
 
 /// Contact information
@@ -69,17 +85,21 @@ struct CStatusResponse {
 
 // External Go functions via CGO
 #[cfg(not(test))]
+#[allow(unused)]
 unsafe extern "C" {
-    fn whatsmeow_init() -> bool;
-    fn whatsmeow_connect_async(callback_handle: usize);
-    fn whatsmeow_disconnect_async(callback_handle: usize);
-    fn whatsmeow_get_status_async(callback_handle: usize);
-    fn whatsmeow_get_qr_async(callback_handle: usize);
+    fn whatsmeow_init(db_path: *const libc::c_char) -> usize;
+    fn whatsmeow_connect_async(client_ptr: usize, callback_handle: usize);
+    fn whatsmeow_disconnect_async(client_ptr: usize, callback_handle: usize);
+    fn whatsmeow_get_status_async(client_ptr: usize, callback_handle: usize);
+    fn whatsmeow_get_qr_async(client_ptr: usize, callback_handle: usize);
     fn whatsmeow_send_message_async(
+        client_ptr: usize,
         chat_jid: *const libc::c_char,
         text: *const libc::c_char,
         callback_handle: usize,
     );
+    fn whatsmeow_register_message_handler(client_ptr: usize, callback_handle: usize) -> bool;
+    fn whatsmeow_unregister_message_handler(client_ptr: usize) -> bool;
     fn whatsmeow_send_image_async(
         chat_jid: *const libc::c_char,
         image_path: *const libc::c_char,
@@ -108,7 +128,7 @@ unsafe extern "C" {
 }
 
 // Mock implementations for testing
-#[cfg(test)]
+#[cfg(feature = "mock-ffi")]
 mod mock_ffi {
     use super::*;
     use std::sync::atomic::{AtomicBool, Ordering};
@@ -126,21 +146,25 @@ mod mock_ffi {
         MOCK_CONNECTION_STATUS.store(connected, Ordering::SeqCst);
     }
 
-    pub unsafe fn whatsmeow_init() -> bool {
-        MOCK_INIT_SUCCESS.load(Ordering::SeqCst)
+    pub unsafe fn whatsmeow_init(_db_path: *const libc::c_char) -> usize {
+        if MOCK_INIT_SUCCESS.load(Ordering::SeqCst) {
+            0x1234 // Return a fake client pointer
+        } else {
+            0 // Return null pointer on failure
+        }
     }
 
-    pub unsafe fn whatsmeow_connect_async(callback_handle: usize) {
+    pub unsafe fn whatsmeow_connect_async(_client_ptr: usize, callback_handle: usize) {
         let tx = Box::from_raw(callback_handle as *mut oneshot::Sender<Result<ConnectionStatus>>);
         let _ = tx.send(Ok(ConnectionStatus::Connected));
     }
 
-    pub unsafe fn whatsmeow_disconnect_async(callback_handle: usize) {
+    pub unsafe fn whatsmeow_disconnect_async(_client_ptr: usize, callback_handle: usize) {
         let tx = Box::from_raw(callback_handle as *mut oneshot::Sender<Result<ConnectionStatus>>);
         let _ = tx.send(Ok(ConnectionStatus::Disconnected));
     }
 
-    pub unsafe fn whatsmeow_get_status_async(callback_handle: usize) {
+    pub unsafe fn whatsmeow_get_status_async(_client_ptr: usize, callback_handle: usize) {
         let tx = Box::from_raw(callback_handle as *mut oneshot::Sender<Result<ConnectionStatus>>);
         let status = if MOCK_CONNECTION_STATUS.load(Ordering::SeqCst) {
             ConnectionStatus::Connected
@@ -150,19 +174,31 @@ mod mock_ffi {
         let _ = tx.send(Ok(status));
     }
 
-    pub unsafe fn whatsmeow_get_qr_async(callback_handle: usize) {
+    pub unsafe fn whatsmeow_get_qr_async(_client_ptr: usize, callback_handle: usize) {
         let tx = Box::from_raw(callback_handle as *mut oneshot::Sender<Result<String>>);
         let qr_code = "https://wa.me/qr/MOCK_QR_CODE_FOR_TESTING".to_string();
         let _ = tx.send(Ok(qr_code));
     }
 
     pub unsafe fn whatsmeow_send_message_async(
+        _client_ptr: usize,
         _chat_jid: *const libc::c_char,
         _text: *const libc::c_char,
         callback_handle: usize,
     ) {
         let tx = Box::from_raw(callback_handle as *mut oneshot::Sender<Result<String>>);
         let _ = tx.send(Ok("msg_mock_123".to_string()));
+    }
+
+    pub unsafe fn whatsmeow_register_message_handler(
+        _client_ptr: usize,
+        _callback_handle: usize,
+    ) -> bool {
+        true // Mock always succeeds
+    }
+
+    pub unsafe fn whatsmeow_unregister_message_handler(_client_ptr: usize) -> bool {
+        true // Mock always succeeds
     }
 
     pub unsafe fn whatsmeow_send_image_async(
@@ -274,37 +310,49 @@ mod mock_ffi {
 }
 
 // Wrapper functions that choose between real FFI and mocks
-#[cfg(not(test))]
+#[cfg(not(feature = "mock-ffi"))]
 mod ffi_wrapper {
     #[allow(unused_imports)]
     use super::*;
 
-    pub unsafe fn whatsmeow_init() -> bool {
-        super::whatsmeow_init()
+    pub unsafe fn whatsmeow_init(db_path: *const libc::c_char) -> usize {
+        super::whatsmeow_init(db_path)
     }
 
-    pub unsafe fn whatsmeow_connect_async(callback_handle: usize) {
-        super::whatsmeow_connect_async(callback_handle)
+    pub unsafe fn whatsmeow_connect_async(client_ptr: usize, callback_handle: usize) {
+        super::whatsmeow_connect_async(client_ptr, callback_handle)
     }
 
-    pub unsafe fn whatsmeow_disconnect_async(callback_handle: usize) {
-        super::whatsmeow_disconnect_async(callback_handle)
+    pub unsafe fn whatsmeow_disconnect_async(client_ptr: usize, callback_handle: usize) {
+        super::whatsmeow_disconnect_async(client_ptr, callback_handle)
     }
 
-    pub unsafe fn whatsmeow_get_status_async(callback_handle: usize) {
-        super::whatsmeow_get_status_async(callback_handle)
+    pub unsafe fn whatsmeow_get_status_async(client_ptr: usize, callback_handle: usize) {
+        super::whatsmeow_get_status_async(client_ptr, callback_handle)
     }
 
-    pub unsafe fn whatsmeow_get_qr_async(callback_handle: usize) {
-        super::whatsmeow_get_qr_async(callback_handle)
+    pub unsafe fn whatsmeow_get_qr_async(client_ptr: usize, callback_handle: usize) {
+        super::whatsmeow_get_qr_async(client_ptr, callback_handle)
     }
 
     pub unsafe fn whatsmeow_send_message_async(
+        client_ptr: usize,
         chat_jid: *const libc::c_char,
         text: *const libc::c_char,
         callback_handle: usize,
     ) {
-        super::whatsmeow_send_message_async(chat_jid, text, callback_handle)
+        super::whatsmeow_send_message_async(client_ptr, chat_jid, text, callback_handle)
+    }
+
+    pub unsafe fn whatsmeow_register_message_handler(
+        client_ptr: usize,
+        callback_handle: usize,
+    ) -> bool {
+        super::whatsmeow_register_message_handler(client_ptr, callback_handle)
+    }
+
+    pub unsafe fn whatsmeow_unregister_message_handler(client_ptr: usize) -> bool {
+        super::whatsmeow_unregister_message_handler(client_ptr)
     }
 
     pub unsafe fn whatsmeow_send_image_async(
@@ -360,8 +408,14 @@ mod ffi_wrapper {
     }
 }
 
-#[cfg(test)]
+#[cfg(feature = "mock-ffi")]
 use mock_ffi as ffi_wrapper;
+
+// Global registry for message stream senders
+lazy_static::lazy_static! {
+    static ref MESSAGE_SENDERS: Arc<Mutex<HashMap<usize, mpsc::UnboundedSender<MessageEvent>>>> =
+        Arc::new(Mutex::new(HashMap::new()));
+}
 
 /// Callback functions that Go can call back to Rust
 #[unsafe(no_mangle)]
@@ -457,21 +511,58 @@ extern "C" fn rust_response_callback(handle: usize, response: *const CResponse) 
     }
 }
 
+/// Callback function for message events from Go
+#[unsafe(no_mangle)]
+extern "C" fn rust_message_callback(handle: usize, response: *const CResponse) {
+    unsafe {
+        if !response.is_null() && (*response).success {
+            let data_str = if !(*response).data.is_null() {
+                CStr::from_ptr((*response).data)
+                    .to_string_lossy()
+                    .to_string()
+            } else {
+                return;
+            };
+
+            // Parse the JSON message event
+            if let Ok(message_event) = serde_json::from_str::<MessageEvent>(&data_str) {
+                // Send to the appropriate stream
+                if let Ok(senders) = MESSAGE_SENDERS.lock() {
+                    if let Some(sender) = senders.get(&handle) {
+                        let _ = sender.send(message_event);
+                    }
+                }
+            }
+
+            // Free the Go allocated memory
+            if !(*response).data.is_null() {
+                ffi_wrapper::go_free((*response).data);
+            }
+            if !(*response).error.is_null() {
+                ffi_wrapper::go_free((*response).error);
+            }
+        }
+    }
+}
+
 /// Main WhatsApp client wrapper
 #[derive(Debug)]
 pub struct WhatsAppBot {
-    // Empty struct for now, will be extended as needed
+    client_ptr: usize,
 }
 
 impl WhatsAppBot {
-    /// Create a new WhatsApp bot instance
-    pub fn new() -> Result<Self> {
-        let initialized = unsafe { ffi_wrapper::whatsmeow_init() };
-        if !initialized {
+    /// Create a new WhatsApp bot instance with database path
+    pub fn new(db_path: &str) -> Result<Self> {
+        let db_path_cstring = CString::new(db_path)?;
+        let db_path_ptr = db_path_cstring.as_ptr();
+
+        let client_ptr = unsafe { ffi_wrapper::whatsmeow_init(db_path_ptr) };
+        if client_ptr == 0 {
             return Err(anyhow!("Failed to initialize WhatsApp client"));
         }
 
-        Ok(Self {})
+        Ok(Self { client_ptr })
     }
 
     /// Connect and authenticate with WhatsApp
@@ -480,7 +571,7 @@ impl WhatsAppBot {
         let handle = Box::into_raw(Box::new(tx)) as usize;
 
         unsafe {
-            ffi_wrapper::whatsmeow_connect_async(handle);
+            ffi_wrapper::whatsmeow_connect_async(self.client_ptr, handle);
         }
 
         rx.await
@@ -494,7 +585,7 @@ impl WhatsAppBot {
         let handle = Box::into_raw(Box::new(tx)) as usize;
 
         unsafe {
-            ffi_wrapper::whatsmeow_disconnect_async(handle);
+            ffi_wrapper::whatsmeow_disconnect_async(self.client_ptr, handle);
         }
 
         rx.await
@@ -508,7 +599,7 @@ impl WhatsAppBot {
         let handle = Box::into_raw(Box::new(tx)) as usize;
 
         unsafe {
-            ffi_wrapper::whatsmeow_get_status_async(handle);
+            ffi_wrapper::whatsmeow_get_status_async(self.client_ptr, handle);
         }
 
         rx.await
@@ -521,11 +612,60 @@ impl WhatsAppBot {
         let handle = Box::into_raw(Box::new(tx)) as usize;
 
         unsafe {
-            ffi_wrapper::whatsmeow_get_qr_async(handle);
+            ffi_wrapper::whatsmeow_get_qr_async(self.client_ptr, handle);
         }
 
         rx.await
             .map_err(|_| anyhow!("Failed to receive response from Go"))?
+    }
+
+    /// Get a stream of incoming messages
+    pub fn message_stream(&self) -> Result<impl Stream<Item = MessageEvent>> {
+        let (tx, rx) = mpsc::unbounded_channel();
+
+        // Store the sender in the global registry using client_ptr as key
+        {
+            let mut senders = MESSAGE_SENDERS
+                .lock()
+                .map_err(|_| anyhow!("Failed to lock message senders"))?;
+            senders.insert(self.client_ptr, tx);
+        }
+
+        // Register the message handler with Go
+        let success = unsafe {
+            ffi_wrapper::whatsmeow_register_message_handler(self.client_ptr, self.client_ptr)
+        };
+
+        if !success {
+            // Clean up on failure
+            let mut senders = MESSAGE_SENDERS
+                .lock()
+                .map_err(|_| anyhow!("Failed to lock message senders"))?;
+            senders.remove(&self.client_ptr);
+            return Err(anyhow!("Failed to register message handler"));
+        }
+
+        Ok(UnboundedReceiverStream::new(rx))
+    }
+
+    /// Stop the message stream
+    pub fn stop_message_stream(&self) -> Result<()> {
+        // Unregister the message handler
+        let success = unsafe { ffi_wrapper::whatsmeow_unregister_message_handler(self.client_ptr) };
+
+        // Remove from registry
+        {
+            let mut senders = MESSAGE_SENDERS
+                .lock()
+                .map_err(|_| anyhow!("Failed to lock message senders"))?;
+            senders.remove(&self.client_ptr);
+        }
+
+        if !success {
+            return Err(anyhow!("Failed to unregister message handler"));
+        }
+
+        Ok(())
     }
 
     /// Check if connected and authenticated
@@ -545,7 +685,12 @@ impl WhatsAppBot {
         let handle = Box::into_raw(Box::new(tx)) as usize;
 
         unsafe {
-            ffi_wrapper::whatsmeow_send_message_async(chat_jid.as_ptr(), text.as_ptr(), handle);
+            ffi_wrapper::whatsmeow_send_message_async(
+                self.client_ptr,
+                chat_jid.as_ptr(),
+                text.as_ptr(),
+                handle,
+            );
         }
 
         rx.await
@@ -708,7 +853,7 @@ impl WhatsAppBot {
 
 impl Default for WhatsAppBot {
     fn default() -> Self {
-        Self::new().expect("Failed to create WhatsApp bot")
+        Self::new("whatsapp.db").expect("Failed to create WhatsApp bot")
     }
 }
 
@@ -721,6 +866,7 @@ unsafe impl Sync for WhatsAppBot {}
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tempfile::tempdir;
 
     // =============================================================================
     // UNIT TESTS - Testing data models, serialization, and Rust-side logic
@@ -730,8 +876,11 @@ mod tests {
 
         #[test]
         fn bot_creation() {
-            let bot = WhatsAppBot::new();
-            assert!(bot.is_ok());
+            let temp_dir = tempdir().unwrap();
+            let bot =
+                WhatsAppBot::new(temp_dir.path().join("whatsapp.db").to_str().unwrap()).unwrap();
+            // Bot creation succeeded if we got here without panicking
+            assert!(bot.client_ptr != 0);
         }
 
         #[test]
@@ -968,38 +1117,49 @@ mod tests {
     // =============================================================================
     mod integration {
         use super::*;
+        use tempfile::tempdir;
 
         #[tokio::test]
         async fn connect_operation() {
-            let bot = WhatsAppBot::new().unwrap();
+            let temp_dir = tempdir().unwrap();
+            let bot =
+                WhatsAppBot::new(temp_dir.path().join("whatsapp.db").to_str().unwrap()).unwrap();
             let result = bot.connect().await;
             assert!(result.is_ok());
         }
 
         #[tokio::test]
         async fn disconnect_operation() {
-            let bot = WhatsAppBot::new().unwrap();
+            let temp_dir = tempdir().unwrap();
+            let bot =
+                WhatsAppBot::new(temp_dir.path().join("whatsapp.db").to_str().unwrap()).unwrap();
             let result = bot.disconnect().await;
             assert!(result.is_ok());
         }
 
         #[tokio::test]
         async fn connection_status_check() {
-            let bot = WhatsAppBot::new().unwrap();
+            let temp_dir = tempdir().unwrap();
+            let bot =
+                WhatsAppBot::new(temp_dir.path().join("whatsapp.db").to_str().unwrap()).unwrap();
             let status = bot.get_connection_status().await.unwrap();
             assert_eq!(status, ConnectionStatus::Disconnected); // Mock returns disconnected by default
         }
 
         #[tokio::test]
         async fn connection_status_boolean_check() {
-            let bot = WhatsAppBot::new().unwrap();
+            let temp_dir = tempdir().unwrap();
+            let bot =
+                WhatsAppBot::new(temp_dir.path().join("whatsapp.db").to_str().unwrap()).unwrap();
             let connected = bot.is_connected().await.unwrap();
             assert!(!connected); // Mock returns disconnected by default
         }
 
         #[tokio::test]
         async fn qr_code_generation() {
-            let bot = WhatsAppBot::new().unwrap();
+            let temp_dir = tempdir().unwrap();
+            let bot =
+                WhatsAppBot::new(temp_dir.path().join("whatsapp.db").to_str().unwrap()).unwrap();
             let qr_code = bot.get_qr_code().await.unwrap();
             assert!(qr_code.contains("MOCK_QR_CODE_FOR_TESTING"));
             assert!(qr_code.starts_with("https://wa.me/qr/"));
@@ -1007,7 +1167,9 @@ mod tests {
 
         #[tokio::test]
         async fn text_message_sending() {
-            let bot = WhatsAppBot::new().unwrap();
+            let temp_dir = tempdir().unwrap();
+            let bot =
+                WhatsAppBot::new(temp_dir.path().join("whatsapp.db").to_str().unwrap()).unwrap();
             let message_id = bot
                 .send_message("test@s.whatsapp.net", "Hello, World!")
                 .await
@@ -1017,7 +1179,9 @@ mod tests {
 
         #[tokio::test]
         async fn image_message_sending() {
-            let bot = WhatsAppBot::new().unwrap();
+            let temp_dir = tempdir().unwrap();
+            let bot =
+                WhatsAppBot::new(temp_dir.path().join("whatsapp.db").to_str().unwrap()).unwrap();
             let message_id = bot
                 .send_image(
                     "test@s.whatsapp.net",
@@ -1031,7 +1195,9 @@ mod tests {
 
         #[tokio::test]
         async fn image_message_sending_no_caption() {
-            let bot = WhatsAppBot::new().unwrap();
+            let temp_dir = tempdir().unwrap();
+            let bot =
+                WhatsAppBot::new(temp_dir.path().join("whatsapp.db").to_str().unwrap()).unwrap();
             let message_id = bot
                 .send_image("test@s.whatsapp.net", "/path/to/image.jpg", None)
                 .await
@@ -1041,7 +1207,9 @@ mod tests {
 
         #[tokio::test]
         async fn contacts_retrieval() {
-            let bot = WhatsAppBot::new().unwrap();
+            let temp_dir = tempdir().unwrap();
+            let bot =
+                WhatsAppBot::new(temp_dir.path().join("whatsapp.db").to_str().unwrap()).unwrap();
             let contacts = bot.get_contacts().await.unwrap();
 
             assert_eq!(contacts.len(), 2);
@@ -1056,7 +1224,9 @@ mod tests {
 
         #[tokio::test]
         async fn groups_retrieval() {
-            let bot = WhatsAppBot::new().unwrap();
+            let temp_dir = tempdir().unwrap();
+            let bot =
+                WhatsAppBot::new(temp_dir.path().join("whatsapp.db").to_str().unwrap()).unwrap();
             let groups = bot.get_groups().await.unwrap();
 
             assert_eq!(groups.len(), 1);
@@ -1072,7 +1242,9 @@ mod tests {
 
         #[tokio::test]
         async fn recent_messages_retrieval() {
-            let bot = WhatsAppBot::new().unwrap();
+            let temp_dir = tempdir().unwrap();
+            let bot =
+                WhatsAppBot::new(temp_dir.path().join("whatsapp.db").to_str().unwrap()).unwrap();
             let messages = bot
                 .get_recent_messages("test@s.whatsapp.net", 10)
                 .await
@@ -1088,7 +1260,9 @@ mod tests {
 
         #[tokio::test]
         async fn group_creation() {
-            let bot = WhatsAppBot::new().unwrap();
+            let temp_dir = tempdir().unwrap();
+            let bot =
+                WhatsAppBot::new(temp_dir.path().join("whatsapp.db").to_str().unwrap()).unwrap();
             let participants = vec!["user1@s.whatsapp.net", "user2@s.whatsapp.net"];
             let group = bot
                 .create_group("New Test Group", &participants)
@@ -1102,7 +1276,9 @@ mod tests {
 
         #[tokio::test]
         async fn group_joining() {
-            let bot = WhatsAppBot::new().unwrap();
+            let temp_dir = tempdir().unwrap();
+            let bot =
+                WhatsAppBot::new(temp_dir.path().join("whatsapp.db").to_str().unwrap()).unwrap();
             let group = bot
                 .join_group("https://chat.whatsapp.com/invite/123")
                 .await
@@ -1118,14 +1294,18 @@ mod tests {
 
         #[tokio::test]
         async fn message_read_marking() {
-            let bot = WhatsAppBot::new().unwrap();
+            let temp_dir = tempdir().unwrap();
+            let bot =
+                WhatsAppBot::new(temp_dir.path().join("whatsapp.db").to_str().unwrap()).unwrap();
             let result = bot.mark_read("test@s.whatsapp.net", "msg_123").await;
             assert!(result.is_ok());
         }
 
         #[tokio::test]
         async fn concurrent_operations() {
-            let bot = WhatsAppBot::new().unwrap();
+            let temp_dir = tempdir().unwrap();
+            let bot =
+                WhatsAppBot::new(temp_dir.path().join("whatsapp.db").to_str().unwrap()).unwrap();
 
             // Test that multiple async operations can run concurrently
             let (status, qr_code, contacts) = tokio::join!(
@@ -1216,15 +1396,15 @@ mod tests {
             println!("=====================================");
 
             // Check if we're using real FFI or mocks
-            #[cfg(test)]
+            #[cfg(feature = "mock-ffi")]
             {
                 println!("ℹ️  Running in MOCK MODE (simulated QR codes)");
                 println!("   📝 Note: This will show 'https://wa.me/qr/MOCK_QR_CODE_FOR_TESTING'");
-                println!("   🎯 For real QR codes, build without test mode");
+                println!("   🎯 For real QR codes, build with --features e2e-real-ffi");
                 println!();
             }
 
-            #[cfg(not(test))]
+            #[cfg(not(feature = "mock-ffi"))]
             {
                 println!("🚀 Running in REAL MODE (actual WhatsApp servers)");
                 println!("   📱 This will generate a real scannable QR code");
@@ -1244,7 +1424,7 @@ mod tests {
 
             // Step 1: Create bot
             println!("\n1️⃣ Creating WhatsApp bot...");
-            let bot = WhatsAppBot::new().expect("Failed to create WhatsApp bot");
+            let bot = WhatsAppBot::new("whatsapp.db").expect("Failed to create WhatsApp bot");
             println!("   ✅ Bot created successfully");
 
             // Step 2: Get QR code for authentication
@@ -1371,7 +1551,7 @@ mod tests {
             println!("   • Valid WhatsApp contact to message");
             println!("   • User confirmation for sending");
 
-            let bot = WhatsAppBot::new().expect("Failed to create WhatsApp bot");
+            let bot = WhatsAppBot::new("whatsapp.db").expect("Failed to create WhatsApp bot");
 
             // Check if we're connected
             println!("\n1️⃣ Checking connection status...");

@@ -1,76 +1,145 @@
-# Testing Quick Reference
+# Testing Guide
 
-## 🚀 Essential Commands
+## Test Categories
 
-### Run All Tests
+### Default Tests (Mock Only)
+By default, `cargo nextest run --all` runs only tests that use mocks and don't connect to external services.
+
 ```bash
-# With nextest (recommended)
+# Run all tests excluding external services (default)
 cargo nextest run --all
 
-# With standard cargo
-cargo test --workspace
+# Run specific test categories
+cargo nextest run --test-group unit
+cargo nextest run --test-group integration
 ```
 
-### Run Specific Crate
+### External Service Tests
+
+External service tests are disabled by default to avoid:
+- Hitting rate limits on external APIs
+- Requiring real accounts/credentials
+- Network dependencies in CI/CD
+
+#### WhatsApp External Tests
 ```bash
-cargo nextest run --package zoe-client-storage
-cargo test --package zoe-client-storage
+# Enable WhatsApp external service tests
+export WHATSAPP_EXTERNAL_TESTS=1
+cargo nextest run --profile whatsapp-external
+
+# Or run all external service tests
+cargo nextest run --profile external-services
 ```
 
-## 🔧 System Dependencies
-
-### SQLCipher (Required for client-storage tests)
-
-**Linux (Ubuntu/Debian)**:
+#### Signal External Tests
 ```bash
-sudo apt-get install libsqlcipher-dev
+# Enable Signal external service tests
+export SIGNAL_EXTERNAL_TESTS=1
+cargo nextest run --profile signal-external
 ```
 
-**Linux (Fedora/Red Hat)**:
+#### All Tests Including External Services
 ```bash
-sudo dnf install sqlcipher-devel
+# Run everything (use with caution)
+export WHATSAPP_EXTERNAL_TESTS=1
+export SIGNAL_EXTERNAL_TESTS=1
+cargo nextest run --profile all-including-external
 ```
 
-**Linux (Arch/Manjaro)**:
-```bash
-sudo pacman -S sqlcipher
-```
+## Environment Variables
 
-**macOS (Homebrew)**:
-```bash
-brew install sqlcipher
-```
+- `WHATSAPP_EXTERNAL_TESTS=1` - Enable WhatsApp external service tests
+- `SIGNAL_EXTERNAL_TESTS=1` - Enable Signal external service tests
 
-**Windows**: See [SQLCipher documentation](https://www.zetetic.net/sqlcipher/) for installation instructions.
+## Test Profiles
 
-### Redis (Required for integration tests)
-```bash
-# Start Redis with Docker
-docker-compose up -d redis
+- `default` - Mock tests only (safe for CI)
+- `ci` - Same as default with retries
+- `external-services` - All external service tests
+- `whatsapp-external` - WhatsApp external tests only
+- `signal-external` - Signal external tests only
+- `all-including-external` - Everything including external services
 
-# Or install locally
-sudo systemctl start redis
-```
-
-## 📋 Nextest Profiles
+## Running Tests
 
 ```bash
-# Default profile (4 threads)
+# Safe default testing (recommended)
 cargo nextest run --all
 
-# CI profile (fail-fast=false, retries=2)
-cargo nextest run --profile ci --all
+# Test with external services (requires setup)
+WHATSAPP_EXTERNAL_TESTS=1 SIGNAL_EXTERNAL_TESTS=1 cargo nextest run --profile all-including-external
 
-# Fast profile (8 threads for quick feedback)
-cargo nextest run --profile fast --all
+# Test specific external service
+WHATSAPP_EXTERNAL_TESTS=1 cargo nextest run --profile whatsapp-external
 ```
 
-## 🐛 Quick Troubleshooting
+## WhatsApp Bot Testing
 
-- **SQLCipher errors**: Install system SQLCipher libraries (see above)
-- **Redis connection errors**: Start Redis with `docker-compose up -d redis`
-- **Test failures**: Run with `RUST_BACKTRACE=1` for detailed errors
+The WhatsApp bot uses a feature-based mock system:
 
-## 📚 Detailed Information
+### Mock Mode (Default)
+- Uses `mock-ffi` feature (enabled by default)
+- No real WhatsApp connections
+- Returns predictable mock responses
+- Safe for CI/CD and development
 
-For comprehensive testing guidelines, see **[docs/testing.md](docs/testing.md)**.
+### Real WhatsApp Mode
+- Disable `mock-ffi` feature: `--no-default-features --features e2e-real-ffi`
+- Connects to real WhatsApp servers
+- Requires phone number and QR code scanning
+- Only for manual testing
+
+```bash
+# Mock mode (default)
+cargo test -p zoe-wa-bot
+
+# Real WhatsApp mode (manual testing only)
+cargo test -p zoe-wa-bot --no-default-features --features e2e-real-ffi
+```
+
+## Signal Bot Testing
+
+Signal bot tests are designed to work without external services:
+- Tests expected failure cases (no registration)
+- Uses temporary directories for isolation
+- No real Signal connections by default
+
+## Nextest Configuration
+
+The workspace uses `.config/nextest.toml` for test organization:
+- 15s timeout for local tests
+- 60s timeout for external service tests
+- Proper test filtering and grouping
+- Parallel execution with appropriate thread limits
+
+## Test Development Guidelines
+
+1. **Default to mocks** - New tests should use mocks by default
+2. **External tests** - Mark with `#[ignore]` and environment variable checks
+3. **Deterministic** - Tests should be repeatable and not depend on external state
+4. **Fast** - Keep test execution time reasonable
+5. **Isolated** - Tests should not interfere with each other
+
+## Troubleshooting
+
+### Tests Connecting to External Services
+If tests are unexpectedly connecting to external services:
+1. Check that `mock-ffi` feature is enabled (default for whatsmeow)
+2. Verify environment variables are not set
+3. Ensure using the correct nextest profile
+
+### Slow Test Execution
+1. Use `cargo nextest run` instead of `cargo test`
+2. Check nextest configuration timeouts
+3. Consider running specific test groups
+
+### CI/CD Integration
+```bash
+# Recommended CI command
+cargo nextest run --all --profile ci
+```
+
+This ensures:
+- No external service dependencies
+- Appropriate retries for flaky tests
+- Fast fail for quick feedback

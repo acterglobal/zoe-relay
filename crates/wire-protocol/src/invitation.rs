@@ -3,8 +3,8 @@
 //! This module defines the message types used in the group invitation flow,
 //! providing type-safe structures for the multi-step verification process.
 
+use crate::{Tag, VerifyingKey};
 use serde::{Deserialize, Serialize};
-use crate::{VerifyingKey, Tag};
 
 /// Protocol version for invitation messages
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]

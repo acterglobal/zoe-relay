@@ -3,6 +3,7 @@ use async_trait::async_trait;
 use eyeball::{AsyncLock, ObservableWriteGuard, SharedObservable};
 use futures::{Stream, StreamExt, pin_mut};
 use serde::{Deserialize, Serialize};
+use std::pin::Pin;
 use std::sync::Arc;
 use tokio::{select, sync::broadcast, task::JoinHandle};
 use tokio_stream::wrappers::{BroadcastStream, errors::BroadcastStreamRecvError};
@@ -64,17 +65,17 @@ pub trait MessagesManagerTrait: Send + Sync {
     fn catch_up_stream(&self) -> BroadcastStream<CatchUpResponse>;
 
     /// Get a filtered stream of messages matching the given filter
-    fn filtered_messages_stream<'a>(
-        &'a self,
+    fn filtered_messages_stream(
+        &self,
         filter: Filter,
-    ) -> std::pin::Pin<Box<dyn Stream<Item = Box<MessageFull>> + Send + 'a>>;
+    ) -> Pin<Box<dyn Stream<Item = Box<MessageFull>> + Send>>;
 
     /// Catch up to historical messages and subscribe to new ones for a filter
-    async fn catch_up_and_subscribe<'a>(
-        &'a self,
+    async fn catch_up_and_subscribe(
+        &self,
         filter: Filter,
         since: Option<String>,
-    ) -> Result<std::pin::Pin<Box<dyn Stream<Item = Box<MessageFull>> + Send + 'a>>>;
+    ) -> Result<Pin<Box<dyn Stream<Item = Box<MessageFull>> + Send>>>;
 
     /// Get user data by author and storage key (for PQXDH inbox fetching)
     async fn user_data(
@@ -247,6 +248,7 @@ impl MessagesManagerBuilder {
 ///
 /// This is the primary interface for interacting with the messaging system.
 ///
+#[derive(Clone)]
 pub struct MessagesManager {
     /// The underlying messages service for RPC operations
     messages_service: Arc<MessagesService>,
@@ -259,9 +261,9 @@ pub struct MessagesManager {
     /// Current subscription state (persistent across reconnections)
     state: SharedObservable<SubscriptionState, AsyncLock>,
     /// Background task handle for syncing with the server
-    sync_handler: JoinHandle<Result<()>>,
+    sync_handler: Arc<JoinHandle<Result<()>>>,
     /// Catch-up request ID counter
-    catch_up_request_id: AtomicU32,
+    catch_up_request_id: Arc<AtomicU32>,
 }
 
 impl MessagesManager {
@@ -396,8 +398,8 @@ impl MessagesManager {
             catch_up_tx,
             message_events_tx,
             state,
-            sync_handler,
-            catch_up_request_id: AtomicU32::new(0),
+            sync_handler: Arc::new(sync_handler),
+            catch_up_request_id: Arc::new(AtomicU32::new(0)),
         }
     }
 
@@ -428,7 +430,7 @@ impl MessagesManager {
     }
 
     pub async fn catch_up_and_subscribe(
-        &self,
+        self,
         filter: Filter,
         since: Option<String>,
     ) -> Result<impl Stream<Item = Box<MessageFull>>> {
@@ -453,7 +455,7 @@ impl MessagesManager {
             request_id,
         };
 
-        let regular_messages_stream = self.filtered_messages_stream(filter.clone());
+        let regular_messages_stream = self.clone().filtered_messages_stream(filter.clone());
 
         let catch_up_stream = {
             // we put this into a scope so the broadcaster is dropped when the stream finished
@@ -504,8 +506,11 @@ impl MessagesManager {
         Ok(catch_up_stream.chain(regular_messages_stream))
     }
 
-    pub fn filtered_messages_stream(&self, filter: Filter) -> impl Stream<Item = Box<MessageFull>> {
-        self.filtered_fn(move |msg| {
+    pub fn filtered_messages_stream(
+        self,
+        filter: Filter,
+    ) -> Pin<Box<dyn Stream<Item = Box<MessageFull>> + Send>> {
+        Box::pin(self.filtered_fn(move |msg| {
             let StreamMessage::MessageReceived { message, .. } = msg else {
                 return None;
             };
@@ -524,7 +529,7 @@ impl MessagesManager {
                 );
                 None
             }
-        })
+        }))
     }
 
     /// Get a filtered stream of messages.
@@ -537,7 +542,7 @@ impl MessagesManager {
     ///
     /// # Returns
     /// A stream of messages that match the filter
-    pub fn filtered_fn<F, T>(&self, filter: F) -> impl Stream<Item = T>
+    pub fn filtered_fn<F, T>(self, filter: F) -> impl Stream<Item = T>
     where
         F: Fn(StreamMessage) -> Option<T> + Send + Clone + 'static,
     {
@@ -694,19 +699,22 @@ impl MessagesManagerTrait for MessagesManager {
         BroadcastStream::new(self.catch_up_tx.subscribe())
     }
 
-    fn filtered_messages_stream<'a>(
-        &'a self,
+    fn filtered_messages_stream(
+        &self,
         filter: Filter,
-    ) -> std::pin::Pin<Box<dyn Stream<Item = Box<MessageFull>> + Send + 'a>> {
-        Box::pin(MessagesManager::filtered_messages_stream(self, filter))
+    ) -> std::pin::Pin<Box<dyn Stream<Item = Box<MessageFull>> + Send>> {
+        Box::pin(MessagesManager::filtered_messages_stream(
+            self.clone(),
+            filter,
+        ))
     }
 
-    async fn catch_up_and_subscribe<'a>(
-        &'a self,
+    async fn catch_up_and_subscribe(
+        &self,
         filter: Filter,
         since: Option<String>,
-    ) -> Result<std::pin::Pin<Box<dyn Stream<Item = Box<MessageFull>> + Send + 'a>>> {
-        let stream = MessagesManager::catch_up_and_subscribe(self, filter, since).await?;
+    ) -> Result<std::pin::Pin<Box<dyn Stream<Item = Box<MessageFull>> + Send>>> {
+        let stream = MessagesManager::catch_up_and_subscribe(self.clone(), filter, since).await?;
         Ok(Box::pin(stream))
     }
 
