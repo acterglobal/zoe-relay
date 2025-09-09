@@ -97,8 +97,8 @@ async fn run_signal_bot(args: ZoeSignalBotArgs) -> Result<(), Box<dyn std::error
         Commands::Default(default_cmd) => {
             run_default_command(&default_cmd).await?;
             return Ok(());
-        },
-        _ => args.command
+        }
+        _ => args.command,
     };
 
     // Initialize Zoe client

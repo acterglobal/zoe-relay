@@ -137,7 +137,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("V3 client sees: {v3_view:?}");
 
     println!("\n=== V3.0 Client Data ===");
-    let v3_notifications = vec![
+    let v3_notifications = [
         NotificationV3::Webhook {
             url: "https://api.example.com/webhook".to_string(),
             payload: r#"{"event": "notification"}"#.to_string(),

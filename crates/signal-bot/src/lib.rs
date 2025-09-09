@@ -408,9 +408,10 @@ impl SignalBot {
 
                 // Apply filters
                 if let Some(filter) = filter_sender
-                    && !sender.contains(filter) {
-                        return Ok(()); // Skip this message
-                    }
+                    && !sender.contains(filter)
+                {
+                    return Ok(()); // Skip this message
+                }
 
                 // For now, we don't have group detection in Signal like WhatsApp
                 // So groups_only and dm_only filters are not implemented yet
