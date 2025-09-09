@@ -13,7 +13,7 @@ COPY crates/whatsmeow/go.sum ./
 RUN go build -buildmode=c-archive -o libwhatsmeow.a whatsmeow.go
 
 # Rust builder stage
-FROM rust:latest as rust-builder
+FROM rust:1.89-bookworm as rust-builder
 
 # Install system dependencies for building
 RUN apt-get update && apt-get install -y \
