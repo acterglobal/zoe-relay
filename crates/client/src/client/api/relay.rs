@@ -372,11 +372,9 @@ impl Client {
     /// This is a computed stream that automatically updates when any relay status changes.
     /// It maintains local state and only locks once for initial state, then updates based on
     /// incoming relay status changes without additional locking.
-    pub fn overall_status_stream(
-        &self,
-    ) -> impl futures::Stream<Item = OverallConnectionStatus> + '_ {
+    pub fn overall_status_stream(&self) -> impl futures::Stream<Item = OverallConnectionStatus> {
         let client = self.clone();
-        let relay_receiver = self.subscribe_to_relay_status();
+        let relay_receiver = client.subscribe_to_relay_status();
 
         async_stream::stream! {
             let mut relay_receiver = relay_receiver;
@@ -419,7 +417,6 @@ impl Client {
             }
         }
     }
-
     /// Calculate the current overall connection status
     ///
     /// This is computed from the current relay states, ensuring it's always accurate but makes it
