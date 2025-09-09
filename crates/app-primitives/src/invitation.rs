@@ -73,7 +73,7 @@ pub fn derive_emoji_verification(shared_secret: &[u8; 32]) -> [&'static str; 6] 
 
     // Split into 6 chunks and derive emoji for each chunk
     let mut emojis = [""; 6];
-    for i in 0..6 {
+    for (i, emoji) in emojis.iter_mut().enumerate() {
         let start = i * 5;
         let end = std::cmp::min(start + 5, 32);
         let chunk = &fingerprint_bytes[start..end];
@@ -84,7 +84,7 @@ pub fn derive_emoji_verification(shared_secret: &[u8; 32]) -> [&'static str; 6] 
             index += (byte as u64) << (j * 8);
         }
 
-        emojis[i] = EMOJI_SET[(index % 64) as usize];
+        *emoji = EMOJI_SET[(index % 64) as usize];
     }
 
     emojis

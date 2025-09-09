@@ -29,7 +29,6 @@ pub struct ClientBuilder {
     autoconnect: bool,
 }
 
-
 impl Client {
     /// Create a new ClientBuilder for constructing a Client
     #[cfg_attr(feature = "frb-api", frb)]
@@ -37,8 +36,6 @@ impl Client {
         ClientBuilder::default()
     }
 }
-
-
 
 #[cfg_attr(feature = "frb-api", frb)]
 impl ClientBuilder {
