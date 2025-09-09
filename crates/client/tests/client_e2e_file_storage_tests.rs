@@ -9,6 +9,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tempfile::TempDir;
 
 use tracing::info;
+use zoe_app_primitives::{NetworkAddress, RelayAddress};
 use zoe_blob_store::BlobServiceImpl;
 use zoe_client::Client;
 use zoe_message_store::RedisMessageStorage;
@@ -119,6 +120,19 @@ impl TestInfrastructure {
             .await
             .context("Client creation timed out after 10 seconds")?
             .context("Failed to create client")?;
+
+        // Connect to the relay server for blob storage
+        info!("🔗 Connecting client to relay server...");
+        let network_address = match self.server_addr {
+            SocketAddr::V4(addr) => NetworkAddress::ipv4_with_port(*addr.ip(), addr.port()),
+            SocketAddr::V6(addr) => NetworkAddress::ipv6_with_port(*addr.ip(), addr.port()),
+        };
+        let relay_address =
+            RelayAddress::new(self.server_public_key.clone()).with_address(network_address);
+        client
+            .add_relay(relay_address)
+            .await
+            .context("Failed to connect client to relay server")?;
 
         info!("✅ Client connected successfully");
         Ok(client)

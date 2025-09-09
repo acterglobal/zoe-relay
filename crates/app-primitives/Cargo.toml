@@ -27,6 +27,9 @@ forward-compatible-enum = { path = "../forward-compatible-enum" }
 # QR code generation
 qrcode = "0.14"
 
+# Async runtime for DNS resolution
+tokio = { workspace = true }
+
 [dev-dependencies]
 # Testing utilities
 rand = { workspace = true }

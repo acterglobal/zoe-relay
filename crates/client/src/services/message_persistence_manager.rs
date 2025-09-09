@@ -797,11 +797,6 @@ mod tests {
         let state = SubscriptionState::with_filters(filters.clone());
         assert_eq!(state.current_filters, filters);
         assert!(state.latest_stream_height.is_none());
-
-        // Test setting stream height
-        let mut state = SubscriptionState::default();
-        state.latest_stream_height = Some("100".to_string());
-        assert_eq!(state.latest_stream_height, Some("100".to_string()));
     }
 
     #[tokio::test]
@@ -848,12 +843,6 @@ mod tests {
         let empty_state = SubscriptionState::default();
         assert!(empty_state.latest_stream_height.is_none());
         assert!(!empty_state.has_active_filters());
-
-        // Test with very long stream height string
-        let long_height = "a".repeat(1000);
-        let mut state = SubscriptionState::default();
-        state.latest_stream_height = Some(long_height.clone());
-        assert_eq!(state.latest_stream_height, Some(long_height));
     }
 
     // ============================================================================

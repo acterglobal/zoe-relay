@@ -2,8 +2,7 @@ use flutter_rust_bridge::frb;
 use std::net::{IpAddr, SocketAddr};
 use tokio::net::lookup_host;
 
-#[allow(dead_code)]
-const DEFAULT_PORT: u16 = 13908;
+pub const DEFAULT_PORT: u16 = 13908;
 
 #[cfg_attr(feature = "frb-api", frb)]
 pub async fn resolve_to_socket_addr(s: &str) -> Result<SocketAddr, String> {

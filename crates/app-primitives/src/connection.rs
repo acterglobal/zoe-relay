@@ -1,5 +1,5 @@
 use std::collections::BTreeSet;
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 
 use serde::{Deserialize, Serialize};
 use zoe_wire_protocol::VerifyingKey;
@@ -134,6 +134,37 @@ impl NetworkAddress {
             }
         }
     }
+
+    /// Resolve this network address to a socket address
+    ///
+    /// For IP addresses, returns immediately. For DNS addresses, performs resolution.
+    pub async fn resolve_to_socket_addr(&self, default_port: u16) -> Result<SocketAddr, String> {
+        match self {
+            NetworkAddress::Ipv4 { address, port } => Ok(SocketAddr::V4(
+                std::net::SocketAddrV4::new(*address, port.unwrap_or(default_port)),
+            )),
+            NetworkAddress::Ipv6 { address, port } => Ok(SocketAddr::V6(
+                std::net::SocketAddrV6::new(*address, port.unwrap_or(default_port), 0, 0),
+            )),
+            NetworkAddress::Dns { hostname, port } => {
+                let connection_string = match port {
+                    Some(p) => format!("{}:{}", hostname, p),
+                    None => format!("{}:{}", hostname, default_port),
+                };
+
+                // Use tokio's lookup_host for DNS resolution
+                use tokio::net::lookup_host;
+                let addrs = lookup_host(&connection_string)
+                    .await
+                    .map_err(|e| e.to_string())?;
+                if let Some(addr) = addrs.into_iter().next() {
+                    Ok(addr)
+                } else {
+                    Err(format!("No addresses found for {}", connection_string))
+                }
+            }
+        }
+    }
 }
 
 impl From<IpAddr> for NetworkAddress {
@@ -141,6 +172,15 @@ impl From<IpAddr> for NetworkAddress {
         match addr {
             IpAddr::V4(ipv4) => NetworkAddress::ipv4(ipv4),
             IpAddr::V6(ipv6) => NetworkAddress::ipv6(ipv6),
+        }
+    }
+}
+
+impl From<SocketAddr> for NetworkAddress {
+    fn from(addr: SocketAddr) -> Self {
+        match addr {
+            SocketAddr::V4(ipv4) => NetworkAddress::ipv4(*ipv4.ip()),
+            SocketAddr::V6(ipv6) => NetworkAddress::ipv6(*ipv6.ip()),
         }
     }
 }
@@ -228,6 +268,16 @@ impl RelayAddress {
     /// Get the first address, if any
     pub fn primary_address(&self) -> Option<&NetworkAddress> {
         self.addresses.iter().next()
+    }
+
+    /// Get the relay ID (public key ID)
+    pub fn id(&self) -> zoe_wire_protocol::KeyId {
+        self.public_key.id()
+    }
+
+    /// Get all addresses for connection attempts
+    pub fn all_addresses(&self) -> &BTreeSet<NetworkAddress> {
+        &self.addresses
     }
 }
 

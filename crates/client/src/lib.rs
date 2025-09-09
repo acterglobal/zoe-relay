@@ -14,7 +14,10 @@ pub mod util;
 #[cfg(feature = "frb-api")]
 pub use frb_api::*;
 
-pub use client::{Client, ClientBuilder};
+pub use client::{
+    Client, ClientBuilder, OverallConnectionStatus, RelayConnectionInfo, RelayConnectionStatus,
+    RelayInfo, RelayStatusUpdate,
+};
 pub use error::ClientError;
 pub use file_storage::FileStorage;
 pub use pqxdh::PqxdhProtocolHandler;

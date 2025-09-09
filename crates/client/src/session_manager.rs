@@ -66,21 +66,6 @@ pub enum SessionManagerError {
 
 /// Result type for session manager operations
 pub type SessionManagerResult<T> = Result<T, SessionManagerError>;
-
-/// State change events that can be broadcast to subscribers
-#[derive(Debug, Clone)]
-pub enum SessionStateChange {
-    /// PQXDH protocol state changed
-    PqxdhStateChanged { handler_id: String },
-    /// Group manager state changed
-    GroupManagerUpdate(GroupDataUpdate),
-    /// Session was removed
-    SessionRemoved {
-        namespace: StateNamespace,
-        key: Vec<u8>,
-    },
-}
-
 /// Builder for creating a SessionManager with proper initialization
 pub struct SessionManagerBuilder<S: StateStorage + 'static, M: MessagesManagerTrait + 'static> {
     storage: Arc<S>,
@@ -140,6 +125,10 @@ impl<S: StateStorage + 'static, M: MessagesManagerTrait + 'static> SessionManage
     }
 }
 
+
+type PqxdhHandlerState<M> = (Arc<PqxdhProtocolHandler<M>>, JoinHandle<()>);
+type PqxdhHandlerStates<M> = BTreeMap<PqxdhInboxProtocol, PqxdhHandlerState<M>>;
+
 /// State synchronization manager that automatically listens to and persists state changes.
 ///
 /// This manager follows the persistent messenger pattern:
@@ -157,8 +146,7 @@ pub struct SessionManager<S: StateStorage + 'static, M: MessagesManagerTrait + '
     /// Messages manager for subscription and message handling
     messages_manager: Arc<M>,
     /// PQXDH handlers with their background listener tasks  
-    pqxdh_handlers:
-        RwLock<BTreeMap<PqxdhInboxProtocol, (Arc<PqxdhProtocolHandler<M>>, JoinHandle<()>)>>,
+    pqxdh_handlers: RwLock<PqxdhHandlerStates<M>>,
     /// Group manager instance with background listener task
     group_manager: Arc<GroupManager>,
     #[allow(dead_code)]
@@ -367,15 +355,6 @@ impl<S: StateStorage + 'static, M: MessagesManagerTrait + 'static> SessionManage
                     tracing::error!(error=?e, "Failed to persist PQXDH state for {handler_id_clone}");
                     continue;
                 }
-
-                // // Emit state change event
-                // let event = SessionStateChange::PqxdhStateChanged {
-                //     handler_id: handler_id_clone.clone(),
-                // };
-
-                // if let Err(e) = state_change_tx.send(event) {
-                //     tracing::warn!("Failed to broadcast PQXDH state change event: {}", e);
-                // }
             }
 
             tracing::debug!("PQXDH state listener ended for handler: {handler_id_clone}");
