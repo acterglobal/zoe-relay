@@ -112,7 +112,7 @@ where
         let this = unsafe { self.get_unchecked_mut() };
         this.outgoing_queue
             .send(item)
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))
+            .map_err(|e| std::io::Error::other(e.to_string()))
     }
 
     fn poll_flush(

@@ -380,14 +380,14 @@ impl<T: crate::services::MessagesManagerTrait + 'static> PqxdhProtocolHandler<T>
 
         let messages_manager = self.messages_manager.clone();
         let state = self.state.clone();
-        Ok(PqxdhMessageListener::new(
+        PqxdhMessageListener::new(
             messages_manager,
             my_session_id,
             state,
             listening_tag,
             catch_up,
         )
-        .await?)
+        .await
     }
 
     pub async fn tarpc_transport<Req, Resp>(

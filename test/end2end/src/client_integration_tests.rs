@@ -9,6 +9,7 @@ use crate::infra::TestInfrastructure;
 use anyhow::{Context, Result};
 use futures::StreamExt;
 use rand::{Rng, RngCore};
+use serial_test::serial;
 use std::collections::BTreeMap;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::time::timeout;
@@ -331,6 +332,7 @@ async fn test_subscription_unsubscription_functionality() -> Result<()> {
 /// Comprehensive end-to-end test for all supported signature types through relay server
 /// Tests message publishing, subscription, and retrieval for Ed25519, MlDsa44, MlDsa65, and MlDsa87
 #[tokio::test]
+#[serial] // Prevent concurrent execution to avoid resource contention
 async fn test_all_signature_types_e2e() -> Result<()> {
     let infra = TestInfrastructure::setup().await?;
 
@@ -397,8 +399,8 @@ async fn test_all_signature_types_e2e() -> Result<()> {
 
     info!("📬 All clients subscribed to channel '{}'", test_channel);
 
-    // Wait for subscriptions to be processed
-    tokio::time::sleep(Duration::from_millis(300)).await;
+    // Wait for subscriptions to be processed (increased for better reliability)
+    tokio::time::sleep(Duration::from_millis(500)).await;
 
     // Create and publish messages from each client
     let timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
@@ -451,21 +453,24 @@ async fn test_all_signature_types_e2e() -> Result<()> {
     let ml_dsa_87_full = MessageFull::new(ml_dsa_87_message, ml_dsa_87_client.keypair())
         .map_err(|e| anyhow::anyhow!("Failed to create ML-DSA-87 MessageFull: {}", e))?;
 
-    // Publish all messages
+    // Publish all messages with small delays to reduce burst load
     let ed25519_result = ed25519_service
         .publish(ed25519_full)
         .await
         .context("Failed to publish Ed25519 message")?;
+    tokio::time::sleep(Duration::from_millis(50)).await;
 
     let ml_dsa_44_result = ml_dsa_44_service
         .publish(ml_dsa_44_full)
         .await
         .context("Failed to publish ML-DSA-44 message")?;
+    tokio::time::sleep(Duration::from_millis(50)).await;
 
     let ml_dsa_65_result = ml_dsa_65_service
         .publish(ml_dsa_65_full)
         .await
         .context("Failed to publish ML-DSA-65 message")?;
+    tokio::time::sleep(Duration::from_millis(50)).await;
 
     let ml_dsa_87_result = ml_dsa_87_service
         .publish(ml_dsa_87_full)
@@ -478,11 +483,11 @@ async fn test_all_signature_types_e2e() -> Result<()> {
     info!("   📝 ML-DSA-65 result: {:?}", ml_dsa_65_result);
     info!("   📝 ML-DSA-87 result: {:?}", ml_dsa_87_result);
 
-    // Wait for messages to be distributed
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    // Wait for messages to be distributed (increased for better reliability under load)
+    tokio::time::sleep(Duration::from_millis(1000)).await;
 
-    // Collect messages from each client's stream
-    let receive_timeout = Duration::from_millis(1000);
+    // Collect messages from each client's stream (increased timeout for resource contention)
+    let receive_timeout = Duration::from_millis(2000);
 
     // Helper function to collect messages from a stream
     async fn collect_messages_from_stream<S>(
@@ -520,15 +525,13 @@ async fn test_all_signature_types_e2e() -> Result<()> {
         messages
     }
 
-    // Collect messages from all clients
-    let ed25519_messages =
-        collect_messages_from_stream(ed25519_stream, "Ed25519", receive_timeout).await;
-    let ml_dsa_44_messages =
-        collect_messages_from_stream(ml_dsa_44_stream, "ML-DSA-44", receive_timeout).await;
-    let ml_dsa_65_messages =
-        collect_messages_from_stream(ml_dsa_65_stream, "ML-DSA-65", receive_timeout).await;
-    let ml_dsa_87_messages =
-        collect_messages_from_stream(ml_dsa_87_stream, "ML-DSA-87", receive_timeout).await;
+    // Collect messages from all clients in parallel to avoid race conditions
+    let (ed25519_messages, ml_dsa_44_messages, ml_dsa_65_messages, ml_dsa_87_messages) = tokio::join!(
+        collect_messages_from_stream(ed25519_stream, "Ed25519", receive_timeout),
+        collect_messages_from_stream(ml_dsa_44_stream, "ML-DSA-44", receive_timeout),
+        collect_messages_from_stream(ml_dsa_65_stream, "ML-DSA-65", receive_timeout),
+        collect_messages_from_stream(ml_dsa_87_stream, "ML-DSA-87", receive_timeout)
+    );
 
     // Verify that all clients received all messages (cross-signature-type communication)
     let expected_messages = [

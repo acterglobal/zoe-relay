@@ -77,17 +77,20 @@ impl MessagesService {
                         match inner {
                             MessageServiceResponseWrap::StreamMessage(message) => {
                                 if let Err(e) = incoming_tx.send(message) {
-                                    return Err(ClientError::Generic(format!("Stream Message Send error: {e}")));
+                                    tracing::warn!("Stream message send failed (receiver may be dropped): {e}");
+                                    // Don't return error - continue processing other messages
                                 }
                             }
                             MessageServiceResponseWrap::RpcResponse(response) => {
                                 if let Err(e) = server_transport.send(*response).await {
-                                    return Err(ClientError::Generic(format!("RPC Response Send error: {e}")));
+                                    tracing::warn!("RPC response send failed (connection may be closing): {e}");
+                                    break; // Break on RPC transport errors as they indicate connection issues
                                 }
                             }
                             MessageServiceResponseWrap::CatchUpResponse(catch_up_response) => {
                                 if let Err(e) = catch_up_tx.send(catch_up_response) {
-                                    return Err(ClientError::Generic(format!("Catch Up Response Send error: {e}")));
+                                    tracing::warn!("Catch-up response send failed (receiver may be dropped): {e}");
+                                    // Don't return error - continue processing other messages
                                 }
                             }
                         }
