@@ -10,13 +10,13 @@ required-features = ["cli"]
 [features]
 default = ["frb-api",]
 mls = ["dep:openmls", "dep:openmls_rust_crypto", "dep:openmls_basic_credential", "dep:openmls_memory_storage"]
-frb-api = ["dep:flutter_rust_bridge", "dep:extend", "tokio/net"]
+frb-api = [
+    "dep:flutter_rust_bridge", "dep:extend", "tokio/net",
+    "zoe-app-primitives/frb-api", "zoe-wire-protocol/frb-api"
+]
 test-utils = []
 mock = ["zoe-client-storage/mock", "dep:mockall"]
 cli = ["clap", "tracing-subscriber"]
-
-[lints.rust]
-unexpected_cfgs = { level = "warn", check-cfg = ['cfg(frb_expand)'] }
 
 [dependencies]
 # Wire protocol for crypto utilities
@@ -30,7 +30,7 @@ zoe-client-storage = { path = "../client-storage" }
 zoe-state-machine = { path = "../state-machine" }
 
 # Flutter Rust Bridge (optional)
-flutter_rust_bridge = { version = "=2.11.1", optional = true }
+flutter_rust_bridge = { workspace = true, optional = true }
 
 # Async runtime
 tokio = { workspace = true, features = ["io-util"] }
@@ -109,3 +109,8 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 postcard = { workspace = true }
 bip39 = "2.1"
+
+
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(frb_expand)'] }

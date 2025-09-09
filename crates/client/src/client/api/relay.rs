@@ -367,14 +367,6 @@ impl Client {
         }
     }
 
-    /// Subscribe to per-relay connection status updates
-    ///
-    /// This provides real-time updates about individual relay connection status changes.
-    /// Each relay reports its status independently via this broadcast channel.
-    pub fn subscribe_to_relay_status(&self) -> broadcast::Receiver<RelayStatusUpdate> {
-        self.relay_status_sender.subscribe()
-    }
-
     /// Create a stream of overall connection status computed from relay status updates
     ///
     /// This is a computed stream that automatically updates when any relay status changes.
@@ -567,5 +559,16 @@ impl Client {
 
         // Send to broadcast channel - ignore if no receivers
         let _ = self.relay_status_sender.send(status_update);
+    }
+}
+
+#[cfg_attr(feature = "frb-api", frb(ignore))]
+impl Client {
+    /// Subscribe to per-relay connection status updates
+    ///
+    /// This provides real-time updates about individual relay connection status changes.
+    /// Each relay reports its status independently via this broadcast channel.
+    pub fn subscribe_to_relay_status(&self) -> broadcast::Receiver<RelayStatusUpdate> {
+        self.relay_status_sender.subscribe()
     }
 }

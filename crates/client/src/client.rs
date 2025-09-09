@@ -10,7 +10,10 @@ use tokio::task::JoinHandle;
 use zoe_client_storage::SqliteMessageStorage;
 use zoe_wire_protocol::KeyId;
 
+#[cfg(not(feature = "frb-api"))]
 mod api;
+#[cfg(feature = "frb-api")]
+pub mod api; // needs to be public for flutter rust bridge
 mod builder;
 mod info;
 mod secret;

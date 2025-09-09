@@ -29,35 +29,33 @@ pub struct ClientBuilder {
     autoconnect: bool,
 }
 
-impl ClientBuilder {
+
+impl Client {
+    /// Create a new ClientBuilder for constructing a Client
     #[cfg_attr(feature = "frb-api", frb)]
+    pub fn builder() -> ClientBuilder {
+        ClientBuilder::default()
+    }
+}
+
+
+
+#[cfg_attr(feature = "frb-api", frb)]
+impl ClientBuilder {
     pub fn client_secret(&mut self, secret: ClientSecret) {
         self.servers = Some(secret.servers);
         self.inner_keypair = Some(secret.inner_keypair);
         self.encryption_key = Some(secret.encryption_key);
     }
 
-    #[cfg_attr(feature = "frb-api", frb)]
     pub fn media_storage_dir(&mut self, media_storage_dir: String) {
         self.media_storage_dir_pathbuf(PathBuf::from(media_storage_dir));
     }
 
-    #[cfg_attr(feature = "frb-api", frb(ignore))]
-    pub fn media_storage_dir_pathbuf(&mut self, media_storage_dir: PathBuf) {
-        self.media_storage_dir = Some(PathBuf::from(media_storage_dir));
-    }
-
-    #[cfg_attr(feature = "frb-api", frb(ignore))]
-    pub fn inner_keypair(&mut self, inner_keypair: KeyPair) {
-        self.inner_keypair = Some(Arc::new(inner_keypair));
-    }
-
-    #[cfg_attr(feature = "frb-api", frb)]
     pub fn servers(&mut self, servers: Vec<RelayAddress>) {
         self.servers = Some(servers);
     }
 
-    #[cfg_attr(feature = "frb-api", frb)]
     pub fn server_info(&mut self, server_public_key: VerifyingKey, server_addr: SocketAddr) {
         self.servers = Some(vec![
             RelayAddress::new(server_public_key)
@@ -67,18 +65,11 @@ impl ClientBuilder {
     }
 
     /// Set the storage database path (convenience method)
-    #[cfg_attr(feature = "frb-api", frb)]
     pub fn db_storage_dir(&mut self, path: String) {
         self.db_storage_dir_pathbuf(PathBuf::from(path));
     }
 
-    #[cfg_attr(feature = "frb-api", frb(ignore))]
-    pub fn db_storage_dir_pathbuf(&mut self, path: PathBuf) {
-        self.db_storage_dir = Some(path);
-    }
-
     /// Set the encryption key for storage
-    #[cfg_attr(feature = "frb-api", frb)]
     pub fn encryption_key(&mut self, key: [u8; 32]) {
         self.encryption_key = Some(key);
     }
@@ -89,12 +80,10 @@ impl ClientBuilder {
     /// will require server information and connect immediately during build().
     /// When autoconnect is false, the client starts in offline mode and can
     /// connect to relays later using add_relay().
-    #[cfg_attr(feature = "frb-api", frb)]
     pub fn autoconnect(&mut self, autoconnect: bool) {
         self.autoconnect = autoconnect;
     }
 
-    #[cfg_attr(feature = "frb-api", frb)]
     pub async fn build(self) -> Result<Client> {
         let Some(media_storage_dir) = self.media_storage_dir else {
             return Err(ClientError::BuildError(
@@ -208,10 +197,18 @@ impl ClientBuilder {
     }
 }
 
-impl Client {
-    /// Create a new ClientBuilder for constructing a Client
-    #[cfg_attr(feature = "frb-api", frb)]
-    pub fn builder() -> ClientBuilder {
-        ClientBuilder::default()
+#[cfg_attr(feature = "frb-api", frb(ignore))]
+// non Flutter Rust Bridge API methods
+impl ClientBuilder {
+    pub fn media_storage_dir_pathbuf(&mut self, media_storage_dir: PathBuf) {
+        self.media_storage_dir = Some(PathBuf::from(media_storage_dir));
+    }
+
+    pub fn inner_keypair(&mut self, inner_keypair: KeyPair) {
+        self.inner_keypair = Some(Arc::new(inner_keypair));
+    }
+
+    pub fn db_storage_dir_pathbuf(&mut self, path: PathBuf) {
+        self.db_storage_dir = Some(path);
     }
 }

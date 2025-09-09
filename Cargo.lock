@@ -9552,6 +9552,7 @@ name = "zoe-app-primitives"
 version = "0.1.0"
 dependencies = [
  "blake3",
+ "flutter_rust_bridge",
  "forward-compatible-enum",
  "hex",
  "libcrux-ml-dsa",
@@ -9883,6 +9884,7 @@ dependencies = [
  "curve25519-dalek",
  "der",
  "ed25519-dalek",
+ "flutter_rust_bridge",
  "forward-compatible-enum",
  "heapless",
  "hex",

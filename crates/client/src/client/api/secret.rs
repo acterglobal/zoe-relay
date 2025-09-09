@@ -7,16 +7,20 @@ use flutter_rust_bridge::frb;
 
 #[cfg_attr(feature = "frb-api", frb)]
 impl Client {
+    /// Get the current client secret
+    pub fn client_secret(&self) -> ClientSecret {
+        self.client_secret_observable.get()
+    }
+}
+
+#[cfg_attr(feature = "frb-api", frb(ignore))]
+impl Client {
     /// Subscribe to client secret updates
     ///
     /// Third parties can use this to be notified when the client secret changes,
     /// allowing them to store updated client secrets with the current server configuration.
     pub fn subscribe_to_client_secret(&self) -> Subscriber<ClientSecret> {
         self.client_secret_observable.subscribe()
-    }
-    /// Get the current client secret
-    pub fn client_secret(&self) -> ClientSecret {
-        self.client_secret_observable.get()
     }
 
     /// Update the client secret observable state with current server configuration
