@@ -25,6 +25,9 @@ pub use info::{
 };
 pub use secret::ClientSecret;
 
+// Re-export from api module
+pub use api::relay::RelayConnectionHandle;
+
 #[cfg(feature = "frb-api")]
 use flutter_rust_bridge::frb;
 

@@ -40,7 +40,7 @@ impl Client {
 #[cfg_attr(feature = "frb-api", frb)]
 impl ClientBuilder {
     pub fn client_secret(&mut self, secret: ClientSecret) {
-        self.servers = Some(secret.servers);
+        self.servers.get_or_insert_default().extend(secret.servers);
         self.inner_keypair = Some(secret.inner_keypair);
         self.encryption_key = Some(secret.encryption_key);
     }
@@ -54,11 +54,11 @@ impl ClientBuilder {
     }
 
     pub fn server_info(&mut self, server_public_key: VerifyingKey, server_addr: SocketAddr) {
-        self.servers = Some(vec![
+        self.servers.get_or_insert_default().push(
             RelayAddress::new(server_public_key)
                 .with_address(server_addr.into())
                 .with_name("Legacy Server".to_string()),
-        ]);
+        );
     }
 
     /// Set the storage database path (convenience method)
@@ -176,17 +176,11 @@ impl ClientBuilder {
         };
 
         // If autoconnect is enabled, add the first server immediately
-        if self.autoconnect && !servers.is_empty() {
-            let first_server = &servers[0];
-            let relay_address = first_server.clone();
-
-            // Add the relay (this will attempt to connect)
-            if let Err(e) = client.add_relay(relay_address).await {
-                tracing::warn!(
-                    "Failed to connect to initial relay in autoconnect mode: {}",
-                    e
-                );
-                // Don't fail the build, just log the warning
+        if self.autoconnect {
+            for server in servers {
+                // add all servers in background
+                let relay_address = server.clone();
+                let _handle = client.add_relay_background(relay_address);
             }
         }
 

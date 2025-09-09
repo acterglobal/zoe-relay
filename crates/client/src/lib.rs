@@ -17,8 +17,8 @@ pub mod util;
 pub use frb_api::*;
 
 pub use client::{
-    Client, ClientBuilder, ClientSecret, OverallConnectionStatus, RelayConnectionInfo,
-    RelayConnectionStatus, RelayInfo, RelayStatusUpdate,
+    Client, ClientBuilder, ClientSecret, OverallConnectionStatus, RelayConnectionHandle,
+    RelayConnectionInfo, RelayConnectionStatus, RelayInfo, RelayStatusUpdate,
 };
 pub use error::ClientError;
 pub use file_storage::FileStorage;
