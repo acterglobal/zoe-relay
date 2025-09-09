@@ -64,7 +64,7 @@ zoe-e2e-tests = { path = "../../test/end2end" }
 
 # Additional utilities for testing  
 tempfile = { workspace = true }
-redis = { version = "0.32.4", features = ["tokio-comp", "connection-manager"] }
+redis = { workspace = true, features = ["tokio-comp", "connection-manager"] }
 tracing-subscriber = { workspace = true }
 rand = { workspace = true }
 rand_chacha = { workspace = true }

@@ -40,4 +40,4 @@ ed25519-dalek = { workspace = true }
 env_logger = { workspace = true }
 
 # Redis client for message store tests
-redis = { version = "0.24", features = ["tokio-comp"] }
+redis = { workspace = true, features = ["tokio-comp"] }

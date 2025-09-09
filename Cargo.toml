@@ -70,6 +70,7 @@ extend = "1.2.0"
 
 # Database
 rusqlite = { version = "0.32" }
+redis = { version = "0.32.4" }
 
 # Compression
 brotli = "8"

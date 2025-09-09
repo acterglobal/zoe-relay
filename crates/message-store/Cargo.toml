@@ -13,7 +13,7 @@ tokio = { workspace = true }
 futures = { workspace = true }
 
 # Redis client
-redis = { version = "0.32.4", features = ["tokio-comp", "connection-manager", "r2d2"] }
+redis = { workspace = true, features = ["tokio-comp", "connection-manager", "r2d2"] }
 r2d2 = "0.8"
 
 # Serialization
