@@ -1,11 +1,23 @@
-# Docker Compose for Zoe Relay Server
-# Production-ready setup with Redis and persistent storage
+# Docker Compose for Zoe Network Services
+# Production-ready setup with Redis, Relay Server, and WhatsApp Bot
 
 services:
+
+
+########  #######  ########    ########  ######## ##          ###    ##    ## 
+     ##  ##     ## ##          ##     ## ##       ##         ## ##    ##  ##  
+    ##   ##     ## ##          ##     ## ##       ##        ##   ##    ####   
+   ##    ##     ## ######      ########  ######   ##       ##     ##    ##    
+  ##     ##     ## ##          ##   ##   ##       ##       #########    ##    
+ ##      ##     ## ##          ##    ##  ##       ##       ##     ##    ##    
+########  #######  ########    ##     ## ######## ######## ##     ##    ##    
+
+
+
   zoe-relay:
     build:
       context: .
-      dockerfile: Dockerfile
+      dockerfile: docker/Dockerfile.relay
     restart: unless-stopped
     depends_on:
       - zoe-redis
@@ -17,21 +29,34 @@ services:
       - ZOERELAY_INTERFACE=0.0.0.0
       - ZOERELAY_EXTERNAL_ADDRESSES=${ZOERELAY_EXTERNAL_ADDRESSES:-localhost}
       - ZOERELAY_NAME=${ZOERELAY_NAME:-Zoe Relay Server}
+      # Key export for other services
+      - ZOERELAY_EXPORT_PUBLIC_KEY_TO=/shared/keys
       # Logging
       - RUST_LOG=${RUST_LOG:-info}
       - ZOERELAY_REDIS_URL=${ZOERELAY_REDIS_URL:-redis://zoe-redis:6379}
     volumes:
-      # Persistent storage for server keys and blob data
-      - zoe_data:/app/data
+      # Persistent storage for server keys and blob data (private to relay)
+      - zoe_relay_data:/app/data
+      # Shared read-only volume for public key export (separate from private data)
+      - zoe_shared_keys:/shared/keys
       # Optional: custom configuration
       # - ./config:/app/config:ro
     healthcheck:
-      test: ["CMD-SHELL", "timeout 5 bash -c '</dev/udp/localhost/13908' || exit 1"]
+      test: ["CMD-SHELL", "test -f /shared/keys/zoe_relay_server_public_key.pem && timeout 5 bash -c '</dev/udp/localhost/13908' || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 10s
-
+    networks:
+      - zoe-network
+                               
+ #####  ###### #####  #  ####  
+ #    # #      #    # # #      
+ #    # #####  #    # #  ####  
+ #####  #      #    # #      # 
+ #   #  #      #    # # #    # 
+ #    # ###### #####  #  ####  
+                               
   zoe-redis:
     image: redis:7-alpine
     restart: unless-stopped
@@ -43,12 +68,167 @@ services:
       timeout: 10s
       retries: 3
       start_period: 10s
+    networks:
+      - zoe-network
+
+#::::::::::::::::::'########:'##::::'##:'########:'########:::::'###:::::::::::::::::::::::::3
+#:::::::::::::::::: ##.....::. ##::'##::... ##..:: ##.... ##:::'## ##::::::::::::::::::::::::3
+#:::::::::::::::::: ##::::::::. ##'##:::::: ##:::: ##:::: ##::'##:. ##:::::::::::::::::::::::3
+#:::'#######::::::: ######:::::. ###::::::: ##:::: ########::'##:::. ##:::::::'#######:::::::3
+#:::........::::::: ##...:::::: ## ##:::::: ##:::: ##.. ##::: #########:::::::........:::::::3
+#:::::::::::::::::: ##:::::::: ##:. ##::::: ##:::: ##::. ##:: ##.... ##::::::::::::::::::::::3
+#:::::::::::::::::: ########: ##:::. ##:::: ##:::: ##:::. ##: ##:::: ##::::::::::::::::::::::3
+#::::::::::::::::::........::..:::::..:::::..:::::..:::::..::..:::::..:::::::::::::::::::::::3
+
+
+
+
+
+
+ #     #                               #                     ######               
+ #  #  # #    #   ##   #####  ####    # #   #####  #####     #     #  ####  ##### 
+ #  #  # #    #  #  #    #   #       #   #  #    # #    #    #     # #    #   #   
+ #  #  # ###### #    #   #    ####  #     # #    # #    #    ######  #    #   #   
+ #  #  # #    # ######   #        # ####### #####  #####     #     # #    #   #   
+ #  #  # #    # #    #   #   #    # #     # #      #         #     # #    #   #   
+  ## ##  #    # #    #   #    ####  #     # #      #         ######   ####    #   
+                                                                                  
+
+  zoe-wa-bot:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.wa-bot
+    restart: unless-stopped
+    depends_on:
+      zoe-relay:
+        condition: service_healthy
+    environment:
+      # Relay connection
+      - ZOE_RELAY_ADDRESS=zoe-relay:13908
+      - ZOE_SERVER_KEY_FILE=/shared/keys/zoe_relay_server_public_key.pem
+      - ZOE_EPHEMERAL=true
+      # Health check
+      - ZOE_HEALTH_CHECK_PORT=8081
+      # WhatsApp configuration
+      - WHATSAPP_DB_PATH=/app/data/whatsapp.db
+      - MAX_CONNECTION_ATTEMPTS=${MAX_CONNECTION_ATTEMPTS:-10}
+      # Logging
+      - RUST_LOG=${RUST_LOG:-info}
+    volumes:
+      # Persistent storage for WhatsApp database and bot data
+      - zoe_wa_bot_data:/app/data
+      # Shared read-only volume to read server public key (no access to relay private data)
+      - zoe_shared_keys:/shared/keys:ro
+    healthcheck:
+      test: ["CMD", "./zoe-wa-bot", "health-check"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+    networks:
+      - zoe-network
+    # Simple command - all configuration via environment variables
+    command: ["./zoe-wa-bot"]
+    profiles:
+      - whatsapp-bot
+  #####                                   ######               
+ #     # #  ####  #    #   ##   #         #     #  ####  ##### 
+ #       # #    # ##   #  #  #  #         #     # #    #   #   
+  #####  # #      # #  # #    # #         ######  #    #   #   
+       # # #  ### #  # # ###### #         #     # #    #   #   
+ #     # # #    # #   ## #    # #         #     # #    #   #   
+  #####  #  ####  #    # #    # ######    ######   ####    #   
+                                                               
+
+  zoe-signal-bot:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.signal-bot
+    restart: unless-stopped
+    depends_on:
+      zoe-relay:
+        condition: service_healthy
+    environment:
+      # Relay connection
+      - ZOE_RELAY_ADDRESS=zoe-relay:13908
+      - ZOE_SERVER_KEY_FILE=/shared/keys/zoe_relay_server_public_key.pem
+      - ZOE_EPHEMERAL=true
+      # Health check
+      - ZOE_HEALTH_CHECK_PORT=8080
+      # Signal configuration
+      - SIGNAL_DATA_DIR=/app/data
+      - MAX_CONNECTION_ATTEMPTS=${MAX_CONNECTION_ATTEMPTS:-10}
+      # Logging
+      - RUST_LOG=${RUST_LOG:-info}
+    volumes:
+      # Persistent storage for Signal database and bot data
+      - signal_bot_data:/app/data
+      # Shared read-only volume to read server public key (no access to relay private data)
+      - zoe_shared_keys:/shared/keys:ro
+    healthcheck:
+      test: ["CMD", "./signal-bot", "health-check"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+    networks:
+      - zoe-network
+    stdin_open: true
+    tty: true
+    # Simple command - all configuration via environment variables
+    command: ["./signal-bot"]
+    profiles:
+      - signal-bot
+
+                                  
+                                  
+                                  
+ #####    #####    #####    ##### 
+                                  
+                                  
+                                  
+                                  
+        
+                                                  
+ #    # ###### ##### #    #  ####  #####  #    # 
+ ##   # #        #   #    # #    # #    # #   #  
+ # #  # #####    #   #    # #    # #    # ####   
+ #  # # #        #   # ## # #    # #####  #  #   
+ #   ## #        #   ##  ## #    # #   #  #   #  
+ #    # ######   #   #    #  ####  #    # #    #                            
+
+networks:
+  zoe-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
+
+                                                  
+ #    #  ####  #      #    # #    # ######  ####  
+ #    # #    # #      #    # ##  ## #      #      
+ #    # #    # #      #    # # ## # #####   ####  
+ #    # #    # #      #    # #    # #           # 
+  #  #  #    # #      #    # #    # #      #    # 
+   ##    ####  ######  ####  #    # ######  ####  
 
 volumes:
-  # Persistent storage for relay server data (keys, blobs, etc.)
-  zoe_data:
+  # Persistent storage for relay server data (keys, blobs, etc.) - private to relay
+  zoe_relay_data:
+    driver: local
+  
+  # Shared volume for public key exchange only - separate from private data
+  zoe_shared_keys:
+    driver: local
+  
+  # Persistent storage for WhatsApp bot data (database, session, etc.)
+  zoe_wa_bot_data:
     driver: local
   
   # Persistent storage for Redis data
   zoe_redis_data:
+    driver: local
+    
+  # Persistent storage for Signal bot data (encrypted database)
+  signal_bot_data:
     driver: local

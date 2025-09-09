@@ -3,6 +3,10 @@ name = "zoe-app-primitives"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+whatsappbot = ["tarpc"]
+signalbot = []
+
 [dependencies]
 # Cryptographic types
 libcrux-ml-dsa = { workspace = true }
@@ -29,6 +33,8 @@ qrcode = "0.14"
 
 # Async runtime for DNS resolution
 tokio = { workspace = true }
+# RPC framework for whatsappbot feature
+tarpc = { workspace = true, features = ["serde-transport"], optional = true }
 
 [dev-dependencies]
 # Testing utilities

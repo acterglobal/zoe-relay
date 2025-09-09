@@ -160,10 +160,10 @@
 //!
 //! This crate is designed to integrate seamlessly with other parts of the Zoe ecosystem:
 //!
-//! - **[`zoe-wire-protocol`]**: Network communication and encryption
-//! - **[`zoe-state-machine`]**: Higher-level state management and event processing
-//! - **[`zoe-message-store`]**: Persistent storage for events and messages
-//! - **[`zoe-client`]**: Application-level client implementations
+//! - **`zoe-wire-protocol`**: Network communication and encryption
+//! - **`zoe-state-machine`**: Higher-level state management and event processing
+//! - **`zoe-message-store`**: Persistent storage for events and messages
+//! - **`zoe-client`**: Application-level client implementations
 //!
 //! The types defined here serve as the interface contracts between these layers,
 //! ensuring compatibility and consistency across the entire system.
@@ -191,9 +191,11 @@
 //! - Review the state machine crate for event processing patterns
 
 pub mod connection;
+pub mod extra;
 pub mod file;
 pub mod group;
 pub mod identity;
+pub mod invitation;
 pub mod metadata;
 pub mod qr;
 pub mod relay;
@@ -202,6 +204,7 @@ pub use connection::*;
 pub use file::*;
 pub use group::*;
 pub use identity::*;
+pub use invitation::*;
 pub use metadata::*;
 pub use qr::*;
 pub use relay::*;

@@ -3,6 +3,7 @@ package main
 /*
 #include <stdlib.h>
 #include <stdint.h>
+#include <stdbool.h>
 
 // Forward declarations for Rust callback functions
 typedef struct {
@@ -18,6 +19,7 @@ typedef struct {
 
 extern void rust_status_callback(uintptr_t handle, CStatusResponse* response);
 extern void rust_response_callback(uintptr_t handle, CResponse* response);
+extern void rust_message_callback(uintptr_t handle, CResponse* response);
 */
 import "C"
 
@@ -27,20 +29,18 @@ import (
 	"encoding/json"
 	"fmt"
 	"runtime"
+	"sync"
 	"time"
 	"unsafe"
 
 	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/store/sqlstore"
 	"go.mau.fi/whatsmeow/types"
+	"go.mau.fi/whatsmeow/types/events"
 	waProto "go.mau.fi/whatsmeow/binary/proto"
 	waLog "go.mau.fi/whatsmeow/util/log"
 	_ "github.com/mattn/go-sqlite3"
 )
-
-// Global client instance
-var client *whatsmeow.Client
-var container *sqlstore.Container
 
 // Contact structure for JSON serialization
 type Contact struct {
@@ -49,53 +49,74 @@ type Contact struct {
 	Phone *string `json:"phone"`
 }
 
-// Initialize the WhatsApp client
+// Message event structure for JSON serialization
+type MessageEvent struct {
+	ID        string `json:"id"`
+	Chat      string `json:"chat"`
+	Sender    string `json:"sender"`
+	Timestamp int64  `json:"timestamp"`
+	Type      string `json:"type"`
+	Content   string `json:"content"`
+	IsFromMe  bool   `json:"is_from_me"`
+}
+
+// Global message handlers registry
+var messageHandlers = make(map[uintptr]uintptr)
+var messageHandlersMutex sync.RWMutex
+
+// Initialize the WhatsApp client with database path and return client pointer
 //export whatsmeow_init
-func whatsmeow_init() bool {
+func whatsmeow_init(path *C.char) uintptr {
+	if path == nil {
+		return 0
+	}
+
+	pathStr := C.GoString(path)
+	dbConnString := fmt.Sprintf("%s?_foreign_keys=on", pathStr)
+	db, err := sql.Open("sqlite3", dbConnString)
+	if err != nil {
+		fmt.Printf("Failed to open database: %v\n", err)
+		return 0
+	}
+
 	// Create database container
 	dbLog := waLog.Stdout("Database", "DEBUG", true)
-	container = sqlstore.NewWithDB(getSQLiteDB(), "sqlite3", dbLog)
+	container := sqlstore.NewWithDB(db, "sqlite3", dbLog)
 	
 	// Ensure database schema is created
-	err := container.Upgrade(context.Background())
+	err = container.Upgrade(context.Background())
 	if err != nil {
 		fmt.Printf("Failed to upgrade database schema: %v\n", err)
-		return false
+		return 0
 	}
 	
 	// Get the first device store
 	deviceStore, err := container.GetFirstDevice(context.Background())
 	if err != nil {
 		fmt.Printf("Failed to get device store: %v\n", err)
-		return false
+		return 0
 	}
 	
 	// Create client
 	clientLog := waLog.Stdout("Client", "DEBUG", true)
-	client = whatsmeow.NewClient(deviceStore, clientLog)
+	client := whatsmeow.NewClient(deviceStore, clientLog)
 	
-	return true
-}
-
-// Get SQLite database connection
-func getSQLiteDB() *sql.DB {
-	db, err := sql.Open("sqlite3", "whatsapp.db?_foreign_keys=on")
-	if err != nil {
-		panic(fmt.Sprintf("Failed to open database: %v", err))
-	}
-	return db
+	// Return client as uintptr (pointer)
+	return uintptr(unsafe.Pointer(client))
 }
 
 // Connect to WhatsApp
 //export whatsmeow_connect_async
-func whatsmeow_connect_async(callback_handle uintptr) {
+func whatsmeow_connect_async(client_ptr uintptr, callback_handle uintptr) {
 	go func() {
 		defer handlePanic()
 		
-		if client == nil {
+		if client_ptr == 0 {
 			sendStatusCallback(callback_handle, "disconnected", "Client not initialized")
 			return
 		}
+		
+		client := (*whatsmeow.Client)(unsafe.Pointer(client_ptr))
 		
 		if client.IsConnected() {
 			sendStatusCallback(callback_handle, "connected", "")
@@ -114,15 +135,16 @@ func whatsmeow_connect_async(callback_handle uintptr) {
 
 // Disconnect from WhatsApp
 //export whatsmeow_disconnect_async
-func whatsmeow_disconnect_async(callback_handle uintptr) {
+func whatsmeow_disconnect_async(client_ptr uintptr, callback_handle uintptr) {
 	go func() {
 		defer handlePanic()
 		
-		if client == nil {
+		if client_ptr == 0 {
 			sendStatusCallback(callback_handle, "disconnected", "Client not initialized")
 			return
 		}
 		
+		client := (*whatsmeow.Client)(unsafe.Pointer(client_ptr))
 		client.Disconnect()
 		sendStatusCallback(callback_handle, "disconnected", "")
 	}()
@@ -130,14 +152,16 @@ func whatsmeow_disconnect_async(callback_handle uintptr) {
 
 // Get connection status
 //export whatsmeow_get_status_async
-func whatsmeow_get_status_async(callback_handle uintptr) {
+func whatsmeow_get_status_async(client_ptr uintptr, callback_handle uintptr) {
 	go func() {
 		defer handlePanic()
 		
-		if client == nil {
+		if client_ptr == 0 {
 			sendStatusCallback(callback_handle, "disconnected", "")
 			return
 		}
+		
+		client := (*whatsmeow.Client)(unsafe.Pointer(client_ptr))
 		
 		if client.IsLoggedIn() {
 			if client.IsConnected() {
@@ -153,14 +177,16 @@ func whatsmeow_get_status_async(callback_handle uintptr) {
 
 // Get QR code for authentication
 //export whatsmeow_get_qr_async
-func whatsmeow_get_qr_async(callback_handle uintptr) {
+func whatsmeow_get_qr_async(client_ptr uintptr, callback_handle uintptr) {
 	go func() {
 		defer handlePanic()
 		
-		if client == nil {
+		if client_ptr == 0 {
 			sendResponseCallback(callback_handle, false, "", "Client not initialized")
 			return
 		}
+		
+		client := (*whatsmeow.Client)(unsafe.Pointer(client_ptr))
 		
 		if client.IsLoggedIn() {
 			sendResponseCallback(callback_handle, true, "", "")
@@ -217,14 +243,16 @@ func whatsmeow_get_qr_async(callback_handle uintptr) {
 
 // Send a text message
 //export whatsmeow_send_message_async
-func whatsmeow_send_message_async(chat_jid *C.char, text *C.char, callback_handle uintptr) {
+func whatsmeow_send_message_async(client_ptr uintptr, chat_jid *C.char, text *C.char, callback_handle uintptr) {
 	go func() {
 		defer handlePanic()
 		
-		if client == nil {
+		if client_ptr == 0 {
 			sendResponseCallback(callback_handle, false, "", "Client not initialized")
 			return
 		}
+		
+		client := (*whatsmeow.Client)(unsafe.Pointer(client_ptr))
 		
 		chatJIDStr := C.GoString(chat_jid)
 		textStr := C.GoString(text)
@@ -414,8 +442,96 @@ func whatsmeow_stop_event_stream() C.bool {
 	return C.bool(true)
 }
 
+// Register a message handler for a specific client
 //export whatsmeow_register_message_handler
-func whatsmeow_register_message_handler(callback_handle uintptr) C.bool {
+func whatsmeow_register_message_handler(client_ptr uintptr, callback_handle uintptr) C.bool {
+	if client_ptr == 0 {
+		return C.bool(false)
+	}
+	
+	client := (*whatsmeow.Client)(unsafe.Pointer(client_ptr))
+	
+	// Store the callback handle
+	messageHandlersMutex.Lock()
+	messageHandlers[client_ptr] = callback_handle
+	messageHandlersMutex.Unlock()
+	
+	// Add event handler to the client
+	client.AddEventHandler(func(evt interface{}) {
+		switch v := evt.(type) {
+		case *events.Message:
+			handleMessageEvent(client_ptr, v)
+		}
+	})
+	
+	return C.bool(true)
+}
+
+// Handle incoming message events
+func handleMessageEvent(client_ptr uintptr, evt *events.Message) {
+	messageHandlersMutex.RLock()
+	callback_handle, exists := messageHandlers[client_ptr]
+	messageHandlersMutex.RUnlock()
+	
+	if !exists {
+		return
+	}
+	
+	// Extract message content
+	var content string
+	var msgType string
+	
+	if evt.Message.GetConversation() != "" {
+		content = evt.Message.GetConversation()
+		msgType = "text"
+	} else if evt.Message.GetExtendedTextMessage() != nil {
+		content = evt.Message.GetExtendedTextMessage().GetText()
+		msgType = "text"
+	} else if evt.Message.GetImageMessage() != nil {
+		content = evt.Message.GetImageMessage().GetCaption()
+		msgType = "image"
+	} else if evt.Message.GetVideoMessage() != nil {
+		content = evt.Message.GetVideoMessage().GetCaption()
+		msgType = "video"
+	} else if evt.Message.GetAudioMessage() != nil {
+		content = "Audio message"
+		msgType = "audio"
+	} else if evt.Message.GetDocumentMessage() != nil {
+		content = evt.Message.GetDocumentMessage().GetTitle()
+		msgType = "document"
+	} else {
+		content = "Unsupported message type"
+		msgType = "unknown"
+	}
+	
+	// Create message event
+	messageEvent := MessageEvent{
+		ID:        evt.Info.ID,
+		Chat:      evt.Info.Chat.String(),
+		Sender:    evt.Info.Sender.String(),
+		Timestamp: evt.Info.Timestamp.Unix(),
+		Type:      msgType,
+		Content:   content,
+		IsFromMe:  evt.Info.IsFromMe,
+	}
+	
+	// Serialize to JSON
+	jsonData, err := json.Marshal(messageEvent)
+	if err != nil {
+		fmt.Printf("Failed to serialize message event: %v\n", err)
+		return
+	}
+	
+	// Send to Rust message callback
+	sendMessageCallback(callback_handle, true, string(jsonData), "")
+}
+
+// Unregister message handler for a specific client
+//export whatsmeow_unregister_message_handler
+func whatsmeow_unregister_message_handler(client_ptr uintptr) C.bool {
+	messageHandlersMutex.Lock()
+	delete(messageHandlers, client_ptr)
+	messageHandlersMutex.Unlock()
 	return C.bool(true)
 }
 
@@ -485,6 +601,31 @@ func sendResponseCallback(handle uintptr, success bool, data string, errorMsg st
 	
 	// Call Rust callback
 	C.rust_response_callback(C.uintptr_t(handle), &response)
+}
+
+func sendMessageCallback(handle uintptr, success bool, data string, errorMsg string) {
+	// Create C strings
+	var dataCStr *C.char
+	if data != "" {
+		dataCStr = C.CString(data)
+	}
+	var errorCStr *C.char
+	if errorMsg != "" {
+		errorCStr = C.CString(errorMsg)
+	}
+	
+	// Create response structure
+	response := C.CResponse{
+		data:    dataCStr,
+		error:   errorCStr,
+	}
+	
+	if success {
+		response.success = C.int(1)
+	}
+	
+	// Call Rust message callback
+	C.rust_message_callback(C.uintptr_t(handle), &response)
 }
 
 func handlePanic() {

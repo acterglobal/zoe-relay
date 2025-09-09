@@ -38,6 +38,7 @@ typedef struct {
 
 extern void rust_status_callback(uintptr_t handle, CStatusResponse* response);
 extern void rust_response_callback(uintptr_t handle, CResponse* response);
+extern void rust_message_callback(uintptr_t handle, CResponse* response);
 
 #line 1 "cgo-generated-wrapper"
 
@@ -96,23 +97,23 @@ extern "C" {
 #endif
 
 
-// Initialize the WhatsApp client
-extern GoUint8 whatsmeow_init();
+// Initialize the WhatsApp client with database path and return client pointer
+extern GoUintptr whatsmeow_init(char* path);
 
 // Connect to WhatsApp
-extern void whatsmeow_connect_async(GoUintptr callback_handle);
+extern void whatsmeow_connect_async(GoUintptr client_ptr, GoUintptr callback_handle);
 
 // Disconnect from WhatsApp
-extern void whatsmeow_disconnect_async(GoUintptr callback_handle);
+extern void whatsmeow_disconnect_async(GoUintptr client_ptr, GoUintptr callback_handle);
 
 // Get connection status
-extern void whatsmeow_get_status_async(GoUintptr callback_handle);
+extern void whatsmeow_get_status_async(GoUintptr client_ptr, GoUintptr callback_handle);
 
 // Get QR code for authentication
-extern void whatsmeow_get_qr_async(GoUintptr callback_handle);
+extern void whatsmeow_get_qr_async(GoUintptr client_ptr, GoUintptr callback_handle);
 
 // Send a text message
-extern void whatsmeow_send_message_async(char* chat_jid, char* text, GoUintptr callback_handle);
+extern void whatsmeow_send_message_async(GoUintptr client_ptr, char* chat_jid, char* text, GoUintptr callback_handle);
 
 // Simplified functions for other operations
 extern void whatsmeow_send_image_async(char* chat_jid, char* image_path, char* caption, GoUintptr callback_handle);
@@ -136,7 +137,12 @@ extern void whatsmeow_set_profile_picture_async(char* image_path, GoUintptr call
 extern void whatsmeow_get_profile_picture_async(char* jid, char* save_path, GoUintptr callback_handle);
 extern _Bool whatsmeow_start_event_stream(GoUintptr callback_handle);
 extern _Bool whatsmeow_stop_event_stream();
-extern _Bool whatsmeow_register_message_handler(GoUintptr callback_handle);
+
+// Register a message handler for a specific client
+extern _Bool whatsmeow_register_message_handler(GoUintptr client_ptr, GoUintptr callback_handle);
+
+// Unregister message handler for a specific client
+extern _Bool whatsmeow_unregister_message_handler(GoUintptr client_ptr);
 extern _Bool whatsmeow_register_presence_handler(GoUintptr callback_handle);
 extern _Bool whatsmeow_register_receipt_handler(GoUintptr callback_handle);
 

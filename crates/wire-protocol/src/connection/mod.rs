@@ -184,5 +184,3 @@ pub mod client;
 
 #[cfg(feature = "server")]
 pub mod server;
-
-pub mod ed25519;

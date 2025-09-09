@@ -1,0 +1,42 @@
+# Workspace-level nextest configuration for Zoe project
+# Handles external service test filtering for WhatsApp and Signal bots
+
+[profile.default]
+# Default profile - excludes external service tests
+retries = 0
+fail-fast = false
+slow-timeout = { period = "15s", terminate-after = 2 }
+
+[profile.ci]
+# CI profile - also excludes external service tests
+retries = 1
+fail-fast = true
+slow-timeout = { period = "15s", terminate-after = 2 }
+
+[profile.external-services]
+# Profile for running tests that connect to external services
+# Use: cargo nextest run --profile external-services
+retries = 0
+fail-fast = false
+slow-timeout = { period = "60s", terminate-after = 1 }
+
+[profile.whatsapp-external]
+# Profile specifically for WhatsApp external service tests
+# Use: cargo nextest run --profile whatsapp-external
+retries = 0
+fail-fast = false
+slow-timeout = { period = "60s", terminate-after = 1 }
+
+[profile.signal-external]
+# Profile specifically for Signal external service tests
+# Use: cargo nextest run --profile signal-external
+retries = 0
+fail-fast = false
+slow-timeout = { period = "60s", terminate-after = 1 }
+
+[profile.all-including-external]
+# Profile that runs ALL tests including external services
+# Use: cargo nextest run --profile all-including-external
+retries = 0
+fail-fast = false
+slow-timeout = { period = "60s", terminate-after = 1 }

@@ -5,13 +5,15 @@ edition = "2024"
 
 [[example]]
 name = "full"
+required-features = ["cli"]
 
 [features]
-default = ["frb-api"]
+default = ["frb-api",]
 mls = ["dep:openmls", "dep:openmls_rust_crypto", "dep:openmls_basic_credential", "dep:openmls_memory_storage"]
 frb-api = ["dep:flutter_rust_bridge", "dep:extend", "tokio/net"]
 test-utils = []
 mock = ["zoe-client-storage/mock", "dep:mockall"]
+cli = ["clap", "tracing-subscriber"]
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(frb_expand)'] }
@@ -84,6 +86,10 @@ tempfile = { workspace = true }
 
 extend = { workspace = true, optional = true }
 
+# CLI support
+clap = { workspace = true, optional = true }
+tracing-subscriber = { workspace = true, optional = true }
+
 [dev-dependencies]
 # Testing framework
 tokio-test = { workspace = true }
@@ -95,7 +101,6 @@ mockall = { workspace = true }
 zoe-relay = { path = "../relay" }
 zoe-message-store = { path = "../message-store" }
 
-clap = { workspace = true }
 anyhow = { workspace = true }
 tracing-subscriber = { workspace = true }
 env_logger = { workspace = true }

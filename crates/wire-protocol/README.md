@@ -213,7 +213,7 @@ pub enum Content {
 ```rust
 pub enum Kind {
     Regular,                    // Persistent storage
-    Emphemeral(Option<u8>),    // Temporary storage (optional TTL in seconds)
+    Ephemeral(Option<u8>),    // Temporary storage (optional TTL in seconds)
     Store(StoreKey),           // User-specific storage
     ClearStore(StoreKey),      // Clear user storage
 }

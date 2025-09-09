@@ -1,6 +1,7 @@
 use anyhow::Result;
 use qrcode::render::unicode;
 use qrcode::QrCode;
+use tempfile::tempdir;
 use whatsmeow::WhatsAppBot;
 
 #[tokio::main]
@@ -10,7 +11,8 @@ async fn main() -> Result<()> {
 
     // Create bot
     println!("📱 Creating WhatsApp bot...");
-    let bot = WhatsAppBot::new()?;
+    let temp_dir = tempdir().unwrap();
+    let bot = WhatsAppBot::new(temp_dir.path().join("whatsapp.db").to_str().unwrap())?;
     println!("✅ Bot created successfully");
 
     // Test QR code generation

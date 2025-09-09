@@ -206,12 +206,12 @@ impl Default for MessagePersistenceManagerBuilder {
 ///
 /// This manager operates by subscribing to the message events stream from MessagesManager
 /// and automatically persisting all events to the configured storage backend.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct GenericMessagePersistenceManager<T: MessagesManagerTrait> {
     /// The messages manager that this persistence manager wraps
     messages_manager: Arc<T>,
     /// Handle to the background persistence task
-    persistence_task: JoinHandle<Result<()>>,
+    persistence_task: Arc<JoinHandle<Result<()>>>,
 }
 
 /// Type alias for the common case of MessagePersistenceManager with concrete MessagesManager
@@ -266,7 +266,7 @@ impl<T: MessagesManagerTrait> GenericMessagePersistenceManager<T> {
         let storage_clone = storage.clone();
 
         // Start the background persistence task
-        let persistence_task = tokio::spawn(async move {
+        let persistence_task = Arc::new(tokio::spawn(async move {
             debug!("MessagePersistenceManager started");
 
             let mut events_stream = Box::pin(events_stream);
@@ -307,7 +307,7 @@ impl<T: MessagesManagerTrait> GenericMessagePersistenceManager<T> {
                 }
             }
             Ok(())
-        });
+        }));
 
         Ok(Self {
             messages_manager,
@@ -381,23 +381,6 @@ impl<T: MessagesManagerTrait> GenericMessagePersistenceManager<T> {
     pub fn is_running(&self) -> bool {
         !self.persistence_task.is_finished()
     }
-
-    /// Stop the persistence manager and wait for the background task to complete
-    pub async fn shutdown(self) -> Result<()> {
-        let task = self.persistence_task;
-        task.abort();
-        match task.await {
-            Ok(result) => result,
-            Err(e) if e.is_cancelled() => {
-                debug!("MessagePersistenceManager shutdown successfully");
-                Ok(())
-            }
-            Err(e) => Err(ClientError::Generic(format!(
-                "Error during persistence manager shutdown: {}",
-                e
-            ))),
-        }
-    }
 }
 
 // Concrete implementation for the type alias
@@ -459,18 +442,18 @@ impl<T: MessagesManagerTrait> MessagesManagerTrait for GenericMessagePersistence
         self.messages_manager.catch_up_stream()
     }
 
-    fn filtered_messages_stream<'a>(
-        &'a self,
+    fn filtered_messages_stream(
+        &self,
         filter: Filter,
-    ) -> std::pin::Pin<Box<dyn Stream<Item = Box<MessageFull>> + Send + 'a>> {
+    ) -> std::pin::Pin<Box<dyn Stream<Item = Box<MessageFull>> + Send>> {
         self.messages_manager.filtered_messages_stream(filter)
     }
 
-    async fn catch_up_and_subscribe<'a>(
-        &'a self,
+    async fn catch_up_and_subscribe(
+        &self,
         filter: Filter,
         since: Option<String>,
-    ) -> Result<std::pin::Pin<Box<dyn Stream<Item = Box<MessageFull>> + Send + 'a>>> {
+    ) -> Result<std::pin::Pin<Box<dyn Stream<Item = Box<MessageFull>> + Send>>> {
         self.messages_manager
             .catch_up_and_subscribe(filter, since)
             .await

@@ -58,6 +58,7 @@ pub struct RelayConnection {
 /// - Aggregates messages from all connected relays
 /// - Deduplicates messages based on message ID
 /// - Maintains the same interface as a single MessagesManager
+#[derive(Clone)]
 pub struct MultiRelayMessageManager<S: MessageStorage> {
     /// Map of relay ID to relay connection info
     relay_connections: Arc<RwLock<BTreeMap<KeyId, RelayConnection>>>,
@@ -627,21 +628,21 @@ impl<S: MessageStorage + 'static> MessagesManagerTrait for MultiRelayMessageMana
     }
 
     /// Get a filtered stream of messages matching the given filter from all relays
-    fn filtered_messages_stream<'a>(
-        &'a self,
+    fn filtered_messages_stream(
+        &self,
         _filter: Filter,
-    ) -> std::pin::Pin<Box<dyn Stream<Item = Box<MessageFull>> + Send + 'a>> {
+    ) -> std::pin::Pin<Box<dyn Stream<Item = Box<MessageFull>> + Send>> {
         // TODO: Implement proper filtering
         // For now, return an empty stream
         Box::pin(futures::stream::empty())
     }
 
     /// Catch up to historical messages and subscribe to new ones for a filter
-    async fn catch_up_and_subscribe<'a>(
-        &'a self,
+    async fn catch_up_and_subscribe(
+        &self,
         _filter: Filter,
         _since: Option<String>,
-    ) -> Result<std::pin::Pin<Box<dyn Stream<Item = Box<MessageFull>> + Send + 'a>>> {
+    ) -> Result<std::pin::Pin<Box<dyn Stream<Item = Box<MessageFull>> + Send>>> {
         // TODO: Implement proper catch-up across all relays
         // For now, return an empty stream as a placeholder
         Ok(Box::pin(futures::stream::empty()))
@@ -1203,7 +1204,7 @@ mod tests {
                 Content::raw(b"Expired message".to_vec()),
                 keypair.public_key(),
                 past_timestamp,
-                Kind::Emphemeral(1), // 1 second timeout - should be expired
+                Kind::Ephemeral(1), // 1 second timeout - should be expired
                 vec![],
             );
             MessageFull::new(message, &keypair).unwrap()
@@ -1329,7 +1330,7 @@ mod tests {
                     Content::raw(format!("Expired message {}", i).as_bytes().to_vec()),
                     keypair.public_key(),
                     past_timestamp,
-                    Kind::Emphemeral(1), // 1 second timeout - all should be expired
+                    Kind::Ephemeral(1), // 1 second timeout - all should be expired
                     vec![],
                 );
                 MessageFull::new(message, &keypair).unwrap()

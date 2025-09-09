@@ -1,0 +1,121 @@
+/**
+ * Any CSS included here will be global. The classic template
+ * bundles Infima by default. Infima is a CSS framework designed to
+ * work well for content-centric websites.
+ */
+
+/* Zoe Relay Brand Colors - Purple to Pink Gradient Theme */
+:root {
+  /* Primary purple-pink gradient colors */
+  --ifm-color-primary: #8b5cf6;
+  --ifm-color-primary-dark: #7c3aed;
+  --ifm-color-primary-darker: #7c2d92;
+  --ifm-color-primary-darkest: #6b21a8;
+  --ifm-color-primary-light: #a78bfa;
+  --ifm-color-primary-lighter: #c4b5fd;
+  --ifm-color-primary-lightest: #ddd6fe;
+  
+  /* Accent colors from the gradient */
+  --zoe-purple: #8b5cf6;
+  --zoe-pink: #ec4899;
+  --zoe-gradient: linear-gradient(135deg, #8b5cf6 0%, #ec4899 100%);
+  
+  /* Enhanced styling */
+  --ifm-code-font-size: 95%;
+  --docusaurus-highlighted-code-line-bg: rgba(139, 92, 246, 0.1);
+  --ifm-navbar-background-color: rgba(255, 255, 255, 0.95);
+  --ifm-navbar-shadow: 0 2px 4px rgba(139, 92, 246, 0.1);
+}
+
+/* Dark mode with enhanced purple-pink theme */
+[data-theme='dark'] {
+  --ifm-color-primary: #a78bfa;
+  --ifm-color-primary-dark: #8b5cf6;
+  --ifm-color-primary-darker: #7c3aed;
+  --ifm-color-primary-darkest: #6d28d9;
+  --ifm-color-primary-light: #c4b5fd;
+  --ifm-color-primary-lighter: #ddd6fe;
+  --ifm-color-primary-lightest: #ede9fe;
+  
+  --docusaurus-highlighted-code-line-bg: rgba(167, 139, 250, 0.2);
+  --ifm-navbar-background-color: rgba(17, 24, 39, 0.95);
+  --ifm-background-color: #0f172a;
+  --ifm-background-surface-color: #1e293b;
+}
+
+/* Custom gradient styling for headlines only */
+.hero__title {
+  background: var(--zoe-gradient);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  font-weight: 800;
+}
+
+/* Ensure hero section has default background */
+.hero {
+  background-color: var(--ifm-hero-background-color);
+}
+
+/* Beautiful gradient CTA buttons */
+.button--primary,
+.button.button--primary {
+  background: var(--zoe-gradient) !important;
+  border: none !important;
+  color: white !important;
+  font-weight: 600;
+  transition: all 0.2s ease;
+  text-decoration: none !important;
+  opacity: 1 !important;
+}
+
+.button--primary:hover,
+.button.button--primary:hover {
+  background: linear-gradient(135deg, #7c3aed 0%, #db2777 100%) !important;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(139, 92, 246, 0.3);
+  color: white !important;
+  text-decoration: none !important;
+  opacity: 1 !important;
+}
+
+.button--primary:active,
+.button.button--primary:active {
+  color: white !important;
+  background: linear-gradient(135deg, #6d28d9 0%, #be185d 100%) !important;
+}
+
+.button--outline.button--secondary {
+  border: 2px solid var(--ifm-color-primary);
+  color: var(--ifm-color-primary);
+  background: transparent;
+  transition: all 0.2s ease;
+}
+
+.button--outline.button--secondary:hover {
+  background-color: var(--ifm-color-primary);
+  color: white;
+  border-color: var(--ifm-color-primary);
+}
+
+/* Enhanced navbar - keep it clean */
+.navbar {
+  backdrop-filter: blur(10px);
+  border-bottom: 1px solid rgba(139, 92, 246, 0.1);
+}
+
+/* Sidebar enhancements - subtle accent only */
+.theme-doc-sidebar-item-link-level-1 > .menu__link--active {
+  background-color: rgba(139, 92, 246, 0.1);
+  border-right: 3px solid var(--ifm-color-primary);
+}
+
+/* Code block enhancements - minimal styling */
+.prism-code {
+  border-radius: 8px;
+}
+
+/* Footer - keep it simple */
+.footer {
+  background-color: var(--ifm-background-surface-color);
+}

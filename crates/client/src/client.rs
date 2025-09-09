@@ -2,7 +2,7 @@ use crate::error::Result;
 use crate::services::MultiRelayMessageManager;
 use crate::services::blob_store::MultiRelayBlobService;
 use crate::util::DEFAULT_PORT;
-use crate::{ClientError, FileStorage, RelayClient, RelayClientBuilder};
+use crate::{ClientError, FileStorage, RelayClient, RelayClientBuilder, SessionManager};
 use eyeball::{SharedObservable, Subscriber};
 use rand::Rng;
 use std::collections::BTreeMap;
@@ -54,7 +54,7 @@ impl ClientSecret {
 }
 
 // Note: ML-DSA types don't have simple serde serialization, so we'll handle this differently
-#[cfg_attr(feature = "frb-api", frb(opaque))]
+#[cfg_attr(feature = "frb-api", frb(ignore))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LegacyClientSecret {
     #[serde(
@@ -270,6 +270,15 @@ impl ClientBuilder {
         // Offline mode: use multi-relay services
         let message_manager = Arc::new(MultiRelayMessageManager::new(Arc::clone(&storage)));
         let blob_service = Arc::new(MultiRelayBlobService::new(Arc::clone(&storage)));
+        let session_manager = Arc::new(
+            SessionManager::builder(Arc::clone(&storage), message_manager.clone())
+                .client_keypair(key_pair.clone())
+                .build()
+                .await
+                .map_err(|e| {
+                    ClientError::BuildError(format!("Failed to create session manager: {}", e))
+                })?,
+        );
 
         let fs =
             FileStorage::new(&fs_path, blob_service.clone(), CompressionConfig::default()).await?;
@@ -296,6 +305,7 @@ impl ClientBuilder {
             client_secret_observable,
             relay_status_sender,
             connection_monitors: Arc::new(RwLock::new(BTreeMap::new())),
+            session_manager,
         };
 
         // If autoconnect is enabled, add the first server immediately
@@ -377,15 +387,21 @@ pub struct OverallConnectionStatus {
     pub total_count: usize,
 }
 
+pub type ZoeClientStorage = SqliteMessageStorage;
+pub type ZoeClientSessionManager = SessionManager<ZoeClientStorage, ZoeClientMessageManager>;
+pub type ZoeClientMessageManager = MultiRelayMessageManager<ZoeClientStorage>;
+pub type ZoeClientBlobService = MultiRelayBlobService<ZoeClientStorage>;
+pub type ZoeClientFileStorage = FileStorage<ZoeClientBlobService>;
+
 #[derive(Clone)]
 #[cfg_attr(feature = "frb-api", frb(opaque))]
 pub struct Client {
     client_secret: Arc<ClientSecret>,
-    fs: Arc<FileStorage<MultiRelayBlobService<SqliteMessageStorage>>>,
+    fs: Arc<ZoeClientFileStorage>,
     // All clients now use multi-relay architecture
-    storage: Arc<SqliteMessageStorage>,
-    message_manager: Arc<MultiRelayMessageManager<SqliteMessageStorage>>,
-    blob_service: Arc<MultiRelayBlobService<SqliteMessageStorage>>,
+    storage: Arc<ZoeClientStorage>,
+    message_manager: Arc<ZoeClientMessageManager>,
+    blob_service: Arc<ZoeClientBlobService>,
     relay_connections: Arc<RwLock<BTreeMap<KeyId, RelayClient>>>,
     relay_info: Arc<RwLock<BTreeMap<KeyId, RelayConnectionInfo>>>,
     encryption_key: [u8; 32],
@@ -395,6 +411,8 @@ pub struct Client {
     relay_status_sender: broadcast::Sender<RelayStatusUpdate>,
     /// Connection monitoring tasks for each relay
     connection_monitors: Arc<RwLock<BTreeMap<KeyId, JoinHandle<()>>>>,
+    /// Session manager for the client
+    session_manager: Arc<ZoeClientSessionManager>,
 }
 
 impl Client {
@@ -901,6 +919,19 @@ impl Client {
     }
 
     /// Close the client and clean up all resources
+    /// Get access to the session manager for PQXDH operations
+    ///
+    /// This provides access to the underlying session manager which handles
+    /// PQXDH protocol handlers and state management.
+    ///
+    /// # Returns
+    ///
+    /// A reference to the `SessionManager`
+    #[cfg_attr(feature = "frb-api", frb(ignore))]
+    pub async fn session_manager(&self) -> &Arc<ZoeClientSessionManager> {
+        &self.session_manager
+    }
+
     pub async fn close(&self) {
         // Stop all connection monitors
         {

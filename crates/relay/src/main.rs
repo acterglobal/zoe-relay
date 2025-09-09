@@ -85,6 +85,10 @@ struct Cli {
     #[arg(long = "show-key")]
     show_key: bool,
 
+    /// Export public key to a directory for other services
+    #[arg(long = "export-public-key-to", env = "ZOERELAY_EXPORT_PUBLIC_KEY_TO")]
+    export_public_key_to: Option<PathBuf>,
+
     #[command(subcommand)]
     command: Option<Commands>,
 }
@@ -305,6 +309,45 @@ fn display_relay_qr_code(
     Ok(())
 }
 
+/// Export the server's public key to a PEM file that other services can read
+fn export_public_key_for_clients(
+    public_key: &zoe_wire_protocol::VerifyingKey,
+    export_dir: &PathBuf,
+) -> Result<()> {
+    // Create the export directory if it doesn't exist
+    fs::create_dir_all(export_dir).map_err(|e| {
+        anyhow::anyhow!(
+            "Failed to create export directory {}: {}",
+            export_dir.display(),
+            e
+        )
+    })?;
+
+    // Export as PEM format
+    let public_key_pem = public_key
+        .to_pem()
+        .map_err(|e| anyhow::anyhow!("Failed to encode public key as PEM: {}", e))?;
+
+    // Write the public key to the export directory with new filename
+    let key_file = export_dir.join("zoe_relay_server_public_key.pem");
+    fs::write(&key_file, &public_key_pem).map_err(|e| {
+        anyhow::anyhow!(
+            "Failed to write public key to {}: {}",
+            key_file.display(),
+            e
+        )
+    })?;
+
+    info!("📤 Exported server public key to: {}", key_file.display());
+    info!("🔑 Public key algorithm: {}", public_key.algorithm());
+    info!(
+        "🔑 Public key ID: {}",
+        hex::encode(public_key.id().as_bytes())
+    );
+
+    Ok(())
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     // Initialize Rustls crypto provider before any TLS operations
@@ -380,6 +423,11 @@ async fn main() -> Result<()> {
         hex::encode(public_key.encode()),
         public_key.algorithm()
     );
+
+    // Export public key for other services to use (if requested)
+    if let Some(export_dir) = &cli.export_public_key_to {
+        export_public_key_for_clients(&public_key, export_dir)?;
+    }
 
     // Display QR code for easy client connection
     if let Err(e) = display_relay_qr_code(

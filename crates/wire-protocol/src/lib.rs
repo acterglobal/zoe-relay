@@ -136,6 +136,7 @@ pub mod connection;
 pub mod connection_info;
 pub mod crypto;
 pub mod inbox;
+pub mod invitation;
 pub mod keys;
 pub mod message;
 pub mod primitives;
@@ -149,6 +150,10 @@ pub use challenge::*;
 pub use connection_info::*;
 pub use crypto::*;
 pub use inbox::*;
+pub use invitation::{
+    generate_ephemeral_group_invite_id, GroupInvitationData, GroupMetadata, HandshakePurpose,
+    HandshakeResponse, ProfileSetEvent, UserProfile, VerificationHandshakeRequest,
+};
 pub use message::*;
 pub use relay::*;
 pub use services::*;

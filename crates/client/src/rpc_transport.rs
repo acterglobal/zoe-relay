@@ -49,7 +49,7 @@ impl<TarpcMsg> RpcMessageListener<TarpcMsg> {
     /// Check if this message is an ephemeral RPC message targeted at us
     fn is_rpc_message_for_us(&self, message: &MessageFull) -> bool {
         // Check if it's an ephemeral message
-        if !matches!(message.kind(), Kind::Emphemeral(_)) {
+        if !matches!(message.kind(), Kind::Ephemeral(_)) {
             tracing::debug!("Message is not ephemeral: {:?}", message.kind());
             return false;
         }

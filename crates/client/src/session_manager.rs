@@ -125,7 +125,6 @@ impl<S: StateStorage + 'static, M: MessagesManagerTrait + 'static> SessionManage
     }
 }
 
-
 type PqxdhHandlerState<M> = (Arc<PqxdhProtocolHandler<M>>, JoinHandle<()>);
 type PqxdhHandlerStates<M> = BTreeMap<PqxdhInboxProtocol, PqxdhHandlerState<M>>;
 

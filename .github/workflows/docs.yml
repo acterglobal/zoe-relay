@@ -1,0 +1,106 @@
+name: Documentation
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'docs/**'
+      - 'crates/**'
+      - '.github/workflows/docs.yml'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'docs/**'
+      - 'crates/**'
+      - '.github/workflows/docs.yml'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  build-docs:
+    name: Build Documentation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@nightly
+      
+      - name: Setup Rust Cache
+        uses: Swatinem/rust-cache@v2
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: docs/package-lock.json
+      
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libsqlcipher-dev protobuf-compiler cmake
+      
+      - name: Generate Rust documentation
+        run: |
+          cargo doc --workspace --no-deps --document-private-items
+          echo '<meta http-equiv="refresh" content="0; url=zoe_client">' > target/doc/index.html
+        env:
+          RUSTDOCFLAGS: "--cfg docsrs -Dwarnings"
+      
+      - name: Build Docusaurus documentation
+        run: |
+          cd docs
+          npm ci
+          npm run build
+      
+      - name: Combine documentation
+        run: |
+          # Create combined docs directory
+          mkdir -p combined-docs
+          
+          # Copy Docusaurus build (main site) - this includes the proper index.html
+          cp -r docs/build/* combined-docs/
+          
+          # Copy Rust docs to /rustdoc/ subdirectory
+          mkdir -p combined-docs/rustdoc
+          cp -r target/doc/* combined-docs/rustdoc/
+          
+          # List contents for debugging
+          find combined-docs -type f -name "*.html" | head -10
+          echo "Root index.html exists: $(test -f combined-docs/index.html && echo 'YES' || echo 'NO')"
+      
+      - name: Upload documentation artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: combined-docs
+
+  deploy-docs:
+    name: Deploy Documentation
+    runs-on: ubuntu-latest
+    needs: build-docs
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Setup Pages
+        uses: actions/configure-pages@v4
+          
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

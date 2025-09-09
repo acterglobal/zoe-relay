@@ -65,10 +65,12 @@ impl Service for MessagesService {
                 }),
         );
 
+        let mut request_stream_closed = false;
+
         loop {
             tokio::select! {
                 // Poll for incoming RPC requests from client
-                request_result = incoming.next() => {
+                request_result = incoming.next(), if !request_stream_closed => {
                     match request_result {
                         Some(Ok(request)) => {
                             debug!("Received RPC request: {:?}", request);
@@ -79,11 +81,14 @@ impl Service for MessagesService {
                         }
                         Some(Err(e)) => {
                             error!("Error reading request: {} (this may be due to client disconnecting)", e);
+                            // Give a brief moment for potential recovery before breaking
+                            tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
                             break;
                         }
                         None => {
-                            info!("Request stream closed");
-                            break;
+                            info!("Request stream closed - continuing to process responses");
+                            request_stream_closed = true;
+                            // Don't break - continue processing responses and background tasks
                         }
                     }
                 }
@@ -95,6 +100,8 @@ impl Service for MessagesService {
                             // Forward message to client
                             if let Err(e) = sink.send(MessageServiceResponseWrap::RpcResponse(Box::new(message))).await {
                                 error!("Failed to send response to client: {}", e);
+                                // Allow a brief moment for recovery before breaking
+                                tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
                                 break;
                             }
                         }
@@ -103,8 +110,9 @@ impl Service for MessagesService {
                             break;
                         }
                         None => {
-                            debug!("RPC channel closed");
-                            // Continue running - this can happen when rpc task ends
+                            debug!("RPC channel closed - service shutting down");
+                            // RPC channel closed means no more responses can be processed
+                            break;
                         }
                     }
                 }
@@ -116,7 +124,9 @@ impl Service for MessagesService {
                             debug!("🔄 MessagesService {} received stream message from subscription task: {:?}", service_id, message);
                             // Forward message to client
                             if let Err(e) = sink.send(MessageServiceResponseWrap::StreamMessage(message)).await {
-                                error!("Failed to send response to client: {}", e);
+                                error!("Failed to send stream message to client: {}", e);
+                                // Allow a brief moment for recovery before breaking
+                                tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
                                 break;
                             } else {
                                 debug!("✅ MessagesService {} successfully sent stream message to client", service_id);
@@ -135,7 +145,9 @@ impl Service for MessagesService {
                         Some(response) => {
                             // Forward response to client
                             if let Err(e) = sink.send(MessageServiceResponseWrap::CatchUpResponse(response)).await {
-                                error!("Failed to send response to client: {}", e);
+                                error!("Failed to send catch-up response to client: {}", e);
+                                // Allow a brief moment for recovery before breaking
+                                tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
                                 break;
                             }
                         }

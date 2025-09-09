@@ -193,8 +193,8 @@ use crate::{IdentityInfo, IdentityRef, IdentityType, Metadata, Permission};
 /// ## 🌐 Integration with Group Events
 ///
 /// Identity management integrates with the event system through:
-/// - [`super::events::GroupManagementEvent::SetIdentity`]: Declares new identities
-/// - [`super::events::GroupManagementEvent::AssignRole`]: Assigns roles to identities
+/// - [`super::events::GroupActivityEvent::SetIdentity`]: Declares new identities
+/// - [`super::events::GroupActivityEvent::AssignRole`]: Assigns roles to identities
 /// - Event processing updates the membership state automatically
 /// - All identity changes are part of the signed, encrypted event history
 ///
@@ -472,7 +472,7 @@ pub struct GroupMember {
 /// 2. **Announcement**: User sends any [`super::events::GroupActivityEvent`] to announce participation
 /// 3. **Recognition**: Internal handling adds them to active member list
 /// 4. **Activity**: Member's [`GroupMember::last_active`] is updated with each message
-/// 5. **Departure**: [`super::events::GroupManagementEvent::LeaveGroup`] removes from active list
+/// 5. **Departure**: [`super::events::GroupActivityEvent::LeaveGroup`] removes from active list
 ///
 /// Note: Departure only removes from the active member tracking - the user still
 /// possesses the encryption key and could rejoin at any time.
