@@ -9,7 +9,7 @@ pub mod server;
 pub mod client;
 
 /// Default challenge timeout in seconds
-#[cfg(any(feature = "server"))]
+#[cfg(feature = "server")]
 const DEFAULT_CHALLENGE_TIMEOUT_SECS: u64 = 30;
 
 /// Maximum size for challenge messages (to prevent DoS)

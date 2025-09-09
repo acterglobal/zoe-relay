@@ -48,7 +48,6 @@ where
         // Spawn a background task to handle outgoing responses
         let background_handle = {
             let tx = tx.clone();
-            let session_id = session_id;
             tokio::spawn(async move {
                 while let Some(resp) = rx.recv().await {
                     if let Err(e) = client.send_response(&session_id, &resp).await {
