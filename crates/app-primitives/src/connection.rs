@@ -184,8 +184,14 @@ impl From<IpAddr> for NetworkAddress {
 impl From<SocketAddr> for NetworkAddress {
     fn from(addr: SocketAddr) -> Self {
         match addr {
-            SocketAddr::V4(ipv4) => NetworkAddress::ipv4(*ipv4.ip()),
-            SocketAddr::V6(ipv6) => NetworkAddress::ipv6(*ipv6.ip()),
+            SocketAddr::V4(ipv4) => NetworkAddress::Ipv4 {
+                address: *ipv4.ip(),
+                port: Some(ipv4.port()),
+            },
+            SocketAddr::V6(ipv6) => NetworkAddress::Ipv6 {
+                address: *ipv6.ip(),
+                port: Some(ipv6.port()),
+            },
         }
     }
 }
@@ -425,5 +431,93 @@ mod tests {
         let serialized = postcard::to_stdvec(&info).unwrap();
         let deserialized: RelayAddress = postcard::from_bytes(&serialized).unwrap();
         assert_eq!(info, deserialized);
+    }
+
+    #[test]
+    fn test_from_socket_addr_ipv4_preserves_port() {
+        // Test that converting from SocketAddr preserves the port information
+        let socket_addr = SocketAddr::from(([192, 168, 1, 100], 13918));
+        let network_addr: NetworkAddress = socket_addr.into();
+
+        match network_addr {
+            NetworkAddress::Ipv4 { address, port } => {
+                assert_eq!(address, Ipv4Addr::new(192, 168, 1, 100));
+                assert_eq!(port, Some(13918));
+            }
+            _ => panic!("Expected IPv4 NetworkAddress"),
+        }
+
+        // Verify the port is correctly used in connection strings
+        assert_eq!(
+            network_addr.to_connection_string(None),
+            "192.168.1.100:13918"
+        );
+        assert_eq!(network_addr.port(), Some(13918));
+        assert_eq!(network_addr.port_or_default(8080), 13918);
+    }
+
+    #[test]
+    fn test_from_socket_addr_ipv6_preserves_port() {
+        // Test that converting from SocketAddr preserves the port information for IPv6
+        let socket_addr = SocketAddr::from(([0x2001, 0xdb8, 0, 0, 0, 0, 0, 1], 13918));
+        let network_addr: NetworkAddress = socket_addr.into();
+
+        match network_addr {
+            NetworkAddress::Ipv6 { address, port } => {
+                assert_eq!(address, Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 1));
+                assert_eq!(port, Some(13918));
+            }
+            _ => panic!("Expected IPv6 NetworkAddress"),
+        }
+
+        // Verify the port is correctly used in connection strings
+        assert_eq!(
+            network_addr.to_connection_string(None),
+            "[2001:db8::1]:13918"
+        );
+        assert_eq!(network_addr.port(), Some(13918));
+        assert_eq!(network_addr.port_or_default(8080), 13918);
+    }
+
+    #[test]
+    fn test_from_socket_addr_localhost_preserves_port() {
+        // Test with localhost addresses that are commonly used in development
+        let ipv4_localhost = SocketAddr::from(([127, 0, 0, 1], 13918));
+        let ipv6_localhost = SocketAddr::from((Ipv6Addr::LOCALHOST, 13918));
+
+        let ipv4_network: NetworkAddress = ipv4_localhost.into();
+        let ipv6_network: NetworkAddress = ipv6_localhost.into();
+
+        assert_eq!(ipv4_network.port(), Some(13918));
+        assert_eq!(ipv6_network.port(), Some(13918));
+
+        // Verify they resolve correctly with the preserved port
+        assert_eq!(ipv4_network.to_connection_string(None), "127.0.0.1:13918");
+        assert_eq!(ipv6_network.to_connection_string(None), "[::1]:13918");
+    }
+
+    #[test]
+    fn test_relay_address_with_socket_addr_preserves_port() {
+        // Integration test: ensure RelayAddress correctly uses the port from SocketAddr
+        use zoe_wire_protocol::KeyPair;
+
+        let keypair = KeyPair::generate_ed25519(&mut rand::thread_rng());
+        let socket_addr = SocketAddr::from(([89, 58, 47, 227], 13918));
+
+        let relay_address = RelayAddress::new(keypair.public_key())
+            .with_address(socket_addr.into())
+            .with_name("Test Server".to_string());
+
+        // Verify the address was stored with the correct port
+        let addresses: Vec<_> = relay_address.all_addresses().iter().collect();
+        assert_eq!(addresses.len(), 1);
+
+        match addresses[0] {
+            NetworkAddress::Ipv4 { address, port } => {
+                assert_eq!(*address, Ipv4Addr::new(89, 58, 47, 227));
+                assert_eq!(*port, Some(13918));
+            }
+            _ => panic!("Expected IPv4 NetworkAddress"),
+        }
     }
 }
