@@ -36,6 +36,8 @@ pub enum ClientError {
     RpcError(#[from] tarpc::client::RpcError),
     #[error("Session manager error: {0}")]
     SessionManager(#[from] SessionManagerError),
+    #[error("Storage error: {0}")]
+    Storage(#[from] zoe_client_storage::StorageError),
 }
 
 pub type Result<T> = std::result::Result<T, ClientError>;
