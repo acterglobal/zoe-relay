@@ -29,9 +29,8 @@ pub use rpc_transport::{RpcMessageListener, TarpcOverMessagesClient, TarpcOverMe
 pub use services::{BlobService, MessagesService, MessagesStream};
 pub use session_manager::{SessionManager, SessionManagerError, SessionManagerResult};
 pub use system_check::{
-    DiagnosticCollector, DiagnosticLevel, DiagnosticMessage, ExtractableDiagnosticCollector,
-    SystemCheck, SystemCheckConfig, SystemCheckOutcome, SystemCheckResults, TestCategory, TestInfo,
-    TestResult, run_system_check_with_diagnostics,
+    DiagnosticCollector, DiagnosticLevel, DiagnosticMessage, SystemCheck, SystemCheckConfig,
+    SystemCheckOutcome, SystemCheckResults, TestCategory, TestInfo, TestResult,
 };
 
 // Re-export FileRef and Image from app-primitives for convenience

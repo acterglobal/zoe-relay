@@ -55,137 +55,20 @@ use zoe_client::{
     ExtractableDiagnosticCollector, SystemCheck, SystemCheckConfig, TestCategory, TestResult,
 };
 
-/// CLI-specific collector for actual errors and warnings from tracing
-#[derive(Debug, Clone, Default)]
-struct CliDiagnosticCollector {
-    errors: Vec<String>,
-    warnings: Vec<String>,
-}
-
-impl CliDiagnosticCollector {
-    fn new() -> Self {
-        Self::default()
-    }
-
-    fn has_errors(&self) -> bool {
-        !self.errors.is_empty()
-    }
-
-    fn has_warnings(&self) -> bool {
-        !self.warnings.is_empty()
-    }
-
-    fn print_summary(&self) {
-        if self.has_errors() {
-            eprintln!("\n❌ ERRORS DETECTED:");
-            eprintln!("═══════════════════");
-            for (i, error) in self.errors.iter().enumerate() {
-                eprintln!("{}. {}", i + 1, error);
-            }
-        }
-
-        if self.has_warnings() {
-            eprintln!("\n⚠️  WARNINGS DETECTED:");
-            eprintln!("═════════════════════");
-            for (i, warning) in self.warnings.iter().enumerate() {
-                eprintln!("{}. {}", i + 1, warning);
-            }
-        }
-    }
-}
-
-impl DiagnosticCollector for CliDiagnosticCollector {
-    fn add_error(&mut self, message: String) {
-        self.errors.push(message);
-    }
-
-    fn add_warning(&mut self, message: String) {
-        self.warnings.push(message);
-    }
-}
-
-impl ExtractableDiagnosticCollector for CliDiagnosticCollector {
-    fn extract_messages(&self) -> (Vec<DiagnosticMessage>, bool, bool) {
-        let mut messages = Vec::new();
-
-        for error in &self.errors {
-            messages.push(DiagnosticMessage {
-                level: DiagnosticLevel::Error,
-                message: error.clone(),
-            });
-        }
-
-        for warning in &self.warnings {
-            messages.push(DiagnosticMessage {
-                level: DiagnosticLevel::Warning,
-                message: warning.clone(),
-            });
-        }
-
-        (messages, self.has_errors(), self.has_warnings())
-    }
-}
-
-/// Custom tracing layer to capture ERROR and WARN messages
-struct DiagnosticLayer {
-    collector: Arc<Mutex<CliDiagnosticCollector>>,
-}
-
-impl DiagnosticLayer {
-    fn new(collector: Arc<Mutex<CliDiagnosticCollector>>) -> Self {
-        Self { collector }
-    }
-}
-
-impl<S> Layer<S> for DiagnosticLayer
-where
-    S: tracing::Subscriber,
-{
-    fn on_event(
-        &self,
-        event: &tracing::Event<'_>,
-        _ctx: tracing_subscriber::layer::Context<'_, S>,
-    ) {
-        let level = *event.metadata().level();
-
-        // Only collect ERROR and WARN level events
-        if level == Level::ERROR || level == Level::WARN {
-            let mut visitor = MessageVisitor::new();
-            event.record(&mut visitor);
-
-            if let Some(message) = visitor.message {
-                let mut collector = self.collector.lock().unwrap();
-                match level {
-                    Level::ERROR => collector.add_error(message),
-                    Level::WARN => collector.add_warning(message),
-                    _ => {}
-                }
-            }
-        }
-    }
-}
-
-/// Visitor to extract message from tracing events
-struct MessageVisitor {
-    message: Option<String>,
-}
-
-impl MessageVisitor {
-    fn new() -> Self {
-        Self { message: None }
-    }
-}
-
-impl tracing::field::Visit for MessageVisitor {
-    fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
-        if field.name() == "message" {
-            self.message = Some(format!("{:?}", value));
+fn print_summary(diagnostic_collector: &DiagnosticCollector) {
+    if diagnostic_collector.has_errors() {
+        eprintln!("\n❌ ERRORS DETECTED:");
+        eprintln!("═══════════════════");
+        for (i, error) in diagnostic_collector.errors().iter().enumerate() {
+            eprintln!("{}. {}", i + 1, error);
         }
     }
 
-    fn record_str(&mut self, field: &tracing::field::Field, value: &str) {
-        if field.name() == "message" {
-            self.message = Some(value.to_string());
+    if diagnostic_collector.has_warnings() {
+        eprintln!("\n⚠️  WARNINGS DETECTED:");
+        eprintln!("═════════════════════");
+        for (i, warning) in diagnostic_collector.warnings().iter().enumerate() {
+            eprintln!("{}. {}", i + 1, warning);
         }
     }
 }
@@ -263,7 +146,7 @@ async fn main() {
     let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
 
     // Create diagnostic collector
-    let diagnostic_collector = Arc::new(Mutex::new(CliDiagnosticCollector::new()));
+    let diagnostic_collector = Arc::new(Mutex::new(DiagnosticCollector::new()));
     let diagnostic_layer = DiagnosticLayer::new(diagnostic_collector.clone());
     let fmt_layer = tracing_subscriber::fmt::layer().with_filter(
         tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| {

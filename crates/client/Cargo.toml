@@ -20,7 +20,7 @@ frb-api = [
 ]
 test-utils = []
 mock = ["zoe-client-storage/mock", "dep:mockall"]
-cli = ["clap", "tracing-subscriber"]
+cli = ["clap"]
 
 [dependencies]
 # Wire protocol for crypto utilities
@@ -63,6 +63,7 @@ hex = { workspace = true }
 async-trait = { workspace = true }
 async-stream = { workspace = true }
 eyeball = { version = "0.8", features = ["async-lock"] }
+tracing-subscriber = { workspace = true }
 
 # Mock support for testing
 mockall = { workspace = true, optional = true }
@@ -92,7 +93,6 @@ extend = { workspace = true, optional = true }
 
 # CLI support
 clap = { workspace = true, optional = true }
-tracing-subscriber = { workspace = true, optional = true }
 
 # System check dependencies
 crc32fast = { workspace = true }
@@ -109,7 +109,6 @@ zoe-relay = { path = "../relay" }
 zoe-message-store = { path = "../message-store" }
 
 anyhow = { workspace = true }
-tracing-subscriber = { workspace = true }
 env_logger = { workspace = true }
 tempfile = { workspace = true }
 serde = { workspace = true }

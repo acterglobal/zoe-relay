@@ -6,11 +6,14 @@
 //! and programmatically via FRB bindings.
 
 use crate::{Client, ClientError};
+use async_stream::stream;
+use futures::{Stream, StreamExt};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
-use tracing::info;
+use tracing::{Level, info};
+use tracing_subscriber::Layer;
 
 #[cfg(feature = "frb-api")]
 use flutter_rust_bridge::frb;
@@ -39,12 +42,6 @@ pub enum DiagnosticLevel {
 pub struct DiagnosticMessage {
     pub level: DiagnosticLevel,
     pub message: String,
-}
-
-/// Trait for collecting diagnostic messages
-pub trait DiagnosticCollector: Send + Sync {
-    fn add_error(&mut self, message: String);
-    fn add_warning(&mut self, message: String);
 }
 
 /// Overall outcome of system check including test results and diagnostics
@@ -129,7 +126,7 @@ impl TestResult {
 
 /// Detailed information about a test execution
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg_attr(feature = "frb-api", frb(opaque))]
+#[cfg_attr(feature = "frb-api", frb)]
 pub struct TestInfo {
     /// Name of the test
     pub name: String,
@@ -339,6 +336,61 @@ impl SystemCheckResults {
     }
 }
 
+// FRB functions for SystemCheckResults
+#[cfg(feature = "frb-api")]
+#[frb]
+pub fn system_check_results_is_success(results: &SystemCheckResults) -> bool {
+    results.is_success()
+}
+
+#[cfg(feature = "frb-api")]
+#[frb]
+pub fn system_check_results_passed_count(results: &SystemCheckResults) -> u32 {
+    results.passed_count() as u32
+}
+
+#[cfg(feature = "frb-api")]
+#[frb]
+pub fn system_check_results_failed_count(results: &SystemCheckResults) -> u32 {
+    results.failed_count() as u32
+}
+
+#[cfg(feature = "frb-api")]
+#[frb]
+pub fn system_check_results_total_count(results: &SystemCheckResults) -> u32 {
+    results.total_count() as u32
+}
+
+#[cfg(feature = "frb-api")]
+#[frb]
+pub fn system_check_results_total_duration_ms(results: &SystemCheckResults) -> u64 {
+    results.total_duration.as_millis() as u64
+}
+
+#[cfg(feature = "frb-api")]
+#[frb]
+pub fn system_check_results_get_categories(results: &SystemCheckResults) -> Vec<TestCategory> {
+    results.results.keys().cloned().collect()
+}
+
+#[cfg(feature = "frb-api")]
+#[frb]
+pub fn system_check_results_get_tests_for_category(
+    results: &SystemCheckResults,
+    category: TestCategory,
+) -> Vec<TestInfo> {
+    results.results.get(&category).cloned().unwrap_or_default()
+}
+
+#[cfg(feature = "frb-api")]
+#[frb]
+pub fn system_check_results_category_has_failures(
+    results: &SystemCheckResults,
+    category: TestCategory,
+) -> bool {
+    results.category_has_failures(category)
+}
+
 /// Main system check runner
 #[cfg_attr(feature = "frb-api", frb(opaque))]
 pub struct SystemCheck {
@@ -363,66 +415,90 @@ impl SystemCheck {
     /// 3. Online tests
     /// 4. Synchronization verification (if enabled)
     pub async fn run_all(&self) -> Result<SystemCheckResults, ClientError> {
-        let mut results = SystemCheckResults::new(self.config.clone());
+        self.run_all_stream()
+            .collect::<Vec<_>>()
+            .await
+            .last()
+            .cloned()
+            .ok_or(ClientError::Generic("No results returned".to_string()))
+    }
 
-        // Phase 1: Offline tests (before establishing relay connection)
-        if self.config.run_offline_tests {
-            info!("🔧 Phase 1: Running offline tests...");
+    pub fn run_all_stream(&self) -> impl Stream<Item = SystemCheckResults> {
+        stream! {
+            let mut results = SystemCheckResults::new(self.config.clone());
+            yield results.clone();
+
+            // Phase 1: Offline tests (before establishing relay connection)
+            if self.config.run_offline_tests {
+                info!("🔧 Phase 1: Running offline tests...");
+
+                if !self.config.skip_storage_tests {
+                    let offline_storage_results =
+                        offline_storage::run_tests(&self.client, &self.config).await;
+                    for test in offline_storage_results {
+                        results.add_test(TestCategory::OfflineStorage, test);
+                        yield results.clone();
+                    }
+                    yield results.clone();
+                }
+
+                if !self.config.skip_blob_tests {
+                    let offline_blob_results =
+                        offline_blob::run_tests(&self.client, &self.config).await;
+                    for test in offline_blob_results {
+                        results.add_test(TestCategory::OfflineBlob, test);
+                        yield results.clone();
+                    }
+                    yield results.clone();
+                }
+            }
+
+            // Phase 2: Connectivity tests (establish relay connection)
+            if !self.config.skip_connectivity_tests {
+                info!("🚀 Phase 2: Establishing connectivity...");
+                let connectivity_results = connectivity::run_tests(&self.client, &self.config).await;
+                for test in connectivity_results {
+                    results.add_test(TestCategory::Connectivity, test);
+                    yield results.clone();
+                }
+                yield results.clone();
+            }
+
+            // Phase 3: Online tests (with relay connection)
+            info!("🌐 Phase 3: Running online tests...");
 
             if !self.config.skip_storage_tests {
-                let offline_storage_results =
-                    offline_storage::run_tests(&self.client, &self.config).await;
-                for test in offline_storage_results {
-                    results.add_test(TestCategory::OfflineStorage, test);
+                let storage_results = storage::run_tests(&self.client, &self.config).await;
+                for test in storage_results {
+                    results.add_test(TestCategory::Storage, test);
+                    yield results.clone();
                 }
+                yield results.clone();
             }
 
             if !self.config.skip_blob_tests {
-                let offline_blob_results =
-                    offline_blob::run_tests(&self.client, &self.config).await;
-                for test in offline_blob_results {
-                    results.add_test(TestCategory::OfflineBlob, test);
+                let blob_results = blob_service::run_tests(&self.client, &self.config).await;
+                for test in blob_results {
+                    results.add_test(TestCategory::BlobService, test);
+                    yield results.clone();
                 }
+                yield results.clone();
             }
-        }
 
-        // Phase 2: Connectivity tests (establish relay connection)
-        if !self.config.skip_connectivity_tests {
-            info!("🚀 Phase 2: Establishing connectivity...");
-            let connectivity_results = connectivity::run_tests(&self.client, &self.config).await;
-            for test in connectivity_results {
-                results.add_test(TestCategory::Connectivity, test);
+            // Phase 4: Synchronization verification (verify offline data synced)
+            if self.config.verify_sync && self.config.run_offline_tests {
+                info!("🔄 Phase 4: Verifying synchronization...");
+                let sync_results = synchronization::run_tests(&self.client, &self.config).await;
+                for test in sync_results {
+                    results.add_test(TestCategory::Synchronization, test);
+                    yield results.clone();
+                }
+                yield results.clone();
             }
+
+            results.finalize();
+            yield results;
         }
-
-        // Phase 3: Online tests (with relay connection)
-        info!("🌐 Phase 3: Running online tests...");
-
-        if !self.config.skip_storage_tests {
-            let storage_results = storage::run_tests(&self.client, &self.config).await;
-            for test in storage_results {
-                results.add_test(TestCategory::Storage, test);
-            }
-        }
-
-        if !self.config.skip_blob_tests {
-            let blob_results = blob_service::run_tests(&self.client, &self.config).await;
-            for test in blob_results {
-                results.add_test(TestCategory::BlobService, test);
-            }
-        }
-
-        // Phase 4: Synchronization verification (verify offline data synced)
-        if self.config.verify_sync && self.config.run_offline_tests {
-            info!("🔄 Phase 4: Verifying synchronization...");
-            let sync_results = synchronization::run_tests(&self.client, &self.config).await;
-            for test in sync_results {
-                results.add_test(TestCategory::Synchronization, test);
-            }
-        }
-
-        results.finalize();
-        Ok(results)
     }
 
     /// Run only connectivity tests
@@ -552,46 +628,135 @@ impl SystemCheck {
     }
 }
 
-/// Enhanced diagnostic collector that can extract messages
-pub trait ExtractableDiagnosticCollector: DiagnosticCollector {
-    fn extract_messages(&self) -> (Vec<DiagnosticMessage>, bool, bool);
+/// CLI-specific collector for actual errors and warnings from tracing
+#[derive(Debug, Clone, Default)]
+pub struct DiagnosticCollector {
+    errors: Vec<String>,
+    warnings: Vec<String>,
 }
 
-/// Run system check with custom diagnostic collection
-///
-/// This is the main reusable function that can be used by both CLI and FRB API.
-/// It sets up tracing with the provided diagnostic collector and runs the system check.
-pub async fn run_system_check_with_diagnostics<F, D>(
-    client: Client,
-    config: SystemCheckConfig,
-    diagnostic_collector: Arc<Mutex<D>>,
-    setup_tracing: F,
-) -> Result<SystemCheckOutcome, ClientError>
+impl DiagnosticCollector {
+    fn new() -> Self {
+        Self::default()
+    }
+
+    fn has_errors(&self) -> bool {
+        !self.errors.is_empty()
+    }
+
+    fn has_warnings(&self) -> bool {
+        !self.warnings.is_empty()
+    }
+
+    fn errors(&self) -> &Vec<String> {
+        &self.errors
+    }
+
+    fn warnings(&self) -> &Vec<String> {
+        &self.warnings
+    }
+}
+
+impl DiagnosticCollector {
+    fn add_error(&mut self, message: String) {
+        self.errors.push(message);
+    }
+
+    fn add_warning(&mut self, message: String) {
+        self.warnings.push(message);
+    }
+
+    fn extract_messages(&self) -> (Vec<DiagnosticMessage>, bool, bool) {
+        let mut messages = Vec::new();
+
+        for error in &self.errors {
+            messages.push(DiagnosticMessage {
+                level: DiagnosticLevel::Error,
+                message: error.clone(),
+            });
+        }
+
+        for warning in &self.warnings {
+            messages.push(DiagnosticMessage {
+                level: DiagnosticLevel::Warning,
+                message: warning.clone(),
+            });
+        }
+
+        (messages, self.has_errors(), self.has_warnings())
+    }
+}
+
+/// Custom tracing layer to capture ERROR and WARN messages
+pub enum DiagnosticLayer {
+    WithCollector(Arc<Mutex<DiagnosticCollector>>),
+    None,
+}
+
+impl DiagnosticLayer {
+    pub fn new(collector: Arc<Mutex<DiagnosticCollector>>) -> Self {
+        Self::WithCollector(collector)
+    }
+
+    pub fn new_none() -> Self {
+        Self::None
+    }
+}
+
+impl<S> Layer<S> for DiagnosticLayer
 where
-    F: FnOnce(Arc<Mutex<D>>) -> Result<(), Box<dyn std::error::Error + Send + Sync>>,
-    D: ExtractableDiagnosticCollector + 'static,
+    S: tracing::Subscriber,
 {
-    // Set up tracing with the provided diagnostic collector
-    setup_tracing(diagnostic_collector.clone())
-        .map_err(|e| ClientError::Generic(format!("Failed to setup tracing: {}", e)))?;
+    fn on_event(
+        &self,
+        event: &tracing::Event<'_>,
+        _ctx: tracing_subscriber::layer::Context<'_, S>,
+    ) {
+        let collector_arc = match self {
+            Self::WithCollector(collector) => collector,
+            Self::None => return,
+        };
 
-    // Run the system check
-    let system_check = SystemCheck::new(client, config);
-    let test_results = system_check.run_all().await?;
+        let level = *event.metadata().level();
 
-    // Extract diagnostics
-    let (diagnostics, has_errors, has_warnings) = {
-        let collector = diagnostic_collector.lock().unwrap();
-        collector.extract_messages()
-    };
+        // Only collect ERROR and WARN level events
+        if level == Level::ERROR || level == Level::WARN {
+            let mut visitor = MessageVisitor::new();
+            event.record(&mut visitor);
 
-    let success = test_results.is_success() && !has_errors;
+            if let Some(message) = visitor.message {
+                let mut collector = collector_arc.lock().unwrap();
+                match level {
+                    Level::ERROR => collector.add_error(message),
+                    Level::WARN => collector.add_warning(message),
+                    _ => {}
+                }
+            }
+        }
+    }
+}
 
-    Ok(SystemCheckOutcome {
-        test_results,
-        diagnostics,
-        success,
-        has_errors,
-        has_warnings,
-    })
+/// Visitor to extract message from tracing events
+struct MessageVisitor {
+    message: Option<String>,
+}
+
+impl MessageVisitor {
+    fn new() -> Self {
+        Self { message: None }
+    }
+}
+
+impl tracing::field::Visit for MessageVisitor {
+    fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
+        if field.name() == "message" {
+            self.message = Some(format!("{:?}", value));
+        }
+    }
+
+    fn record_str(&mut self, field: &tracing::field::Field, value: &str) {
+        if field.name() == "message" {
+            self.message = Some(value.to_string());
+        }
+    }
 }

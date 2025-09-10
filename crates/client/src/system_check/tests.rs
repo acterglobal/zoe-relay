@@ -19,7 +19,6 @@ use zoe_wire_protocol::{KeyPair, VerifyingKey};
 use super::{
     DiagnosticCollector, DiagnosticLevel, DiagnosticMessage, ExtractableDiagnosticCollector,
     SystemCheck, SystemCheckConfig, SystemCheckResults, TestCategory, TestResult,
-    run_system_check_with_diagnostics,
 };
 use crate::Client;
 
@@ -536,71 +535,6 @@ mod integration_tests {
         match result {
             Ok(r) => r,
             Err(_) => anyhow::bail!("Test timed out after 30 seconds"),
-        }
-    }
-
-    #[tokio::test(flavor = "multi_thread")]
-    async fn test_system_check_with_diagnostics_api() -> Result<()> {
-        let result = tokio::time::timeout(Duration::from_secs(45), async {
-            init_crypto_provider();
-            let _ = tracing_subscriber::fmt().with_env_filter("info").try_init();
-
-            info!("🚀 Starting system check with diagnostics API test");
-
-            let mut infra = TestInfrastructure::setup().await?;
-            let client = infra.create_client().await?;
-            client.add_relay(infra.get_relay_address()).await?;
-
-            // Wait for connection
-            let mut attempts = 0;
-            while attempts < 50 && !client.has_connected_relays().await {
-                tokio::time::sleep(Duration::from_millis(100)).await;
-                attempts += 1;
-            }
-
-            // Create diagnostic collector
-            let diagnostic_collector = Arc::new(Mutex::new(TestDiagnosticCollector::new()));
-
-            // Configure system check
-            let config = SystemCheckConfig::default()
-                .with_timeout_secs(10)
-                .with_blob_test_size(512)
-                .with_storage_test_count(1);
-
-            // Setup tracing function (simplified for test)
-            let setup_tracing = |_collector: Arc<Mutex<TestDiagnosticCollector>>| -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-                // In a real implementation, this would set up tracing with the collector
-                // For this test, we'll just return Ok
-                Ok(())
-            };
-
-            // Run system check with diagnostics
-            let outcome = run_system_check_with_diagnostics(
-                client,
-                config,
-                diagnostic_collector.clone(),
-                setup_tracing,
-            ).await?;
-
-            // Verify outcome
-            assert!(outcome.success, "System check should succeed");
-            assert!(outcome.test_results.is_success(), "Test results should be successful");
-            assert!(outcome.test_results.total_count() > 0, "Should have run tests");
-
-            // Check diagnostics (may be empty in successful run)
-            info!("Diagnostics: {} errors, {} warnings", 
-                outcome.diagnostics.iter().filter(|d| d.level == DiagnosticLevel::Error).count(),
-                outcome.diagnostics.iter().filter(|d| d.level == DiagnosticLevel::Warning).count()
-            );
-
-            info!("✅ System check with diagnostics API test passed");
-            infra.cleanup().await?;
-            Ok(())
-        }).await;
-
-        match result {
-            Ok(r) => r,
-            Err(_) => anyhow::bail!("Test timed out after 45 seconds"),
         }
     }
 

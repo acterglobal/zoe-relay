@@ -124,39 +124,8 @@ fn parse_algorithm(s: &str) -> Result<Algorithm, String> {
 /// - "192.168.1.100:8443" (IPv4 with port)
 /// - "[::1]:8443" (IPv6 with port)
 fn parse_external_address(addr_str: &str) -> Result<NetworkAddress> {
-    // Try to parse as a full socket address first
-    if let Ok(socket_addr) = addr_str.parse::<SocketAddr>() {
-        return Ok(match socket_addr.ip() {
-            std::net::IpAddr::V4(ipv4) => NetworkAddress::ipv4_with_port(ipv4, socket_addr.port()),
-            std::net::IpAddr::V6(ipv6) => NetworkAddress::ipv6_with_port(ipv6, socket_addr.port()),
-        });
-    }
-
-    // Try to parse as IP:port
-    if let Some((ip_str, port_str)) = addr_str.rsplit_once(':') {
-        if let (Ok(ip), Ok(port)) = (ip_str.parse::<std::net::IpAddr>(), port_str.parse::<u16>()) {
-            return Ok(match ip {
-                std::net::IpAddr::V4(ipv4) => NetworkAddress::ipv4_with_port(ipv4, port),
-                std::net::IpAddr::V6(ipv6) => NetworkAddress::ipv6_with_port(ipv6, port),
-            });
-        }
-
-        // Try as hostname:port
-        if let Ok(port) = port_str.parse::<u16>() {
-            return Ok(NetworkAddress::dns_with_port(ip_str, port));
-        }
-    }
-
-    // Try to parse as plain IP
-    if let Ok(ip) = addr_str.parse::<std::net::IpAddr>() {
-        return Ok(match ip {
-            std::net::IpAddr::V4(ipv4) => NetworkAddress::ipv4(ipv4),
-            std::net::IpAddr::V6(ipv6) => NetworkAddress::ipv6(ipv6),
-        });
-    }
-
-    // Assume it's a DNS name without port
-    Ok(NetworkAddress::dns(addr_str))
+    NetworkAddress::try_from(addr_str.to_string())
+        .map_err(|e| anyhow::anyhow!("Failed to parse external address '{}': {}", addr_str, e))
 }
 
 /// Load or generate a server keypair, with persistent storage

@@ -39,6 +39,21 @@ pub enum NetworkAddress {
     },
 }
 
+impl std::fmt::Display for NetworkAddress {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let (first, port) = match self {
+            NetworkAddress::Dns { hostname, port } => (hostname.clone(), port),
+            NetworkAddress::Ipv4 { address, port } => (format!("{address}"), port),
+            NetworkAddress::Ipv6 { address, port } => (format!("[{address}]"), port),
+        };
+        if let Some(port) = port {
+            write!(f, "{}:{}", first, port)
+        } else {
+            write!(f, "{}", first)
+        }
+    }
+}
+
 #[cfg_attr(feature = "frb-api", frb)]
 impl NetworkAddress {
     /// Create a DNS network address
@@ -106,40 +121,6 @@ impl NetworkAddress {
             NetworkAddress::Ipv6 { port, .. } => *port,
         }
     }
-
-    /// Convert to a string representation suitable for connection
-    pub fn to_connection_string(&self, default_port: Option<u16>) -> String {
-        match self {
-            NetworkAddress::Dns { hostname, port } => {
-                if let Some(port) = port {
-                    format!("{}:{}", hostname, port)
-                } else if let Some(default) = default_port {
-                    format!("{}:{}", hostname, default)
-                } else {
-                    hostname.clone()
-                }
-            }
-            NetworkAddress::Ipv4 { address, port } => {
-                if let Some(port) = port {
-                    format!("{}:{}", address, port)
-                } else if let Some(default) = default_port {
-                    format!("{}:{}", address, default)
-                } else {
-                    address.to_string()
-                }
-            }
-            NetworkAddress::Ipv6 { address, port } => {
-                if let Some(port) = port {
-                    format!("[{}]:{}", address, port)
-                } else if let Some(default) = default_port {
-                    format!("[{}]:{}", address, default)
-                } else {
-                    address.to_string()
-                }
-            }
-        }
-    }
-
     /// Resolve this network address to a socket address
     ///
     /// For IP addresses, returns immediately. For DNS addresses, performs resolution.
@@ -196,9 +177,47 @@ impl From<SocketAddr> for NetworkAddress {
     }
 }
 
-impl std::fmt::Display for NetworkAddress {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.to_connection_string(None))
+impl From<String> for NetworkAddress {
+    fn from(addr_str: String) -> Self {
+        // Try to parse as a full socket address first
+        if let Ok(socket_addr) = addr_str.parse::<SocketAddr>() {
+            return match socket_addr.ip() {
+                std::net::IpAddr::V4(ipv4) => {
+                    NetworkAddress::ipv4_with_port(ipv4, socket_addr.port())
+                }
+                std::net::IpAddr::V6(ipv6) => {
+                    NetworkAddress::ipv6_with_port(ipv6, socket_addr.port())
+                }
+            };
+        }
+
+        // Try to parse as IP:port
+        if let Some((ip_str, port_str)) = addr_str.rsplit_once(':') {
+            if let (Ok(ip), Ok(port)) =
+                (ip_str.parse::<std::net::IpAddr>(), port_str.parse::<u16>())
+            {
+                return match ip {
+                    std::net::IpAddr::V4(ipv4) => NetworkAddress::ipv4_with_port(ipv4, port),
+                    std::net::IpAddr::V6(ipv6) => NetworkAddress::ipv6_with_port(ipv6, port),
+                };
+            }
+
+            // Try as hostname:port
+            if let Ok(port) = port_str.parse::<u16>() {
+                return NetworkAddress::dns_with_port(ip_str, port);
+            }
+        }
+
+        // Try to parse as plain IP
+        if let Ok(ip) = addr_str.parse::<std::net::IpAddr>() {
+            return match ip {
+                std::net::IpAddr::V4(ipv4) => NetworkAddress::ipv4(ipv4),
+                std::net::IpAddr::V6(ipv6) => NetworkAddress::ipv6(ipv6),
+            };
+        }
+
+        // Assume it's a DNS name without port
+        NetworkAddress::dns(addr_str)
     }
 }
 
@@ -242,6 +261,11 @@ impl RelayAddress {
     /// Add a network address
     pub fn with_address(mut self, address: NetworkAddress) -> Self {
         self.addresses.insert(address);
+        self
+    }
+
+    pub fn with_address_str(mut self, address: String) -> Self {
+        self.addresses.insert(address.into());
         self
     }
 
@@ -301,8 +325,6 @@ mod tests {
     #[test]
     fn test_network_address_dns() {
         let addr = NetworkAddress::dns("example.com");
-        assert_eq!(addr.to_connection_string(Some(8080)), "example.com:8080");
-        assert_eq!(addr.to_connection_string(None), "example.com");
         assert_eq!(addr.port(), None);
         assert_eq!(addr.port_or_default(8080), 8080);
     }
@@ -310,8 +332,6 @@ mod tests {
     #[test]
     fn test_network_address_dns_with_port() {
         let addr = NetworkAddress::dns_with_port("example.com", 9090);
-        assert_eq!(addr.to_connection_string(Some(8080)), "example.com:9090");
-        assert_eq!(addr.to_connection_string(None), "example.com:9090");
         assert_eq!(addr.port(), Some(9090));
         assert_eq!(addr.port_or_default(8080), 9090);
     }
@@ -319,8 +339,6 @@ mod tests {
     #[test]
     fn test_network_address_ipv4() {
         let addr = NetworkAddress::ipv4(Ipv4Addr::new(192, 168, 1, 1));
-        assert_eq!(addr.to_connection_string(Some(8080)), "192.168.1.1:8080");
-        assert_eq!(addr.to_connection_string(None), "192.168.1.1");
         assert_eq!(addr.port(), None);
         assert_eq!(addr.port_or_default(8080), 8080);
     }
@@ -328,8 +346,6 @@ mod tests {
     #[test]
     fn test_network_address_ipv4_with_port() {
         let addr = NetworkAddress::ipv4_with_port(Ipv4Addr::new(192, 168, 1, 1), 9090);
-        assert_eq!(addr.to_connection_string(Some(8080)), "192.168.1.1:9090");
-        assert_eq!(addr.to_connection_string(None), "192.168.1.1:9090");
         assert_eq!(addr.port(), Some(9090));
         assert_eq!(addr.port_or_default(8080), 9090);
     }
@@ -337,8 +353,6 @@ mod tests {
     #[test]
     fn test_network_address_ipv6() {
         let addr = NetworkAddress::ipv6(Ipv6Addr::LOCALHOST);
-        assert_eq!(addr.to_connection_string(Some(8080)), "[::1]:8080");
-        assert_eq!(addr.to_connection_string(None), "::1");
         assert_eq!(addr.port(), None);
         assert_eq!(addr.port_or_default(8080), 8080);
     }
@@ -346,8 +360,6 @@ mod tests {
     #[test]
     fn test_network_address_ipv6_with_port() {
         let addr = NetworkAddress::ipv6_with_port(Ipv6Addr::LOCALHOST, 9090);
-        assert_eq!(addr.to_connection_string(Some(8080)), "[::1]:9090");
-        assert_eq!(addr.to_connection_string(None), "[::1]:9090");
         assert_eq!(addr.port(), Some(9090));
         assert_eq!(addr.port_or_default(8080), 9090);
     }
@@ -448,10 +460,6 @@ mod tests {
         }
 
         // Verify the port is correctly used in connection strings
-        assert_eq!(
-            network_addr.to_connection_string(None),
-            "192.168.1.100:13918"
-        );
         assert_eq!(network_addr.port(), Some(13918));
         assert_eq!(network_addr.port_or_default(8080), 13918);
     }
@@ -471,10 +479,6 @@ mod tests {
         }
 
         // Verify the port is correctly used in connection strings
-        assert_eq!(
-            network_addr.to_connection_string(None),
-            "[2001:db8::1]:13918"
-        );
         assert_eq!(network_addr.port(), Some(13918));
         assert_eq!(network_addr.port_or_default(8080), 13918);
     }
@@ -490,10 +494,6 @@ mod tests {
 
         assert_eq!(ipv4_network.port(), Some(13918));
         assert_eq!(ipv6_network.port(), Some(13918));
-
-        // Verify they resolve correctly with the preserved port
-        assert_eq!(ipv4_network.to_connection_string(None), "127.0.0.1:13918");
-        assert_eq!(ipv6_network.to_connection_string(None), "[::1]:13918");
     }
 
     #[test]
