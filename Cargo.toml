@@ -78,6 +78,9 @@ brotli = "8"
 # CLI
 clap = { version = "4.4", features = ["derive", "env"] }
 
+# flutter rust bridge support
+flutter_rust_bridge = { version = "=2.11.1" }
+
 # Testing utilities
 tempfile = "3.0"
 test-case = "3.0"

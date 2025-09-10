@@ -1,5 +1,5 @@
 # Multi-stage Dockerfile for Zoe Relay Server
-FROM rust:latest as builder
+FROM rust:1.89-bookworm as builder
 
 # Install system dependencies for building
 RUN apt-get update && apt-get install -y \
@@ -43,7 +43,7 @@ WORKDIR /app
 COPY --from=builder /app/target/release/zoe-relay ./zoe-relay
 
 # Create data directory structure
-RUN mkdir -p /app/data && chown -R zoe:zoe /app
+RUN mkdir -p /app/data /shared/keys && chown -R zoe:zoe /app /shared/keys
 
 # Switch to app user
 USER zoe

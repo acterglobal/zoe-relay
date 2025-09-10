@@ -4,11 +4,15 @@ use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use serde::{Deserialize, Serialize};
 use zoe_wire_protocol::VerifyingKey;
 
+#[cfg(feature = "frb-api")]
+use flutter_rust_bridge::frb;
+
 /// Network address information for connecting to a service
 ///
 /// Supports multiple address types including DNS names, IPv4, and IPv6 addresses
 /// with optional port specifications for maximum flexibility.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+#[cfg_attr(feature = "frb-api", frb(opaque))]
 pub enum NetworkAddress {
     /// DNS hostname with optional port
     ///
@@ -35,6 +39,7 @@ pub enum NetworkAddress {
     },
 }
 
+#[cfg_attr(feature = "frb-api", frb)]
 impl NetworkAddress {
     /// Create a DNS network address
     pub fn dns(hostname: impl Into<String>) -> Self {
@@ -154,7 +159,7 @@ impl NetworkAddress {
 
                 // Use tokio's lookup_host for DNS resolution
                 use tokio::net::lookup_host;
-                let addrs = lookup_host(&connection_string)
+                let addrs = lookup_host(connection_string.clone())
                     .await
                     .map_err(|e| e.to_string())?;
                 if let Some(addr) = addrs.into_iter().next() {
@@ -217,6 +222,7 @@ pub struct RelayAddress {
     pub name: Option<String>,
 }
 
+#[cfg_attr(feature = "frb-api", frb(opaque))]
 impl RelayAddress {
     /// Create a new connection info with minimal required fields
     pub fn new(public_key: VerifyingKey) -> Self {
