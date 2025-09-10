@@ -11,6 +11,7 @@ pub mod relay_client;
 pub mod rpc_transport;
 pub mod services;
 pub mod session_manager;
+pub mod system_check;
 pub mod util;
 
 #[cfg(feature = "frb-api")]
@@ -27,6 +28,11 @@ pub use relay_client::{RelayClient, RelayClientBuilder};
 pub use rpc_transport::{RpcMessageListener, TarpcOverMessagesClient, TarpcOverMessagesServer};
 pub use services::{BlobService, MessagesService, MessagesStream};
 pub use session_manager::{SessionManager, SessionManagerError, SessionManagerResult};
+pub use system_check::{
+    DiagnosticCollector, DiagnosticLevel, DiagnosticMessage, ExtractableDiagnosticCollector,
+    SystemCheck, SystemCheckConfig, SystemCheckOutcome, SystemCheckResults, TestCategory, TestInfo,
+    TestResult, run_system_check_with_diagnostics,
+};
 
 // Re-export FileRef and Image from app-primitives for convenience
 pub use zoe_app_primitives::{FileRef, Image};

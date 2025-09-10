@@ -1,456 +1,600 @@
 //! # Zoe System Check Binary
 //!
 //! A comprehensive system check tool that verifies all aspects of the Zoe client functionality
-//! including server connectivity, storage operations, and blob service functionality.
+//! including offline operations, server connectivity, storage operations, blob service functionality,
+//! and synchronization between offline and online data.
 //!
 //! ## Usage
 //!
-//! Basic usage:
-//! ```bash
-//! cargo run --bin zoe-system-check -- --relay-address "127.0.0.1:8080" --server-key-file server.key --ephemeral
-//! ```
-//!
-//! With specific server key:
+//! Basic comprehensive check:
 //! ```bash
 //! cargo run --bin zoe-system-check -- --relay-address "127.0.0.1:8080" --server-key "abc123..." --ephemeral
 //! ```
 //!
+//! Individual test categories:
+//! ```bash
+//! cargo run --bin zoe-system-check -- -r server:port -s key -e connectivity
+//! cargo run --bin zoe-system-check -- -r server:port -s key -e offline-storage
+//! cargo run --bin zoe-system-check -- -r server:port -s key -e storage --count 5
+//! cargo run --bin zoe-system-check -- -r server:port -s key -e blob-service --size 2048
+//! ```
+//!
 //! ## What This Tool Tests
 //!
-//! 1. **Server Connectivity**: QUIC connection, protocol negotiation, ML-DSA handshake
-//! 2. **Storage Operations**: Store and retrieve test messages using the message store
-//! 3. **Blob Service**: Upload and download random data through the blob service
-//! 4. **Error Handling**: Proper error reporting with appropriate exit codes
+//! ### Phase 1: Offline Tests (without relay connection)
+//! 1. **Offline Storage**: Local message storage and retrieval
+//! 2. **Offline Blob Service**: Local blob data handling and integrity
+//!
+//! ### Phase 2: Connectivity Tests
+//! 3. **Server Connectivity**: QUIC connection, protocol negotiation, ML-DSA handshake
+//!
+//! ### Phase 3: Online Tests (with relay connection)
+//! 4. **Online Storage**: Store and retrieve messages through relay
+//! 5. **Online Blob Service**: Upload and download data through relay
+//!
+//! ### Phase 4: Synchronization Tests
+//! 6. **Sync Verification**: Verify offline data syncs with server
 //!
 //! ## Exit Codes
 //!
 //! - `0`: All tests passed successfully
-//! - `1`: Server connectivity failed
-//! - `2`: Storage operations failed
-//! - `3`: Blob service operations failed
+//! - `1`: Errors or warnings detected (with --fail-on-warnings)
+//! - `2`: Test failures detected
 //! - `4`: Configuration or setup error
 
-use clap::{Parser, command};
-use rand::RngCore;
-use std::time::{SystemTime, UNIX_EPOCH};
-use tracing::{error, info, warn};
-use zoe_client::cli::{RelayClientArgs, full_cli_client, main_setup};
-use zoe_client::services::{BlobStore, MessagesManagerTrait};
-use zoe_wire_protocol::{Content, KeyPair, Kind, Message, MessageFull, StoreKey, Tag};
+use clap::{Parser, Subcommand};
+use std::process;
+use std::sync::{Arc, Mutex};
+use tracing::{Level, error, info, warn};
+use tracing_subscriber::Layer;
+use zoe_client::cli::RelayClientArgs;
+use zoe_client::util::resolve_to_socket_addr;
+use zoe_client::{
+    Client, DiagnosticCollector, DiagnosticLevel, DiagnosticMessage,
+    ExtractableDiagnosticCollector, SystemCheck, SystemCheckConfig, TestCategory, TestResult,
+};
 
-#[cfg(debug_assertions)]
-const IS_DEBUG: bool = true;
-#[cfg(not(debug_assertions))]
-const IS_DEBUG: bool = false;
-
-#[derive(Parser, Debug)]
-#[command(author, version, about = "Comprehensive Zoe system check tool", long_about = None)]
-struct SystemCheckArgs {
-    #[command(flatten)]
-    args: RelayClientArgs,
-
-    /// Size of random data to test blob service (in bytes)
-    #[arg(long, default_value = "1024")]
-    blob_test_size: usize,
-
-    /// Number of storage messages to test
-    #[arg(long, default_value = "3")]
-    storage_test_count: u32,
-
-    /// Skip blob service tests
-    #[arg(long)]
-    skip_blob_tests: bool,
-
-    /// Skip storage tests
-    #[arg(long)]
-    skip_storage_tests: bool,
-
-    /// Quiet output (suppress detailed progress messages)
-    #[arg(short, long)]
-    quiet: bool,
+/// CLI-specific collector for actual errors and warnings from tracing
+#[derive(Debug, Clone, Default)]
+struct CliDiagnosticCollector {
+    errors: Vec<String>,
+    warnings: Vec<String>,
 }
 
-/// Test message content for storage verification
-#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq)]
-struct SystemCheckTestMessage {
-    test_id: u64,
-    timestamp: u64,
-    data: Vec<u8>,
-    checksum: u32,
+impl CliDiagnosticCollector {
+    fn new() -> Self {
+        Self::default()
+    }
+
+    fn has_errors(&self) -> bool {
+        !self.errors.is_empty()
+    }
+
+    fn has_warnings(&self) -> bool {
+        !self.warnings.is_empty()
+    }
+
+    fn print_summary(&self) {
+        if self.has_errors() {
+            eprintln!("\n❌ ERRORS DETECTED:");
+            eprintln!("═══════════════════");
+            for (i, error) in self.errors.iter().enumerate() {
+                eprintln!("{}. {}", i + 1, error);
+            }
+        }
+
+        if self.has_warnings() {
+            eprintln!("\n⚠️  WARNINGS DETECTED:");
+            eprintln!("═════════════════════");
+            for (i, warning) in self.warnings.iter().enumerate() {
+                eprintln!("{}. {}", i + 1, warning);
+            }
+        }
+    }
 }
 
-impl SystemCheckTestMessage {
-    fn new(test_id: u64, data: Vec<u8>) -> Self {
-        let timestamp = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
-        let checksum = crc32fast::hash(&data);
-        Self {
-            test_id,
-            timestamp,
-            data,
-            checksum,
+impl DiagnosticCollector for CliDiagnosticCollector {
+    fn add_error(&mut self, message: String) {
+        self.errors.push(message);
+    }
+
+    fn add_warning(&mut self, message: String) {
+        self.warnings.push(message);
+    }
+}
+
+impl ExtractableDiagnosticCollector for CliDiagnosticCollector {
+    fn extract_messages(&self) -> (Vec<DiagnosticMessage>, bool, bool) {
+        let mut messages = Vec::new();
+
+        for error in &self.errors {
+            messages.push(DiagnosticMessage {
+                level: DiagnosticLevel::Error,
+                message: error.clone(),
+            });
+        }
+
+        for warning in &self.warnings {
+            messages.push(DiagnosticMessage {
+                level: DiagnosticLevel::Warning,
+                message: warning.clone(),
+            });
+        }
+
+        (messages, self.has_errors(), self.has_warnings())
+    }
+}
+
+/// Custom tracing layer to capture ERROR and WARN messages
+struct DiagnosticLayer {
+    collector: Arc<Mutex<CliDiagnosticCollector>>,
+}
+
+impl DiagnosticLayer {
+    fn new(collector: Arc<Mutex<CliDiagnosticCollector>>) -> Self {
+        Self { collector }
+    }
+}
+
+impl<S> Layer<S> for DiagnosticLayer
+where
+    S: tracing::Subscriber,
+{
+    fn on_event(
+        &self,
+        event: &tracing::Event<'_>,
+        _ctx: tracing_subscriber::layer::Context<'_, S>,
+    ) {
+        let level = *event.metadata().level();
+
+        // Only collect ERROR and WARN level events
+        if level == Level::ERROR || level == Level::WARN {
+            let mut visitor = MessageVisitor::new();
+            event.record(&mut visitor);
+
+            if let Some(message) = visitor.message {
+                let mut collector = self.collector.lock().unwrap();
+                match level {
+                    Level::ERROR => collector.add_error(message),
+                    Level::WARN => collector.add_warning(message),
+                    _ => {}
+                }
+            }
+        }
+    }
+}
+
+/// Visitor to extract message from tracing events
+struct MessageVisitor {
+    message: Option<String>,
+}
+
+impl MessageVisitor {
+    fn new() -> Self {
+        Self { message: None }
+    }
+}
+
+impl tracing::field::Visit for MessageVisitor {
+    fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
+        if field.name() == "message" {
+            self.message = Some(format!("{:?}", value));
         }
     }
 
-    #[allow(dead_code)]
-    fn verify_checksum(&self) -> bool {
-        crc32fast::hash(&self.data) == self.checksum
+    fn record_str(&mut self, field: &tracing::field::Field, value: &str) {
+        if field.name() == "message" {
+            self.message = Some(value.to_string());
+        }
     }
+}
+
+#[derive(Parser, Debug)]
+#[clap(author, version, about = "Comprehensive Zoe system check tool", long_about = None)]
+struct SystemCheckArgs {
+    #[command(flatten)]
+    client_args: RelayClientArgs,
+
+    /// Run in quiet mode (only show summary)
+    #[arg(short, long, global = true)]
+    quiet: bool,
+
+    /// Fail with non-zero exit code if any warnings are detected
+    #[arg(long, global = true)]
+    fail_on_warnings: bool,
+
+    /// Timeout for operations in seconds
+    #[arg(short, long, default_value = "30", global = true)]
+    timeout: u64,
+
+    /// Skip offline tests
+    #[arg(long, global = true)]
+    skip_offline: bool,
+
+    /// Skip sync verification
+    #[arg(long, global = true)]
+    skip_sync: bool,
+
+    /// Test command to run
+    #[command(subcommand)]
+    command: Option<TestCommand>,
+}
+
+#[derive(Subcommand, Debug)]
+enum TestCommand {
+    /// Test offline storage functionality
+    OfflineStorage {
+        /// Number of test messages
+        #[arg(long, default_value = "2")]
+        count: u32,
+    },
+    /// Test offline blob service functionality
+    OfflineBlob {
+        /// Size of test data in bytes
+        #[arg(long, default_value = "65536")]
+        size: usize,
+    },
+    /// Test server connectivity
+    Connectivity,
+    /// Test online storage operations
+    Storage {
+        /// Number of test messages
+        #[arg(long, default_value = "3")]
+        count: u32,
+    },
+    /// Test online blob service operations
+    BlobService {
+        /// Size of test data in bytes
+        #[arg(long, default_value = "1048576")]
+        size: usize,
+    },
+    /// Test synchronization between offline and online data
+    Synchronization,
+    /// Run all tests in comprehensive flow
+    All,
 }
 
 #[tokio::main]
-pub async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    if !IS_DEBUG {
-        error!("This is a debug only app for now. Release mode isn't supported yet.");
-        std::process::exit(4);
-    }
-
-    // Set default log level if not already set
-    if std::env::var("RUST_LOG").is_err() {
-        unsafe {
-            std::env::set_var("RUST_LOG", "zoe_system_check=info,zoe_client=warn");
-        }
-    }
-
-    main_setup().await?;
-
+async fn main() {
     let args = SystemCheckArgs::parse();
 
-    if !args.quiet {
-        info!("🔍 Starting comprehensive Zoe system check");
-        info!("📊 Configuration:");
-        info!("  - Server: {}", args.args.relay_address);
-        info!("  - Blob test size: {} bytes", args.blob_test_size);
-        info!("  - Storage test count: {}", args.storage_test_count);
-        info!("  - Skip blob tests: {}", args.skip_blob_tests);
-        info!("  - Skip storage tests: {}", args.skip_storage_tests);
+    // Initialize crypto provider for Rustls
+    let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+
+    // Create diagnostic collector
+    let diagnostic_collector = Arc::new(Mutex::new(CliDiagnosticCollector::new()));
+
+    info!("🚀 Starting Zoe System Check");
+
+    // Create client configuration
+    let mut config = SystemCheckConfig::default().with_timeout_secs(args.timeout);
+
+    // Apply global flags
+    if args.skip_offline {
+        config = config.with_offline_tests(false);
+    }
+    if args.skip_sync {
+        config = config.with_sync_verification(false);
     }
 
-    // Step 1: Test server connectivity
-    info!("🚀 Step 1/3: Testing server connectivity...");
-    let client = match full_cli_client(args.args).await {
-        Ok(client) => {
-            info!("✅ Server connectivity: PASSED");
-            info!("  - QUIC connection established");
-            info!("  - Protocol version negotiated");
-            info!("  - ML-DSA handshake completed");
-            info!("  - Storage initialized");
-            client
+    // Determine what tests to run and configure accordingly
+    let (run_specific_test, specific_category) = match &args.command {
+        Some(TestCommand::OfflineStorage { count }) => {
+            config = config
+                .with_offline_message_count(*count)
+                .skip_blob_tests()
+                .skip_connectivity_tests();
+            (true, Some(TestCategory::OfflineStorage))
         }
-        Err(e) => {
-            error!("❌ Server connectivity: FAILED");
-            error!("  Error: {}", e);
-            std::process::exit(1);
+        Some(TestCommand::OfflineBlob { size }) => {
+            config = config
+                .with_offline_blob_size(*size)
+                .skip_storage_tests()
+                .skip_connectivity_tests();
+            (true, Some(TestCategory::OfflineBlob))
+        }
+        Some(TestCommand::Connectivity) => {
+            config = config
+                .with_offline_tests(false)
+                .with_sync_verification(false)
+                .skip_storage_tests()
+                .skip_blob_tests();
+            (true, Some(TestCategory::Connectivity))
+        }
+        Some(TestCommand::Storage { count }) => {
+            config = config
+                .with_storage_test_count(*count)
+                .with_offline_tests(false)
+                .with_sync_verification(false)
+                .skip_blob_tests();
+            (true, Some(TestCategory::Storage))
+        }
+        Some(TestCommand::BlobService { size }) => {
+            config = config
+                .with_blob_test_size(*size)
+                .with_offline_tests(false)
+                .with_sync_verification(false)
+                .skip_storage_tests();
+            (true, Some(TestCategory::BlobService))
+        }
+        Some(TestCommand::Synchronization) => {
+            config = config
+                .skip_storage_tests()
+                .skip_blob_tests()
+                .skip_connectivity_tests();
+            (true, Some(TestCategory::Synchronization))
+        }
+        Some(TestCommand::All) | None => {
+            // Run comprehensive test flow
+            (false, None)
         }
     };
 
-    let mut test_results = SystemCheckResults::new();
+    // Create client
+    info!("📍 Establishing client connection...");
+    let client = match create_client(&args.client_args).await {
+        Ok(client) => {
+            info!("✅ Client connection established successfully");
+            client
+        }
+        Err(e) => {
+            error!("❌ Failed to create client: {}", e);
+            process::exit(4);
+        }
+    };
 
-    // Step 2: Test storage operations
-    if !args.skip_storage_tests {
-        info!("💾 Step 2/3: Testing storage operations...");
-        match test_storage_operations(&client, args.storage_test_count, !args.quiet).await {
-            Ok(()) => {
-                info!("✅ Storage operations: PASSED");
-                test_results.storage_passed = true;
+    // Create system check instance
+    let system_check = SystemCheck::new(client, config.clone());
+
+    // Run tests
+    let results = if run_specific_test {
+        if let Some(category) = specific_category {
+            match category {
+                TestCategory::OfflineStorage => {
+                    info!("🔍 Running offline storage tests only...");
+                }
+                TestCategory::OfflineBlob => {
+                    info!("🔍 Running offline blob tests only...");
+                }
+                TestCategory::Connectivity => {
+                    info!("🔍 Running connectivity tests only...");
+                }
+                TestCategory::Storage => {
+                    info!("🔍 Running online storage tests only...");
+                }
+                TestCategory::BlobService => {
+                    info!("🔍 Running blob service tests only...");
+                }
+                TestCategory::Synchronization => {
+                    info!("🔍 Running synchronization tests only...");
+                }
             }
+
+            match system_check.run_category_tests(category).await {
+                Ok(tests) => {
+                    let mut results = zoe_client::SystemCheckResults::new(config);
+                    for test in tests {
+                        results.add_test(category, test);
+                    }
+                    results.finalize();
+                    results
+                }
+                Err(e) => {
+                    error!("❌ Failed to run {} tests: {}", category.name(), e);
+                    process::exit(2);
+                }
+            }
+        } else {
+            unreachable!("Specific test requested but no category provided");
+        }
+    } else {
+        info!("🔍 Running comprehensive system check...");
+        match system_check.run_all().await {
+            Ok(results) => results,
             Err(e) => {
-                error!("❌ Storage operations: FAILED");
-                error!("  Error: {}", e);
-                client.close().await;
-                std::process::exit(2);
+                error!("❌ System check failed: {}", e);
+                process::exit(4);
             }
         }
-    } else {
-        info!("⏭️  Step 2/3: Storage operations skipped");
-        test_results.storage_skipped = true;
-    }
+    };
 
-    // Step 3: Test blob service
-    if !args.skip_blob_tests {
-        info!("📦 Step 3/3: Testing blob service...");
-        match test_blob_service(&client, args.blob_test_size, !args.quiet).await {
-            Ok(()) => {
-                info!("✅ Blob service: PASSED");
-                test_results.blob_passed = true;
+    // Print results
+    print_results(&results, args.quiet);
+
+    // Print actual captured errors and warnings
+    let (has_errors, has_warnings) = {
+        let collector = diagnostic_collector.lock().unwrap();
+        if collector.has_errors() || collector.has_warnings() {
+            collector.print_summary();
+        }
+        (collector.has_errors(), collector.has_warnings())
+    };
+
+    // Determine exit code (simplified)
+    let exit_code = if !results.is_success() {
+        error!("❌ System check failed due to test failures");
+        2 // Test failures
+    } else if has_errors {
+        error!("❌ System check failed due to errors (see above)");
+        1 // Errors detected
+    } else if args.fail_on_warnings && has_warnings {
+        error!("❌ System check failed due to warnings (--fail-on-warnings enabled)");
+        1 // Warnings treated as errors
+    } else {
+        info!("🎉 All system checks completed successfully!");
+        if has_warnings && !args.fail_on_warnings {
+            warn!(
+                "⚠️  Note: Warnings detected but not treated as failures (use --fail-on-warnings to change this)"
+            );
+        }
+        0 // Success
+    };
+    process::exit(exit_code);
+}
+
+/// Create a client with the specified configuration
+async fn create_client(args: &RelayClientArgs) -> Result<Client, Box<dyn std::error::Error>> {
+    let mut builder = Client::builder();
+
+    // Configure for offline-first operation
+    builder.autoconnect(false); // We'll manually establish connections as needed
+
+    if args.ephemeral {
+        // Set up temporary directories
+        let temp_dir = tempfile::tempdir()?;
+        let media_storage_path = temp_dir.path().join("blobs");
+        let db_storage_path = temp_dir.path().join("db");
+
+        builder.media_storage_dir_pathbuf(media_storage_path);
+        builder.db_storage_dir_pathbuf(db_storage_path);
+
+        // Create the client
+        let client = builder.build().await?;
+
+        // Get server public key from either direct argument or file
+        let server_public_key = if let Some(file_path) = &args.server_key_file {
+            info!("📖 Reading server public key from: {}", file_path.display());
+            let content = std::fs::read_to_string(file_path)?;
+            zoe_wire_protocol::VerifyingKey::from_pem(&content)?
+        } else if let Some(key) = &args.server_key {
+            key.clone()
+        } else {
+            return Err("Must specify either --server-key or --server-key-file".into());
+        };
+
+        // Parse server address
+        let server_addr = resolve_to_socket_addr(&args.relay_address).await?;
+
+        info!("🔗 Establishing relay connection...");
+        use zoe_app_primitives::RelayAddress;
+
+        let relay_address = RelayAddress::new(server_public_key)
+            .with_address(server_addr.into())
+            .with_name("System Check Server".to_string());
+
+        client.add_relay(relay_address).await?;
+
+        // Wait for the connection to be established
+        info!("⏳ Waiting for relay connection to be ready...");
+        let mut attempts = 0;
+        const MAX_ATTEMPTS: u32 = 50; // 5 seconds total (50 * 100ms)
+
+        while attempts < MAX_ATTEMPTS {
+            if client.has_connected_relays().await {
+                info!("✅ Relay connection established successfully");
+                break;
             }
-            Err(e) => {
-                error!("❌ Blob service: FAILED");
-                error!("  Error: {}", e);
-                client.close().await;
-                std::process::exit(3);
+            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+            attempts += 1;
+        }
+
+        if attempts >= MAX_ATTEMPTS {
+            return Err("Failed to establish relay connection within timeout".into());
+        }
+
+        Ok(client)
+    } else {
+        Err("Non-ephemeral mode not yet supported in new system check".into())
+    }
+}
+
+/// Print test results in a formatted way
+fn print_results(results: &zoe_client::SystemCheckResults, quiet: bool) {
+    if !quiet {
+        info!("📋 SYSTEM CHECK REPORT");
+        info!("═══════════════════════");
+
+        // Print results by category in logical order
+        let categories = [
+            TestCategory::OfflineStorage,
+            TestCategory::OfflineBlob,
+            TestCategory::Connectivity,
+            TestCategory::Storage,
+            TestCategory::BlobService,
+            TestCategory::Synchronization,
+        ];
+
+        for category in categories {
+            if let Some(tests) = results.get_category_results(category)
+                && !tests.is_empty()
+            {
+                let status = if tests.iter().all(|t| t.result.is_passed()) {
+                    "✅ PASSED"
+                } else if tests.iter().any(|t| t.result.is_failed()) {
+                    "❌ FAILED"
+                } else {
+                    "⏭️ SKIPPED"
+                };
+
+                info!("{} {}: {}", category.emoji(), category.name(), status);
+
+                for test in tests {
+                    let test_status = match &test.result {
+                        TestResult::Passed => "PASSED",
+                        TestResult::Failed { .. } => "FAILED",
+                        TestResult::Skipped => "SKIPPED",
+                    };
+                    let status_icon = match &test.result {
+                        TestResult::Passed => "✅",
+                        TestResult::Failed { .. } => "❌",
+                        TestResult::Skipped => "⏭️",
+                    };
+
+                    info!(
+                        "  {} {}: {} ({:.2}s)",
+                        status_icon,
+                        test.name,
+                        test_status,
+                        test.duration.as_secs_f64()
+                    );
+
+                    // Show details for failed tests or in verbose mode
+                    if matches!(test.result, TestResult::Failed { .. }) || !test.details.is_empty()
+                    {
+                        for detail in &test.details {
+                            info!("    - {}", detail);
+                        }
+                    }
+
+                    // Show error for failed tests
+                    if let TestResult::Failed { error } = &test.result {
+                        info!("    ❌ Error: {}", error);
+                    }
+                }
             }
         }
-    } else {
-        info!("⏭️  Step 3/3: Blob service tests skipped");
-        test_results.blob_skipped = true;
+
+        info!("═══════════════════════");
     }
 
-    // Clean shutdown
-    client.close().await;
+    // Always show summary
+    info!(
+        "📊 Summary: {}/{} tests passed",
+        results.passed_count(),
+        results.total_count()
+    );
+    info!(
+        "⏱️ Total time: {:.2}s",
+        results.total_duration.as_secs_f64()
+    );
 
-    // Final report
-    print_final_report(&test_results);
-
-    info!("🎉 All system checks completed successfully!");
-    Ok(())
-}
-
-/// Test storage operations by storing and retrieving test messages
-async fn test_storage_operations(
-    client: &zoe_client::Client,
-    test_count: u32,
-    verbose: bool,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let mut rng = rand::thread_rng();
-    let keypair = KeyPair::generate(&mut rng);
-
-    if verbose {
-        info!("  📝 Testing {} storage operations", test_count);
-    }
-
-    for i in 0..test_count {
-        // Generate test data
-        let mut test_data = vec![0u8; 64];
-        rng.fill_bytes(&mut test_data);
-
-        let test_message = SystemCheckTestMessage::new(i as u64, test_data);
-        let serialized = postcard::to_stdvec(&test_message)?;
-
-        if verbose {
-            info!(
-                "    🔄 Test {}/{}: Creating message (size: {} bytes)",
-                i + 1,
-                test_count,
-                serialized.len()
-            );
-        }
-
-        // Create message with Store kind for testing
-        let store_key = StoreKey::CustomKey(9999 + i); // Use custom key for testing
-        let content = Content::raw(serialized);
-        let timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
-
-        let message = Message::new_v0(
-            content,
-            keypair.public_key(),
-            timestamp,
-            Kind::Store(store_key.clone()),
-            vec![Tag::Protected], // Mark as protected for testing
-        );
-
-        let message_full = MessageFull::new(message, &keypair)?;
-        let message_id = message_full.id();
-
-        if verbose {
-            info!(
-                "    📤 Test {}/{}: Publishing message (ID: {})",
-                i + 1,
-                test_count,
-                hex::encode(message_id.as_bytes())
-            );
-        }
-
-        // Publish the message
-        let message_manager = client.message_manager();
-        let _publish_result = message_manager.publish(message_full).await?;
-
-        if verbose {
-            info!(
-                "    📥 Test {}/{}: Message published successfully",
-                i + 1,
-                test_count
-            );
-        }
-
-        // Wait a moment for storage to complete
-        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-
-        // Try to retrieve the message (this is a simplified test - in practice you'd use proper queries)
-        if verbose {
-            info!(
-                "    🔍 Test {}/{}: Verifying message storage",
-                i + 1,
-                test_count
-            );
-        }
-
-        // For now, we consider the test passed if publishing succeeded
-        // In a full implementation, you'd retrieve and verify the stored message
-    }
-
-    if verbose {
-        info!(
-            "  ✅ All {} storage operations completed successfully",
-            test_count
-        );
-    }
-
-    Ok(())
-}
-
-/// Test blob service by uploading and downloading random data
-async fn test_blob_service(
-    client: &zoe_client::Client,
-    test_size: usize,
-    verbose: bool,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let mut rng = rand::thread_rng();
-
-    if verbose {
-        info!(
-            "  📦 Testing blob service with {} bytes of random data",
-            test_size
-        );
-    }
-
-    // Generate random test data
-    let mut test_data = vec![0u8; test_size];
-    rng.fill_bytes(&mut test_data);
-    let original_checksum = crc32fast::hash(&test_data);
-
-    if verbose {
-        info!(
-            "    🎲 Generated random data (checksum: {:08x})",
-            original_checksum
-        );
-    }
-
-    // Get blob service from client
-    let blob_service = client.blob_service();
-
-    if verbose {
-        info!("    📤 Uploading blob...");
-    }
-
-    // Upload the blob
-    let blob_id = blob_service.upload_blob(&test_data).await?;
-
-    if verbose {
-        info!(
-            "    ✅ Blob uploaded successfully (ID: {})",
-            hex::encode(blob_id.as_bytes())
-        );
-    }
-
-    // Download the blob
-    if verbose {
-        info!("    📥 Downloading blob...");
-    }
-
-    let downloaded_data = blob_service.get_blob(&blob_id).await?;
-
-    if verbose {
-        info!(
-            "    ✅ Blob downloaded successfully ({} bytes)",
-            downloaded_data.len()
-        );
-    }
-
-    // Verify the data integrity
-    if verbose {
-        info!("    🔍 Verifying data integrity...");
-    }
-
-    if downloaded_data.len() != test_data.len() {
-        return Err(format!(
-            "Data size mismatch: uploaded {} bytes, downloaded {} bytes",
-            test_data.len(),
-            downloaded_data.len()
-        )
-        .into());
-    }
-
-    let downloaded_checksum = crc32fast::hash(&downloaded_data);
-    if downloaded_checksum != original_checksum {
-        return Err(format!(
-            "Data checksum mismatch: original {:08x}, downloaded {:08x}",
-            original_checksum, downloaded_checksum
-        )
-        .into());
-    }
-
-    if downloaded_data != test_data {
-        return Err("Downloaded data does not match original data".into());
-    }
-
-    if verbose {
-        info!(
-            "    ✅ Data integrity verified (checksum: {:08x})",
-            downloaded_checksum
-        );
-    }
-
-    Ok(())
-}
-
-/// Structure to track test results
-#[derive(Debug)]
-struct SystemCheckResults {
-    connectivity_passed: bool,
-    storage_passed: bool,
-    storage_skipped: bool,
-    blob_passed: bool,
-    blob_skipped: bool,
-}
-
-impl SystemCheckResults {
-    fn new() -> Self {
-        Self {
-            connectivity_passed: true, // If we get here, connectivity passed
-            storage_passed: false,
-            storage_skipped: false,
-            blob_passed: false,
-            blob_skipped: false,
-        }
-    }
-}
-
-/// Print a comprehensive final report
-fn print_final_report(results: &SystemCheckResults) {
-    info!("📋 SYSTEM CHECK REPORT");
-    info!("═══════════════════════");
-
-    // Connectivity
-    if results.connectivity_passed {
-        info!("🚀 Server Connectivity: ✅ PASSED");
-    } else {
-        info!("🚀 Server Connectivity: ❌ FAILED");
-    }
-
-    // Storage
-    if results.storage_skipped {
-        info!("💾 Storage Operations:  ⏭️  SKIPPED");
-    } else if results.storage_passed {
-        info!("💾 Storage Operations:  ✅ PASSED");
-    } else {
-        info!("💾 Storage Operations:  ❌ FAILED");
-    }
-
-    // Blob service
-    if results.blob_skipped {
-        info!("📦 Blob Service:        ⏭️  SKIPPED");
-    } else if results.blob_passed {
-        info!("📦 Blob Service:        ✅ PASSED");
-    } else {
-        info!("📦 Blob Service:        ❌ FAILED");
-    }
-
-    info!("═══════════════════════");
-
-    let total_tests =
-        if results.storage_skipped { 0 } else { 1 } + if results.blob_skipped { 0 } else { 1 } + 1;
-    let passed_tests = (if results.connectivity_passed { 1 } else { 0 })
-        + (if results.storage_passed { 1 } else { 0 })
-        + (if results.blob_passed { 1 } else { 0 });
-
-    info!("📊 Summary: {}/{} tests passed", passed_tests, total_tests);
-
-    if passed_tests == total_tests {
+    if results.is_success() {
         info!("🎉 ALL TESTS PASSED - System is fully operational!");
     } else {
-        warn!("⚠️  Some tests failed - Check logs above for details");
+        let failed = results.failed_count();
+        let skipped = results.skipped_count();
+
+        if failed > 0 {
+            error!("❌ {} test(s) FAILED", failed);
+        }
+        if skipped > 0 {
+            info!("⏭️ {} test(s) SKIPPED", skipped);
+        }
+
+        if let Some(first_failure) = results.first_failure()
+            && let TestResult::Failed { error } = &first_failure.result
+        {
+            error!("💥 First failure: {} - {}", first_failure.name, error);
+        }
     }
 }

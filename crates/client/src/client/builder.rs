@@ -122,8 +122,8 @@ impl ClientBuilder {
         let storage_config = StorageConfig {
             database_path: db_storage_dir.join(&user_id_hex).join("db.sqlite"),
             max_query_limit: None,
-            enable_wal_mode: false,
-            cache_size_kb: None,
+            enable_wal_mode: true, // Enable WAL mode for better concurrent access
+            cache_size_kb: Some(32 * 1024), // 32MB cache for better performance
         };
 
         let storage = Arc::new(

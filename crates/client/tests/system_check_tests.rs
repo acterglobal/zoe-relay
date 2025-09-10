@@ -53,13 +53,10 @@ async fn run_system_check(args: &[&str]) -> Result<std::process::Output, std::io
         .await?;
 
     if !compile_output.status.success() {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::Other,
-            format!(
-                "Failed to compile binary: {}",
-                String::from_utf8_lossy(&compile_output.stderr)
-            ),
-        ));
+        return Err(std::io::Error::other(format!(
+            "Failed to compile binary: {}",
+            String::from_utf8_lossy(&compile_output.stderr)
+        )));
     }
 
     // Run the compiled binary directly with CLI features
@@ -73,11 +70,10 @@ async fn run_system_check(args: &[&str]) -> Result<std::process::Output, std::io
         .args(args);
 
     // Run with timeout to prevent hanging tests
-    let output = timeout(Duration::from_secs(30), cmd.output())
-        .await
-        .map_err(|_| std::io::Error::new(std::io::ErrorKind::TimedOut, "Command timed out"))?;
 
-    output
+    timeout(Duration::from_secs(30), cmd.output())
+        .await
+        .map_err(|_| std::io::Error::new(std::io::ErrorKind::TimedOut, "Command timed out"))?
 }
 
 #[tokio::test]
@@ -110,7 +106,7 @@ async fn test_system_check_invalid_server() {
 
     let stderr = String::from_utf8_lossy(&output.stderr);
     // Should show error about key file or connectivity
-    assert!(stderr.contains("Failed") || stderr.len() > 0);
+    assert!(stderr.contains("Failed") || !stderr.is_empty());
 }
 
 #[tokio::test]
@@ -157,7 +153,7 @@ async fn test_system_check_quiet_output() {
 
     let stderr = String::from_utf8_lossy(&output.stderr);
     // Should still show error messages even in quiet mode
-    assert!(stderr.contains("Must specify") || stderr.contains("server-key") || stderr.len() > 0);
+    assert!(stderr.contains("Must specify") || stderr.contains("server-key") || !stderr.is_empty());
 }
 
 #[tokio::test]
@@ -299,46 +295,6 @@ fn test_system_check_test_message_serialization() {
 
     // Test checksum verification
     assert!(deserialized.verify_checksum());
-}
-
-/// Unit test for the SystemCheckResults structure
-#[test]
-fn test_system_check_results() {
-    // Define the results structure locally since we can't import from binary
-    #[derive(Debug)]
-    struct SystemCheckResults {
-        connectivity_passed: bool,
-        storage_passed: bool,
-        storage_skipped: bool,
-        blob_passed: bool,
-        blob_skipped: bool,
-    }
-
-    impl SystemCheckResults {
-        fn new() -> Self {
-            Self {
-                connectivity_passed: true, // If we get here, connectivity passed
-                storage_passed: false,
-                storage_skipped: false,
-                blob_passed: false,
-                blob_skipped: false,
-            }
-        }
-    }
-
-    let mut results = SystemCheckResults::new();
-    assert!(results.connectivity_passed);
-    assert!(!results.storage_passed);
-    assert!(!results.storage_skipped);
-    assert!(!results.blob_passed);
-    assert!(!results.blob_skipped);
-
-    results.storage_passed = true;
-    results.blob_passed = true;
-
-    assert!(results.connectivity_passed);
-    assert!(results.storage_passed);
-    assert!(results.blob_passed);
 }
 
 /// Test error handling for invalid blob sizes
