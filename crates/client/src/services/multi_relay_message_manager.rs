@@ -365,6 +365,9 @@ impl<S: MessageStorage + 'static> MultiRelayMessageManager<S> {
         let mut processed_count = 0;
         // Process messages based on existence check results
         for (message, existence_result) in valid_messages.iter().zip(existence_results.iter()) {
+            // Ensure message is stored locally first (for both existing and new messages)
+            storage.store_message(message).await?;
+
             if let Some(global_stream_id) = existence_result {
                 // Message already exists on server, just mark as synced
                 if let Err(e) = storage
@@ -377,14 +380,15 @@ impl<S: MessageStorage + 'static> MultiRelayMessageManager<S> {
                         hex::encode(relay_id.as_bytes()),
                         e
                     );
-                } else {
-                    tracing::debug!(
-                        "Message {} already exists on relay {}, marked as synced",
-                        hex::encode(message.id().as_bytes()),
-                        hex::encode(relay_id.as_bytes())
-                    );
-                    processed_count += 1;
+                    continue;
                 }
+
+                tracing::debug!(
+                    "Message {} already exists on relay {}, marked as synced",
+                    hex::encode(message.id().as_bytes()),
+                    hex::encode(relay_id.as_bytes())
+                );
+                processed_count += 1;
                 continue;
             }
 
@@ -420,6 +424,7 @@ impl<S: MessageStorage + 'static> MultiRelayMessageManager<S> {
                     hex::encode(relay_id.as_bytes()),
                     e
                 );
+                continue;
             }
             processed_count += 1;
         }
@@ -519,6 +524,15 @@ impl<S: MessageStorage + 'static> MessagesManagerTrait for MultiRelayMessageMana
         // In a more sophisticated implementation, we could implement load balancing
         let (relay_id, manager) = &connected_relays[0];
 
+        // Store message locally first to ensure it exists before any sync operations
+        self.storage.store_message(&message).await.map_err(|e| {
+            ClientError::Generic(format!(
+                "Failed to store message {} locally: {}",
+                hex::encode(message.id().as_bytes()),
+                e
+            ))
+        })?;
+
         match manager.publish(message.clone()).await {
             Ok(result) => {
                 // Mark as synced to this relay
@@ -532,18 +546,17 @@ impl<S: MessageStorage + 'static> MessagesManagerTrait for MultiRelayMessageMana
                     }
                 };
 
-                if let Err(e) = self
-                    .storage
+                self.storage
                     .mark_message_synced(message.id(), relay_key_id, global_stream_id)
                     .await
-                {
-                    tracing::error!(
-                        "Failed to mark message {} as synced to relay {}: {}",
-                        hex::encode(message.id().as_bytes()),
-                        hex::encode(relay_id.as_bytes()),
-                        e
-                    );
-                }
+                    .map_err(|e| {
+                        ClientError::Generic(format!(
+                            "Failed to mark message {} as synced to relay {}: {}",
+                            hex::encode(message.id().as_bytes()),
+                            hex::encode(relay_id.as_bytes()),
+                            e
+                        ))
+                    })?;
 
                 tracing::debug!(
                     "Successfully published message to relay {}",
@@ -908,6 +921,12 @@ mod tests {
             .times(1)
             .returning(|_, _, _| Ok(()));
 
+        // Mock store_message call (new requirement from our fix)
+        mock_storage
+            .expect_store_message()
+            .times(1)
+            .returning(|_| Ok(()));
+
         let storage = Arc::new(mock_storage);
 
         // Create a mock messages manager that will succeed
@@ -1021,6 +1040,12 @@ mod tests {
             .times(5)
             .returning(|_, _, _| Ok(()));
 
+        // Mock store_message calls for all 5 messages (new requirement from our fix)
+        mock_storage
+            .expect_store_message()
+            .times(5)
+            .returning(|_| Ok(()));
+
         let storage = Arc::new(mock_storage);
 
         // Create a mock messages manager that will succeed for all messages
@@ -1128,6 +1153,12 @@ mod tests {
             .expect_mark_message_synced()
             .times(3)
             .returning(|_, _, _| Ok(()));
+
+        // Mock store_message calls for all 3 messages (new requirement from our fix)
+        mock_storage
+            .expect_store_message()
+            .times(3)
+            .returning(|_| Ok(()));
 
         let storage = Arc::new(mock_storage);
 
@@ -1263,6 +1294,12 @@ mod tests {
             .expect_mark_message_synced()
             .times(1)
             .returning(|_, _, _| Ok(()));
+
+        // Mock store_message call for the valid message only (new requirement from our fix)
+        mock_storage
+            .expect_store_message()
+            .times(1)
+            .returning(|_| Ok(()));
 
         let storage = Arc::new(mock_storage);
 
