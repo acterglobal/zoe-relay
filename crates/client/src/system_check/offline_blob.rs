@@ -6,7 +6,6 @@
 
 use super::{SystemCheckConfig, TestInfo, TestResult};
 use crate::Client;
-use rand::Rng;
 use std::collections::HashMap;
 use tracing::{debug, info};
 
@@ -21,8 +20,9 @@ pub struct OfflineTestBlob {
 
 impl OfflineTestBlob {
     pub fn new(blob_id: String, size: usize) -> Self {
-        let mut rng = rand::thread_rng();
-        let data: Vec<u8> = (0..size).map(|_| rng.r#gen::<u8>()).collect();
+        use rand::{RngCore, SeedableRng};
+        let mut rng = rand::rngs::StdRng::from_entropy();
+        let data: Vec<u8> = (0..size).map(|_| rng.next_u32() as u8).collect();
         let checksum = crc32fast::hash(&data);
 
         Self {
@@ -109,9 +109,10 @@ async fn test_blob_data_integrity(client: &Client, config: &SystemCheckConfig) -
                 .collect(),
         ),
         ("random", {
-            let mut rng = rand::thread_rng();
+            use rand::{RngCore, SeedableRng};
+            let mut rng = rand::rngs::StdRng::from_entropy();
             (0..config.offline_blob_size / 4)
-                .map(|_| rng.r#gen::<u8>())
+                .map(|_| rng.next_u32() as u8)
                 .collect()
         }),
     ];

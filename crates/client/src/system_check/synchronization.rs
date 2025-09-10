@@ -8,7 +8,6 @@
 use super::{SystemCheckConfig, TestInfo, TestResult};
 use crate::Client;
 use crate::services::MessagesManagerTrait;
-use rand::Rng;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::time::sleep;
 use tracing::{debug, info, warn};
@@ -29,8 +28,9 @@ pub struct SyncTestMessage {
 
 impl SyncTestMessage {
     pub fn new_offline(sync_id: String, data_size: usize) -> Self {
-        let mut rng = rand::thread_rng();
-        let data: Vec<u8> = (0..data_size).map(|_| rng.r#gen::<u8>()).collect();
+        use rand::{RngCore, SeedableRng};
+        let mut rng = rand::rngs::StdRng::from_entropy();
+        let data: Vec<u8> = (0..data_size).map(|_| rng.next_u32() as u8).collect();
         let checksum = crc32fast::hash(&data);
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -95,7 +95,9 @@ async fn test_message_sync_verification(client: &Client, _config: &SystemCheckCo
         }
     };
 
-    let temp_keypair = KeyPair::generate_ed25519(&mut rand::thread_rng());
+    use rand::SeedableRng;
+    let mut rng = rand::rngs::StdRng::from_entropy();
+    let temp_keypair = KeyPair::generate_ed25519(&mut rng);
 
     let message = Message::MessageV0(MessageV0 {
         header: MessageV0Header {
@@ -192,7 +194,9 @@ async fn test_sync_connection_stability(client: &Client, _config: &SystemCheckCo
             }
         };
 
-        let temp_keypair = KeyPair::generate_ed25519(&mut rand::thread_rng());
+        use rand::SeedableRng;
+        let mut rng = rand::rngs::StdRng::from_entropy();
+        let temp_keypair = KeyPair::generate_ed25519(&mut rng);
 
         let message = Message::MessageV0(MessageV0 {
             header: MessageV0Header {

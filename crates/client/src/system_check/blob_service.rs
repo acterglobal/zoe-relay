@@ -6,7 +6,6 @@
 
 use super::{SystemCheckConfig, TestInfo, TestResult};
 use crate::{Client, services::BlobStore};
-use rand::Rng;
 use tracing::{debug, info};
 
 /// Run all blob service tests
@@ -32,9 +31,10 @@ async fn test_blob_upload_download(client: &Client, config: &SystemCheckConfig) 
     );
 
     // Generate random test data
-    let mut rng = rand::thread_rng();
+    use rand::{RngCore, SeedableRng};
+    let mut rng = rand::rngs::StdRng::from_entropy();
     let test_data: Vec<u8> = (0..config.blob_test_size)
-        .map(|_| rng.r#gen::<u8>())
+        .map(|_| rng.next_u32() as u8)
         .collect();
     let original_checksum = crc32fast::hash(&test_data);
 

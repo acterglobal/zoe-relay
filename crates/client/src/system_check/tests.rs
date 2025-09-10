@@ -46,7 +46,9 @@ impl TestInfrastructure {
     /// Set up test infrastructure with relay server
     async fn setup() -> Result<Self> {
         // Generate server key (default to Ed25519)
-        let server_keypair = KeyPair::generate_ed25519(&mut rand::thread_rng());
+        use rand::SeedableRng;
+        let mut rng = rand::rngs::StdRng::from_entropy();
+        let server_keypair = KeyPair::generate_ed25519(&mut rng);
         let server_public_key = server_keypair.public_key();
 
         info!(

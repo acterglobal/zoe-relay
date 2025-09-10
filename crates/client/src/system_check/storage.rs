@@ -6,7 +6,6 @@
 
 use super::{SystemCheckConfig, TestInfo, TestResult};
 use crate::{Client, services::MessagesManagerTrait};
-use rand::Rng;
 use serde::{Deserialize, Serialize};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tracing::{debug, info};
@@ -30,8 +29,9 @@ pub struct SystemCheckTestMessage {
 impl SystemCheckTestMessage {
     /// Create a new test message with random data
     pub fn new(test_id: String, data_size: usize) -> Self {
-        let mut rng = rand::thread_rng();
-        let data: Vec<u8> = (0..data_size).map(|_| rng.r#gen::<u8>()).collect();
+        use rand::{RngCore, SeedableRng};
+        let mut rng = rand::rngs::StdRng::from_entropy();
+        let data: Vec<u8> = (0..data_size).map(|_| rng.next_u32() as u8).collect();
         let checksum = crc32fast::hash(&data);
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -93,7 +93,9 @@ async fn test_message_storage(client: &Client, config: &SystemCheckConfig) -> Te
         };
 
         // Create a temporary keypair for the test message
-        let temp_keypair = KeyPair::generate_ed25519(&mut rand::thread_rng());
+        use rand::SeedableRng;
+        let mut rng = rand::rngs::StdRng::from_entropy();
+        let temp_keypair = KeyPair::generate_ed25519(&mut rng);
 
         let message = Message::MessageV0(MessageV0 {
             header: MessageV0Header {
@@ -168,7 +170,9 @@ async fn test_message_integrity(client: &Client, _config: &SystemCheckConfig) ->
     };
 
     // Create a temporary keypair for the test message
-    let temp_keypair = KeyPair::generate_ed25519(&mut rand::thread_rng());
+    use rand::SeedableRng;
+    let mut rng = rand::rngs::StdRng::from_entropy();
+    let temp_keypair = KeyPair::generate_ed25519(&mut rng);
 
     let message = Message::MessageV0(MessageV0 {
         header: MessageV0Header {
