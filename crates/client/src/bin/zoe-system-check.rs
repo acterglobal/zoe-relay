@@ -47,6 +47,7 @@ use std::process;
 use std::sync::{Arc, Mutex};
 use tracing::{Level, error, info, warn};
 use tracing_subscriber::Layer;
+use tracing_subscriber::prelude::*;
 use zoe_client::cli::RelayClientArgs;
 use zoe_client::util::resolve_to_socket_addr;
 use zoe_client::{
@@ -263,6 +264,20 @@ async fn main() {
 
     // Create diagnostic collector
     let diagnostic_collector = Arc::new(Mutex::new(CliDiagnosticCollector::new()));
+    let diagnostic_layer = DiagnosticLayer::new(diagnostic_collector.clone());
+    let fmt_layer = tracing_subscriber::fmt::layer().with_filter(
+        tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| {
+            tracing_subscriber::EnvFilter::new(if args.quiet {
+                "warn"
+            } else {
+                "zoe_system_check=info,warn"
+            })
+        }),
+    );
+    tracing_subscriber::registry()
+        .with(fmt_layer)
+        .with(diagnostic_layer)
+        .init();
 
     info!("🚀 Starting Zoe System Check");
 
