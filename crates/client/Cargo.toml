@@ -7,6 +7,10 @@ edition = "2024"
 name = "full"
 required-features = ["cli"]
 
+[[bin]]
+name = "zoe-system-check"
+required-features = ["cli"]
+
 [features]
 default = ["frb-api",]
 mls = ["dep:openmls", "dep:openmls_rust_crypto", "dep:openmls_basic_credential", "dep:openmls_memory_storage"]
@@ -89,6 +93,9 @@ extend = { workspace = true, optional = true }
 # CLI support
 clap = { workspace = true, optional = true }
 tracing-subscriber = { workspace = true, optional = true }
+
+# System check dependencies
+crc32fast = { workspace = true }
 
 [dev-dependencies]
 # Testing framework

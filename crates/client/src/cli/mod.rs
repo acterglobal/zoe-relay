@@ -116,7 +116,9 @@ pub async fn full_cli_client(args: RelayClientArgs) -> Result<Client, ClientErro
     };
 
     let mut builder = Client::builder();
-    builder.server_info(server_public_key, server_addr);
+    // Don't use autoconnect - we'll manually establish the connection to ensure it's ready
+    builder.autoconnect(false);
+
     if let Some(persist_path) = args.persist_path {
         info!("💾 Using persistent storage at: {}", persist_path.display());
         error!("persistence not yet implemented");
@@ -138,12 +140,43 @@ pub async fn full_cli_client(args: RelayClientArgs) -> Result<Client, ClientErro
 
         info!("🔧 Building client...");
 
-        // Build the clien
+        // Build the client
         builder.media_storage_dir_pathbuf(media_storage_path);
         builder.db_storage_dir_pathbuf(db_storage_path);
     }
 
-    builder.build().await
+    let client = builder.build().await?;
+
+    // Now manually establish the relay connection and wait for it to be ready
+    info!("🔗 Establishing relay connection...");
+    use zoe_app_primitives::RelayAddress;
+    let relay_address = RelayAddress::new(server_public_key)
+        .with_address(server_addr.into())
+        .with_name("CLI Server".to_string());
+
+    client.add_relay(relay_address).await?;
+
+    // Wait for the connection to be established
+    info!("⏳ Waiting for relay connection to be ready...");
+    let mut attempts = 0;
+    const MAX_ATTEMPTS: u32 = 50; // 5 seconds total (50 * 100ms)
+
+    while attempts < MAX_ATTEMPTS {
+        if client.has_connected_relays().await {
+            info!("✅ Relay connection established successfully");
+            break;
+        }
+        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+        attempts += 1;
+    }
+
+    if attempts >= MAX_ATTEMPTS {
+        return Err(ClientError::Generic(
+            "Failed to establish relay connection within timeout".to_string(),
+        ));
+    }
+
+    Ok(client)
 }
 
 /// Health check server that responds to ping requests

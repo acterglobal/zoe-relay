@@ -41,14 +41,18 @@ async fn test_broadcast_channel_receiver_lifecycle_issue() -> Result<()> {
     let test_filter = Filter::from(test_tag.clone());
 
     // Ensure the filter is subscribed
-    messages_manager.ensure_contains_filter(test_filter.clone()).await?;
-    
+    messages_manager
+        .ensure_contains_filter(test_filter.clone())
+        .await?;
+
     info!("🔍 Subscribed to filter: {:?}", test_filter);
 
     // STEP 1: Create a filtered stream but DON'T poll it immediately
     // This simulates the problematic pattern where streams are created but not immediately used
-    let filtered_stream = messages_manager.clone().filtered_messages_stream(test_filter.clone());
-    
+    let filtered_stream = messages_manager
+        .clone()
+        .filtered_messages_stream(test_filter.clone());
+
     info!("📺 Created filtered stream (but not polling yet)");
 
     // STEP 2: Wait a moment to let any background tasks settle
@@ -59,7 +63,7 @@ async fn test_broadcast_channel_receiver_lifecycle_issue() -> Result<()> {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
         .as_secs();
-    
+
     let test_message_raw = Message::new_v0_raw(
         b"Test message for broadcast channel lifecycle".to_vec(),
         client.public_key(),
@@ -67,7 +71,7 @@ async fn test_broadcast_channel_receiver_lifecycle_issue() -> Result<()> {
         Kind::Ephemeral(60),
         vec![test_tag],
     );
-    
+
     let test_message = MessageFull::new(test_message_raw, client.keypair())?;
 
     info!("📤 Publishing test message");
@@ -79,22 +83,31 @@ async fn test_broadcast_channel_receiver_lifecycle_issue() -> Result<()> {
 
     // STEP 5: NOW try to poll the stream (this should fail due to receiver being dropped)
     info!("📺 Now attempting to poll the filtered stream...");
-    
+
     let mut filtered_stream = Box::pin(filtered_stream);
     let result = timeout(Duration::from_secs(5), filtered_stream.next()).await;
-    
+
     match result {
         Ok(Some(received_message)) => {
-            info!("✅ Successfully received message: {}", hex::encode(received_message.id().as_bytes()));
+            info!(
+                "✅ Successfully received message: {}",
+                hex::encode(received_message.id().as_bytes())
+            );
             // This would be the ideal case, but we expect it to fail due to the broadcast channel issue
         }
         Ok(None) => {
             warn!("❌ Stream ended unexpectedly (no message received)");
-            return Err(anyhow::anyhow!("Stream ended without receiving message - this demonstrates the broadcast channel lifecycle issue"));
+            return Err(anyhow::anyhow!(
+                "Stream ended without receiving message - this demonstrates the broadcast channel lifecycle issue"
+            ));
         }
         Err(_) => {
-            warn!("❌ Timeout waiting for message (likely due to broadcast channel receiver being dropped)");
-            return Err(anyhow::anyhow!("Timeout receiving message - this demonstrates the broadcast channel lifecycle issue"));
+            warn!(
+                "❌ Timeout waiting for message (likely due to broadcast channel receiver being dropped)"
+            );
+            return Err(anyhow::anyhow!(
+                "Timeout receiving message - this demonstrates the broadcast channel lifecycle issue"
+            ));
         }
     }
 
@@ -130,20 +143,27 @@ async fn test_broadcast_channel_correct_usage_pattern() -> Result<()> {
     let test_filter = Filter::from(test_tag.clone());
 
     // Ensure the filter is subscribed
-    messages_manager.ensure_contains_filter(test_filter.clone()).await?;
-    
+    messages_manager
+        .ensure_contains_filter(test_filter.clone())
+        .await?;
+
     info!("🔍 Subscribed to filter: {:?}", test_filter);
 
     // CORRECT PATTERN: Create stream and immediately start polling it
-    let filtered_stream = messages_manager.clone().filtered_messages_stream(test_filter.clone());
+    let filtered_stream = messages_manager
+        .clone()
+        .filtered_messages_stream(test_filter.clone());
     let mut filtered_stream = Box::pin(filtered_stream);
-    
+
     // Start polling in the background
     let stream_task = {
         let mut stream = filtered_stream;
         tokio::spawn(async move {
             if let Some(message) = stream.next().await {
-                info!("✅ Background task received message: {}", hex::encode(message.id().as_bytes()));
+                info!(
+                    "✅ Background task received message: {}",
+                    hex::encode(message.id().as_bytes())
+                );
                 Some(message)
             } else {
                 warn!("❌ Background task: stream ended");
@@ -162,7 +182,7 @@ async fn test_broadcast_channel_correct_usage_pattern() -> Result<()> {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
         .as_secs();
-    
+
     let test_message_raw = Message::new_v0_raw(
         b"Test message for correct pattern".to_vec(),
         client.public_key(),
@@ -170,7 +190,7 @@ async fn test_broadcast_channel_correct_usage_pattern() -> Result<()> {
         Kind::Ephemeral(60),
         vec![test_tag],
     );
-    
+
     let test_message = MessageFull::new(test_message_raw, client.keypair())?;
 
     info!("📤 Publishing test message");
@@ -179,10 +199,13 @@ async fn test_broadcast_channel_correct_usage_pattern() -> Result<()> {
 
     // Wait for the background task to receive the message
     let result = timeout(Duration::from_secs(5), stream_task).await;
-    
+
     match result {
         Ok(Ok(Some(received_message))) => {
-            info!("✅ Successfully received message via correct pattern: {}", hex::encode(received_message.id().as_bytes()));
+            info!(
+                "✅ Successfully received message via correct pattern: {}",
+                hex::encode(received_message.id().as_bytes())
+            );
         }
         Ok(Ok(None)) => {
             return Err(anyhow::anyhow!("Stream ended without receiving message"));
@@ -228,14 +251,22 @@ async fn test_broadcast_channel_multiple_receivers() -> Result<()> {
     let test_filter = Filter::from(test_tag.clone());
 
     // Ensure the filter is subscribed
-    messages_manager.ensure_contains_filter(test_filter.clone()).await?;
-    
+    messages_manager
+        .ensure_contains_filter(test_filter.clone())
+        .await?;
+
     info!("🔍 Subscribed to filter: {:?}", test_filter);
 
     // Create multiple streams - some actively polling, some not
-    let active_stream = messages_manager.clone().filtered_messages_stream(test_filter.clone());
-    let inactive_stream1 = messages_manager.clone().filtered_messages_stream(test_filter.clone());
-    let inactive_stream2 = messages_manager.clone().filtered_messages_stream(test_filter.clone());
+    let active_stream = messages_manager
+        .clone()
+        .filtered_messages_stream(test_filter.clone());
+    let inactive_stream1 = messages_manager
+        .clone()
+        .filtered_messages_stream(test_filter.clone());
+    let inactive_stream2 = messages_manager
+        .clone()
+        .filtered_messages_stream(test_filter.clone());
 
     // Start polling only the active stream
     let mut active_stream = Box::pin(active_stream);
@@ -243,7 +274,11 @@ async fn test_broadcast_channel_multiple_receivers() -> Result<()> {
         let mut received_count = 0;
         while let Some(message) = active_stream.next().await {
             received_count += 1;
-            info!("✅ Active stream received message {}: {}", received_count, hex::encode(message.id().as_bytes()));
+            info!(
+                "✅ Active stream received message {}: {}",
+                received_count,
+                hex::encode(message.id().as_bytes())
+            );
             if received_count >= 5 {
                 break;
             }
@@ -262,7 +297,7 @@ async fn test_broadcast_channel_multiple_receivers() -> Result<()> {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_secs();
-        
+
         let test_message_raw = Message::new_v0_raw(
             format!("Test message {} for multi-receiver test", i).into_bytes(),
             client.public_key(),
@@ -270,11 +305,11 @@ async fn test_broadcast_channel_multiple_receivers() -> Result<()> {
             Kind::Ephemeral(60),
             vec![test_tag.clone()],
         );
-        
+
         let test_message = MessageFull::new(test_message_raw, client.keypair())?;
 
         messages_manager.publish(test_message).await?;
-        
+
         // Small delay between messages
         tokio::time::sleep(Duration::from_millis(10)).await;
     }
@@ -287,19 +322,23 @@ async fn test_broadcast_channel_multiple_receivers() -> Result<()> {
 
     // Now try to poll the inactive streams (these should have missed messages)
     info!("📺 Now attempting to poll inactive streams...");
-    
+
     let mut inactive_stream1 = Box::pin(inactive_stream1);
     let mut inactive_stream2 = Box::pin(inactive_stream2);
-    
+
     let inactive1_result = timeout(Duration::from_secs(2), inactive_stream1.next()).await;
     let inactive2_result = timeout(Duration::from_secs(2), inactive_stream2.next()).await;
-    
+
     match (inactive1_result, inactive2_result) {
         (Ok(Some(_)), Ok(Some(_))) => {
-            info!("⚠️ Inactive streams unexpectedly received messages (buffer might be larger than expected)");
+            info!(
+                "⚠️ Inactive streams unexpectedly received messages (buffer might be larger than expected)"
+            );
         }
         _ => {
-            info!("❌ Inactive streams timed out or ended (demonstrating the broadcast channel lifecycle issue)");
+            info!(
+                "❌ Inactive streams timed out or ended (demonstrating the broadcast channel lifecycle issue)"
+            );
         }
     }
 
