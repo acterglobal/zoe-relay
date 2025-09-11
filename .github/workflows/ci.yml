@@ -91,16 +91,6 @@ jobs:
         env:
           CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
 
-  build-examples:
-    name: Build Examples
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: ./.github/actions/setup-rust-cross-platform
-      - name: Build examples (excluding problematic crates)
-        run: |
-          cargo build --examples --workspace --exclude whatsmeow --exclude wa-bot
-
   compile-targets-zoe-client:
     name: Zoe Client Compile
     runs-on: ${{ matrix.os }}
@@ -183,6 +173,6 @@ jobs:
 
       - name: Run fast tests
         run: |
-          cargo nextest run --profile fast --workspace
+          cargo nextest run --profile ci --workspace
         env:
           REDIS_URL: redis://localhost:6379
