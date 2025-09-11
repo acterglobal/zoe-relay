@@ -44,12 +44,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: ./.github/actions/setup-rust-cross-platform
+      - uses: rustsec/audit-check@v2.0.0
         with:
-          tools: cargo-audit
-          
-      - name: Run security audit
-        run: cargo audit
+          token: ${{ secrets.GITHUB_TOKEN }}
+          ignore: RUSTSEC-2023-0071  # we are not using sqlx-mysql
 
   test:
     name: Test Suite
