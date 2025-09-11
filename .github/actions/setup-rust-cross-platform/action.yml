@@ -67,7 +67,10 @@ runs:
         
         # Install OpenSSL dev packages for cross-compilation
         if echo "${{ inputs.targets }}" | grep -q "aarch64-unknown-linux-gnu"; then
-          sudo apt-get install -y libssl-dev:arm64 pkg-config
+          # Add arm64 architecture and install cross-compilation packages
+          sudo dpkg --add-architecture arm64
+          sudo apt-get update
+          sudo apt-get install -y libssl-dev:arm64 libssl-dev pkg-config gcc-aarch64-linux-gnu
           # Set up pkg-config for cross-compilation
           echo "PKG_CONFIG_ALLOW_CROSS=1" >> $GITHUB_ENV
           echo "PKG_CONFIG_PATH=/usr/lib/aarch64-linux-gnu/pkgconfig" >> $GITHUB_ENV
@@ -85,8 +88,21 @@ runs:
         
         # Set up iOS SDK paths for bindgen
         if echo "${{ inputs.targets }}" | grep -q "apple-ios"; then
-          IOS_SDK_PATH=$(xcrun --sdk iphoneos --show-sdk-path)
-          echo "BINDGEN_EXTRA_CLANG_ARGS=-isysroot $IOS_SDK_PATH" >> $GITHUB_ENV
+          # Set up for both device and simulator SDKs
+          if echo "${{ inputs.targets }}" | grep -q "x86_64-apple-ios"; then
+            IOS_SDK_PATH=$(xcrun --sdk iphonesimulator --show-sdk-path)
+            echo "BINDGEN_EXTRA_CLANG_ARGS_x86_64_apple_ios=-isysroot $IOS_SDK_PATH -target x86_64-apple-ios-simulator" >> $GITHUB_ENV
+            echo "CARGO_TARGET_X86_64_APPLE_IOS_LINKER=$(xcrun --find --sdk iphonesimulator clang)" >> $GITHUB_ENV
+            echo "CC_x86_64_apple_ios=$(xcrun --find --sdk iphonesimulator clang)" >> $GITHUB_ENV
+            echo "AR_x86_64_apple_ios=$(xcrun --find --sdk iphonesimulator ar)" >> $GITHUB_ENV
+          fi
+          if echo "${{ inputs.targets }}" | grep -q "aarch64-apple-ios"; then
+            IOS_SDK_PATH=$(xcrun --sdk iphoneos --show-sdk-path)
+            echo "BINDGEN_EXTRA_CLANG_ARGS_aarch64_apple_ios=-isysroot $IOS_SDK_PATH -target arm64-apple-ios" >> $GITHUB_ENV
+            echo "CARGO_TARGET_AARCH64_APPLE_IOS_LINKER=$(xcrun --find --sdk iphoneos clang)" >> $GITHUB_ENV
+            echo "CC_aarch64_apple_ios=$(xcrun --find --sdk iphoneos clang)" >> $GITHUB_ENV
+            echo "AR_aarch64_apple_ios=$(xcrun --find --sdk iphoneos ar)" >> $GITHUB_ENV
+          fi
         fi
     
     - name: Install Protobuf and CMake (Windows)
@@ -108,10 +124,10 @@ runs:
       shell: bash
       run: |
         sudo apt-get install -y wget unzip
-        wget -q https://dl.google.com/android/repository/android-ndk-r25c-linux.zip
-        unzip -q android-ndk-r25c-linux.zip
-        echo "ANDROID_NDK_HOME=$PWD/android-ndk-r25c" >> $GITHUB_ENV
-        echo "NDK_HOME=$PWD/android-ndk-r25c" >> $GITHUB_ENV
+        wget -q https://dl.google.com/android/repository/android-ndk-r26d-linux.zip
+        unzip -q android-ndk-r26d-linux.zip
+        echo "ANDROID_NDK_HOME=$PWD/android-ndk-r26d" >> $GITHUB_ENV
+        echo "NDK_HOME=$PWD/android-ndk-r26d" >> $GITHUB_ENV
     
     - name: Setup Android environment
       if: inputs.install_android_ndk == 'true' && runner.os == 'Linux'
@@ -119,23 +135,23 @@ runs:
       run: |
         # Ensure NDK_HOME is set from previous step
         if [ -z "$ANDROID_NDK_HOME" ]; then
-          echo "ANDROID_NDK_HOME=$PWD/android-ndk-r25c" >> $GITHUB_ENV
-          export ANDROID_NDK_HOME="$PWD/android-ndk-r25c"
+          echo "ANDROID_NDK_HOME=$PWD/android-ndk-r26d" >> $GITHUB_ENV
+          export ANDROID_NDK_HOME="$PWD/android-ndk-r26d"
         fi
         
         mkdir -p ~/.cargo
         cat >> ~/.cargo/config.toml << 'CARGO_EOF'
         [target.aarch64-linux-android]
-        linker = "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android21-clang"
+        linker = "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/clang"
         
         [target.armv7-linux-androideabi]
-        linker = "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/armv7a-linux-androideabi21-clang"
+        linker = "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/clang"
         
         [target.x86_64-linux-android]
-        linker = "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/x86_64-linux-android21-clang"
+        linker = "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/clang"
         
         [target.i686-linux-android]
-        linker = "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/i686-linux-android21-clang"
+        linker = "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/clang"
         CARGO_EOF
         
         # Replace $ANDROID_NDK_HOME with actual path in config file
@@ -146,6 +162,12 @@ runs:
         echo "CC_armv7_linux_androideabi=$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/armv7a-linux-androideabi21-clang" >> $GITHUB_ENV
         echo "CC_x86_64_linux_android=$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/x86_64-linux-android21-clang" >> $GITHUB_ENV
         echo "CC_i686_linux_android=$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/i686-linux-android21-clang" >> $GITHUB_ENV
+        
+        # Set target-specific environment variables for proper cross-compilation
+        echo "CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER=$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android21-clang" >> $GITHUB_ENV
+        echo "CARGO_TARGET_ARMV7_LINUX_ANDROIDEABI_LINKER=$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/armv7a-linux-androideabi21-clang" >> $GITHUB_ENV
+        echo "CARGO_TARGET_X86_64_LINUX_ANDROID_LINKER=$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/x86_64-linux-android21-clang" >> $GITHUB_ENV
+        echo "CARGO_TARGET_I686_LINUX_ANDROID_LINKER=$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/i686-linux-android21-clang" >> $GITHUB_ENV
         
         # Set AR (archiver) for each target
         echo "AR_aarch64_linux_android=$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ar" >> $GITHUB_ENV

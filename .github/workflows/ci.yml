@@ -44,10 +44,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: rustsec/audit-check@v2.0.0
+      - uses: ./.github/actions/setup-rust-cross-platform
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          ignore: RUSTSEC-2023-0071  # we are not using sqlx-mysql
+          tools: cargo-audit
+          
+      - name: Run security audit
+        run: cargo audit
 
   test:
     name: Test Suite
@@ -91,6 +93,16 @@ jobs:
         env:
           CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
 
+  build-examples:
+    name: Build Examples
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-rust-cross-platform
+      - name: Build examples (excluding problematic crates)
+        run: |
+          cargo build --examples --workspace --exclude whatsmeow --exclude wa-bot
+
   compile-targets-zoe-client:
     name: Zoe Client Compile
     runs-on: ${{ matrix.os }}
@@ -110,16 +122,12 @@ jobs:
           # Android targets - run on Linux
           - target: aarch64-linux-android
             os: ubuntu-latest
-            include_android_ndk: true
           - target: armv7-linux-androideabi
             os: ubuntu-latest
-            include_android_ndk: true
           - target: x86_64-linux-android
             os: ubuntu-latest
-            include_android_ndk: true
           - target: i686-linux-android
             os: ubuntu-latest
-            include_android_ndk: true
           # Linux targets - run on Linux
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-latest
@@ -138,7 +146,7 @@ jobs:
       - uses: ./.github/actions/setup-rust-cross-platform
         with:
           targets: ${{ matrix.target }}
-          include_android_ndk: ${{ matrix.include_android_ndk }}
+          install_android_ndk: ${{ contains(matrix.target, 'android') }}
           
       - name: Cross compile zoe-client for ${{ matrix.target }}
         run: |
@@ -173,6 +181,6 @@ jobs:
 
       - name: Run fast tests
         run: |
-          cargo nextest run --profile ci --workspace
+          cargo nextest run --profile fast --workspace
         env:
           REDIS_URL: redis://localhost:6379
