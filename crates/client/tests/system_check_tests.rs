@@ -8,38 +8,6 @@ use std::time::Duration;
 use tempfile::TempDir;
 use tokio::time::timeout;
 
-/// Helper function to create a temporary relay server and export its key
-async fn create_relay_with_key_export() -> Option<(TempDir, std::path::PathBuf)> {
-    let temp_dir = TempDir::new().ok()?;
-    let key_export_dir = temp_dir.path().join("keys");
-    std::fs::create_dir_all(&key_export_dir).ok()?;
-
-    // Use the relay CLI to generate a key and export it
-    let output = tokio::process::Command::new("cargo")
-        .arg("run")
-        .arg("--bin")
-        .arg("zoe-relay")
-        .arg("--")
-        .arg("generate-key")
-        .arg("--algorithm")
-        .arg("ed25519")
-        .output()
-        .await
-        .ok()?;
-
-    if !output.status.success() {
-        return None;
-    }
-
-    // The key file should be created in the default location
-    let key_file = temp_dir.path().join("server.pem");
-    if key_file.exists() {
-        Some((temp_dir, key_file))
-    } else {
-        None
-    }
-}
-
 /// Test helper to run the system check binary with given arguments
 async fn run_system_check(args: &[&str]) -> Result<std::process::Output, std::io::Error> {
     // First ensure the binary is compiled with CLI features

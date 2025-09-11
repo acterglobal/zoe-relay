@@ -13,7 +13,6 @@ pub fn frb_init() {
     rustls::crypto::aws_lc_rs::default_provider()
         .install_default()
         .expect("Failed to install crypto provider");
-
 }
 
 // Key conversion utilities - work with hex strings instead of raw types

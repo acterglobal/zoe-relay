@@ -5,7 +5,6 @@
 
 use anyhow::{Context, Result};
 use std::net::{Ipv6Addr, SocketAddr, SocketAddrV6};
-use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tempfile::TempDir;
 use tracing::info;
@@ -17,8 +16,8 @@ use zoe_relay::{RelayServer, RelayServiceRouter};
 use zoe_wire_protocol::{KeyPair, VerifyingKey};
 
 use super::{
-    DiagnosticCollector, DiagnosticLevel, DiagnosticMessage, ExtractableDiagnosticCollector,
-    SystemCheck, SystemCheckConfig, SystemCheckResults, TestCategory, TestResult,
+    DiagnosticLevel, DiagnosticMessage, SystemCheck, SystemCheckConfig, SystemCheckResults,
+    TestCategory, TestResult,
 };
 use crate::Client;
 
@@ -175,7 +174,7 @@ impl TestDiagnosticCollector {
     }
 }
 
-impl DiagnosticCollector for TestDiagnosticCollector {
+impl TestDiagnosticCollector {
     fn add_error(&mut self, message: String) {
         self.errors.push(message);
     }
@@ -183,9 +182,6 @@ impl DiagnosticCollector for TestDiagnosticCollector {
     fn add_warning(&mut self, message: String) {
         self.warnings.push(message);
     }
-}
-
-impl ExtractableDiagnosticCollector for TestDiagnosticCollector {
     fn extract_messages(&self) -> (Vec<DiagnosticMessage>, bool, bool) {
         let mut messages = Vec::new();
 

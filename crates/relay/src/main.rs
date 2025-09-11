@@ -116,19 +116,7 @@ fn parse_algorithm(s: &str) -> Result<Algorithm, String> {
     }
 }
 
-/// Parse an external address string into a NetworkAddress
-///
-/// Supports formats like:
-/// - "relay.example.com" (DNS without port)
-/// - "relay.example.com:8443" (DNS with port)
-/// - "192.168.1.100:8443" (IPv4 with port)
-/// - "[::1]:8443" (IPv6 with port)
-fn parse_external_address(addr_str: &str) -> Result<NetworkAddress> {
-    NetworkAddress::try_from(addr_str.to_string())
-        .map_err(|e| anyhow::anyhow!("Failed to parse external address '{}': {}", addr_str, e))
-}
-
-/// Load or generate a server keypair, with persistent storage
+// Load or generate a server keypair, with persistent storage
 fn load_or_generate_keypair(
     private_key_pem: Option<&str>,
     key_file_path: &PathBuf,
@@ -220,13 +208,11 @@ fn display_relay_qr_code(
     }
 
     // Add all external addresses
-    relay_info = relay_info.with_addresses(external_addresses.iter().filter_map(|addr_str| {
-        parse_external_address(addr_str)
-            .inspect_err(
-                |e| tracing::warn!(error=?e, "Failed to parse external address '{}'", addr_str),
-            )
-            .ok()
-    }));
+    relay_info = relay_info.with_addresses(
+        external_addresses
+            .iter()
+            .map(|addr| NetworkAddress::from(addr.as_str())),
+    );
 
     // Set the server name if provided
     if let Some(name) = server_name {
@@ -444,220 +430,6 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_external_address_dns_without_port() {
-        let result = parse_external_address("relay.example.com").unwrap();
-        assert_eq!(result, NetworkAddress::dns("relay.example.com"));
-    }
-
-    #[test]
-    fn test_parse_external_address_dns_with_port() {
-        let result = parse_external_address("relay.example.com:8443").unwrap();
-        assert_eq!(
-            result,
-            NetworkAddress::dns_with_port("relay.example.com", 8443)
-        );
-    }
-
-    #[test]
-    fn test_parse_external_address_ipv4_without_port() {
-        use std::net::Ipv4Addr;
-        let result = parse_external_address("192.168.1.100").unwrap();
-        assert_eq!(
-            result,
-            NetworkAddress::ipv4(Ipv4Addr::new(192, 168, 1, 100))
-        );
-    }
-
-    #[test]
-    fn test_parse_external_address_ipv4_with_port() {
-        use std::net::Ipv4Addr;
-        let result = parse_external_address("192.168.1.100:8443").unwrap();
-        assert_eq!(
-            result,
-            NetworkAddress::ipv4_with_port(Ipv4Addr::new(192, 168, 1, 100), 8443)
-        );
-    }
-
-    #[test]
-    fn test_parse_external_address_ipv6_without_port() {
-        // Note: "::1" gets parsed as hostname ":" with port 1 due to rsplit_once(':')
-        // This is expected behavior - IPv6 without brackets should use brackets for clarity
-        let result = parse_external_address("::1").unwrap();
-        assert_eq!(result, NetworkAddress::dns_with_port(":", 1));
-    }
-
-    #[test]
-    fn test_parse_external_address_ipv6_with_port_brackets() {
-        use std::net::Ipv6Addr;
-        let result = parse_external_address("[::1]:8443").unwrap();
-        assert_eq!(
-            result,
-            NetworkAddress::ipv6_with_port(Ipv6Addr::LOCALHOST, 8443)
-        );
-    }
-
-    #[test]
-    fn test_parse_external_address_ipv6_full_with_port() {
-        use std::net::Ipv6Addr;
-        let result = parse_external_address("[2001:db8::1]:9443").unwrap();
-        let expected_ipv6 = "2001:db8::1".parse::<Ipv6Addr>().unwrap();
-        assert_eq!(result, NetworkAddress::ipv6_with_port(expected_ipv6, 9443));
-    }
-
-    #[test]
-    fn test_parse_external_address_localhost_ipv4() {
-        use std::net::Ipv4Addr;
-        let result = parse_external_address("127.0.0.1:3000").unwrap();
-        assert_eq!(
-            result,
-            NetworkAddress::ipv4_with_port(Ipv4Addr::LOCALHOST, 3000)
-        );
-    }
-
-    #[test]
-    fn test_parse_external_address_subdomain_with_port() {
-        let result = parse_external_address("api.relay.example.com:443").unwrap();
-        assert_eq!(
-            result,
-            NetworkAddress::dns_with_port("api.relay.example.com", 443)
-        );
-    }
-
-    #[test]
-    fn test_parse_external_address_single_word_hostname() {
-        let result = parse_external_address("localhost").unwrap();
-        assert_eq!(result, NetworkAddress::dns("localhost"));
-    }
-
-    #[test]
-    fn test_parse_external_address_hostname_with_hyphen() {
-        let result = parse_external_address("my-relay-server.com:8080").unwrap();
-        assert_eq!(
-            result,
-            NetworkAddress::dns_with_port("my-relay-server.com", 8080)
-        );
-    }
-
-    #[test]
-    fn test_parse_external_address_edge_cases() {
-        // Test with port 0 (should be valid)
-        let result = parse_external_address("example.com:0").unwrap();
-        assert_eq!(result, NetworkAddress::dns_with_port("example.com", 0));
-
-        // Test with max port
-        let result = parse_external_address("example.com:65535").unwrap();
-        assert_eq!(result, NetworkAddress::dns_with_port("example.com", 65535));
-
-        // Test with standard HTTP ports
-        let result = parse_external_address("example.com:80").unwrap();
-        assert_eq!(result, NetworkAddress::dns_with_port("example.com", 80));
-
-        let result = parse_external_address("example.com:443").unwrap();
-        assert_eq!(result, NetworkAddress::dns_with_port("example.com", 443));
-    }
-
-    #[test]
-    fn test_parse_external_address_invalid_port_fallback() {
-        // Invalid port should fall back to DNS without port
-        let result = parse_external_address("example.com:99999").unwrap();
-        assert_eq!(result, NetworkAddress::dns("example.com:99999"));
-    }
-
-    #[test]
-    fn test_parse_external_address_malformed_ipv6_fallback() {
-        // "::1:8443" actually parses as valid IPv6 "::1" with port 8443
-        // This is because rsplit_once(':') splits on the last colon
-        use std::net::Ipv6Addr;
-        let result = parse_external_address("::1:8443").unwrap();
-        assert_eq!(
-            result,
-            NetworkAddress::ipv6_with_port(Ipv6Addr::LOCALHOST, 8443)
-        );
-    }
-
-    #[test]
-    fn test_parse_external_address_empty_string() {
-        let result = parse_external_address("").unwrap();
-        assert_eq!(result, NetworkAddress::dns(""));
-    }
-
-    #[test]
-    fn test_parse_external_address_international_domain() {
-        let result = parse_external_address("测试.example.com:8443").unwrap();
-        assert_eq!(
-            result,
-            NetworkAddress::dns_with_port("测试.example.com", 8443)
-        );
-    }
-
-    #[test]
-    fn test_parse_external_address_multiple_colons_dns() {
-        // Multiple colons should be treated as DNS (not IPv6 without brackets)
-        let result = parse_external_address("my:weird:hostname:8443").unwrap();
-        assert_eq!(
-            result,
-            NetworkAddress::dns_with_port("my:weird:hostname", 8443)
-        );
-    }
-
-    #[test]
-    fn test_parse_external_address_proper_ipv6_usage() {
-        use std::net::Ipv6Addr;
-
-        // Proper IPv6 usage with brackets (recommended)
-        let result = parse_external_address("[::1]").unwrap();
-        assert_eq!(result, NetworkAddress::dns("[::1]")); // No port, treated as DNS
-
-        let result = parse_external_address("[2001:db8::1]").unwrap();
-        assert_eq!(result, NetworkAddress::dns("[2001:db8::1]")); // No port, treated as DNS
-
-        // IPv6 with brackets and port (proper format)
-        let result = parse_external_address("[::1]:8080").unwrap();
-        assert_eq!(
-            result,
-            NetworkAddress::ipv6_with_port(Ipv6Addr::LOCALHOST, 8080)
-        );
-    }
-
-    #[test]
-    fn test_parse_external_address_ambiguous_cases() {
-        // These cases show the limitations of parsing IPv6 without brackets
-
-        // "::1" is ambiguous - could be IPv6 or hostname with port
-        let result = parse_external_address("::1").unwrap();
-        assert_eq!(result, NetworkAddress::dns_with_port(":", 1));
-
-        // "2001:db8::1" would be parsed as hostname "2001:db8:" with port 1
-        let result = parse_external_address("2001:db8::1").unwrap();
-        assert_eq!(result, NetworkAddress::dns_with_port("2001:db8:", 1));
-
-        // This is why brackets are recommended for IPv6
-    }
-
-    #[test]
-    fn test_parse_external_address_real_world_examples() {
-        // Common real-world address formats
-        let result = parse_external_address("relay.example.com").unwrap();
-        assert_eq!(result, NetworkAddress::dns("relay.example.com"));
-
-        let result = parse_external_address("relay.example.com:443").unwrap();
-        assert_eq!(
-            result,
-            NetworkAddress::dns_with_port("relay.example.com", 443)
-        );
-
-        let result = parse_external_address("10.0.0.1:8080").unwrap();
-        assert_eq!(
-            result,
-            NetworkAddress::ipv4_with_port(std::net::Ipv4Addr::new(10, 0, 0, 1), 8080)
-        );
-
-        let result = parse_external_address("[2001:db8::1]:443").unwrap();
-        let expected_ipv6 = "2001:db8::1".parse::<std::net::Ipv6Addr>().unwrap();
-        assert_eq!(result, NetworkAddress::ipv6_with_port(expected_ipv6, 443));
-    }
-
-    #[test]
     fn test_display_relay_qr_code_includes_all_addresses() {
         use std::net::Ipv4Addr;
         use zoe_wire_protocol::KeyPair;
@@ -686,9 +458,7 @@ mod tests {
 
         // Add external addresses
         for addr_str in &external_addresses {
-            if let Ok(network_addr) = parse_external_address(addr_str) {
-                relay_info = relay_info.with_address(network_addr);
-            }
+            relay_info = relay_info.with_address_str(addr_str.to_string());
         }
 
         // Should have 4 addresses total (1 bind + 3 external)
@@ -735,9 +505,7 @@ mod tests {
 
         // Add external addresses
         for addr_str in &external_addresses {
-            if let Ok(network_addr) = parse_external_address(addr_str) {
-                relay_info = relay_info.with_address(network_addr);
-            }
+            relay_info = relay_info.with_address_str(addr_str.to_string());
         }
 
         // Should have 1 address total (0 bind + 1 external)

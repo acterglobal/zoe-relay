@@ -636,23 +636,23 @@ pub struct DiagnosticCollector {
 }
 
 impl DiagnosticCollector {
-    fn new() -> Self {
+    pub fn new() -> Self {
         Self::default()
     }
 
-    fn has_errors(&self) -> bool {
+    pub fn has_errors(&self) -> bool {
         !self.errors.is_empty()
     }
 
-    fn has_warnings(&self) -> bool {
+    pub fn has_warnings(&self) -> bool {
         !self.warnings.is_empty()
     }
 
-    fn errors(&self) -> &Vec<String> {
+    pub fn errors(&self) -> &Vec<String> {
         &self.errors
     }
 
-    fn warnings(&self) -> &Vec<String> {
+    pub fn warnings(&self) -> &Vec<String> {
         &self.warnings
     }
 }
@@ -664,26 +664,6 @@ impl DiagnosticCollector {
 
     fn add_warning(&mut self, message: String) {
         self.warnings.push(message);
-    }
-
-    fn extract_messages(&self) -> (Vec<DiagnosticMessage>, bool, bool) {
-        let mut messages = Vec::new();
-
-        for error in &self.errors {
-            messages.push(DiagnosticMessage {
-                level: DiagnosticLevel::Error,
-                message: error.clone(),
-            });
-        }
-
-        for warning in &self.warnings {
-            messages.push(DiagnosticMessage {
-                level: DiagnosticLevel::Warning,
-                message: warning.clone(),
-            });
-        }
-
-        (messages, self.has_errors(), self.has_warnings())
     }
 }
 

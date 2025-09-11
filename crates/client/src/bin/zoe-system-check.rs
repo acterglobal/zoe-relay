@@ -45,14 +45,14 @@
 use clap::{Parser, Subcommand};
 use std::process;
 use std::sync::{Arc, Mutex};
-use tracing::{Level, error, info, warn};
+use tracing::{error, info, warn};
 use tracing_subscriber::Layer;
 use tracing_subscriber::prelude::*;
 use zoe_client::cli::RelayClientArgs;
+use zoe_client::system_check::DiagnosticLayer;
 use zoe_client::util::resolve_to_socket_addr;
 use zoe_client::{
-    Client, DiagnosticCollector, DiagnosticLevel, DiagnosticMessage,
-    ExtractableDiagnosticCollector, SystemCheck, SystemCheckConfig, TestCategory, TestResult,
+    Client, DiagnosticCollector, SystemCheck, SystemCheckConfig, TestCategory, TestResult,
 };
 
 fn print_summary(diagnostic_collector: &DiagnosticCollector) {
@@ -303,7 +303,7 @@ async fn main() {
     let (has_errors, has_warnings) = {
         let collector = diagnostic_collector.lock().unwrap();
         if collector.has_errors() || collector.has_warnings() {
-            collector.print_summary();
+            print_summary(&collector);
         }
         (collector.has_errors(), collector.has_warnings())
     };

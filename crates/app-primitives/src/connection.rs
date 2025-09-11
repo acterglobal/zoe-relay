@@ -177,8 +177,8 @@ impl From<SocketAddr> for NetworkAddress {
     }
 }
 
-impl From<String> for NetworkAddress {
-    fn from(addr_str: String) -> Self {
+impl From<&str> for NetworkAddress {
+    fn from(addr_str: &str) -> Self {
         // Try to parse as a full socket address first
         if let Ok(socket_addr) = addr_str.parse::<SocketAddr>() {
             return match socket_addr.ip() {
@@ -217,7 +217,13 @@ impl From<String> for NetworkAddress {
         }
 
         // Assume it's a DNS name without port
-        NetworkAddress::dns(addr_str)
+        NetworkAddress::dns(addr_str.to_string())
+    }
+}
+
+impl From<String> for NetworkAddress {
+    fn from(addr_str: String) -> Self {
+        Self::from(addr_str.as_str())
     }
 }
 
