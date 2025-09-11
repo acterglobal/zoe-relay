@@ -170,8 +170,5 @@ jobs:
       - name: Run fast tests
         run: |
           cargo nextest run --profile ci --workspace
-ts
-        run: |
-          cargo nextest run --profile fast --workspace
         env:
           REDIS_URL: redis://localhost:6379
