@@ -120,12 +120,16 @@ jobs:
           # Android targets - run on Linux
           - target: aarch64-linux-android
             os: ubuntu-latest
+            include_android_ndk: true
           - target: armv7-linux-androideabi
             os: ubuntu-latest
+            include_android_ndk: true
           - target: x86_64-linux-android
             os: ubuntu-latest
+            include_android_ndk: true
           - target: i686-linux-android
             os: ubuntu-latest
+            include_android_ndk: true
           # Linux targets - run on Linux
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-latest
@@ -144,6 +148,7 @@ jobs:
       - uses: ./.github/actions/setup-rust-cross-platform
         with:
           targets: ${{ matrix.target }}
+          include_android_ndk: ${{ matrix.include_android_ndk }}
           
       - name: Cross compile zoe-client for ${{ matrix.target }}
         run: |

@@ -24,19 +24,17 @@ inputs:
   workspace_path:
     description: 'Path to Rust workspace (relative to repo root)'
     required: false
+    default: '.'
   
   install_android_ndk:
     description: 'Whether to install Android NDK'
     required: false
     default: 'false'
 
-  
-
 outputs:
   cache_key:
     description: 'Rust cache key used'
     value: ${{ steps.cache.outputs.cache-primary-key }}
-
 
 runs:
   using: 'composite'
@@ -66,6 +64,15 @@ runs:
       run: |
         sudo apt-get update
         sudo apt-get install -y libsqlcipher-dev protobuf-compiler cmake
+        
+        # Install OpenSSL dev packages for cross-compilation
+        if echo "${{ inputs.targets }}" | grep -q "aarch64-unknown-linux-gnu"; then
+          sudo apt-get install -y libssl-dev:arm64 pkg-config
+          # Set up pkg-config for cross-compilation
+          echo "PKG_CONFIG_ALLOW_CROSS=1" >> $GITHUB_ENV
+          echo "PKG_CONFIG_PATH=/usr/lib/aarch64-linux-gnu/pkgconfig" >> $GITHUB_ENV
+          echo "OPENSSL_DIR=/usr" >> $GITHUB_ENV
+        fi
     
     - name: Install SQLCipher and Protobuf (macOS)
       if: runner.os == 'macOS'
@@ -75,12 +82,20 @@ runs:
         brew install sqlcipher protobuf cmake llvm
         echo "/opt/homebrew/opt/llvm/bin" >> $GITHUB_PATH
         echo "LIBCLANG_PATH=/opt/homebrew/opt/llvm/lib" >> $GITHUB_ENV
+        
+        # Set up iOS SDK paths for bindgen
+        if echo "${{ inputs.targets }}" | grep -q "apple-ios"; then
+          IOS_SDK_PATH=$(xcrun --sdk iphoneos --show-sdk-path)
+          echo "BINDGEN_EXTRA_CLANG_ARGS=-isysroot $IOS_SDK_PATH" >> $GITHUB_ENV
+        fi
     
     - name: Install Protobuf and CMake (Windows)
       if: runner.os == 'Windows'
       shell: powershell
       run: |
-        choco install protoc cmake
+        choco install protoc cmake nasm
+        # Add NASM to PATH for aws-lc-sys
+        echo "C:\Program Files\NASM" >> $env:GITHUB_PATH
     
     - name: Install bindgen-cli (non-Windows)
       if: runner.os != 'Windows'
@@ -102,6 +117,12 @@ runs:
       if: inputs.install_android_ndk == 'true' && runner.os == 'Linux'
       shell: bash
       run: |
+        # Ensure NDK_HOME is set from previous step
+        if [ -z "$ANDROID_NDK_HOME" ]; then
+          echo "ANDROID_NDK_HOME=$PWD/android-ndk-r25c" >> $GITHUB_ENV
+          export ANDROID_NDK_HOME="$PWD/android-ndk-r25c"
+        fi
+        
         mkdir -p ~/.cargo
         cat >> ~/.cargo/config.toml << 'CARGO_EOF'
         [target.aarch64-linux-android]
@@ -117,7 +138,10 @@ runs:
         linker = "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/i686-linux-android21-clang"
         CARGO_EOF
         
-        # Set environment variables for C compilers
+        # Replace $ANDROID_NDK_HOME with actual path in config file
+        sed -i "s|\$ANDROID_NDK_HOME|$ANDROID_NDK_HOME|g" ~/.cargo/config.toml
+        
+        # Set environment variables for C compilers (needed by ring and other native crates)
         echo "CC_aarch64_linux_android=$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android21-clang" >> $GITHUB_ENV
         echo "CC_armv7_linux_androideabi=$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/armv7a-linux-androideabi21-clang" >> $GITHUB_ENV
         echo "CC_x86_64_linux_android=$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/x86_64-linux-android21-clang" >> $GITHUB_ENV
@@ -153,3 +177,37 @@ runs:
         # Set environment variables for C compiler and archiver
         echo "CC_aarch64_unknown_linux_gnu=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
         echo "AR_aarch64_unknown_linux_gnu=aarch64-linux-gnu-ar" >> $GITHUB_ENV
+        
+        # Set OpenSSL environment for cross-compilation
+        echo "OPENSSL_DIR=/usr" >> $GITHUB_ENV
+        echo "PKG_CONFIG_ALLOW_CROSS=1" >> $GITHUB_ENV
+    
+    - name: Set up Windows i686 target environment
+      if: runner.os == 'Windows' && contains(inputs.targets, 'i686-pc-windows-msvc')
+      shell: powershell
+      run: |
+        # Set C standard to C11 for aws-lc-sys on i686 Windows
+        echo "AWS_LC_SYS_C_STD=11" >> $env:GITHUB_ENV
+        # Ensure NASM is available
+        echo "CMAKE_ASM_NASM_COMPILER=C:\Program Files\NASM\nasm.exe" >> $env:GITHUB_ENV
+    
+    - name: Debug environment setup
+      shell: bash
+      run: |
+        echo "=== Environment Debug ==="
+        echo "Targets: ${{ inputs.targets }}"
+        echo "Rust version: ${{ inputs.rust_version }}"
+        echo "Workspace path: ${{ inputs.workspace_path }}"
+        echo "Install Android NDK: ${{ inputs.install_android_ndk }}"
+        
+        if [ "${{ inputs.install_android_ndk }}" = "true" ]; then
+          echo "ANDROID_NDK_HOME: ${ANDROID_NDK_HOME:-not set}"
+          echo "NDK_HOME: ${NDK_HOME:-not set}"
+        fi
+        
+        echo "=== Cargo config ==="
+        if [ -f ~/.cargo/config.toml ]; then
+          cat ~/.cargo/config.toml
+        else
+          echo "No cargo config found"
+        fi
