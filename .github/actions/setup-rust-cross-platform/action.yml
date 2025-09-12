@@ -73,6 +73,13 @@ runs:
         
         sudo apt-get install -y libsqlcipher-dev protobuf-compiler cmake
         
+        # For Android targets, don't set SQLCipher library paths - use bundled feature instead
+        if ! echo "${{ inputs.targets }}" | grep -q "android"; then
+          # Only set SQLCipher paths for native Linux builds, not Android cross-compilation
+          echo "SQLCIPHER_LIB_DIR=/usr/lib/x86_64-linux-gnu" >> $GITHUB_ENV
+          echo "SQLCIPHER_INCLUDE_DIR=/usr/include/sqlcipher" >> $GITHUB_ENV
+        fi
+        
         # Install OpenSSL dev packages for cross-compilation
         if echo "${{ inputs.targets }}" | grep -q "aarch64-unknown-linux-gnu"; then
           # Add arm64 architecture and configure sources for cross-compilation
@@ -123,10 +130,12 @@ runs:
         echo "/opt/homebrew/opt/llvm/bin" >> $GITHUB_PATH
         echo "LIBCLANG_PATH=/opt/homebrew/opt/llvm/lib" >> $GITHUB_ENV
         
-        # Set SQLCipher library paths for Rust linking
-        echo "LIBRARY_PATH=/opt/homebrew/lib:/usr/local/lib" >> $GITHUB_ENV
-        echo "SQLCIPHER_LIB_DIR=/opt/homebrew/lib" >> $GITHUB_ENV
-        echo "SQLCIPHER_INCLUDE_DIR=/opt/homebrew/include" >> $GITHUB_ENV
+        # Set SQLCipher library paths for Rust linking (macOS only, not iOS)
+        if ! echo "${{ inputs.targets }}" | grep -q "apple-ios"; then
+          echo "LIBRARY_PATH=/opt/homebrew/lib:/usr/local/lib" >> $GITHUB_ENV
+          echo "SQLCIPHER_LIB_DIR=/opt/homebrew/lib" >> $GITHUB_ENV
+          echo "SQLCIPHER_INCLUDE_DIR=/opt/homebrew/include" >> $GITHUB_ENV
+        fi
         
         # Set up iOS SDK paths for bindgen
         if echo "${{ inputs.targets }}" | grep -q "apple-ios"; then
