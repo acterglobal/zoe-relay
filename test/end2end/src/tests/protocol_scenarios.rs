@@ -135,8 +135,7 @@ async fn test_group_chat_scenario() -> Result<()> {
     // Note: In testing environments, message delivery can be unreliable due to timing
     assert!(
         success_rate >= 20.0,
-        "Group chat success rate too low: {:.1}%",
-        success_rate
+        "Group chat success rate too low: {success_rate:.1}%"
     );
 
     harness.cleanup().await?;
@@ -355,8 +354,7 @@ async fn test_high_frequency_messaging_scenario() -> Result<()> {
     // Consider successful if we achieved at least 30% throughput (high-frequency can be lossy)
     assert!(
         throughput_rate >= 30.0,
-        "Throughput rate too low: {:.1}%",
-        throughput_rate
+        "Throughput rate too low: {throughput_rate:.1}%"
     );
 
     harness.cleanup().await?;
@@ -464,7 +462,7 @@ async fn test_server_resilience_under_load_scenario() -> Result<()> {
     let mut connection_tasks = Vec::new();
 
     for i in 0..num_clients {
-        let client_name = format!("client_{}", i);
+        let client_name = format!("client_{i}");
         let harness_ref = &harness;
 
         let task = async move {
@@ -598,8 +596,7 @@ async fn test_server_resilience_under_load_scenario() -> Result<()> {
     // Server should handle at least 75% of connections under load
     assert!(
         connection_success_rate >= 75.0,
-        "Server should handle at least 75% of connections under load, got {:.1}%",
-        connection_success_rate
+        "Server should handle at least 75% of connections under load, got {connection_success_rate:.1}%"
     );
 
     harness.cleanup().await?;

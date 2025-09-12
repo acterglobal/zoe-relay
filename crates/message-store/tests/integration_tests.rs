@@ -689,47 +689,31 @@ async fn test_all_signature_types_comprehensive() {
     // Verify signature verification works for all types
     let ed25519_msg_bytes = postcard::to_stdvec(retrieved_ed25519.message())
         .expect("Failed to serialize Ed25519 message");
-    assert_eq!(
-        retrieved_ed25519
-            .message()
-            .verify_sender_signature(&ed25519_msg_bytes, retrieved_ed25519.signature())
-            .expect("Ed25519 signature verification should succeed"),
-        (),
-        "Ed25519 signature should be valid"
-    );
+    retrieved_ed25519
+        .message()
+        .verify_sender_signature(&ed25519_msg_bytes, retrieved_ed25519.signature())
+        .expect("Ed25519 signature verification should succeed");
 
     let ml_dsa_44_msg_bytes = postcard::to_stdvec(retrieved_ml_dsa_44.message())
         .expect("Failed to serialize ML-DSA-44 message");
-    assert_eq!(
-        retrieved_ml_dsa_44
-            .message()
-            .verify_sender_signature(&ml_dsa_44_msg_bytes, retrieved_ml_dsa_44.signature())
-            .expect("ML-DSA-44 signature verification should succeed"),
-        (),
-        "ML-DSA-44 signature should be valid"
-    );
+    retrieved_ml_dsa_44
+        .message()
+        .verify_sender_signature(&ml_dsa_44_msg_bytes, retrieved_ml_dsa_44.signature())
+        .expect("ML-DSA-44 signature verification should succeed");
 
     let ml_dsa_65_msg_bytes = postcard::to_stdvec(retrieved_ml_dsa_65.message())
         .expect("Failed to serialize ML-DSA-65 message");
-    assert_eq!(
-        retrieved_ml_dsa_65
-            .message()
-            .verify_sender_signature(&ml_dsa_65_msg_bytes, retrieved_ml_dsa_65.signature())
-            .expect("ML-DSA-65 signature verification should succeed"),
-        (),
-        "ML-DSA-65 signature should be valid"
-    );
+    retrieved_ml_dsa_65
+        .message()
+        .verify_sender_signature(&ml_dsa_65_msg_bytes, retrieved_ml_dsa_65.signature())
+        .expect("ML-DSA-65 signature verification should succeed");
 
     let ml_dsa_87_msg_bytes = postcard::to_stdvec(retrieved_ml_dsa_87.message())
         .expect("Failed to serialize ML-DSA-87 message");
-    assert_eq!(
-        retrieved_ml_dsa_87
-            .message()
-            .verify_sender_signature(&ml_dsa_87_msg_bytes, retrieved_ml_dsa_87.signature())
-            .expect("ML-DSA-87 signature verification should succeed"),
-        (),
-        "ML-DSA-87 signature should be valid"
-    );
+    retrieved_ml_dsa_87
+        .message()
+        .verify_sender_signature(&ml_dsa_87_msg_bytes, retrieved_ml_dsa_87.signature())
+        .expect("ML-DSA-87 signature verification should succeed");
 
     // Test channel streaming with mixed signature types
     let channel_filter = Filter::Channel(test_channel.to_vec());
@@ -765,14 +749,10 @@ async fn test_all_signature_types_comprehensive() {
     for (i, message) in all_messages.iter().enumerate() {
         let msg_bytes =
             postcard::to_stdvec(message.message()).expect("Failed to serialize message");
-        assert_eq!(
-            message
-                .message()
-                .verify_sender_signature(&msg_bytes, message.signature())
-                .expect("Signature verification should succeed"),
-            (),
-            "Message {i} signature should be valid"
-        );
+        message
+            .message()
+            .verify_sender_signature(&msg_bytes, message.signature())
+            .expect("Signature verification should succeed");
     }
 
     // Test author filtering with different signature types

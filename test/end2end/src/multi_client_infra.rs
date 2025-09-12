@@ -143,7 +143,7 @@ pub async fn perform_challenge_handshake(
         .map_err(|e| anyhow::anyhow!("Challenge protocol failed: {}", e))?;
 
     // Convert warnings to strings
-    let warning_strings: Vec<String> = warnings.into_iter().map(|w| format!("{:?}", w)).collect();
+    let warning_strings: Vec<String> = warnings.into_iter().map(|w| format!("{w:?}")).collect();
 
     Ok((verified_count, warning_strings))
 }
@@ -402,8 +402,8 @@ impl MultiClientTestHarness {
                 .build(),
         )
         .await
-        .with_context(|| format!("Timeout connecting client '{}'", name))?
-        .with_context(|| format!("Failed to create client '{}'", name))?;
+        .with_context(|| format!("Timeout connecting client '{name}'"))?
+        .with_context(|| format!("Failed to create client '{name}'"))?;
 
         let test_client = TestClient::new(name.to_string(), client);
 

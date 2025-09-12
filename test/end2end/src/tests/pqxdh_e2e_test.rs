@@ -100,7 +100,7 @@ async fn test_pqxdh_simple_echo_e2e() -> Result<()> {
     );
 
     // Alice echoes the message back
-    let echo_message = format!("Echo: {}", received_message);
+    let echo_message = format!("Echo: {received_message}");
     alice_handler
         .send_message(&alice_session_id, &echo_message)
         .await
@@ -152,7 +152,7 @@ async fn test_pqxdh_simple_echo_e2e() -> Result<()> {
     );
 
     // Alice echoes the follow-up message
-    let echo_follow_up = format!("Echo: {}", received_follow_up);
+    let echo_follow_up = format!("Echo: {received_follow_up}");
     alice_handler
         .send_message(&alice_session_id, &echo_follow_up)
         .await

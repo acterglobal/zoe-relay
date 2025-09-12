@@ -1621,12 +1621,6 @@ mod tests {
 
             // Test that signature can be verified
             verifying_key.verify(message, &signature).unwrap();
-            assert_eq!(
-                (),
-                (),
-                "Signature should be valid for correct key and message"
-            );
-
             // Test with wrong message
             let wrong_message = b"different message";
             let is_invalid = verifying_key.verify(wrong_message, &signature);
@@ -1796,11 +1790,6 @@ mod tests {
         // Test that matching key/signature pairs work
         for (key, sig) in verifying_keys.iter().zip(signatures.iter()) {
             key.verify(message, sig).unwrap();
-            assert_eq!(
-                (),
-                (),
-                "Matching key and signature should verify successfully"
-            );
         }
 
         // Test that mismatched key/signature pairs fail
@@ -2245,16 +2234,8 @@ mod tests {
 
             // Both signatures should verify with the public key
             let public_key = original_keypair.public_key();
-            assert_eq!(
-                public_key.verify(message, &original_signature).unwrap(),
-                (),
-                "Original signature should verify after PEM round trip"
-            );
-            assert_eq!(
-                public_key.verify(message, &restored_signature).unwrap(),
-                (),
-                "Restored signature should verify after PEM round trip"
-            );
+            public_key.verify(message, &original_signature).unwrap();
+            public_key.verify(message, &restored_signature).unwrap();
         }
     }
 
@@ -2282,14 +2263,10 @@ mod tests {
             // Test that we can sign and verify
             let message = format!("Environment variable test message {i}");
             let signature = restored_keypair.sign(message.as_bytes());
-            assert_eq!(
-                restored_keypair
-                    .public_key()
-                    .verify(message.as_bytes(), &signature)
-                    .unwrap(),
-                (),
-                "Should be able to sign and verify after environment variable round trip"
-            );
+            restored_keypair
+                .public_key()
+                .verify(message.as_bytes(), &signature)
+                .unwrap();
         }
     }
 
@@ -2366,14 +2343,10 @@ mod tests {
             // Verify signing still works
             let message = format!("Test message for {name}");
             let signature = restored.sign(message.as_bytes());
-            assert_eq!(
-                restored
-                    .public_key()
-                    .verify(message.as_bytes(), &signature)
-                    .unwrap(),
-                (),
-                "{name} should be able to sign and verify after PEM serialization"
-            );
+            restored
+                .public_key()
+                .verify(message.as_bytes(), &signature)
+                .unwrap();
 
             // Verify PEM format contains expected labels
             match name {

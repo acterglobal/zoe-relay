@@ -559,17 +559,14 @@ async fn test_all_signature_types_e2e() -> Result<()> {
         // Check that we received at least some messages (may not be all 4 due to timing)
         assert!(
             !messages.is_empty(),
-            "{} client should have received at least one message",
-            client_name
+            "{client_name} client should have received at least one message"
         );
 
         // Verify that received messages are from our expected set
         for message in messages {
             assert!(
                 expected_messages.contains(message),
-                "{} client received unexpected message: {}",
-                client_name,
-                message
+                "{client_name} client received unexpected message: {message}"
             );
         }
     }

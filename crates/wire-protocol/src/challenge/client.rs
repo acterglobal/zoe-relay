@@ -338,7 +338,7 @@ mod tests {
             let pub_key = keys[i].public_key();
 
             // Verify the signature works
-            assert_eq!(pub_key.verify(test_data, &test_sig).unwrap(), ());
+            pub_key.verify(test_data, &test_sig).unwrap();
         }
     }
 

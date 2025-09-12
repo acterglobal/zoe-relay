@@ -299,7 +299,7 @@ async fn test_broadcast_channel_multiple_receivers() -> Result<()> {
             .as_secs();
 
         let test_message_raw = Message::new_v0_raw(
-            format!("Test message {} for multi-receiver test", i).into_bytes(),
+            format!("Test message {i} for multi-receiver test").into_bytes(),
             client.public_key(),
             timestamp,
             Kind::Ephemeral(60),
