@@ -1,13 +1,13 @@
 use crate::error::{ClientError, Result};
+use async_broadcast::{Receiver, RecvError, Sender};
 use async_trait::async_trait;
 use eyeball::{AsyncLock, ObservableWriteGuard, SharedObservable};
 use futures::{Stream, StreamExt, pin_mut};
 use serde::{Deserialize, Serialize};
 use std::pin::Pin;
 use std::sync::Arc;
-use tokio::{select, sync::broadcast, task::JoinHandle};
-use tokio_stream::wrappers::{BroadcastStream, errors::BroadcastStreamRecvError};
-use tracing::{error, warn};
+use tokio::{select, task::JoinHandle};
+use tracing::warn;
 use zoe_client_storage::SubscriptionState;
 use zoe_wire_protocol::{
     CatchUpRequest, CatchUpResponse, Filter, FilterOperation, FilterUpdateRequest, MessageFilters,
@@ -26,7 +26,7 @@ use mockall::automock;
 #[async_trait]
 pub trait MessagesManagerTrait: Send + Sync {
     /// Get a stream of all message events for persistence and monitoring
-    fn message_events_stream(&self) -> BroadcastStream<MessageEvent>;
+    fn message_events_stream(&self) -> Receiver<MessageEvent>;
 
     /// Subscribe to subscription state changes for reactive programming
     ///
@@ -59,10 +59,10 @@ pub trait MessagesManagerTrait: Send + Sync {
     async fn ensure_contains_filter(&self, filter: Filter) -> Result<()>;
 
     /// Get a stream of incoming messages
-    fn messages_stream(&self) -> BroadcastStream<StreamMessage>;
+    fn messages_stream(&self) -> Receiver<StreamMessage>;
 
     /// Get a stream of catch-up responses
-    fn catch_up_stream(&self) -> BroadcastStream<CatchUpResponse>;
+    fn catch_up_stream(&self) -> Receiver<CatchUpResponse>;
 
     /// Get a filtered stream of messages matching the given filter
     fn filtered_messages_stream(
@@ -247,6 +247,14 @@ impl MessagesManagerBuilder {
     }
 }
 
+struct AbortOnDrop<T>(JoinHandle<T>);
+
+impl<T> Drop for AbortOnDrop<T> {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
+
 /// High-level messages manager that provides a unified interface for message operations.
 ///
 /// The `MessagesManager` combines message broadcasting and subscription management:
@@ -262,15 +270,21 @@ pub struct MessagesManager {
     /// The underlying messages service for RPC operations
     messages_service: Arc<MessagesService>,
     /// Broadcast sender for distributing messages to subscribers
-    broadcast_tx: broadcast::Sender<StreamMessage>,
+    broadcast_tx: Arc<Sender<StreamMessage>>,
     /// Broadcast sender for distributing catch-up responses to subscribers
-    catch_up_tx: broadcast::Sender<CatchUpResponse>,
+    catch_up_tx: Arc<Sender<CatchUpResponse>>,
     /// Broadcast sender for all message events (for persistence and monitoring)
-    message_events_tx: broadcast::Sender<MessageEvent>,
+    message_events_tx: Arc<Sender<MessageEvent>>,
+    /// Keeper receiver to prevent broadcast channel closure (not actively used)
+    _broadcast_keeper: async_broadcast::InactiveReceiver<StreamMessage>,
+    /// Keeper receiver to prevent catch-up channel closure (not actively used)
+    _catch_up_keeper: async_broadcast::InactiveReceiver<CatchUpResponse>,
+    /// Keeper receiver to prevent message events channel closure (not actively used)
+    _message_events_keeper: async_broadcast::InactiveReceiver<MessageEvent>,
     /// Current subscription state (persistent across reconnections)
     state: SharedObservable<SubscriptionState, AsyncLock>,
     /// Background task handle for syncing with the server
-    sync_handler: Arc<JoinHandle<Result<()>>>,
+    _sync_handler: Arc<AbortOnDrop<Result<()>>>,
     /// Catch-up request ID counter
     catch_up_request_id: Arc<AtomicU32>,
 }
@@ -278,6 +292,25 @@ pub struct MessagesManager {
 impl MessagesManager {
     pub fn builder() -> MessagesManagerBuilder {
         MessagesManagerBuilder::new()
+    }
+
+    /// Helper function to safely broadcast messages using try_broadcast
+    /// Handles TrySendError cases gracefully without panicking
+    fn safe_broadcast<T: Clone>(sender: &Sender<T>, message: T, context: &str) {
+        match sender.try_broadcast(message) {
+            Ok(_msg) => {
+                tracing::trace!("{context}: Successfully broadcast message");
+            }
+            Err(async_broadcast::TrySendError::Inactive(_msg)) => {
+                tracing::debug!("{context}: All receivers inactive, message not sent");
+            }
+            Err(async_broadcast::TrySendError::Full(_msg)) => {
+                tracing::warn!("{context}: Broadcast channel full, message dropped");
+            }
+            Err(async_broadcast::TrySendError::Closed(_msg)) => {
+                tracing::debug!("{context}: Broadcast channel closed");
+            }
+        }
     }
 
     /// Create a new MessagesManager with existing subscription state.
@@ -297,9 +330,9 @@ impl MessagesManager {
         buffer_size: Option<usize>,
     ) -> Self {
         let buffer_size = buffer_size.unwrap_or(1000);
-        let (broadcast_tx, _) = broadcast::channel(buffer_size);
-        let (catch_up_tx, _) = broadcast::channel(buffer_size);
-        let (message_events_tx, _) = broadcast::channel(buffer_size);
+        let (broadcast_tx, broadcast_keeper) = async_broadcast::broadcast(buffer_size);
+        let (catch_up_tx, catch_up_keeper) = async_broadcast::broadcast(buffer_size);
+        let (message_events_tx, message_events_keeper) = async_broadcast::broadcast(buffer_size);
 
         // Create observable state
         let state = SharedObservable::new_async(state);
@@ -319,7 +352,6 @@ impl MessagesManager {
                             tracing::debug!("📪 Subscriptions stream ended");
                             break;
                         };
-
                         match &message {
                             StreamMessage::StreamHeightUpdate(height) => {
                                 // Update both the internal state and the observable
@@ -331,9 +363,7 @@ impl MessagesManager {
                                 }
                                 // Emit height update event
                                 let event = MessageEvent::StreamHeightUpdate { height: height.clone() };
-                                if let Err(e) = message_events_tx_clone.send(event) {
-                                    warn!("No subscribers listening for message events: {e}");
-                                }
+                                Self::safe_broadcast(&message_events_tx_clone, event, "StreamHeightUpdate event");
                             },
                             StreamMessage::MessageReceived { message: msg, stream_height } => {
                                 // Update both the internal state and the observable
@@ -349,19 +379,14 @@ impl MessagesManager {
                                     message: (**msg).clone(),
                                     stream_height: stream_height.clone()
                                 };
-                                if let Err(e) = message_events_tx_clone.send(event) {
-                                    warn!("No subscribers listening for message events: {e}");
-                                }
+                                Self::safe_broadcast(&message_events_tx_clone, event, "MessageReceived event");
                             }
                         }
 
                         // Forward message to all subscribers
-                        // If no subscribers are listening, the message is dropped (which is fine)
+                        // async-broadcast queues messages for receivers even if they're not actively polling
                         tracing::debug!("MessagesManager forwarding message to broadcast channel: {:?}", message);
-                        if let Err(e) = tx_clone.send(message) {
-                            warn!("No subscribers listening for messages: {e}");
-                            // Don't return error - this is expected when no one is subscribed
-                        }
+                        Self::safe_broadcast(&tx_clone, message, "StreamMessage");
                     }
                     catch_up_response = c_stream.recv() => {
                         let Some(catch_up_response) = catch_up_response else {
@@ -376,24 +401,17 @@ impl MessagesManager {
                                 message: message.clone(),
                                 request_id: catch_up_response.request_id
                             };
-                            if let Err(e) = message_events_tx_clone.send(event) {
-                                warn!("No subscribers listening for message events: {e}");
-                            }
+                            Self::safe_broadcast(&message_events_tx_clone, event, "CatchUpMessage event");
                         }
 
                         if catch_up_response.is_complete {
                             let event = MessageEvent::CatchUpCompleted {
                                 request_id: catch_up_response.request_id
                             };
-                            if let Err(e) = message_events_tx_clone.send(event) {
-                                warn!("No subscribers listening for message events: {e}");
-                            }
+                            Self::safe_broadcast(&message_events_tx_clone, event, "CatchUpCompleted event");
                         }
 
-                        if let Err(e) = catch_up_tx_clone.send(catch_up_response) {
-                            warn!("No subscribers listening for catch-up responses: {e}");
-                            // Don't return error - this is expected when no one is subscribed
-                        }
+                        Self::safe_broadcast(&catch_up_tx_clone, catch_up_response, "CatchUpResponse");
                     }
                 }
             }
@@ -403,12 +421,15 @@ impl MessagesManager {
 
         Self {
             messages_service: Arc::new(messages_service),
-            broadcast_tx,
-            catch_up_tx,
-            message_events_tx,
+            broadcast_tx: Arc::new(broadcast_tx),
+            catch_up_tx: Arc::new(catch_up_tx),
+            message_events_tx: Arc::new(message_events_tx),
             state,
-            sync_handler: Arc::new(sync_handler),
             catch_up_request_id: Arc::new(AtomicU32::new(0)),
+            _broadcast_keeper: broadcast_keeper.deactivate(),
+            _catch_up_keeper: catch_up_keeper.deactivate(),
+            _message_events_keeper: message_events_keeper.deactivate(),
+            _sync_handler: Arc::new(AbortOnDrop(sync_handler)),
         }
     }
 
@@ -464,81 +485,63 @@ impl MessagesManager {
             request_id,
         };
 
+        // Store request_id before moving the request
+        let request_id_filter = request.request_id;
+
+        // Create and start polling the catch-up receiver immediately to make it "active"
+        let mut catch_up_receiver = self.catch_up_tx.new_receiver();
+
+        // Send the catch-up request to the server
+        self.messages_service.catch_up(request).await?;
+
         let regular_messages_stream = self.clone().filtered_messages_stream(filter.clone());
 
         let catch_up_stream = {
             // we put this into a scope so the broadcaster is dropped when the stream finished
 
-            let catch_up_rcv = BroadcastStream::new(self.catch_up_tx.subscribe()).filter_map(
-                move |result| async move {
-                    match result {
-                        Err(BroadcastStreamRecvError::Lagged(skipped)) => {
-                            warn!(
-                                "MessagesManager subscriber lagged, skipped {} messages",
-                                skipped
-                            );
-                            None
-                        }
+            let catch_up_rcv = async_stream::stream! {
+                loop {
+                    match catch_up_receiver.recv().await {
                         Ok(CatchUpResponse {
                             request_id,
                             messages,
                             is_complete,
                             ..
                         }) => {
-                            if request_id != request.request_id {
-                                return None;
+                            if request_id == request_id_filter {
+                                yield (messages, is_complete);
                             }
-                            Some((messages, is_complete))
+                        }
+                        Err(RecvError::Closed) => break, // we are done processing
+                        Err(RecvError::Overflowed(skipped)) => {
+                            warn!(
+                                "MessagesManager catch-up subscriber lagged, skipped {} responses",
+                                skipped
+                            );
+                            // Continue receiving after overflow
                         }
                     }
-                },
-            );
+                }
+            };
 
             stream! {
                 pin_mut!(catch_up_rcv);
-                tracing::debug!("🔄 Catch-up stream starting for request_id: {}", request.request_id);
+                tracing::debug!("🔄 Catch-up stream starting for request_id: {request_id_filter}");
                 while let Some((messages, is_complete)) = catch_up_rcv.next().await {
                     tracing::debug!("📦 Catch-up received {} messages, is_complete: {}", messages.len(), is_complete);
                     for message in messages {
                         yield Box::new(message);
                     }
                     if is_complete {
-                        tracing::debug!("✅ Catch-up stream completed for request_id: {}", request.request_id);
+                        tracing::debug!("✅ Catch-up stream completed for request_id: {request_id_filter}");
                         break;
                     }
                 }
-                tracing::debug!("🏁 Catch-up stream ended for request_id: {}", request.request_id);
+                tracing::debug!("🏁 Catch-up stream ended for request_id: {request_id_filter}");
             }
         };
 
-        // Attempt the catch-up request with retry logic for transient failures
-        let mut attempts = 0;
-        const MAX_ATTEMPTS: usize = 3;
-        const RETRY_DELAY: std::time::Duration = std::time::Duration::from_millis(100);
-
-        loop {
-            attempts += 1;
-            match self.messages_service.catch_up(request.clone()).await {
-                Ok(_) => break,
-                Err(e) if attempts < MAX_ATTEMPTS => {
-                    warn!(
-                        "Catch-up request failed (attempt {}/{}): {}. Retrying...",
-                        attempts, MAX_ATTEMPTS, e
-                    );
-                    tokio::time::sleep(RETRY_DELAY).await;
-                    continue;
-                }
-                Err(e) => {
-                    error!(
-                        "Catch-up request failed after {} attempts: {}",
-                        MAX_ATTEMPTS, e
-                    );
-                    return Err(e);
-                }
-            }
-        }
-
-        Ok(catch_up_stream.chain(regular_messages_stream))
+        Ok(Box::pin(catch_up_stream.chain(regular_messages_stream)))
     }
 
     pub fn filtered_messages_stream(
@@ -581,45 +584,43 @@ impl MessagesManager {
     where
         F: Fn(StreamMessage) -> Option<T> + Send + Clone + 'static,
     {
-        let receiver = self.broadcast_tx.subscribe();
+        let mut receiver = self.broadcast_tx.new_receiver();
+        tracing::info!(
+            "🔧 Created new broadcast receiver for filtered stream (manager: {:p})",
+            self.broadcast_tx.as_ref()
+        );
 
-        // Convert broadcast receiver to stream and apply filter
-        BroadcastStream::new(receiver).filter_map(move |result| {
-            let filter = filter.clone();
-            async move {
-                match result {
-                    Ok(message) => filter(message),
-                    Err(BroadcastStreamRecvError::Lagged(skipped)) => {
+        // Convert async-broadcast receiver to stream and apply filter
+        async_stream::stream! {
+            tracing::info!("🎯 Filtered stream started, waiting for messages...");
+            loop {
+                match receiver.recv().await {
+                    Ok(message) => {
+                        if let Some(filtered) = filter(message) {
+                            yield filtered;
+                        }
+                    }
+                    Err(RecvError::Closed) => {
+                        break;
+                    }
+                    Err(RecvError::Overflowed(skipped)) => {
                         warn!(
                             "MessagesManager subscriber lagged, skipped {} messages",
                             skipped
                         );
-                        None
+                        // Continue receiving after overflow
                     }
                 }
             }
-        })
+        }
     }
 
     /// Get a stream of all messages.
     ///
     /// # Returns
     /// A stream of all messages received by the manager
-    pub fn all_messages_stream(&self) -> impl Stream<Item = StreamMessage> {
-        let receiver = self.broadcast_tx.subscribe();
-
-        BroadcastStream::new(receiver).filter_map(|result| async move {
-            match result {
-                Ok(message) => Some(message),
-                Err(BroadcastStreamRecvError::Lagged(skipped)) => {
-                    warn!(
-                        "MessagesManager subscriber lagged, skipped {} messages",
-                        skipped
-                    );
-                    None
-                }
-            }
-        })
+    pub fn all_messages_stream(&self) -> Receiver<StreamMessage> {
+        self.broadcast_tx.new_receiver()
     }
 
     pub async fn publish(&self, message: MessageFull) -> Result<PublishResult> {
@@ -635,9 +636,7 @@ impl MessagesManager {
             publish_result: result.clone(),
         };
 
-        if let Err(e) = self.message_events_tx.send(event) {
-            warn!("No subscribers listening for message events: {e}");
-        }
+        Self::safe_broadcast(&self.message_events_tx, event, "MessageSent event");
 
         Ok(result)
     }
@@ -678,34 +677,15 @@ impl MessagesManager {
     ///
     /// # Returns
     /// A stream of `MessageEvent` that captures all message activities
-    pub fn message_events_stream(&self) -> impl Stream<Item = MessageEvent> + use<> {
-        let receiver = self.message_events_tx.subscribe();
-
-        BroadcastStream::new(receiver).filter_map(|result| async move {
-            match result {
-                Ok(event) => Some(event),
-                Err(BroadcastStreamRecvError::Lagged(skipped)) => {
-                    warn!(
-                        "Message events subscriber lagged, skipped {} events",
-                        skipped
-                    );
-                    None
-                }
-            }
-        })
-    }
-}
-
-impl Drop for MessagesManager {
-    fn drop(&mut self) {
-        self.sync_handler.abort();
+    pub fn message_events_stream(&self) -> Receiver<MessageEvent> {
+        self.message_events_tx.new_receiver()
     }
 }
 
 #[async_trait]
 impl MessagesManagerTrait for MessagesManager {
-    fn message_events_stream(&self) -> BroadcastStream<MessageEvent> {
-        BroadcastStream::new(self.message_events_tx.subscribe())
+    fn message_events_stream(&self) -> Receiver<MessageEvent> {
+        self.message_events_tx.new_receiver()
     }
 
     async fn get_subscription_state_updates(
@@ -726,12 +706,12 @@ impl MessagesManagerTrait for MessagesManager {
         MessagesManager::ensure_contains_filter(self, filter).await
     }
 
-    fn messages_stream(&self) -> BroadcastStream<StreamMessage> {
-        BroadcastStream::new(self.broadcast_tx.subscribe())
+    fn messages_stream(&self) -> Receiver<StreamMessage> {
+        self.all_messages_stream()
     }
 
-    fn catch_up_stream(&self) -> BroadcastStream<CatchUpResponse> {
-        BroadcastStream::new(self.catch_up_tx.subscribe())
+    fn catch_up_stream(&self) -> Receiver<CatchUpResponse> {
+        self.catch_up_tx.new_receiver()
     }
 
     fn filtered_messages_stream(

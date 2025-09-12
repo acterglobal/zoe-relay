@@ -38,6 +38,7 @@ quinn = { workspace = true }
 x25519-dalek = { version = "2.0", features = ["static_secrets", "serde"] }
 ed25519-dalek = { workspace = true }
 env_logger = { workspace = true }
+async-broadcast = { workspace = true }
 
 # Redis client for message store tests
 redis = { workspace = true, features = ["tokio-comp"] }

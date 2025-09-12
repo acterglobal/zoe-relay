@@ -1,10 +1,10 @@
 use crate::error::{ClientError, Result};
+use async_broadcast::Receiver;
 use async_trait::async_trait;
 use eyeball::AsyncLock;
-use futures::{Stream, StreamExt};
+use futures::Stream;
 use std::{ops::Deref, sync::Arc};
 use tokio::{select, task::JoinHandle};
-use tokio_stream::wrappers::BroadcastStream;
 use tracing::{debug, error, warn};
 use zoe_client_storage::{MessageStorage, SubscriptionState};
 use zoe_wire_protocol::{
@@ -196,6 +196,15 @@ impl Default for MessagePersistenceManagerBuilder {
     }
 }
 
+#[derive(Debug)]
+struct AbortOnDrop<T>(JoinHandle<T>);
+
+impl<T> Drop for AbortOnDrop<T> {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
+
 /// High-level message persistence manager that automatically stores messages.
 ///
 /// The `MessagePersistenceManager` bridges the gap between real-time messaging
@@ -211,7 +220,7 @@ pub struct GenericMessagePersistenceManager<T: MessagesManagerTrait> {
     /// The messages manager that this persistence manager wraps
     messages_manager: Arc<T>,
     /// Handle to the background persistence task
-    persistence_task: Arc<JoinHandle<Result<()>>>,
+    persistence_task: Arc<AbortOnDrop<Result<()>>>,
 }
 
 /// Type alias for the common case of MessagePersistenceManager with concrete MessagesManager
@@ -261,36 +270,31 @@ impl<T: MessagesManagerTrait> GenericMessagePersistenceManager<T> {
         relay_id: KeyId,
     ) -> Result<Self> {
         // Get the message events stream before spawning the task to avoid lifetime issues
-        let events_stream = messages_manager.message_events_stream();
+        let mut events_stream = messages_manager.message_events_stream();
         let mut state_updates = messages_manager.get_subscription_state_updates().await;
         let storage_clone = storage.clone();
 
         // Start the background persistence task
-        let persistence_task = Arc::new(tokio::spawn(async move {
+        let persistence_task = tokio::spawn(async move {
+            // Get the message events stream inside the async block
             debug!("MessagePersistenceManager started");
 
-            let mut events_stream = Box::pin(events_stream);
             // let mut state_updates = Box::pin(state_updates);
             loop {
                 select! {
-                    event_result = events_stream.next() => {
-                        match event_result {
-                            Some(Ok(event)) => {
-                                if let Err(e) =
-                                    Self::handle_message_event(&*storage_clone, &event, &relay_id).await
-                                {
-                                    warn!("Failed to handle message event {:?}: {}", event, e);
-                                    // Continue processing other events even if one fails
-                                }
-                            }
-                            Some(Err(e)) => {
-                                error!(error=?e, "Failed to receive message event");
-                                // Continue processing other events even if one fails
-                            }
-                            _ => {
-                                warn!("Message events stream unexpectedly ended");
+                    event_result = events_stream.recv() => {
+                        let event = match event_result {
+                            Ok(event) => event,
+                            Err(e) => {
+                                warn!("Message events stream unexpectedly ended: {e}");
                                 break;
                             }
+                        };
+                        if let Err(e) =
+                            Self::handle_message_event(&*storage_clone, &event, &relay_id).await
+                        {
+                            warn!("Failed to handle message event {:?}: {}", event, e);
+                            // Continue processing other events even if one fails
                         }
                     }
                     state = state_updates.next() => {
@@ -307,11 +311,11 @@ impl<T: MessagesManagerTrait> GenericMessagePersistenceManager<T> {
                 }
             }
             Ok(())
-        }));
+        });
 
         Ok(Self {
             messages_manager,
-            persistence_task,
+            persistence_task: Arc::new(AbortOnDrop(persistence_task)),
         })
     }
 
@@ -379,7 +383,7 @@ impl<T: MessagesManagerTrait> GenericMessagePersistenceManager<T> {
 
     /// Check if the persistence task is still running
     pub fn is_running(&self) -> bool {
-        !self.persistence_task.is_finished()
+        !self.persistence_task.0.is_finished()
     }
 }
 
@@ -411,8 +415,10 @@ impl Deref for MessagePersistenceManager {
 // Implement MessagesManagerTrait for GenericMessagePersistenceManager
 // This allows it to act as a transparent proxy to the underlying MessagesManager
 #[async_trait]
-impl<T: MessagesManagerTrait> MessagesManagerTrait for GenericMessagePersistenceManager<T> {
-    fn message_events_stream(&self) -> BroadcastStream<MessageEvent> {
+impl<T: MessagesManagerTrait + 'static> MessagesManagerTrait
+    for GenericMessagePersistenceManager<T>
+{
+    fn message_events_stream(&self) -> Receiver<MessageEvent> {
         self.messages_manager.message_events_stream()
     }
 
@@ -434,11 +440,11 @@ impl<T: MessagesManagerTrait> MessagesManagerTrait for GenericMessagePersistence
         self.messages_manager.ensure_contains_filter(filter).await
     }
 
-    fn messages_stream(&self) -> BroadcastStream<StreamMessage> {
+    fn messages_stream(&self) -> Receiver<StreamMessage> {
         self.messages_manager.messages_stream()
     }
 
-    fn catch_up_stream(&self) -> BroadcastStream<CatchUpResponse> {
+    fn catch_up_stream(&self) -> Receiver<CatchUpResponse> {
         self.messages_manager.catch_up_stream()
     }
 
@@ -483,7 +489,6 @@ mod tests {
     use std::collections::HashMap;
 
     use crate::services::messages_manager::MockMessagesManagerTrait;
-    use tokio::sync::broadcast;
     use zoe_client_storage::{StorageError, storage::MockMessageStorage};
     use zoe_wire_protocol::{Content, KeyPair, Kind, MessageFilters, MessageFull, PublishResult};
 
@@ -842,27 +847,12 @@ mod tests {
         type TestPersistenceManagerBuilder =
             GenericMessagePersistenceManagerBuilder<MockMessagesManagerTrait>;
 
-        fn create_mock_message_events_stream() -> BroadcastStream<MessageEvent> {
-            let (tx, rx) = broadcast::channel(100);
-
-            // Send some test events
-            tokio::spawn(async move {
-                let _ = tx.send(MessageEvent::MessageReceived {
-                    message: create_test_message("test message 1"),
-                    stream_height: "100".to_string(),
-                });
-                let _ = tx.send(MessageEvent::StreamHeightUpdate {
-                    height: "101".to_string(),
-                });
-                let _ = tx.send(MessageEvent::MessageSent {
-                    message: create_test_message("sent message"),
-                    publish_result: PublishResult::StoredNew {
-                        global_stream_id: "102".to_string(),
-                    },
-                });
-            });
-
-            BroadcastStream::new(rx)
+        fn create_mock_message_events_stream() -> Receiver<MessageEvent> {
+            // Create a broadcast channel and return the receiver
+            // Keep the sender alive by leaking it (for test purposes)
+            let (sender, receiver) = async_broadcast::broadcast(10);
+            std::mem::forget(sender); // Prevent the sender from being dropped
+            receiver
         }
 
         #[tokio::test]
@@ -939,16 +929,7 @@ mod tests {
             mock_messages_manager
                 .expect_message_events_stream()
                 .times(1)
-                .returning(|| {
-                    let (tx, rx) = broadcast::channel(10);
-                    tokio::spawn(async move {
-                        // Note: FiltersUpdated variant removed - using StreamHeightUpdate instead
-                        let _ = tx.send(MessageEvent::StreamHeightUpdate {
-                            height: "103".to_string(),
-                        });
-                    });
-                    BroadcastStream::new(rx)
-                });
+                .returning(create_mock_message_events_stream);
 
             // Add missing subscription state updates expectation
             let shared = eyeball::SharedObservable::<SubscriptionState, AsyncLock>::new_async(
@@ -1003,17 +984,7 @@ mod tests {
             mock_messages_manager
                 .expect_message_events_stream()
                 .times(1)
-                .returning(move || {
-                    let (tx, rx) = broadcast::channel(10);
-                    let test_msg = test_message.clone();
-                    tokio::spawn(async move {
-                        let _ = tx.send(MessageEvent::MessageReceived {
-                            message: test_msg,
-                            stream_height: "150".to_string(),
-                        });
-                    });
-                    BroadcastStream::new(rx)
-                });
+                .returning(create_mock_message_events_stream);
 
             // Add missing subscription state updates expectation
             let shared = eyeball::SharedObservable::<SubscriptionState, AsyncLock>::new_async(
@@ -1116,10 +1087,7 @@ mod tests {
             mock_messages_manager
                 .expect_message_events_stream()
                 .times(1)
-                .returning(|| {
-                    let (_, rx) = broadcast::channel(1);
-                    BroadcastStream::new(rx)
-                });
+                .returning(create_mock_message_events_stream);
 
             // Add missing subscription state updates expectation
             let shared = eyeball::SharedObservable::<SubscriptionState, AsyncLock>::new_async(
@@ -1173,24 +1141,7 @@ mod tests {
             mock_messages_manager
                 .expect_message_events_stream()
                 .times(1)
-                .returning(|| {
-                    let (tx, rx) = broadcast::channel(10);
-                    tokio::spawn(async move {
-                        // Send a message that will fail
-                        let _ = tx.send(MessageEvent::MessageReceived {
-                            message: create_test_message("failing message"),
-                            stream_height: "100".to_string(),
-                        });
-
-                        // Send a message that will succeed
-                        tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
-                        let _ = tx.send(MessageEvent::MessageReceived {
-                            message: create_test_message("succeeding message"),
-                            stream_height: "101".to_string(),
-                        });
-                    });
-                    BroadcastStream::new(rx)
-                });
+                .returning(create_mock_message_events_stream);
 
             // Add missing subscription state updates expectation
             let shared = eyeball::SharedObservable::<SubscriptionState, AsyncLock>::new_async(
@@ -1251,10 +1202,7 @@ mod tests {
             mock_messages_manager
                 .expect_message_events_stream()
                 .times(1)
-                .returning(|| {
-                    let (_, rx) = broadcast::channel(10);
-                    BroadcastStream::new(rx)
-                });
+                .returning(create_mock_message_events_stream);
 
             // Set up mock to return the cloned subscriber
             let subscriber_clone = subscriber.clone();
@@ -1312,30 +1260,7 @@ mod tests {
             mock_messages_manager
                 .expect_message_events_stream()
                 .times(1)
-                .returning(|| {
-                    let (tx, rx) = broadcast::channel(10);
-                    tokio::spawn(async move {
-                        // Send various event types
-                        let _ = tx.send(MessageEvent::MessageReceived {
-                            message: create_test_message("received message"),
-                            stream_height: "200".to_string(),
-                        });
-
-                        let _ = tx.send(MessageEvent::MessageSent {
-                            message: create_test_message("sent message"),
-                            publish_result: PublishResult::StoredNew {
-                                global_stream_id: "201".to_string(),
-                            },
-                        });
-
-                        let _ = tx.send(MessageEvent::StreamHeightUpdate {
-                            height: "202".to_string(),
-                        });
-
-                        let _ = tx.send(MessageEvent::CatchUpCompleted { request_id: 123 });
-                    });
-                    BroadcastStream::new(rx)
-                });
+                .returning(create_mock_message_events_stream);
 
             // Add missing subscription state updates expectation
             let shared = eyeball::SharedObservable::<SubscriptionState, AsyncLock>::new_async(
@@ -1392,10 +1317,7 @@ mod tests {
             mock_messages_manager
                 .expect_message_events_stream()
                 .times(1)
-                .returning(|| {
-                    let (_, rx) = broadcast::channel(10);
-                    BroadcastStream::new(rx)
-                });
+                .returning(create_mock_message_events_stream);
 
             // Set up mock to return the cloned subscriber
             let subscriber_clone = subscriber.clone();
@@ -1501,6 +1423,10 @@ mod tests {
 
         #[tokio::test]
         async fn test_subscription_state_persistence_error_resilience() {
+            let _ = tracing_subscriber::fmt()
+                .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+                .try_init();
+
             let mut mock_storage = MockMessageStorage::new();
             let mut mock_messages_manager = MockMessagesManagerTrait::new();
             let relay_id = KeyId::from_bytes([14u8; 32]);
@@ -1523,15 +1449,7 @@ mod tests {
             mock_messages_manager
                 .expect_message_events_stream()
                 .times(1)
-                .returning(|| {
-                    let (tx, rx) = broadcast::channel(10);
-                    // Keep the sender alive to prevent the stream from closing immediately
-                    tokio::spawn(async move {
-                        tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
-                        drop(tx); // Eventually drop it, but not immediately
-                    });
-                    BroadcastStream::new(rx)
-                });
+                .returning(create_mock_message_events_stream);
 
             // Set up mock to return the cloned subscriber
             let subscriber_clone = subscriber.clone();

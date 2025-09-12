@@ -2,11 +2,11 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::SystemTime;
 
+use async_broadcast::{Receiver, Sender as BroadcastSender};
 use async_trait::async_trait;
 use futures::stream::Stream;
-use tokio::sync::{RwLock, broadcast};
+use tokio::sync::RwLock;
 use tokio::task::JoinHandle;
-use tokio_stream::wrappers::BroadcastStream;
 
 use eyeball::{AsyncLock, SharedObservable};
 use zoe_client_storage::{MessageStorage, SubscriptionState};
@@ -65,11 +65,11 @@ pub struct MultiRelayMessageManager<S: MessageStorage> {
     /// Storage for message persistence and offline queuing
     storage: Arc<S>,
     /// Global message event broadcaster (aggregates from all relays)
-    global_events_tx: broadcast::Sender<MessageEvent>,
+    global_events_tx: BroadcastSender<MessageEvent>,
     /// Global message broadcaster (aggregates from all relays)
-    global_messages_tx: broadcast::Sender<StreamMessage>,
+    global_messages_tx: BroadcastSender<StreamMessage>,
     /// Global catch-up response broadcaster
-    global_catchup_tx: broadcast::Sender<CatchUpResponse>,
+    global_catchup_tx: BroadcastSender<CatchUpResponse>,
     /// Map of active catch-up tasks by relay ID
     catch_up_tasks: Arc<RwLock<BTreeMap<KeyId, JoinHandle<()>>>>,
 }
@@ -77,9 +77,9 @@ pub struct MultiRelayMessageManager<S: MessageStorage> {
 impl<S: MessageStorage + 'static> MultiRelayMessageManager<S> {
     /// Create a new multi-relay message manager
     pub fn new(storage: Arc<S>) -> Self {
-        let (global_events_tx, _) = broadcast::channel(1000);
-        let (global_messages_tx, _) = broadcast::channel(1000);
-        let (global_catchup_tx, _) = broadcast::channel(1000);
+        let (global_events_tx, _) = async_broadcast::broadcast(1000);
+        let (global_messages_tx, _) = async_broadcast::broadcast(1000);
+        let (global_catchup_tx, _) = async_broadcast::broadcast(1000);
 
         let relay_connections = Arc::new(RwLock::new(BTreeMap::new()));
         let catch_up_tasks = Arc::new(RwLock::new(BTreeMap::new()));
@@ -444,8 +444,8 @@ impl<S: MessageStorage + 'static> MultiRelayMessageManager<S> {
 #[async_trait]
 impl<S: MessageStorage + 'static> MessagesManagerTrait for MultiRelayMessageManager<S> {
     /// Get a stream of all message events from all relays
-    fn message_events_stream(&self) -> BroadcastStream<MessageEvent> {
-        BroadcastStream::new(self.global_events_tx.subscribe())
+    fn message_events_stream(&self) -> Receiver<MessageEvent> {
+        self.global_events_tx.new_receiver()
     }
 
     /// Subscribe to subscription state changes (aggregated from all relays)
@@ -627,13 +627,13 @@ impl<S: MessageStorage + 'static> MessagesManagerTrait for MultiRelayMessageMana
     }
 
     /// Get a stream of incoming messages from all relays
-    fn messages_stream(&self) -> BroadcastStream<StreamMessage> {
-        BroadcastStream::new(self.global_messages_tx.subscribe())
+    fn messages_stream(&self) -> Receiver<StreamMessage> {
+        self.global_messages_tx.new_receiver()
     }
 
     /// Get a stream of catch-up responses from all relays
-    fn catch_up_stream(&self) -> BroadcastStream<CatchUpResponse> {
-        BroadcastStream::new(self.global_catchup_tx.subscribe())
+    fn catch_up_stream(&self) -> Receiver<CatchUpResponse> {
+        self.global_catchup_tx.new_receiver()
     }
 
     /// Get a filtered stream of messages matching the given filter from all relays

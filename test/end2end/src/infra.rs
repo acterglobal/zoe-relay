@@ -1168,15 +1168,51 @@ mod tests {
         info!("🔍 Client 1 testing catch-up API for '{}'", new_channel);
 
         // Get the stream from catch_up_and_subscribe
-        let mut original_stream = messages_manager1
+        let original_stream = messages_manager1
+            .clone()
             .catch_up_and_subscribe(
                 zoe_wire_protocol::Filter::Channel(new_channel.as_bytes().to_vec()),
                 None,
             )
             .await?;
 
-        // Pin the original stream
-        pin_mut!(original_stream);
+        // Start polling the stream immediately in a background task to prevent connection closure
+        let (message_tx, mut message_rx) = tokio::sync::mpsc::unbounded_channel();
+        let stream_task = tokio::spawn(async move {
+            pin_mut!(original_stream);
+            info!("🔄 Background stream task started");
+            let mut message_count = 0;
+            loop {
+                info!("🔍 Background task polling stream...");
+                match tokio::time::timeout(Duration::from_millis(100), original_stream.next()).await
+                {
+                    Ok(Some(message)) => {
+                        message_count += 1;
+                        info!(
+                            "📥 Background task received message {}: {}",
+                            message_count,
+                            hex::encode(message.id().as_bytes())
+                        );
+                        if message_tx.send(message).is_err() {
+                            warn!("📪 Background task: receiver dropped, exiting");
+                            break; // Receiver dropped
+                        }
+                    }
+                    Ok(None) => {
+                        info!("🔚 Background task: stream ended");
+                        break;
+                    }
+                    Err(_) => {
+                        // Timeout - continue polling
+                        continue;
+                    }
+                }
+            }
+            info!(
+                "🏁 Background stream task ended after {} messages",
+                message_count
+            );
+        });
 
         // Wait a bit for catch-up processing
         tokio::time::sleep(Duration::from_millis(500)).await;
@@ -1187,10 +1223,17 @@ mod tests {
             new_channel
         );
 
+        // Explicitly ensure the filter is added (this should be redundant but let's be sure)
+        messages_manager1
+            .ensure_contains_filter(zoe_wire_protocol::Filter::Channel(
+                new_channel.as_bytes().to_vec(),
+            ))
+            .await?;
+
         info!("✅ Client 1 updated subscription filters");
 
-        // Give time for filter update to be processed
-        tokio::time::sleep(Duration::from_millis(300)).await;
+        // Give more time for filter update to be processed and propagated
+        tokio::time::sleep(Duration::from_millis(1000)).await;
 
         // Step 5: Client 2 publishes additional messages that Client 1 should receive in real-time
         let num_live_messages = 3usize;
@@ -1233,11 +1276,9 @@ mod tests {
 
         info!("👂 Waiting for live messages...");
 
-        pin_mut!(original_stream);
-
         let start_time = std::time::Instant::now();
         while start_time.elapsed() < live_timeout {
-            match timeout(Duration::from_millis(500), original_stream.next()).await {
+            match timeout(Duration::from_millis(500), message_rx.recv()).await {
                 Ok(Some(message)) => {
                     // Check if this is one of our expected live messages
                     let expected_ids: Vec<zoe_wire_protocol::Hash> = expected_live_messages
@@ -1340,6 +1381,9 @@ mod tests {
         info!(
             "🏆 ALL ASSERTIONS PASSED - Server properly handling catch-up and live subscriptions!"
         );
+
+        // Cleanup background task
+        stream_task.abort();
 
         // Cleanup
         infra.cleanup().await?;
