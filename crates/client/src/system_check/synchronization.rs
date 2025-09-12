@@ -90,7 +90,7 @@ async fn test_message_sync_verification(client: &Client, _config: &SystemCheckCo
     let serialized_content = match postcard::to_stdvec(&sync_message) {
         Ok(data) => data,
         Err(e) => {
-            let error = format!("Failed to serialize sync test message: {}", e);
+            let error = format!("Failed to serialize sync test message: {e}");
             return test.with_result(TestResult::Failed { error });
         }
     };
@@ -115,7 +115,7 @@ async fn test_message_sync_verification(client: &Client, _config: &SystemCheckCo
     let message_full = match MessageFull::new(message, &temp_keypair) {
         Ok(msg) => msg,
         Err(e) => {
-            let error = format!("Failed to create sync test MessageFull: {}", e);
+            let error = format!("Failed to create sync test MessageFull: {e}");
             return test.with_result(TestResult::Failed { error });
         }
     };
@@ -127,7 +127,7 @@ async fn test_message_sync_verification(client: &Client, _config: &SystemCheckCo
             test.add_detail("✓ Published message for sync verification");
         }
         Err(e) => {
-            let error = format!("Failed to publish sync test message: {}", e);
+            let error = format!("Failed to publish sync test message: {e}");
             return test.with_result(TestResult::Failed { error });
         }
     }
@@ -166,7 +166,7 @@ async fn test_sync_connection_stability(client: &Client, _config: &SystemCheckCo
     let initial_status = match client.get_relay_status().await {
         Ok(status) => status,
         Err(e) => {
-            let error = format!("Failed to get initial relay status: {}", e);
+            let error = format!("Failed to get initial relay status: {e}");
             return test.with_result(TestResult::Failed { error });
         }
     };
@@ -177,14 +177,13 @@ async fn test_sync_connection_stability(client: &Client, _config: &SystemCheckCo
         .count();
 
     test.add_detail(format!(
-        "✓ Initial connection state: {} relays connected",
-        connected_count
+        "✓ Initial connection state: {connected_count} relays connected"
     ));
 
     // Perform several sync-like operations to test stability
     for i in 0..3 {
         // Create a small test message
-        let test_message = SyncTestMessage::new_offline(format!("stability_test_{}", i), 128);
+        let test_message = SyncTestMessage::new_offline(format!("stability_test_{i}"), 128);
 
         let serialized_content = match postcard::to_stdvec(&test_message) {
             Ok(data) => data,
@@ -223,7 +222,7 @@ async fn test_sync_connection_stability(client: &Client, _config: &SystemCheckCo
         let message_manager = client.message_manager();
         match message_manager.publish(message_full).await {
             Ok(_) => {
-                test.add_detail(format!("✓ Stability test {} completed", i));
+                test.add_detail(format!("✓ Stability test {i} completed"));
             }
             Err(e) => {
                 warn!("Stability test {} failed: {}", i, e);
@@ -248,8 +247,7 @@ async fn test_sync_connection_stability(client: &Client, _config: &SystemCheckCo
                     .count();
 
                 test.add_detail(format!(
-                    "✓ Final connection state: {} relays connected",
-                    final_connected
+                    "✓ Final connection state: {final_connected} relays connected"
                 ));
 
                 if final_connected >= connected_count {

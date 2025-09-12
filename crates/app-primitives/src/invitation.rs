@@ -133,8 +133,7 @@ mod tests {
         for emoji in &EMOJI_SET {
             assert!(
                 unique_emojis.insert(emoji),
-                "Emoji set should not contain duplicates: {}",
-                emoji
+                "Emoji set should not contain duplicates: {emoji}"
             );
         }
     }

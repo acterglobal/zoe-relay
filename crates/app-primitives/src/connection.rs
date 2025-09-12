@@ -47,9 +47,9 @@ impl std::fmt::Display for NetworkAddress {
             NetworkAddress::Ipv6 { address, port } => (format!("[{address}]"), port),
         };
         if let Some(port) = port {
-            write!(f, "{}:{}", first, port)
+            write!(f, "{first}:{port}")
         } else {
-            write!(f, "{}", first)
+            write!(f, "{first}")
         }
     }
 }

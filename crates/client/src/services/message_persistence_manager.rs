@@ -234,7 +234,7 @@ impl<T: MessagesManagerTrait> GenericMessagePersistenceManager<T> {
         storage
             .get_subscription_state(relay_id)
             .await
-            .map_err(|e| ClientError::Generic(format!("Failed to load subscription state: {}", e)))
+            .map_err(|e| ClientError::Generic(format!("Failed to load subscription state: {e}")))
     }
 
     /// Load all subscription states from storage
@@ -242,7 +242,7 @@ impl<T: MessagesManagerTrait> GenericMessagePersistenceManager<T> {
         storage: &dyn MessageStorage,
     ) -> Result<std::collections::HashMap<KeyId, SubscriptionState>> {
         storage.get_all_subscription_states().await.map_err(|e| {
-            ClientError::Generic(format!("Failed to load all subscription states: {}", e))
+            ClientError::Generic(format!("Failed to load all subscription states: {e}"))
         })
     }
 
@@ -331,7 +331,7 @@ impl<T: MessagesManagerTrait> GenericMessagePersistenceManager<T> {
                     hex::encode(message.id().as_bytes())
                 );
                 storage.store_message(message).await.map_err(|e| {
-                    ClientError::Generic(format!("Failed to store received message: {}", e))
+                    ClientError::Generic(format!("Failed to store received message: {e}"))
                 })?;
 
                 // Mark as synced if we have relay info
@@ -339,7 +339,7 @@ impl<T: MessagesManagerTrait> GenericMessagePersistenceManager<T> {
                     .mark_message_synced(message.id(), relay_id, stream_height)
                     .await
                     .map_err(|e| {
-                        ClientError::Generic(format!("Failed to mark message as synced: {}", e))
+                        ClientError::Generic(format!("Failed to mark message as synced: {e}"))
                     })?;
             }
             MessageEvent::MessageSent { message, .. } => {
@@ -348,7 +348,7 @@ impl<T: MessagesManagerTrait> GenericMessagePersistenceManager<T> {
                     hex::encode(message.id().as_bytes())
                 );
                 storage.store_message(message).await.map_err(|e| {
-                    ClientError::Generic(format!("Failed to store sent message: {}", e))
+                    ClientError::Generic(format!("Failed to store sent message: {e}"))
                 })?;
             }
             MessageEvent::CatchUpMessage {
@@ -361,7 +361,7 @@ impl<T: MessagesManagerTrait> GenericMessagePersistenceManager<T> {
                     hex::encode(message.id().as_bytes())
                 );
                 storage.store_message(message).await.map_err(|e| {
-                    ClientError::Generic(format!("Failed to store catch-up message: {}", e))
+                    ClientError::Generic(format!("Failed to store catch-up message: {e}"))
                 })?;
             }
             MessageEvent::StreamHeightUpdate { .. } => {

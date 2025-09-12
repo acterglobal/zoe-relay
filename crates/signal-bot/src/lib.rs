@@ -292,7 +292,7 @@ impl SignalBot {
 
                             use presage::libsignal_service::content::{ContentBody, DataMessage};
                             let data_message = DataMessage {
-                                body: Some(format!("Echo: {}", echo_msg)),
+                                body: Some(format!("Echo: {echo_msg}")),
                                 timestamp: Some(chrono::Utc::now().timestamp_millis() as u64),
                                 ..Default::default()
                             };
@@ -438,7 +438,7 @@ impl SignalBot {
 
                             use presage::libsignal_service::content::{ContentBody, DataMessage};
                             let data_message = DataMessage {
-                                body: Some(format!("Echo: {}", echo_msg)),
+                                body: Some(format!("Echo: {echo_msg}")),
                                 timestamp: Some(chrono::Utc::now().timestamp_millis() as u64),
                                 ..Default::default()
                             };
@@ -527,13 +527,13 @@ fn display_signal_message(
         } else {
             sender
         };
-        output.push_str(&format!("[{}] ", sender_short));
+        output.push_str(&format!("[{sender_short}] "));
     }
 
     // Format the message
-    output.push_str(&format!("👤 💬 {}: {}", sender, message));
+    output.push_str(&format!("👤 💬 {sender}: {message}"));
 
-    println!("{}", output);
+    println!("{output}");
 }
 
 #[cfg(test)]

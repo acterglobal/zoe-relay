@@ -56,7 +56,7 @@ pub fn generate_pqxdh_prekeys<R: CryptoRng + RngCore>(
     for i in 0..num_one_time_keys {
         let otk_private = StaticSecret::random_from_rng(&mut *rng);
         let otk_public = X25519PublicKey::from(&otk_private);
-        let otk_id = format!("x25519_otk_{:03}", i);
+        let otk_id = format!("x25519_otk_{i:03}");
 
         x25519_one_time_prekeys.insert(otk_id.clone(), otk_public);
         x25519_one_time_privates.insert(otk_id, otk_private);
@@ -84,7 +84,7 @@ pub fn generate_pqxdh_prekeys<R: CryptoRng + RngCore>(
         rng.fill_bytes(&mut otk_randomness);
         let otk_keypair = mlkem768::generate_key_pair(otk_randomness);
         let otk_public_bytes = otk_keypair.public_key().as_slice().to_vec();
-        let otk_id = format!("mlkem_otk_{:03}", i);
+        let otk_id = format!("mlkem_otk_{i:03}");
 
         // Sign each ML-KEM one-time prekey
         let otk_signature_data = create_prekey_signature_data(&otk_public_bytes, &otk_id);

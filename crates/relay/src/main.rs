@@ -110,8 +110,7 @@ fn parse_algorithm(s: &str) -> Result<Algorithm, String> {
         // "ml-dsa-65" | "ml-dsa" => Ok(Algorithm::MlDsa65),
         // "ml-dsa-87"  => Ok(Algorithm::MlDsa87),
         _ => Err(format!(
-            "Invalid algorithm: {}. We only support Ed25519 at the moment.",
-            s
+            "Invalid algorithm: {s}. We only support Ed25519 at the moment."
         )),
     }
 }
@@ -177,7 +176,7 @@ fn load_or_generate_keypair(
         println!("Public key ID: {}", hex::encode(keypair.public_key().id()));
         println!("Key file: {}", key_file_path.display());
         println!("\nPrivate key (PEM format):");
-        println!("{}", pem_string);
+        println!("{pem_string}");
     }
 
     Ok(keypair)
@@ -233,7 +232,7 @@ fn display_relay_qr_code(
 
         // Create QR options with relay-specific formatting
         let mut options = QrOptions::new("📡 ZOE RELAY SERVER")
-            .with_subtitle(format!("Bind: {}", bind_address))
+            .with_subtitle(format!("Bind: {bind_address}"))
             .with_subtitle(format!("Key: {}...", &hex::encode(public_key.id())[..16]))
             .with_footer("Scan with Zoe client to connect");
 
@@ -252,7 +251,7 @@ fn display_relay_qr_code(
         }
 
         if let Some(name) = server_name {
-            options = options.with_subtitle(format!("Name: {}", name));
+            options = options.with_subtitle(format!("Name: {name}"));
         }
 
         // Display the QR code using the helper function
@@ -330,13 +329,13 @@ async fn main() -> Result<()> {
                     .to_pem()
                     .map_err(|e| anyhow::anyhow!("Failed to encode keypair to PEM: {}", e))?;
 
-                println!("Generated server keypair ({}):", algorithm);
+                println!("Generated server keypair ({algorithm}):");
                 println!(
                     "Public key ID: {}",
                     hex::encode(server_keypair.public_key().id())
                 );
                 println!("\nPrivate key (PEM format):");
-                println!("{}", pem_string);
+                println!("{pem_string}");
                 println!("\nTo use this key, set the ZOERELAY_PRIVATE_KEY environment variable:");
                 println!(
                     "export ZOERELAY_PRIVATE_KEY='{}'",

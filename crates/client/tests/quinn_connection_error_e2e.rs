@@ -66,8 +66,7 @@ async fn test_quinn_connection_error_capture() {
         // The error should contain information about connection failure
         assert!(
             error.contains("connection") || error.contains("refused") || error.contains("timeout"),
-            "Error should indicate connection issue: {}",
-            error
+            "Error should indicate connection issue: {error}"
         );
     } else {
         panic!("Expected Failed status, got: {:?}", failed_update.status);
@@ -147,8 +146,7 @@ async fn test_manual_disconnection_no_error() {
     if let RelayConnectionStatus::Disconnected { error } = &disconnected_update.status {
         assert!(
             error.is_none(),
-            "Manual disconnection should not have error: {:?}",
-            error
+            "Manual disconnection should not have error: {error:?}"
         );
     } else {
         panic!(
@@ -205,7 +203,7 @@ async fn test_connection_error_preservation() {
             !error.is_empty(),
             "Error should be preserved in relay status"
         );
-        println!("Captured connection error: {}", error);
+        println!("Captured connection error: {error}");
     } else {
         panic!(
             "Expected Failed status with error, got: {:?}",

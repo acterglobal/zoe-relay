@@ -71,7 +71,7 @@ mod ed25519 {
         key_array.copy_from_slice(key_bytes);
 
         let verifying_key = ed25519_dalek::VerifyingKey::from_bytes(&key_array)
-            .map_err(|e| CryptoError::ParseError(format!("Invalid Ed25519 public key: {}", e)))?;
+            .map_err(|e| CryptoError::ParseError(format!("Invalid Ed25519 public key: {e}")))?;
 
         tracing::debug!("✅ Successfully extracted Ed25519 public key from certificate");
         Ok(verifying_key)

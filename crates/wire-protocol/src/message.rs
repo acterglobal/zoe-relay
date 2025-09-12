@@ -1727,7 +1727,7 @@ mod size_tests {
             let serialized = postcard::to_stdvec(&MessageFullWire::from(msg_full)).unwrap();
             let size = serialized.len();
 
-            println!("Minimum serialized size for {}: {} bytes", key_type, size);
+            println!("Minimum serialized size for {key_type}: {size} bytes");
 
             // Assert expected minimum sizes based on our analysis
             match key_type.as_str() {
@@ -1756,11 +1756,10 @@ mod size_tests {
                     // ML-DSA-87: ~7,322 bytes (allow reasonable variance)
                     assert!(
                         (7100..=7600).contains(&size),
-                        "ML-DSA-87 message size {} should be ~7,322 bytes (7100-7600 range)",
-                        size
+                        "ML-DSA-87 message size {size} should be ~7,322 bytes (7100-7600 range)"
                     );
                 }
-                _ => panic!("Unknown key type: {}", key_type),
+                _ => panic!("Unknown key type: {key_type}"),
             }
         }
     }
@@ -1776,11 +1775,10 @@ mod size_tests {
         // Ed25519 should be the smallest - around 120 bytes
         assert!(
             (100..=150).contains(&size),
-            "Ed25519 minimum message size {} should be approximately 120 bytes",
-            size
+            "Ed25519 minimum message size {size} should be approximately 120 bytes"
         );
 
-        println!("Ed25519 precise minimum size: {} bytes", size);
+        println!("Ed25519 precise minimum size: {size} bytes");
     }
 
     #[test]
@@ -1794,11 +1792,10 @@ mod size_tests {
         // ML-DSA-44 should be around 3,832 bytes
         assert!(
             (3700..=4000).contains(&size),
-            "ML-DSA-44 minimum message size {} should be approximately 3,832 bytes",
-            size
+            "ML-DSA-44 minimum message size {size} should be approximately 3,832 bytes"
         );
 
-        println!("ML-DSA-44 precise minimum size: {} bytes", size);
+        println!("ML-DSA-44 precise minimum size: {size} bytes");
     }
 
     #[test]
@@ -1812,11 +1809,10 @@ mod size_tests {
         // ML-DSA-65 should be around 5,362 bytes
         assert!(
             (5200..=5600).contains(&size),
-            "ML-DSA-65 minimum message size {} should be approximately 5,362 bytes",
-            size
+            "ML-DSA-65 minimum message size {size} should be approximately 5,362 bytes"
         );
 
-        println!("ML-DSA-65 precise minimum size: {} bytes", size);
+        println!("ML-DSA-65 precise minimum size: {size} bytes");
     }
 
     #[test]
@@ -1830,11 +1826,10 @@ mod size_tests {
         // ML-DSA-87 should be around 7,322 bytes
         assert!(
             (7100..=7600).contains(&size),
-            "ML-DSA-87 minimum message size {} should be approximately 7,322 bytes",
-            size
+            "ML-DSA-87 minimum message size {size} should be approximately 7,322 bytes"
         );
 
-        println!("ML-DSA-87 precise minimum size: {} bytes", size);
+        println!("ML-DSA-87 precise minimum size: {size} bytes");
     }
 
     #[test]
@@ -1873,18 +1868,15 @@ mod size_tests {
         // Assert expected ratios (ML-DSA should be significantly larger)
         assert!(
             (25.0..=40.0).contains(&mldsa44_ratio),
-            "ML-DSA-44 should be 25-40x larger than Ed25519, got {:.1}x",
-            mldsa44_ratio
+            "ML-DSA-44 should be 25-40x larger than Ed25519, got {mldsa44_ratio:.1}x"
         );
         assert!(
             (35.0..=55.0).contains(&mldsa65_ratio),
-            "ML-DSA-65 should be 35-55x larger than Ed25519, got {:.1}x",
-            mldsa65_ratio
+            "ML-DSA-65 should be 35-55x larger than Ed25519, got {mldsa65_ratio:.1}x"
         );
         assert!(
             (50.0..=75.0).contains(&mldsa87_ratio),
-            "ML-DSA-87 should be 50-75x larger than Ed25519, got {:.1}x",
-            mldsa87_ratio
+            "ML-DSA-87 should be 50-75x larger than Ed25519, got {mldsa87_ratio:.1}x"
         );
     }
 
@@ -1917,10 +1909,10 @@ mod size_tests {
                 .unwrap()
                 .len();
 
-            println!("{} component breakdown:", key_type);
-            println!("  VerifyingKey: {} bytes", verifying_key_size);
-            println!("  Signature: {} bytes", signature_size);
-            println!("  Total message: {} bytes", total_size);
+            println!("{key_type} component breakdown:");
+            println!("  VerifyingKey: {verifying_key_size} bytes");
+            println!("  Signature: {signature_size} bytes");
+            println!("  Total message: {total_size} bytes");
             println!(
                 "  Overhead: {} bytes",
                 total_size - verifying_key_size - signature_size
@@ -1934,9 +1926,7 @@ mod size_tests {
             // Overhead should be reasonable (< 100 bytes for fixed fields + postcard encoding)
             assert!(
                 overhead < 100,
-                "{} overhead {} bytes should be less than 100 bytes",
-                key_type,
-                overhead
+                "{key_type} overhead {overhead} bytes should be less than 100 bytes"
             );
 
             // Key and signature should account for most of the message size

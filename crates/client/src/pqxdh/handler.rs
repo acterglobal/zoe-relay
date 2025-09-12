@@ -257,10 +257,7 @@ impl<T: crate::services::MessagesManagerTrait + 'static> PqxdhProtocolHandler<T>
 
         let inbox_message_full =
             MessageFull::new(inbox_message, &self.client_keypair).map_err(|e| {
-                PqxdhError::MessageCreation(format!(
-                    "Failed to create MessageFull for inbox: {}",
-                    e
-                ))
+                PqxdhError::MessageCreation(format!("Failed to create MessageFull for inbox: {e}"))
             })?;
 
         let target_tag = Tag::from(&inbox_message_full);
@@ -641,7 +638,7 @@ impl<T: crate::services::MessagesManagerTrait> PqxdhProtocolHandler<T> {
         );
 
         let message_full = MessageFull::new(message, &self.client_keypair).map_err(|e| {
-            PqxdhError::MessageCreation(format!("Failed to create initial message: {}", e))
+            PqxdhError::MessageCreation(format!("Failed to create initial message: {e}"))
         })?;
 
         // The initial message will be routed using its derived tag (Tag::Event with message ID)
@@ -797,5 +794,5 @@ pub(crate) fn create_pqxdh_prekey_bundle_with_private_keys(
 )> {
     let mut rng = rand::thread_rng();
     generate_pqxdh_prekeys(identity_keypair, num_one_time_keys, &mut rng)
-        .map_err(|e| PqxdhError::KeyGeneration(format!("Failed to generate PQXDH prekeys: {}", e)))
+        .map_err(|e| PqxdhError::KeyGeneration(format!("Failed to generate PQXDH prekeys: {e}")))
 }

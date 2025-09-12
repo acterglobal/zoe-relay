@@ -18,9 +18,9 @@ use zoe_wire_protocol::{PqxdhInboxProtocol, VerifyingKey};
 
 /// Helper function to parse hex string to VerifyingKey
 fn parse_verifying_key(hex_str: &str) -> Result<VerifyingKey, String> {
-    let hex = hex::decode(hex_str).map_err(|e| format!("Invalid hex string: {}", e))?;
+    let hex = hex::decode(hex_str).map_err(|e| format!("Invalid hex string: {e}"))?;
     let key: VerifyingKey =
-        VerifyingKey::try_from(hex.as_slice()).map_err(|e| format!("Invalid key: {}", e))?;
+        VerifyingKey::try_from(hex.as_slice()).map_err(|e| format!("Invalid key: {e}"))?;
     Ok(key)
 }
 
@@ -434,11 +434,11 @@ fn print_filter_info(
     let mut filters = Vec::new();
 
     if let Some(sender) = filter_sender {
-        filters.push(format!("sender contains '{}'", sender));
+        filters.push(format!("sender contains '{sender}'"));
     }
 
     if let Some(chat) = filter_chat {
-        filters.push(format!("chat contains '{}'", chat));
+        filters.push(format!("chat contains '{chat}'"));
     }
 
     if groups_only {
@@ -513,7 +513,7 @@ fn display_message(message: &whatsmeow::MessageEvent, show_timestamps: bool, sho
         output.push_str(" (sent by me)");
     }
 
-    println!("{}", output);
+    println!("{output}");
 }
 
 /// Run the PQXDH service to accept secure connections

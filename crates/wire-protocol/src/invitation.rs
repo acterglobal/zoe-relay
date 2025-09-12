@@ -102,7 +102,7 @@ mod tests {
     fn test_ephemeral_id_range() {
         for _ in 0..100 {
             let id = generate_ephemeral_group_invite_id();
-            assert!(id < 1000, "Generated ID {} should be less than 1000", id);
+            assert!(id < 1000, "Generated ID {id} should be less than 1000");
         }
     }
 

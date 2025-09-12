@@ -395,8 +395,7 @@ async fn test_service_id_routing() -> Result<()> {
         Ok(Ok(())) => {
             println!("✅ Client test successful");
             println!(
-                "✅ Service ID {} was correctly routed (verified by echo response)",
-                test_service_id
+                "✅ Service ID {test_service_id} was correctly routed (verified by echo response)"
             );
         }
         Ok(Err(e)) => return Err(e),

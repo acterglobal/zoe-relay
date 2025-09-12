@@ -730,7 +730,7 @@ impl MessageVisitor {
 impl tracing::field::Visit for MessageVisitor {
     fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
         if field.name() == "message" {
-            self.message = Some(format!("{:?}", value));
+            self.message = Some(format!("{value:?}"));
         }
     }
 

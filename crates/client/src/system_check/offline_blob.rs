@@ -118,7 +118,7 @@ async fn test_blob_data_integrity(client: &Client, config: &SystemCheckConfig) -
     ];
 
     for (pattern_name, pattern_data) in &test_patterns {
-        let blob_id = format!("integrity_test_{}", pattern_name);
+        let blob_id = format!("integrity_test_{pattern_name}");
         let checksum = crc32fast::hash(pattern_data);
 
         let test_blob = OfflineTestBlob {
@@ -137,7 +137,7 @@ async fn test_blob_data_integrity(client: &Client, config: &SystemCheckConfig) -
                 checksum
             ));
         } else {
-            let error = format!("Integrity check failed for {} pattern", pattern_name);
+            let error = format!("Integrity check failed for {pattern_name} pattern");
             return test.with_result(TestResult::Failed { error });
         }
     }
@@ -148,15 +148,12 @@ async fn test_blob_data_integrity(client: &Client, config: &SystemCheckConfig) -
         if blob.verify_integrity() {
             integrity_checks += 1;
         } else {
-            let error = format!("Integrity verification failed for blob: {}", blob_id);
+            let error = format!("Integrity verification failed for blob: {blob_id}");
             return test.with_result(TestResult::Failed { error });
         }
     }
 
-    test.add_detail(format!(
-        "✓ All {} integrity checks passed",
-        integrity_checks
-    ));
+    test.add_detail(format!("✓ All {integrity_checks} integrity checks passed"));
 
     // Verify blob service is ready for future operations
     let _blob_service = client.blob_service();

@@ -86,7 +86,7 @@ async fn test_multi_address_relay_connection_attempts() {
                     || error.contains("127.0.0.1:8080")
             );
         }
-        other => panic!("Expected Failed status, got: {:?}", other),
+        other => panic!("Expected Failed status, got: {other:?}"),
     }
 
     // Verify overall status is still disconnected

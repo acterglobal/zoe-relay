@@ -78,7 +78,7 @@ async fn test_offline_message_storage(client: &Client, config: &SystemCheckConfi
     // Store test messages locally
     for i in 0..config.offline_message_count {
         let test_message = OfflineTestMessage::new(
-            format!("offline_storage_test_{}", i),
+            format!("offline_storage_test_{i}"),
             256, // Small data size for offline tests
         );
 
@@ -86,7 +86,7 @@ async fn test_offline_message_storage(client: &Client, config: &SystemCheckConfi
         let serialized_content = match postcard::to_stdvec(&test_message) {
             Ok(data) => data,
             Err(e) => {
-                let error = format!("Failed to serialize test message {}: {}", i, e);
+                let error = format!("Failed to serialize test message {i}: {e}");
                 return test.with_result(TestResult::Failed { error });
             }
         };
@@ -112,7 +112,7 @@ async fn test_offline_message_storage(client: &Client, config: &SystemCheckConfi
         let message_full = match MessageFull::new(message, &temp_keypair) {
             Ok(msg) => msg,
             Err(e) => {
-                let error = format!("Failed to create MessageFull for test message {}: {}", i, e);
+                let error = format!("Failed to create MessageFull for test message {i}: {e}");
                 return test.with_result(TestResult::Failed { error });
             }
         };
@@ -122,10 +122,10 @@ async fn test_offline_message_storage(client: &Client, config: &SystemCheckConfi
         match message_manager.publish(message_full.clone()).await {
             Ok(_) => {
                 stored_messages.insert(test_message.test_id.clone(), test_message);
-                test.add_detail(format!("✓ Stored offline message {}", i));
+                test.add_detail(format!("✓ Stored offline message {i}"));
             }
             Err(e) => {
-                let error = format!("Failed to store offline message {}: {}", i, e);
+                let error = format!("Failed to store offline message {i}: {e}");
                 return test.with_result(TestResult::Failed { error });
             }
         }
@@ -156,7 +156,7 @@ async fn test_message_persistence(client: &Client, _config: &SystemCheckConfig) 
     let serialized_content = match postcard::to_stdvec(&test_message) {
         Ok(data) => data,
         Err(e) => {
-            let error = format!("Failed to serialize persistence test message: {}", e);
+            let error = format!("Failed to serialize persistence test message: {e}");
             return test.with_result(TestResult::Failed { error });
         }
     };
@@ -181,7 +181,7 @@ async fn test_message_persistence(client: &Client, _config: &SystemCheckConfig) 
     let message_full = match MessageFull::new(message, &temp_keypair) {
         Ok(msg) => msg,
         Err(e) => {
-            let error = format!("Failed to create persistent MessageFull: {}", e);
+            let error = format!("Failed to create persistent MessageFull: {e}");
             return test.with_result(TestResult::Failed { error });
         }
     };
@@ -193,7 +193,7 @@ async fn test_message_persistence(client: &Client, _config: &SystemCheckConfig) 
             test.add_detail("✓ Stored persistent message");
         }
         Err(e) => {
-            let error = format!("Failed to store persistent message: {}", e);
+            let error = format!("Failed to store persistent message: {e}");
             return test.with_result(TestResult::Failed { error });
         }
     }

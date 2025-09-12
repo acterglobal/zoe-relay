@@ -1082,11 +1082,10 @@ impl BlobStorage for SqliteMessageStorage {
             .map_err(|e| StorageError::Internal(format!("Failed to acquire database lock: {e}")))?;
 
         let relay_id_bytes = relay_id.as_bytes();
-        let limit_clause = limit.map(|l| format!(" LIMIT {}", l)).unwrap_or_default();
+        let limit_clause = limit.map(|l| format!(" LIMIT {l}")).unwrap_or_default();
 
         let query = format!(
-            "SELECT blob_hash, relay_id, uploaded_at, blob_size FROM blob_upload_status WHERE relay_id = ?1 ORDER BY uploaded_at DESC{}",
-            limit_clause
+            "SELECT blob_hash, relay_id, uploaded_at, blob_size FROM blob_upload_status WHERE relay_id = ?1 ORDER BY uploaded_at DESC{limit_clause}"
         );
 
         let mut stmt = conn.prepare(&query)?;

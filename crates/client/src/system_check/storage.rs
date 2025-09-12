@@ -79,7 +79,7 @@ async fn test_message_storage(client: &Client, config: &SystemCheckConfig) -> Te
     // Store test messages
     for i in 0..config.storage_test_count {
         let test_message = SystemCheckTestMessage::new(
-            format!("storage_test_{}", i),
+            format!("storage_test_{i}"),
             256, // Small data size for storage tests
         );
 
@@ -87,7 +87,7 @@ async fn test_message_storage(client: &Client, config: &SystemCheckConfig) -> Te
         let serialized_content = match postcard::to_stdvec(&test_message) {
             Ok(data) => data,
             Err(e) => {
-                let error = format!("Failed to serialize test message {}: {}", i, e);
+                let error = format!("Failed to serialize test message {i}: {e}");
                 return test.with_result(TestResult::Failed { error });
             }
         };
@@ -113,7 +113,7 @@ async fn test_message_storage(client: &Client, config: &SystemCheckConfig) -> Te
         let message_full = match MessageFull::new(message, &temp_keypair) {
             Ok(msg) => msg,
             Err(e) => {
-                let error = format!("Failed to create MessageFull for test message {}: {}", i, e);
+                let error = format!("Failed to create MessageFull for test message {i}: {e}");
                 return test.with_result(TestResult::Failed { error });
             }
         };
@@ -124,7 +124,7 @@ async fn test_message_storage(client: &Client, config: &SystemCheckConfig) -> Te
                 stored_messages.push((publish_result, test_message));
             }
             Err(e) => {
-                let error = format!("Failed to store test message {}: {}", i, e);
+                let error = format!("Failed to store test message {i}: {e}");
                 return test.with_result(TestResult::Failed { error });
             }
         }
@@ -164,7 +164,7 @@ async fn test_message_integrity(client: &Client, _config: &SystemCheckConfig) ->
     let serialized_content = match postcard::to_stdvec(&test_message) {
         Ok(data) => data,
         Err(e) => {
-            let error = format!("Failed to serialize integrity test message: {}", e);
+            let error = format!("Failed to serialize integrity test message: {e}");
             return test.with_result(TestResult::Failed { error });
         }
     };
@@ -190,7 +190,7 @@ async fn test_message_integrity(client: &Client, _config: &SystemCheckConfig) ->
     let message_full = match MessageFull::new(message, &temp_keypair) {
         Ok(msg) => msg,
         Err(e) => {
-            let error = format!("Failed to create MessageFull for integrity test: {}", e);
+            let error = format!("Failed to create MessageFull for integrity test: {e}");
             return test.with_result(TestResult::Failed { error });
         }
     };
@@ -198,8 +198,7 @@ async fn test_message_integrity(client: &Client, _config: &SystemCheckConfig) ->
     match client.message_manager().publish(message_full).await {
         Ok(publish_result) => {
             test.add_detail(format!(
-                "Stored integrity test message with result: {:?}",
-                publish_result
+                "Stored integrity test message with result: {publish_result:?}"
             ));
             test.add_detail(format!("Data size: {} bytes", test_message.data.len()));
             test.add_detail(format!("Checksum: {:08x}", test_message.checksum));
@@ -208,7 +207,7 @@ async fn test_message_integrity(client: &Client, _config: &SystemCheckConfig) ->
             test.with_result(TestResult::Passed)
         }
         Err(e) => {
-            let error = format!("Failed to store integrity test message: {}", e);
+            let error = format!("Failed to store integrity test message: {e}");
             test.with_result(TestResult::Failed { error })
         }
     }

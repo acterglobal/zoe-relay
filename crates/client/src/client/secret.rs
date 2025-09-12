@@ -83,7 +83,7 @@ where
 impl ClientSecret {
     pub fn from_hex(hex: &str) -> Result<Self> {
         let bytes = hex::decode(hex).map_err(|e| {
-            ClientError::BuildError(format!("Failed to decode hex for client secret: {}", e))
+            ClientError::BuildError(format!("Failed to decode hex for client secret: {e}"))
         })?;
         let secret = match postcard::from_bytes(&bytes) {
             Ok(secret) => secret,
@@ -95,8 +95,7 @@ impl ClientSecret {
                 let legacy_secret: LegacyClientSecret =
                     postcard::from_bytes(&bytes).map_err(|e| {
                         ClientError::BuildError(format!(
-                            "Failed to deserialize legacy client secret: {}",
-                            e
+                            "Failed to deserialize legacy client secret: {e}"
                         ))
                     })?;
                 ClientSecret {
@@ -114,7 +113,7 @@ impl ClientSecret {
 
     pub fn to_hex(&self) -> Result<String> {
         let bytes = postcard::to_stdvec(&self).map_err(|e| {
-            ClientError::BuildError(format!("Failed to serialize client secret: {}", e))
+            ClientError::BuildError(format!("Failed to serialize client secret: {e}"))
         })?;
         Ok(hex::encode(bytes))
     }

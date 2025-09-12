@@ -45,7 +45,7 @@ fn setup_ffi() {
 
     // Tell Cargo to link the library
     println!("cargo:rustc-link-search=native={manifest_dir}");
-    println!("cargo:rustc-link-lib={}=whatsmeow", link_type);
+    println!("cargo:rustc-link-lib={link_type}=whatsmeow");
 
     // For static linking, we need to link Go runtime dependencies
     if link_type == "static" {

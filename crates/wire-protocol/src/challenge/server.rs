@@ -455,7 +455,7 @@ mod tests {
         // Each proof should verify
         for (i, proof) in response.key_proofs.iter().enumerate() {
             let result = verify_single_key_proof(proof, &challenge.nonce);
-            assert!(result.is_ok(), "Proof {} should verify", i);
+            assert!(result.is_ok(), "Proof {i} should verify");
         }
     }
 

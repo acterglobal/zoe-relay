@@ -211,8 +211,7 @@ async fn handle_catch_up_request(
     if let Err(e) = sender.send(response) {
         warn!("Relay service closed during final catch-up send: {}", e);
         return Err(crate::MessageStoreError::Internal(format!(
-            "Relay service closed during final catch-up send: {}",
-            e
+            "Relay service closed during final catch-up send: {e}"
         )));
     }
 

@@ -109,7 +109,7 @@ impl PqxdhSession {
         );
 
         MessageFull::new(message, client_keypair).map_err(|e| {
-            PqxdhError::MessageCreation(format!("Failed to create session message: {}", e))
+            PqxdhError::MessageCreation(format!("Failed to create session message: {e}"))
         })
     }
 

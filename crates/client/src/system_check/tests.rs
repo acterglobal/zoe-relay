@@ -394,12 +394,11 @@ mod integration_tests {
 
             for category in categories {
                 let tests = results.get_category_results(category);
-                assert!(tests.is_some(), "Category {:?} should have tests", category);
+                assert!(tests.is_some(), "Category {category:?} should have tests");
                 let tests = tests.unwrap();
                 assert!(
                     !tests.is_empty(),
-                    "Category {:?} should have non-empty tests",
-                    category
+                    "Category {category:?} should have non-empty tests"
                 );
 
                 // All tests should pass

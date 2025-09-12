@@ -48,7 +48,7 @@ async fn test_blob_upload_download(client: &Client, config: &SystemCheckConfig) 
             id
         }
         Err(e) => {
-            let error = format!("Failed to upload blob: {}", e);
+            let error = format!("Failed to upload blob: {e}");
             return test.with_result(TestResult::Failed { error });
         }
     };
@@ -62,8 +62,8 @@ async fn test_blob_upload_download(client: &Client, config: &SystemCheckConfig) 
                 "Successfully downloaded blob: {} bytes",
                 downloaded_data.len()
             ));
-            test.add_detail(format!("Original checksum: {:08x}", original_checksum));
-            test.add_detail(format!("Downloaded checksum: {:08x}", downloaded_checksum));
+            test.add_detail(format!("Original checksum: {original_checksum:08x}"));
+            test.add_detail(format!("Downloaded checksum: {downloaded_checksum:08x}"));
 
             if downloaded_data == test_data && downloaded_checksum == original_checksum {
                 info!("Blob upload/download test completed successfully");
@@ -74,7 +74,7 @@ async fn test_blob_upload_download(client: &Client, config: &SystemCheckConfig) 
             }
         }
         Err(e) => {
-            let error = format!("Failed to download blob: {}", e);
+            let error = format!("Failed to download blob: {e}");
             test.with_result(TestResult::Failed { error })
         }
     }
@@ -105,18 +105,18 @@ async fn test_blob_integrity(client: &Client, _config: &SystemCheckConfig) -> Te
                     let downloaded_checksum = crc32fast::hash(&downloaded_data);
 
                     if downloaded_data == pattern_data && downloaded_checksum == original_checksum {
-                        test.add_detail(format!("{}: ✓ Integrity verified", pattern_name));
+                        test.add_detail(format!("{pattern_name}: ✓ Integrity verified"));
                         successful_tests += 1;
                     } else {
-                        test.add_detail(format!("{}: ✗ Integrity check failed", pattern_name));
+                        test.add_detail(format!("{pattern_name}: ✗ Integrity check failed"));
                     }
                 }
                 Err(e) => {
-                    test.add_detail(format!("{}: ✗ Download failed: {}", pattern_name, e));
+                    test.add_detail(format!("{pattern_name}: ✗ Download failed: {e}"));
                 }
             },
             Err(e) => {
-                test.add_detail(format!("{}: ✗ Upload failed: {}", pattern_name, e));
+                test.add_detail(format!("{pattern_name}: ✗ Upload failed: {e}"));
             }
         }
     }
@@ -125,10 +125,7 @@ async fn test_blob_integrity(client: &Client, _config: &SystemCheckConfig) -> Te
         info!("Blob integrity test completed successfully");
         test.with_result(TestResult::Passed)
     } else {
-        let error = format!(
-            "Only {}/{} integrity tests passed",
-            successful_tests, pattern_count
-        );
+        let error = format!("Only {successful_tests}/{pattern_count} integrity tests passed");
         test.with_result(TestResult::Failed { error })
     }
 }
@@ -185,8 +182,7 @@ mod tests {
             assert_eq!(
                 checksum,
                 crc32fast::hash(&data),
-                "Checksum inconsistent for {}",
-                name
+                "Checksum inconsistent for {name}"
             );
         }
     }

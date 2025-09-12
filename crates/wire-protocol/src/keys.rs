@@ -394,9 +394,9 @@ impl VerifyingKey {
     }
 
     pub fn from_hex(hex: String) -> Result<Self, String> {
-        let bytes = hex::decode(hex).map_err(|e| format!("Invalid hex: {}", e))?;
+        let bytes = hex::decode(hex).map_err(|e| format!("Invalid hex: {e}"))?;
         let key: VerifyingKey =
-            postcard::from_bytes(&bytes).map_err(|e| format!("Invalid key data: {}", e))?;
+            postcard::from_bytes(&bytes).map_err(|e| format!("Invalid key data: {e}"))?;
         Ok(key)
     }
 
@@ -948,7 +948,7 @@ impl KeyPair {
     /// ```
     pub fn from_pem(pem_string: &str) -> Result<KeyPair, KeyPairError> {
         let pems = parse_many(pem_string)
-            .map_err(|e| KeyPairError::InvalidKeyData(format!("Invalid PEM format: {}", e)))?;
+            .map_err(|e| KeyPairError::InvalidKeyData(format!("Invalid PEM format: {e}")))?;
 
         if pems.is_empty() {
             return Err(KeyPairError::InvalidKeyData(
@@ -1945,7 +1945,7 @@ mod tests {
         let pem = key.to_pem().expect("Should encode to PEM");
 
         // Test with extra whitespace
-        let pem_with_whitespace = format!("  \n\t{}\n  \t", pem);
+        let pem_with_whitespace = format!("  \n\t{pem}\n  \t");
         let restored = VerifyingKey::from_pem(&pem_with_whitespace)
             .expect("Should handle whitespace gracefully");
 
@@ -2276,12 +2276,11 @@ mod tests {
             assert_eq!(
                 keypair.public_key(),
                 restored_keypair.public_key(),
-                "Keypair {} should survive environment variable round trip",
-                i
+                "Keypair {i} should survive environment variable round trip"
             );
 
             // Test that we can sign and verify
-            let message = format!("Environment variable test message {}", i);
+            let message = format!("Environment variable test message {i}");
             let signature = restored_keypair.sign(message.as_bytes());
             assert_eq!(
                 restored_keypair
@@ -2354,19 +2353,18 @@ mod tests {
             // Test PEM round trip
             let pem_string = keypair
                 .to_pem()
-                .unwrap_or_else(|_| panic!("{} should encode to PEM", name));
+                .unwrap_or_else(|_| panic!("{name} should encode to PEM"));
             let restored = KeyPair::from_pem(&pem_string)
-                .unwrap_or_else(|_| panic!("{} should decode from PEM", name));
+                .unwrap_or_else(|_| panic!("{name} should decode from PEM"));
 
             assert_eq!(
                 keypair.public_key(),
                 restored.public_key(),
-                "{} public key should match after PEM round trip",
-                name
+                "{name} public key should match after PEM round trip"
             );
 
             // Verify signing still works
-            let message = format!("Test message for {}", name);
+            let message = format!("Test message for {name}");
             let signature = restored.sign(message.as_bytes());
             assert_eq!(
                 restored

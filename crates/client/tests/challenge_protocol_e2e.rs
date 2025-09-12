@@ -389,14 +389,14 @@ async fn test_challenge_protocol_version_mismatch() -> Result<()> {
                             let client_protocol_config = zoe_wire_protocol::version::ClientProtocolConfig::default();
                             match zoe_wire_protocol::version::validate_server_protocol_support(&connection, &client_protocol_config) {
                                 Ok(negotiated_version) => {
-                                    panic!("Protocol validation succeeded when it should have failed: {}", negotiated_version);
+                                    panic!("Protocol validation succeeded when it should have failed: {negotiated_version}");
                                 }
                                 Err(zoe_wire_protocol::version::ProtocolVersionError::ProtocolNotSupportedByServer) => {
                                     info!("✅ Client correctly detected protocol not supported by server");
                                     Ok::<(), anyhow::Error>(())
                                 }
                                 Err(e) => {
-                                    panic!("Client protocol validation failed with unexpected error: {}", e);
+                                    panic!("Client protocol validation failed with unexpected error: {e}");
                                 }
                             }
                         }
@@ -407,7 +407,7 @@ async fn test_challenge_protocol_version_mismatch() -> Result<()> {
                             if error_string.contains("protocol") || error_string.contains("handshake") {
                                 Ok::<(), anyhow::Error>(())
                             } else {
-                                panic!("Client failed with unexpected error: {}", e);
+                                panic!("Client failed with unexpected error: {e}");
                             }
                         }
                         Err(_) => {
@@ -436,7 +436,7 @@ async fn test_challenge_protocol_version_mismatch() -> Result<()> {
             Ok(())
         }
         Ok(Err(e)) => {
-            panic!("Test failed with error: {}", e);
+            panic!("Test failed with error: {e}");
         }
         Err(_) => {
             panic!("Test timed out");

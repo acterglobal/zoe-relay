@@ -300,7 +300,7 @@ impl<S: MessageStorage + 'static> MultiRelayMessageManager<S> {
         let unsynced_messages = storage
             .get_unsynced_messages_for_relay(relay_key_id, Some(batch_size))
             .await
-            .map_err(|e| ClientError::Generic(format!("Failed to get unsynced messages: {}", e)))?;
+            .map_err(|e| ClientError::Generic(format!("Failed to get unsynced messages: {e}")))?;
 
         if unsynced_messages.is_empty() {
             return Ok(None); // No messages to process - indicates completion
@@ -504,10 +504,7 @@ impl<S: MessageStorage + 'static> MessagesManagerTrait for MultiRelayMessageMana
         if connected_relays.is_empty() {
             // No relays available, store message for offline processing
             self.storage.store_message(&message).await.map_err(|e| {
-                ClientError::Generic(format!(
-                    "Failed to store message for offline delivery: {}",
-                    e
-                ))
+                ClientError::Generic(format!("Failed to store message for offline delivery: {e}"))
             })?;
 
             tracing::info!(
@@ -577,8 +574,7 @@ impl<S: MessageStorage + 'static> MessagesManagerTrait for MultiRelayMessageMana
                     .await
                     .map_err(|storage_err| {
                         ClientError::Generic(format!(
-                            "Failed to store message for offline delivery: {}",
-                            storage_err
+                            "Failed to store message for offline delivery: {storage_err}"
                         ))
                     })?;
 
@@ -975,7 +971,7 @@ mod tests {
                 let mut rng = rand::thread_rng();
                 let keypair = KeyPair::generate(&mut rng);
                 let message = Message::new_v0(
-                    Content::raw(format!("Test message {}", i).as_bytes().to_vec()),
+                    Content::raw(format!("Test message {i}").as_bytes().to_vec()),
                     keypair.public_key(),
                     1234567890u64 + i,
                     Kind::Regular,
@@ -1107,7 +1103,7 @@ mod tests {
                 let mut rng = rand::thread_rng();
                 let keypair = KeyPair::generate(&mut rng);
                 let message = Message::new_v0(
-                    Content::raw(format!("Test message {}", i).as_bytes().to_vec()),
+                    Content::raw(format!("Test message {i}").as_bytes().to_vec()),
                     keypair.public_key(),
                     1234567890u64 + i,
                     Kind::Regular,
@@ -1364,7 +1360,7 @@ mod tests {
                     .saturating_sub(10); // 10 seconds ago
 
                 let message = Message::new_v0(
-                    Content::raw(format!("Expired message {}", i).as_bytes().to_vec()),
+                    Content::raw(format!("Expired message {i}").as_bytes().to_vec()),
                     keypair.public_key(),
                     past_timestamp,
                     Kind::Ephemeral(1), // 1 second timeout - all should be expired

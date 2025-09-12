@@ -219,7 +219,7 @@ impl ProtocolVariant {
 impl fmt::Display for ProtocolVariant {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let name: String = self.clone().into();
-        write!(f, "{}", name)
+        write!(f, "{name}")
     }
 }
 

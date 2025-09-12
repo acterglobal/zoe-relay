@@ -183,9 +183,7 @@ impl RelayClientBuilder {
             Arc::new(
                 SqliteMessageStorage::new(db_config, &encryption_key)
                     .await
-                    .map_err(|e| {
-                        ClientError::Generic(format!("Failed to create storage: {}", e))
-                    })?,
+                    .map_err(|e| ClientError::Generic(format!("Failed to create storage: {e}")))?,
             )
         };
 
@@ -279,8 +277,7 @@ impl RelayClientInner {
             }
             Err(e) => {
                 return Err(ClientError::ProtocolError(format!(
-                    "Server protocol validation failed: {}",
-                    e
+                    "Server protocol validation failed: {e}"
                 )));
             }
         }

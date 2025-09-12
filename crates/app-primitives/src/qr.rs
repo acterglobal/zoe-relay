@@ -142,7 +142,7 @@ pub fn generate_qr_string<T: Serialize>(data: &T, options: &QrOptions) -> QrResu
     let border = border_char.repeat(options.border_width);
 
     // Top border
-    result.push_str(&format!("┌{}┐\n", border));
+    result.push_str(&format!("┌{border}┐\n"));
 
     // Title
     result.push_str(&format!(
@@ -153,7 +153,7 @@ pub fn generate_qr_string<T: Serialize>(data: &T, options: &QrOptions) -> QrResu
 
     // Subtitle lines
     if !options.subtitle_lines.is_empty() {
-        result.push_str(&format!("├{}┤\n", border));
+        result.push_str(&format!("├{border}┤\n"));
         for subtitle in &options.subtitle_lines {
             result.push_str(&format!(
                 "│{:^width$}│\n",
@@ -164,7 +164,7 @@ pub fn generate_qr_string<T: Serialize>(data: &T, options: &QrOptions) -> QrResu
     }
 
     // Separator before QR code
-    result.push_str(&format!("├{}┤\n", border));
+    result.push_str(&format!("├{border}┤\n"));
 
     // QR code
     for line in image.lines() {
@@ -184,11 +184,11 @@ pub fn generate_qr_string<T: Serialize>(data: &T, options: &QrOptions) -> QrResu
             " ".repeat(right_padding)
         );
 
-        result.push_str(&format!("│{}│\n", padded_line));
+        result.push_str(&format!("│{padded_line}│\n"));
     }
 
     // Separator after QR code
-    result.push_str(&format!("├{}┤\n", border));
+    result.push_str(&format!("├{border}┤\n"));
 
     // Footer
     result.push_str(&format!(
@@ -198,7 +198,7 @@ pub fn generate_qr_string<T: Serialize>(data: &T, options: &QrOptions) -> QrResu
     ));
 
     // Bottom border
-    result.push_str(&format!("└{}┘", border));
+    result.push_str(&format!("└{border}┘"));
 
     Ok(result)
 }
@@ -238,7 +238,7 @@ pub fn generate_qr_string_from_text(text: &str, options: &QrOptions) -> QrResult
     let border = border_char.repeat(options.border_width);
 
     // Top border
-    result.push_str(&format!("┌{}┐\n", border));
+    result.push_str(&format!("┌{border}┐\n"));
 
     // Title
     result.push_str(&format!(
@@ -249,7 +249,7 @@ pub fn generate_qr_string_from_text(text: &str, options: &QrOptions) -> QrResult
 
     // Subtitle lines
     if !options.subtitle_lines.is_empty() {
-        result.push_str(&format!("├{}┤\n", border));
+        result.push_str(&format!("├{border}┤\n"));
         for subtitle in &options.subtitle_lines {
             result.push_str(&format!(
                 "│{:^width$}│\n",
@@ -260,7 +260,7 @@ pub fn generate_qr_string_from_text(text: &str, options: &QrOptions) -> QrResult
     }
 
     // Separator before QR code
-    result.push_str(&format!("├{}┤\n", border));
+    result.push_str(&format!("├{border}┤\n"));
 
     // QR code
     for line in image.lines() {
@@ -280,11 +280,11 @@ pub fn generate_qr_string_from_text(text: &str, options: &QrOptions) -> QrResult
             " ".repeat(right_padding)
         );
 
-        result.push_str(&format!("│{}│\n", padded_line));
+        result.push_str(&format!("│{padded_line}│\n"));
     }
 
     // Separator after QR code
-    result.push_str(&format!("├{}┤\n", border));
+    result.push_str(&format!("├{border}┤\n"));
 
     // Footer
     result.push_str(&format!(
@@ -294,7 +294,7 @@ pub fn generate_qr_string_from_text(text: &str, options: &QrOptions) -> QrResult
     ));
 
     // Bottom border
-    result.push_str(&format!("└{}┘", border));
+    result.push_str(&format!("└{border}┘"));
 
     Ok(result)
 }
@@ -326,7 +326,7 @@ pub fn generate_qr_string_from_text(text: &str, options: &QrOptions) -> QrResult
 /// ```
 pub fn display_qr_code<T: Serialize>(data: &T, options: &QrOptions) -> QrResult<()> {
     let qr_string = generate_qr_string(data, options)?;
-    println!("{}", qr_string);
+    println!("{qr_string}");
     Ok(())
 }
 
@@ -354,7 +354,7 @@ pub fn display_qr_code<T: Serialize>(data: &T, options: &QrOptions) -> QrResult<
 /// ```
 pub fn display_qr_code_from_string(text: &str, options: &QrOptions) -> QrResult<()> {
     let qr_string = generate_qr_string_from_text(text, options)?;
-    println!("{}", qr_string);
+    println!("{qr_string}");
     Ok(())
 }
 
@@ -524,18 +524,14 @@ mod tests {
                     || line.starts_with('┌')
                     || line.starts_with('├')
                     || line.starts_with('└'),
-                "Line {} should start with border character: '{}'",
-                i,
-                line
+                "Line {i} should start with border character: '{line}'"
             );
             assert!(
                 line.ends_with('│')
                     || line.ends_with('┐')
                     || line.ends_with('┤')
                     || line.ends_with('┘'),
-                "Line {} should end with border character: '{}'",
-                i,
-                line
+                "Line {i} should end with border character: '{line}'"
             );
 
             // Check that QR code lines are properly formatted
@@ -585,9 +581,7 @@ mod tests {
                         assert_eq!(
                             content.chars().count(),
                             border_width,
-                            "Content width should match border_width {} for line: '{}'",
-                            border_width,
-                            content
+                            "Content width should match border_width {border_width} for line: '{content}'"
                         );
 
                         // Verify the QR code is centered by checking that leading and trailing spaces are balanced
@@ -598,10 +592,7 @@ mod tests {
                             // Allow for ±1 difference due to odd/even width differences
                             assert!(
                                 (leading_spaces as i32 - trailing_spaces as i32).abs() <= 1,
-                                "QR code should be centered: leading={}, trailing={}, content='{}'",
-                                leading_spaces,
-                                trailing_spaces,
-                                content
+                                "QR code should be centered: leading={leading_spaces}, trailing={trailing_spaces}, content='{content}'"
                             );
                         }
                     }
@@ -628,7 +619,7 @@ mod tests {
         // Print the QR code for visual inspection during development
         // This helps ensure the output looks correct
         println!("Generated QR code:");
-        println!("{}", qr_string);
+        println!("{qr_string}");
 
         // Verify structure
         let lines: Vec<&str> = qr_string.lines().collect();

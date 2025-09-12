@@ -49,9 +49,8 @@ pub enum RelayClientDefaultCommands {
 
 /// Helper function to parse hex string to VerifyingKey (simplified for demo)
 fn parse_verifying_key(hex_str: &str) -> Result<VerifyingKey, String> {
-    let hex = hex::decode(hex_str).map_err(|e| format!("Invalid hex string: {}", e))?;
-    let key: VerifyingKey =
-        postcard::from_bytes(&hex).map_err(|e| format!("Invalid key: {}", e))?;
+    let hex = hex::decode(hex_str).map_err(|e| format!("Invalid hex string: {e}"))?;
+    let key: VerifyingKey = postcard::from_bytes(&hex).map_err(|e| format!("Invalid key: {e}"))?;
     Ok(key)
 }
 
@@ -306,12 +305,12 @@ pub async fn run_health_check_command(port: u16) -> Result<(), Box<dyn std::erro
                 println!("healthy");
                 std::process::exit(0);
             } else {
-                eprintln!("unexpected response: {}", response);
+                eprintln!("unexpected response: {response}");
                 std::process::exit(1);
             }
         }
         Err(e) => {
-            eprintln!("health check failed: {}", e);
+            eprintln!("health check failed: {e}");
             std::process::exit(1);
         }
     }

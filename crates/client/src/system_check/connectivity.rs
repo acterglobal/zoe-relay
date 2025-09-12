@@ -37,8 +37,7 @@ async fn test_basic_connectivity(client: &Client) -> TestInfo {
                         &status.status
                     {
                         test.add_detail(format!(
-                            "✓ QUIC connection established to {}",
-                            connected_address
+                            "✓ QUIC connection established to {connected_address}"
                         ));
 
                         // Get client identity information
@@ -141,16 +140,16 @@ async fn test_relay_connection_status(client: &Client) -> TestInfo {
                     "✓ Total relays configured: {}",
                     relay_statuses.len()
                 ));
-                test.add_detail(format!("✓ Connected relays: {}", connected_count));
+                test.add_detail(format!("✓ Connected relays: {connected_count}"));
 
                 if failed_count > 0 {
-                    test.add_detail(format!("⚠ Failed relays: {}", failed_count));
+                    test.add_detail(format!("⚠ Failed relays: {failed_count}"));
                 }
                 if connecting_count > 0 {
-                    test.add_detail(format!("⏳ Connecting relays: {}", connecting_count));
+                    test.add_detail(format!("⏳ Connecting relays: {connecting_count}"));
                 }
                 if disconnected_count > 0 {
-                    test.add_detail(format!("⏸ Disconnected relays: {}", disconnected_count));
+                    test.add_detail(format!("⏸ Disconnected relays: {disconnected_count}"));
                 }
 
                 if connected_count > 0 {
@@ -192,7 +191,7 @@ async fn test_relay_connection_status(client: &Client) -> TestInfo {
                             crate::RelayConnectionStatus::Disconnected { error } => {
                                 let error_msg = error
                                     .as_ref()
-                                    .map(|e| format!(" - {}", e))
+                                    .map(|e| format!(" - {e}"))
                                     .unwrap_or_default();
                                 test.add_detail(format!(
                                     "⏸ Disconnected: {}{}",
@@ -210,7 +209,7 @@ async fn test_relay_connection_status(client: &Client) -> TestInfo {
             }
         }
         Err(e) => {
-            let error = format!("Failed to get relay status: {}", e);
+            let error = format!("Failed to get relay status: {e}");
             test.with_result(TestResult::Failed { error })
         }
     }

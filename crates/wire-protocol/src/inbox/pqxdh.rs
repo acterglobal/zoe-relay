@@ -243,8 +243,7 @@ impl PqxdhPrekeyBundle {
         for (key_id, pq_key) in &self.pq_one_time_keys {
             let signature = self.pq_one_time_signatures.get(key_id).ok_or_else(|| {
                 PqxdhError::InvalidPrekeyBundle(format!(
-                    "Missing signature for PQ one-time key: {}",
-                    key_id
+                    "Missing signature for PQ one-time key: {key_id}"
                 ))
             })?;
 
@@ -257,8 +256,7 @@ impl PqxdhPrekeyBundle {
         for key_id in self.pq_one_time_signatures.keys() {
             if !self.pq_one_time_keys.contains_key(key_id) {
                 return Err(PqxdhError::InvalidPrekeyBundle(format!(
-                    "Extra signature found for non-existent PQ one-time key: {}",
-                    key_id
+                    "Extra signature found for non-existent PQ one-time key: {key_id}"
                 )));
             }
         }
@@ -729,7 +727,7 @@ mod tests {
         let signed_prekey_private = x25519_dalek::StaticSecret::random_from_rng(&mut rng);
         let mut one_time_prekey_privates = BTreeMap::new();
         for i in 0..3 {
-            let key_id = format!("otk_{}", i);
+            let key_id = format!("otk_{i}");
             let private_key = x25519_dalek::StaticSecret::random_from_rng(&mut rng);
             one_time_prekey_privates.insert(key_id, private_key);
         }
@@ -740,7 +738,7 @@ mod tests {
 
         let mut pq_one_time_prekey_privates = BTreeMap::new();
         for i in 0..2 {
-            let key_id = format!("pq_otk_{}", i);
+            let key_id = format!("pq_otk_{i}");
             let mut private_key = vec![0u8; 2400];
             rng.fill_bytes(&mut private_key);
             pq_one_time_prekey_privates.insert(key_id, private_key);

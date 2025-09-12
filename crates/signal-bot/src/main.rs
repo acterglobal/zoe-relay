@@ -224,7 +224,7 @@ fn print_filter_info(filter_sender: &Option<String>, groups_only: bool, dm_only:
     let mut filters = Vec::new();
 
     if let Some(sender) = filter_sender {
-        filters.push(format!("sender contains '{}'", sender));
+        filters.push(format!("sender contains '{sender}'"));
     }
 
     if groups_only {

@@ -1149,7 +1149,7 @@ mod integration_tests {
             // Create a large state with lots of data
             let mut large_data = std::collections::BTreeMap::new();
             for i in 0..1000 {
-                large_data.insert(format!("key_{}", i), vec![i as u8; 100]);
+                large_data.insert(format!("key_{i}"), vec![i as u8; 100]);
             }
 
             let large_state = ComplexState {
@@ -1196,7 +1196,7 @@ mod integration_tests {
                 let storage_clone = storage.clone();
                 let state = TestState {
                     counter: i,
-                    name: format!("concurrent_{}", i),
+                    name: format!("concurrent_{i}"),
                     active: i % 2 == 0,
                 };
 
@@ -1204,7 +1204,7 @@ mod integration_tests {
                     storage_clone
                         .store(
                             &StateNamespace::Custom(b"test".to_vec()),
-                            format!("concurrent_{}", i).as_bytes(),
+                            format!("concurrent_{i}").as_bytes(),
                             &state,
                         )
                         .await
@@ -1227,7 +1227,7 @@ mod integration_tests {
                 let retrieved: Option<TestState> = storage
                     .get(
                         &StateNamespace::Custom(b"test".to_vec()),
-                        format!("concurrent_{}", i).as_bytes(),
+                        format!("concurrent_{i}").as_bytes(),
                     )
                     .await
                     .unwrap();
