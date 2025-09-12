@@ -746,7 +746,7 @@ async fn test_all_signature_types_comprehensive() {
     );
 
     // Verify all messages have valid signatures
-    for (i, message) in all_messages.iter().enumerate() {
+    for message in all_messages.iter() {
         let msg_bytes =
             postcard::to_stdvec(message.message()).expect("Failed to serialize message");
         message
