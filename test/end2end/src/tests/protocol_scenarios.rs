@@ -95,10 +95,10 @@ async fn test_group_chat_scenario() -> Result<()> {
         for _ in 0..10 {
             // Allow for multiple messages
             match timeout(receive_timeout, stream.next()).await {
-                Ok(Some(Ok(StreamMessage::MessageReceived {
+                Ok(Some(StreamMessage::MessageReceived {
                     message: _msg,
                     stream_height,
-                }))) => {
+                })) => {
                     participant_messages += 1;
                     total_messages_received += 1;
                     info!(
@@ -106,12 +106,12 @@ async fn test_group_chat_scenario() -> Result<()> {
                         participant.name, stream_height
                     );
                 }
-                Ok(Some(Ok(StreamMessage::StreamHeightUpdate(_)))) => {
+                Ok(Some(StreamMessage::StreamHeightUpdate(_))) => {
                     // Ignore height updates
                 }
-                Ok(Some(Err(_))) => break, // Stream error
-                Ok(None) => break,         // Stream ended
-                Err(_) => break,           // Timeout
+                // Note: async-broadcast streams don't yield Result, they yield items directly
+                Ok(None) => break, // Stream ended
+                Err(_) => break,   // Timeout
             }
         }
 
@@ -235,11 +235,11 @@ async fn test_dynamic_membership_scenario() -> Result<()> {
         let mut messages = 0;
         for _ in 0..10 {
             match timeout(receive_timeout, stream.next()).await {
-                Ok(Some(Ok(StreamMessage::MessageReceived { .. }))) => messages += 1,
-                Ok(Some(Ok(StreamMessage::StreamHeightUpdate(_)))) => {}
-                Ok(Some(Err(_))) => break, // Stream error
-                Ok(None) => break,         // Stream ended
-                Err(_) => break,           // Timeout
+                Ok(Some(StreamMessage::MessageReceived { .. })) => messages += 1,
+                Ok(Some(StreamMessage::StreamHeightUpdate(_))) => {}
+                // Note: async-broadcast streams don't yield Result, they yield items directly
+                Ok(None) => break, // Stream ended
+                Err(_) => break,   // Timeout
             }
         }
         results.insert(name.to_string(), messages);
@@ -328,14 +328,14 @@ async fn test_high_frequency_messaging_scenario() -> Result<()> {
         for _ in 0..20 {
             // Allow for many messages
             match timeout(receive_timeout, stream.next()).await {
-                Ok(Some(Ok(StreamMessage::MessageReceived { .. }))) => {
+                Ok(Some(StreamMessage::MessageReceived { .. })) => {
                     client_received += 1;
                     total_received += 1;
                 }
-                Ok(Some(Ok(StreamMessage::StreamHeightUpdate(_)))) => {}
-                Ok(Some(Err(_))) => break, // Stream error
-                Ok(None) => break,         // Stream ended
-                Err(_) => break,           // Timeout
+                Ok(Some(StreamMessage::StreamHeightUpdate(_))) => {}
+                // Note: async-broadcast streams don't yield Result, they yield items directly
+                Ok(None) => break, // Stream ended
+                Err(_) => break,   // Timeout
             }
         }
 
@@ -556,14 +556,14 @@ async fn test_server_resilience_under_load_scenario() -> Result<()> {
 
             for _ in 0..15 {
                 match timeout(receive_timeout, stream.next()).await {
-                    Ok(Some(Ok(StreamMessage::MessageReceived { .. }))) => {
+                    Ok(Some(StreamMessage::MessageReceived { .. })) => {
                         client_received += 1;
                         total_received += 1;
                     }
-                    Ok(Some(Ok(StreamMessage::StreamHeightUpdate(_)))) => {}
-                    Ok(Some(Err(_))) => break, // Stream error
-                    Ok(None) => break,         // Stream ended
-                    Err(_) => break,           // Timeout
+                    Ok(Some(StreamMessage::StreamHeightUpdate(_))) => {}
+                    // Note: async-broadcast streams don't yield Result, they yield items directly
+                    Ok(None) => break, // Stream ended
+                    Err(_) => break,   // Timeout
                 }
             }
         }

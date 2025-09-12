@@ -43,6 +43,7 @@ tokio-stream = { workspace = true }
 futures = { workspace = true }
 rand = { workspace = true }
 async-once-cell = { workspace = true }
+async-broadcast = { workspace = true }
 
 # Logging
 tracing = { workspace = true }

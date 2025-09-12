@@ -42,6 +42,8 @@ futures-util = "0.3"
 async-trait = "0.1"
 async-stream = "0.3"
 async-once-cell = "0.5.4"
+async-broadcast = "0.7"
+
 # Cryptography
 libcrux-ml-dsa = { git = "https://github.com/cryspen/libcrux" }
 ml-kem = "0.2.1"

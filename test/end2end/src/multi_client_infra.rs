@@ -60,7 +60,8 @@
 
 use crate::infra::TestInfrastructure;
 use anyhow::{Context, Result};
-use futures::StreamExt;
+use async_broadcast::Receiver;
+use futures::{Stream, StreamExt};
 use libcrux_ml_dsa;
 use rand::{Rng, RngCore};
 use std::collections::BTreeMap;
@@ -68,7 +69,6 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::sync::RwLock;
 use tokio::time::timeout;
-use tokio_stream::wrappers::BroadcastStream;
 use tracing::{debug, info, warn};
 use zoe_client::services::MessagesManagerTrait;
 use zoe_client::services::messages_manager::MessagesManager;
@@ -269,8 +269,8 @@ impl TestClient {
         &self,
     ) -> Result<(
         Arc<zoe_client::services::MessagesManager>,
-        BroadcastStream<zoe_wire_protocol::StreamMessage>,
-        BroadcastStream<zoe_wire_protocol::CatchUpResponse>,
+        Receiver<zoe_wire_protocol::StreamMessage>,
+        Receiver<zoe_wire_protocol::CatchUpResponse>,
     )> {
         let persistence_manager = self.client.persistence_manager().await;
         let msg_stream = persistence_manager.messages_stream();
@@ -320,9 +320,9 @@ impl TestClient {
     pub async fn subscribe_to_channel(
         &self,
         messages_manager: &zoe_client::services::MessagesManager,
-        message_stream: BroadcastStream<zoe_wire_protocol::StreamMessage>,
+        message_stream: Receiver<zoe_wire_protocol::StreamMessage>,
         channel: &str,
-    ) -> Result<BroadcastStream<zoe_wire_protocol::StreamMessage>> {
+    ) -> Result<Receiver<zoe_wire_protocol::StreamMessage>> {
         let filter = Filter::Channel(channel.as_bytes().to_vec());
 
         messages_manager
@@ -499,7 +499,7 @@ impl MultiClientTestHarness {
             // Try to receive messages
             for _ in 0..5 {
                 match timeout(receive_timeout, stream.next()).await {
-                    Ok(Some(Ok(stream_message))) => match stream_message {
+                    Ok(Some(stream_message)) => match stream_message {
                         StreamMessage::MessageReceived {
                             message: _msg,
                             stream_height,
@@ -517,7 +517,7 @@ impl MultiClientTestHarness {
                             );
                         }
                     },
-                    Ok(Some(Err(_))) => break, // Stream error
+                    // Note: async-broadcast streams don't yield Result, they yield items directly
                     Ok(None) => break,
                     Err(_) => break, // Timeout
                 }
@@ -600,8 +600,8 @@ impl MultiClientTestHarness {
         // Collect for client A
         for _ in 0..5 {
             match timeout(receive_timeout, stream_a.next()).await {
-                Ok(Some(Ok(StreamMessage::MessageReceived { .. }))) => messages_a += 1,
-                Ok(Some(Ok(StreamMessage::StreamHeightUpdate(_)))) => {}
+                Ok(Some(StreamMessage::MessageReceived { .. })) => messages_a += 1,
+                Ok(Some(StreamMessage::StreamHeightUpdate(_))) => {}
                 _ => break,
             }
         }
@@ -609,8 +609,8 @@ impl MultiClientTestHarness {
         // Collect for client B
         for _ in 0..5 {
             match timeout(receive_timeout, stream_b.next()).await {
-                Ok(Some(Ok(StreamMessage::MessageReceived { .. }))) => messages_b += 1,
-                Ok(Some(Ok(StreamMessage::StreamHeightUpdate(_)))) => {}
+                Ok(Some(StreamMessage::MessageReceived { .. })) => messages_b += 1,
+                Ok(Some(StreamMessage::StreamHeightUpdate(_))) => {}
                 _ => break,
             }
         }
