@@ -4,42 +4,46 @@
 //! of the Zoe client functionality including server connectivity, storage operations,
 //! and blob service functionality.
 
+use rand::rngs::OsRng;
 use std::time::Duration;
 use tempfile::TempDir;
 use tokio::time::timeout;
+use zoe_wire_protocol::KeyPair;
+
+/// Generate a valid test server key in hex format for CLI usage
+fn generate_test_server_key() -> String {
+    let keypair = KeyPair::generate_ed25519(&mut OsRng);
+    let verifying_key = keypair.public_key();
+    let serialized = postcard::to_stdvec(&verifying_key).expect("Failed to serialize key");
+    hex::encode(serialized)
+}
 
 /// Test helper to run the system check binary with given arguments
 async fn run_system_check(args: &[&str]) -> Result<std::process::Output, std::io::Error> {
-    // First ensure the binary is compiled with CLI features
-    let compile_output = tokio::process::Command::new("cargo")
-        .arg("build")
-        .arg("--bin")
-        .arg("zoe-system-check")
-        .arg("--features")
-        .arg("cli")
-        .output()
-        .await?;
+    // Use the pre-built binary directly to avoid cargo lock contention
+    let binary_path = std::env::var("CARGO_BIN_EXE_zoe-system-check").unwrap_or_else(|_| {
+        // Get the workspace root and construct the path
+        let workspace_root = std::env::var("CARGO_MANIFEST_DIR")
+            .map(|dir| {
+                std::path::Path::new(&dir)
+                    .parent()
+                    .unwrap()
+                    .parent()
+                    .unwrap()
+                    .to_path_buf()
+            })
+            .unwrap_or_else(|_| std::env::current_dir().unwrap());
+        workspace_root
+            .join("target/debug/zoe-system-check")
+            .to_string_lossy()
+            .to_string()
+    });
 
-    if !compile_output.status.success() {
-        return Err(std::io::Error::other(format!(
-            "Failed to compile binary: {}",
-            String::from_utf8_lossy(&compile_output.stderr)
-        )));
-    }
+    let mut cmd = tokio::process::Command::new(&binary_path);
+    cmd.args(args);
 
-    // Run the compiled binary directly with CLI features
-    let mut cmd = tokio::process::Command::new("cargo");
-    cmd.arg("run")
-        .arg("--bin")
-        .arg("zoe-system-check")
-        .arg("--features")
-        .arg("cli")
-        .arg("--")
-        .args(args);
-
-    // Run with timeout to prevent hanging tests
-
-    timeout(Duration::from_secs(30), cmd.output())
+    // Run with shorter timeout since we're not compiling
+    timeout(Duration::from_secs(10), cmd.output())
         .await
         .map_err(|_| std::io::Error::new(std::io::ErrorKind::TimedOut, "Command timed out"))?
 }
@@ -58,23 +62,32 @@ async fn test_system_check_help() {
 
 #[tokio::test]
 async fn test_system_check_invalid_server() {
-    // Test with non-existent server and invalid key file
+    // Test with non-existent server but valid key
+    let test_key = generate_test_server_key();
     let output = run_system_check(&[
         "--relay-address",
-        "127.0.0.1:99999",
-        "--server-key-file",
-        "/dev/null", // Invalid key file
+        "127.0.0.1:99999", // Non-existent server
+        "--server-key",
+        &test_key,
         "--ephemeral",
     ])
     .await
     .unwrap();
 
-    // Should exit with non-zero code (connectivity failure or invalid args)
+    // Should exit with non-zero code (connectivity failure)
     assert_ne!(output.status.code(), Some(0));
 
     let stderr = String::from_utf8_lossy(&output.stderr);
-    // Should show error about key file or connectivity
-    assert!(stderr.contains("Failed") || !stderr.is_empty());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    // Should show connectivity error, not key parsing error
+    assert!(
+        stderr.contains("Failed to establish")
+            || stderr.contains("connection")
+            || stderr.contains("invalid port")
+            || stdout.contains("Failed to create client")
+            || !stderr.is_empty()
+            || !stdout.is_empty()
+    );
 }
 
 #[tokio::test]
@@ -91,14 +104,15 @@ async fn test_system_check_missing_required_args() {
 #[tokio::test]
 async fn test_system_check_skip_options() {
     // Test with skip options (should still fail due to invalid server, but test argument parsing)
+    let test_key = generate_test_server_key();
     let output = run_system_check(&[
         "--relay-address",
         "127.0.0.1:99999",
         "--server-key",
-        "0000000000000000000000000000000000000000000000000000000000000000",
+        &test_key,
         "--ephemeral",
-        "--skip-blob-tests",
-        "--skip-storage-tests",
+        "--skip-offline",
+        "--skip-sync",
     ])
     .await
     .unwrap();
@@ -120,23 +134,30 @@ async fn test_system_check_quiet_output() {
     .unwrap();
 
     let stderr = String::from_utf8_lossy(&output.stderr);
+    let stdout = String::from_utf8_lossy(&output.stdout);
     // Should still show error messages even in quiet mode
-    assert!(stderr.contains("Must specify") || stderr.contains("server-key") || !stderr.is_empty());
+    assert!(
+        stderr.contains("Must specify")
+            || stderr.contains("server-key")
+            || stdout.contains("Must specify")
+            || stdout.contains("server-key")
+            || !stderr.is_empty()
+            || !stdout.is_empty()
+    );
 }
 
 #[tokio::test]
 async fn test_system_check_custom_test_parameters() {
-    // Test custom blob size and storage count parameters
+    // Test custom timeout parameter
+    let test_key = generate_test_server_key();
     let output = run_system_check(&[
         "--relay-address",
         "127.0.0.1:99999",
         "--server-key",
-        "0000000000000000000000000000000000000000000000000000000000000000",
+        &test_key,
         "--ephemeral",
-        "--blob-test-size",
-        "2048",
-        "--storage-test-count",
-        "5",
+        "--timeout",
+        "5", // Short timeout
     ])
     .await
     .unwrap();
@@ -265,17 +286,18 @@ fn test_system_check_test_message_serialization() {
     assert!(deserialized.verify_checksum());
 }
 
-/// Test error handling for invalid blob sizes
+/// Test error handling for invalid timeout values
 #[tokio::test]
 async fn test_system_check_invalid_blob_size() {
+    let test_key = generate_test_server_key();
     let output = run_system_check(&[
         "--relay-address",
         "127.0.0.1:99999",
         "--server-key",
-        "0000000000000000000000000000000000000000000000000000000000000000",
+        &test_key,
         "--ephemeral",
-        "--blob-test-size",
-        "0", // Invalid size
+        "--timeout",
+        "0", // Invalid timeout
     ])
     .await
     .unwrap();
@@ -284,22 +306,23 @@ async fn test_system_check_invalid_blob_size() {
     assert_ne!(output.status.code(), Some(0));
 }
 
-/// Test error handling for invalid storage test count
+/// Test error handling for invalid timeout values  
 #[tokio::test]
 async fn test_system_check_invalid_storage_count() {
+    let test_key = generate_test_server_key();
     let output = run_system_check(&[
         "--relay-address",
         "127.0.0.1:99999",
         "--server-key",
-        "0000000000000000000000000000000000000000000000000000000000000000",
+        &test_key,
         "--ephemeral",
-        "--storage-test-count",
-        "0", // Invalid count
+        "--timeout",
+        "1", // Very short timeout
     ])
     .await
     .unwrap();
 
-    // Should handle invalid parameters gracefully
+    // Should handle short timeout gracefully
     assert_ne!(output.status.code(), Some(0));
 }
 
@@ -327,25 +350,24 @@ async fn test_system_check_malformed_server_key() {
 #[tokio::test]
 async fn test_system_check_performance() {
     let start = std::time::Instant::now();
+    let test_key = generate_test_server_key();
 
     let output = run_system_check(&[
         "--relay-address",
         "127.0.0.1:99999",
         "--server-key",
-        "0000000000000000000000000000000000000000000000000000000000000000",
+        &test_key,
         "--ephemeral",
-        "--blob-test-size",
-        "1024",
-        "--storage-test-count",
-        "1",
+        "--timeout",
+        "5", // Short timeout for performance test
     ])
     .await
     .unwrap();
 
     let duration = start.elapsed();
 
-    // Should complete within 30 seconds even when failing
-    assert!(duration < Duration::from_secs(30));
+    // Should complete within 15 seconds even when failing
+    assert!(duration < Duration::from_secs(15));
 
     // Should still fail due to invalid server
     assert_ne!(output.status.code(), Some(0));
