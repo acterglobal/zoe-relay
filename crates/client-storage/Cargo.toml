@@ -56,3 +56,10 @@ mockall = { workspace = true }
 rand = { workspace = true }
 blake3 = { workspace = true }
 tracing-subscriber = { workspace = true }
+
+# Force bundled SQLCipher for mobile targets to avoid linking issues
+[target.'cfg(target_os = "android")'.dependencies]
+rusqlite = { workspace = true, features = ["bundled", "sqlcipher", "blob"] }
+
+[target.'cfg(target_os = "ios")'.dependencies]
+rusqlite = { workspace = true, features = ["bundled", "sqlcipher", "blob"] }
