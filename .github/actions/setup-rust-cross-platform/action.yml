@@ -123,6 +123,11 @@ runs:
         echo "/opt/homebrew/opt/llvm/bin" >> $GITHUB_PATH
         echo "LIBCLANG_PATH=/opt/homebrew/opt/llvm/lib" >> $GITHUB_ENV
         
+        # Set SQLCipher library paths for Rust linking
+        echo "LIBRARY_PATH=/opt/homebrew/lib:/usr/local/lib" >> $GITHUB_ENV
+        echo "SQLCIPHER_LIB_DIR=/opt/homebrew/lib" >> $GITHUB_ENV
+        echo "SQLCIPHER_INCLUDE_DIR=/opt/homebrew/include" >> $GITHUB_ENV
+        
         # Set up iOS SDK paths for bindgen
         if echo "${{ inputs.targets }}" | grep -q "apple-ios"; then
           # Set up for both device and simulator SDKs
@@ -142,13 +147,27 @@ runs:
           fi
         fi
     
-    - name: Install Protobuf and CMake (Windows)
+    - name: Install SQLCipher, Protobuf and CMake (Windows)
       if: runner.os == 'Windows'
       shell: powershell
       run: |
+        # Install vcpkg for SQLCipher
+        git clone https://github.com/Microsoft/vcpkg.git C:\vcpkg
+        C:\vcpkg\bootstrap-vcpkg.bat
+        
+        # Install SQLCipher via vcpkg
+        C:\vcpkg\vcpkg.exe install sqlcipher:x64-windows
+        
+        # Install other dependencies via chocolatey
         choco install protoc cmake nasm
+        
         # Add NASM to PATH for aws-lc-sys
         echo "C:\Program Files\NASM" >> $env:GITHUB_PATH
+        
+        # Set SQLCipher environment variables for Rust
+        echo "VCPKG_ROOT=C:\vcpkg" >> $env:GITHUB_ENV
+        echo "SQLCIPHER_LIB_DIR=C:\vcpkg\installed\x64-windows\lib" >> $env:GITHUB_ENV
+        echo "SQLCIPHER_INCLUDE_DIR=C:\vcpkg\installed\x64-windows\include" >> $env:GITHUB_ENV
     
     - name: Install bindgen-cli (non-Windows)
       if: runner.os != 'Windows'
