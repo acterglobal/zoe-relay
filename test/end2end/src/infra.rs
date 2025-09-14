@@ -30,7 +30,7 @@ use zoe_wire_protocol::{
 fn init_crypto_provider() {
     static INIT: Once = Once::new();
     INIT.call_once(|| {
-        rustls::crypto::aws_lc_rs::default_provider()
+        rustls::crypto::ring::default_provider()
             .install_default()
             .expect("Failed to install crypto provider");
     });

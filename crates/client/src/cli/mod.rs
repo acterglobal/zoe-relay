@@ -57,7 +57,7 @@ fn parse_verifying_key(hex_str: &str) -> Result<VerifyingKey, String> {
 /// Common setup to be done in a client cli
 pub async fn main_setup() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize Rustls crypto provider before any TLS operations
-    rustls::crypto::aws_lc_rs::default_provider()
+    rustls::crypto::ring::default_provider()
         .install_default()
         .expect("Failed to install crypto provider");
 

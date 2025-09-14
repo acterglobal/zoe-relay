@@ -143,7 +143,7 @@ async fn main() {
     let args = SystemCheckArgs::parse();
 
     // Initialize crypto provider for Rustls
-    let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+    let _ = rustls::crypto::ring::default_provider().install_default();
 
     // Create diagnostic collector
     let diagnostic_collector = Arc::new(Mutex::new(DiagnosticCollector::new()));
