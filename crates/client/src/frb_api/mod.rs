@@ -10,7 +10,7 @@ pub use for_std::*;
 // initialize for frb
 pub fn frb_init() {
     // Initialize Rustls crypto provider before any TLS operations
-    rustls::crypto::aws_lc_rs::default_provider()
+    rustls::crypto::ring::default_provider()
         .install_default()
         .expect("Failed to install crypto provider");
 }
