@@ -18,7 +18,7 @@ tokio = { workspace = true }
 futures = { workspace = true }
 
 # Database and migrations
-rusqlite = { workspace = true, features = ["bundled", "sqlcipher", "blob"], optional = true }
+rusqlite = { workspace = true, features = ["sqlcipher", "blob"], optional = true }
 refinery = { version = "0.8", features = ["rusqlite"], optional = true }
 
 # Serialization
@@ -59,7 +59,10 @@ tracing-subscriber = { workspace = true }
 
 # Force bundled SQLCipher for mobile targets to avoid linking issues
 [target.'cfg(target_os = "android")'.dependencies]
-rusqlite = { workspace = true, features = ["bundled", "sqlcipher", "blob"] }
+rusqlite = { workspace = true, features = ["bundled-sqlcipher", "blob"] }
 
 [target.'cfg(target_os = "ios")'.dependencies]
-rusqlite = { workspace = true, features = ["bundled", "sqlcipher", "blob"] }
+rusqlite = { workspace = true, features = ["bundled-sqlcipher", "blob"] }
+
+# [target.'cfg(target_os = "windows")'.dependencies]
+# rusqlite = { workspace = true, features = ["bundled-sqlcipher", "blob"] }
