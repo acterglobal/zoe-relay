@@ -188,25 +188,48 @@ runs:
       if: inputs.install_android_ndk == 'true' && runner.os == 'Linux'
       shell: bash
       run: |
-        wget -q https://dl.google.com/android/repository/android-ndk-r27.0.12077973-linux.zip
-        unzip -q android-ndk-r27.0.12077973-linux.zip
-        echo "ANDROID_NDK_HOME=$PWD/android-ndk-r27.0.12077973" >> $GITHUB_ENV
-        echo "NDK_HOME=$PWD/android-ndk-r27.0.12077973" >> $GITHUB_ENV
-        echo "ANDROID_NDK_ROOT=$PWD/android-ndk-r27.0.12077973" >> $GITHUB_ENV
-        echo "ANDROID_NDK=$PWD/android-ndk-r27.0.12077973" >> $GITHUB_ENV
+        set -e
+        echo "Downloading Android NDK..."
+        if ! wget -q https://dl.google.com/android/repository/android-ndk-r27.0.12077973-linux.zip; then
+          echo "Failed to download NDK, trying alternative URL..."
+          wget -q https://dl.google.com/android/repository/android-ndk-r26c-linux.zip
+          NDK_DIR="android-ndk-r26c"
+        else
+          NDK_DIR="android-ndk-r27.0.12077973"
+        fi
+        
+        echo "Extracting NDK..."
+        if [ -f "android-ndk-r27.0.12077973-linux.zip" ]; then
+          unzip -q android-ndk-r27.0.12077973-linux.zip
+          NDK_DIR="android-ndk-r27.0.12077973"
+        elif [ -f "android-ndk-r26c-linux.zip" ]; then
+          unzip -q android-ndk-r26c-linux.zip
+          NDK_DIR="android-ndk-r26c"
+        fi
+        
+        echo "Setting up NDK environment variables..."
+        echo "ANDROID_NDK_HOME=$PWD/$NDK_DIR" >> $GITHUB_ENV
+        echo "NDK_HOME=$PWD/$NDK_DIR" >> $GITHUB_ENV
+        echo "ANDROID_NDK_ROOT=$PWD/$NDK_DIR" >> $GITHUB_ENV
+        echo "ANDROID_NDK=$PWD/$NDK_DIR" >> $GITHUB_ENV
+        
+        echo "NDK installed at: $PWD/$NDK_DIR"
+        ls -la "$PWD/$NDK_DIR" | head -10
     
     - name: Setup Android environment
       if: inputs.install_android_ndk == 'true' && runner.os == 'Linux'
       shell: bash
       run: |
-        # Ensure NDK_HOME is set from previous step
+        # Verify NDK_HOME is set from previous step
         if [ -z "$ANDROID_NDK_HOME" ]; then
-          echo "ANDROID_NDK_HOME=$PWD/android-ndk-r27.0.12077973" >> $GITHUB_ENV
-          export ANDROID_NDK_HOME="$PWD/android-ndk-r27.0.12077973"
+          echo "ERROR: ANDROID_NDK_HOME not set by previous step"
+          exit 1
         fi
         
+        echo "Using Android NDK at: $ANDROID_NDK_HOME"
+        
         mkdir -p ~/.cargo
-        cat >> ~/.cargo/config.toml << 'CARGO_EOF'
+        cat >> ~/.cargo/config.toml << CARGO_EOF
         # Cargo configuration for Android cross-compilation
         [target.armv7-linux-androideabi]
         linker = "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/armv7a-linux-androideabi21-clang"
@@ -270,6 +293,11 @@ runs:
         ANDROID_ABI_armv7_linux_androideabi = "armeabi-v7a"
         ANDROID_ABI_aarch64_linux_android = "arm64-v8a"
         ANDROID_ABI_i686_linux_android = "x86"
+
+        # Force bundled SQLite to avoid OpenSSL dependency issues
+        LIBSQLITE3_SYS_USE_PKG_CONFIG = "0"
+        LIBSQLITE3_SYS_USE_BUNDLED = "1"
+        SQLCIPHER_STATIC = "1"
         
         # BINDGEN configuration for header resolution
         BINDGEN_EXTRA_CLANG_ARGS_x86_64_linux_android = "--sysroot=$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot -I$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include -I$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include/x86_64-linux-android"
