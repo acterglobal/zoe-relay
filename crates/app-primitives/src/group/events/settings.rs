@@ -28,12 +28,6 @@ pub struct EncryptionSettings {
     ///
     /// How often to rotate keys when key rotation is enabled.
     pub key_rotation_interval: Option<u64>,
-
-    /// Additional authenticated data to include in encryption
-    ///
-    /// Extra context that will be included in the authenticated encryption
-    /// to provide additional security guarantees.
-    pub additional_context: Option<String>,
 }
 
 impl GroupSettings {
@@ -65,12 +59,6 @@ impl EncryptionSettings {
     pub fn with_key_rotation(mut self, interval_seconds: u64) -> Self {
         self.key_rotation_enabled = true;
         self.key_rotation_interval = Some(interval_seconds);
-        self
-    }
-
-    /// Set additional authenticated context
-    pub fn with_additional_context(mut self, context: String) -> Self {
-        self.additional_context = Some(context);
         self
     }
 }

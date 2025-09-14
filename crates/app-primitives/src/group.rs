@@ -360,15 +360,10 @@ mod tests {
     #[test]
     fn test_encryption_settings_builder() {
         let settings = EncryptionSettings::new()
-            .with_key_rotation(3600)
-            .with_additional_context("test context".to_string());
+            .with_key_rotation(3600);
 
         assert!(settings.key_rotation_enabled);
         assert_eq!(settings.key_rotation_interval, Some(3600));
-        assert_eq!(
-            settings.additional_context,
-            Some("test context".to_string())
-        );
     }
 
     #[test]
@@ -536,7 +531,6 @@ mod tests {
 
         assert!(!settings.key_rotation_enabled);
         assert_eq!(settings.key_rotation_interval, None);
-        assert_eq!(settings.additional_context, None);
     }
 
     #[test]
