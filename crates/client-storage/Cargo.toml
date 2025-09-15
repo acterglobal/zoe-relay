@@ -59,14 +59,14 @@ tracing-subscriber = { workspace = true }
 
 # Force bundled SQLite cipher for mobile targets to avoid linking issues
 [target.'cfg(target_os = "android")'.dependencies]
-rusqlite = { workspace = true, features = ["bundled-sqlcipher", "blob"] }
+rusqlite = { workspace = true, features = ["bundled-sqlcipher-vendored-opensslr", "blob"] }
 
 [target.'cfg(target_os = "ios")'.dependencies]
-rusqlite = { workspace = true, features = ["bundled-sqlcipher", "blob"] }
+rusqlite = { workspace = true, features = ["bundled-sqlcipher-vendored-opensslr", "blob"] }
 
 # Platform-specific SQLite cipher configuration to fix macOS linking issues
 [target.'cfg(target_os = "macos")'.dependencies]
-rusqlite = { version = "0.32", features = ["bundled-sqlcipher", "blob"] }
+rusqlite = { version = "0.32", features = ["bundled-sqlcipher-vendored-opensslr", "blob"] }
 
 [target.'cfg(not(any(target_os = "android", target_os = "ios", target_os = "macos")))'.dependencies]
 rusqlite = { workspace = true, features = ["sqlcipher", "blob"], optional = true }
