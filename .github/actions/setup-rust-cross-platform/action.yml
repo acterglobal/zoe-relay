@@ -216,30 +216,39 @@ runs:
         echo "NDK installed at: $PWD/$NDK_DIR"
         ls -la "$PWD/$NDK_DIR" | head -10
         
-        # Build minimal OpenSSL for Android to provide headers
-        echo "Building minimal OpenSSL for Android..."
+        # Download OpenSSL source to get headers for Android
+        echo "Downloading OpenSSL headers for Android..."
         wget -q https://www.openssl.org/source/openssl-1.1.1w.tar.gz
         tar -xzf openssl-1.1.1w.tar.gz
-        cd openssl-1.1.1w
         
-        # Set up environment for OpenSSL Android build
-        export ANDROID_NDK_ROOT="$PWD/../$NDK_DIR"
-        export PATH="$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/bin:$PATH"
+        # Create directory for OpenSSL headers
+        mkdir -p openssl-android-headers
         
-        # Create a simple script to build headers only
-        mkdir -p ../openssl-android-headers
+        # Copy the OpenSSL headers directly (no need to build)
+        cp -r openssl-1.1.1w/include/openssl openssl-android-headers/
         
-        # Configure for Android (we only need headers, not full build)
-        ./Configure android-arm64 -D__ANDROID_API__=21 --prefix="$PWD/../openssl-android-headers" --openssldir="$PWD/../openssl-android-headers"
-        
-        # Generate headers
-        make include/openssl/opensslconf.h
-        make include/openssl/opensslv.h
-        
-        # Copy headers to our target directory
-        cp -r include/openssl ../openssl-android-headers/
-        
-        cd ..
+        # Create a simple opensslconf.h for Android
+        cat > openssl-android-headers/openssl/opensslconf.h << 'EOF'
+#ifndef OPENSSL_OPENSSLCONF_H
+#define OPENSSL_OPENSSLCONF_H
+#ifdef  __cplusplus
+extern "C" {
+#endif
+/* OpenSSL was configured with the following options: */
+#ifndef OPENSSL_SYS_LINUX
+# define OPENSSL_SYS_LINUX
+#endif
+#ifndef OPENSSL_THREADS
+# define OPENSSL_THREADS
+#endif
+#ifndef OPENSSL_NO_DYNAMIC_ENGINE
+# define OPENSSL_NO_DYNAMIC_ENGINE
+#endif
+#ifdef  __cplusplus
+}
+#endif
+#endif /* OPENSSL_OPENSSLCONF_H */
+EOF
         
         # Set environment variable for OpenSSL headers
         echo "OPENSSL_ANDROID_HEADERS=$PWD/openssl-android-headers" >> $GITHUB_ENV
