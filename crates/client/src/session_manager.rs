@@ -147,7 +147,7 @@ pub struct SessionManager<S: StateStorage + 'static, M: MessagesManagerTrait + '
     /// PQXDH handlers with their background listener tasks  
     pqxdh_handlers: RwLock<PqxdhHandlerStates<M>>,
     /// Group manager instance with background listener task
-    group_manager: Arc<GroupManager>,
+    group_manager: GroupManager,
     #[allow(dead_code)]
     group_manager_task: JoinHandle<()>,
     client_keypair: Arc<zoe_wire_protocol::KeyPair>,
@@ -208,18 +208,16 @@ impl<S: StateStorage + 'static, M: MessagesManagerTrait + 'static> SessionManage
     async fn init_group_manager(
         storage: Arc<S>,
         client_keypair: Arc<zoe_wire_protocol::KeyPair>,
-    ) -> SessionManagerResult<(Arc<GroupManager>, JoinHandle<()>)> {
+    ) -> SessionManagerResult<(GroupManager, JoinHandle<()>)> {
         let namespace = StateNamespace::GroupSession(KeyId::from(*client_keypair.id()));
         let sessions: Vec<(Vec<u8>, zoe_state_machine::GroupSession)> = storage
             .list_namespace_data(&namespace)
             .await
             .map_err(SessionManagerError::Storage)?;
 
-        let group_manager = Arc::new(
-            GroupManager::builder()
-                .with_sessions(sessions.into_iter().map(|(_, session)| session).collect())
-                .build(),
-        );
+        let group_manager = GroupManager::builder()
+            .with_sessions(sessions.into_iter().map(|(_, session)| session).collect())
+            .build();
         let mut group_updates = group_manager.subscribe_to_updates();
 
         let task = tokio::spawn(async move {
@@ -257,8 +255,8 @@ impl<S: StateStorage + 'static, M: MessagesManagerTrait + 'static> SessionManage
     }
 
     /// Get access to the group manager
-    pub fn group_manager(&self) -> &Arc<GroupManager> {
-        &self.group_manager
+    pub fn group_manager(&self) -> GroupManager {
+        self.group_manager.clone()
     }
 }
 

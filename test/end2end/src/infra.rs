@@ -101,19 +101,22 @@ impl TestInfrastructure {
         let message_service = match RedisMessageStorage::new(redis_url.clone()).await {
             Ok(service) => {
                 info!("✅ Connected to Redis message store");
-                
+
                 // Clean up the test database to ensure isolation
-                let client = redis::Client::open(redis_url.clone())
-                    .map_err(|e| anyhow::anyhow!("Failed to create Redis client for cleanup: {}", e))?;
+                let client = redis::Client::open(redis_url.clone()).map_err(|e| {
+                    anyhow::anyhow!("Failed to create Redis client for cleanup: {}", e)
+                })?;
                 let mut conn = client
                     .get_multiplexed_async_connection()
                     .await
-                    .map_err(|e| anyhow::anyhow!("Failed to connect to Redis for cleanup: {}", e))?;
+                    .map_err(|e| {
+                        anyhow::anyhow!("Failed to connect to Redis for cleanup: {}", e)
+                    })?;
                 let _: () = redis::cmd("FLUSHDB")
                     .query_async(&mut conn)
                     .await
                     .map_err(|e| anyhow::anyhow!("Failed to flush test database: {}", e))?;
-                
+
                 service
             }
             Err(e) => {

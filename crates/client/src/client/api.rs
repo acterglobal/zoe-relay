@@ -47,12 +47,12 @@ impl Client {
     /// # Returns
     ///
     /// A reference to the `SessionManager`
-    pub async fn session_manager(&self) -> Arc<ZoeClientSessionManager> {
+    pub fn session_manager(&self) -> Arc<ZoeClientSessionManager> {
         self.session_manager.clone()
     }
 
-    pub async fn group_manager(&self) -> Arc<GroupManager> {
-        self.session_manager.group_manager().clone()
+    pub fn group_manager(&self) -> GroupManager {
+        self.session_manager.group_manager()
     }
 }
 
