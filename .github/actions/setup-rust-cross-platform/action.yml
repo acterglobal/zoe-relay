@@ -215,6 +215,17 @@ runs:
         
         echo "NDK installed at: $PWD/$NDK_DIR"
         ls -la "$PWD/$NDK_DIR" | head -10
+        
+        # Create symlinks for OpenSSL build tools
+        # The OpenSSL build system expects GNU-style tool names, but Android NDK uses LLVM
+        mkdir -p /tmp/android-tools
+        ln -sf "$PWD/$NDK_DIR/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ranlib" "/tmp/android-tools/arm-linux-androideabi-ranlib"
+        ln -sf "$PWD/$NDK_DIR/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ranlib" "/tmp/android-tools/aarch64-linux-android-ranlib"
+        ln -sf "$PWD/$NDK_DIR/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ranlib" "/tmp/android-tools/i686-linux-android-ranlib"
+        ln -sf "$PWD/$NDK_DIR/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ranlib" "/tmp/android-tools/x86_64-linux-android-ranlib"
+        
+        # Add tools directory to PATH
+        echo "/tmp/android-tools:$PWD/$NDK_DIR/toolchains/llvm/prebuilt/linux-x86_64/bin:$PATH" >> $GITHUB_PATH
     
     - name: Setup Android environment
       if: inputs.install_android_ndk == 'true' && runner.os == 'Linux'
@@ -254,18 +265,22 @@ runs:
         CC_armv7_linux_androideabi = "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/armv7a-linux-androideabi21-clang"
         CXX_armv7_linux_androideabi = "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/armv7a-linux-androideabi21-clang++"
         AR_armv7_linux_androideabi = "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ar"
+        RANLIB_armv7_linux_androideabi = "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ranlib"
         
         CC_aarch64_linux_android = "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android21-clang"
         CXX_aarch64_linux_android = "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android21-clang++"
         AR_aarch64_linux_android = "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ar"
+        RANLIB_aarch64_linux_android = "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ranlib"
         
         CC_i686_linux_android = "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/i686-linux-android21-clang"
         CXX_i686_linux_android = "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/i686-linux-android21-clang++"
         AR_i686_linux_android = "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ar"
+        RANLIB_i686_linux_android = "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ranlib"
         
         CC_x86_64_linux_android = "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/x86_64-linux-android21-clang"
         CXX_x86_64_linux_android = "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/x86_64-linux-android21-clang++"
         AR_x86_64_linux_android = "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ar"
+        RANLIB_x86_64_linux_android = "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ranlib"
         
         # Android platform configuration
         ANDROID_PLATFORM = "android-21"
@@ -298,6 +313,7 @@ runs:
         LIBSQLITE3_SYS_USE_PKG_CONFIG = "0"
         LIBSQLITE3_SYS_USE_BUNDLED = "1"
         SQLCIPHER_STATIC = "1"
+        
         
         # BINDGEN configuration for header resolution
         BINDGEN_EXTRA_CLANG_ARGS_x86_64_linux_android = "--sysroot=$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot -I$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include -I$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include/x86_64-linux-android"
