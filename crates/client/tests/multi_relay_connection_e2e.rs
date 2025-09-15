@@ -8,7 +8,7 @@ use zoe_wire_protocol::KeyPair;
 
 /// Test that the client can handle multiple relay addresses and tries them in order
 #[tokio::test]
-async fn test_multi_address_relay_connection_attempts() {
+async fn test_multi_address_relay_connection_attempts_max_30s() {
     // Initialize logging for test debugging
     let _ = tracing_subscriber::fmt::try_init();
 

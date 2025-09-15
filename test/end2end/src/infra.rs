@@ -93,13 +93,27 @@ impl TestInfrastructure {
         let blob_service = BlobServiceImpl::new(blob_dir.clone()).await?;
         info!("✅ Connected to blob service");
 
-        // For now, we'll create a mock message service since the current API has issues
-        let redis_url = "redis://127.0.0.1:6379".to_string();
+        // Use a random database number to avoid conflicts between parallel tests
+        let db_num = rand::random::<u8>() % 15 + 1; // Use databases 1-15 (avoid 0 which might be used elsewhere)
+        let redis_url = format!("redis://127.0.0.1:6379/{db_num}");
 
         // Try to connect to Redis, but don't fail if it's not available
         let message_service = match RedisMessageStorage::new(redis_url.clone()).await {
             Ok(service) => {
                 info!("✅ Connected to Redis message store");
+                
+                // Clean up the test database to ensure isolation
+                let client = redis::Client::open(redis_url.clone())
+                    .map_err(|e| anyhow::anyhow!("Failed to create Redis client for cleanup: {}", e))?;
+                let mut conn = client
+                    .get_multiplexed_async_connection()
+                    .await
+                    .map_err(|e| anyhow::anyhow!("Failed to connect to Redis for cleanup: {}", e))?;
+                let _: () = redis::cmd("FLUSHDB")
+                    .query_async(&mut conn)
+                    .await
+                    .map_err(|e| anyhow::anyhow!("Failed to flush test database: {}", e))?;
+                
                 service
             }
             Err(e) => {

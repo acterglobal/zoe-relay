@@ -22,6 +22,7 @@ use zoe_wire_protocol::{
 
 /// Test message posting and retrieval functionality
 #[tokio::test]
+#[serial] // Prevent concurrent execution to avoid resource contention
 async fn test_message_posting_and_retrieval() -> Result<()> {
     let infra = TestInfrastructure::setup().await?;
     let client = infra.create_client().await?;
@@ -119,6 +120,7 @@ async fn test_message_posting_and_retrieval() -> Result<()> {
 
 /// Test user data storage and the user_data function
 #[tokio::test]
+#[serial] // Prevent concurrent execution to avoid resource contention
 async fn test_user_data_storage_and_lookup() -> Result<()> {
     let infra = TestInfrastructure::setup().await?;
     let client = infra.create_client().await?;
@@ -231,6 +233,7 @@ async fn test_user_data_storage_and_lookup() -> Result<()> {
 
 /// Test subscription and unsubscription functionality
 #[tokio::test]
+#[serial] // Prevent concurrent execution to avoid resource contention
 async fn test_subscription_unsubscription_functionality() -> Result<()> {
     let infra = TestInfrastructure::setup().await?;
     let client = infra.create_client().await?;
@@ -595,6 +598,7 @@ async fn test_all_signature_types_e2e() -> Result<()> {
 
 /// Test signature type interoperability and ordering in end-to-end scenario
 #[tokio::test]
+#[serial] // Prevent concurrent execution to avoid resource contention
 async fn test_signature_type_interoperability_e2e() -> Result<()> {
     let infra = TestInfrastructure::setup().await?;
 
