@@ -3,6 +3,7 @@ use crate::error::Result;
 use crate::services::MultiRelayMessageManager;
 use crate::services::blob_store::MultiRelayBlobService;
 use crate::{Client, ClientError, FileStorage, SessionManager};
+use async_broadcast;
 use eyeball::SharedObservable;
 use rand::Rng;
 use std::collections::BTreeMap;
@@ -10,7 +11,6 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tokio::sync::broadcast;
 use zoe_app_primitives::{CompressionConfig, RelayAddress};
 use zoe_client_storage::{SqliteMessageStorage, StorageConfig};
 use zoe_wire_protocol::{KeyPair, VerifyingKey};
@@ -133,7 +133,8 @@ impl ClientBuilder {
         );
 
         // Initialize broadcast channel for relay status updates
-        let (relay_status_sender, _) = broadcast::channel(100);
+        let (relay_status_sender, relay_status_rx) = async_broadcast::broadcast(1000);
+        let relay_status_keeper = relay_status_rx.deactivate();
         // Offline mode: use multi-relay services
         let message_manager = Arc::new(MultiRelayMessageManager::new(Arc::clone(&storage)));
         let blob_service = Arc::new(MultiRelayBlobService::new(Arc::clone(&storage)));
@@ -170,7 +171,8 @@ impl ClientBuilder {
             relay_info: Arc::new(RwLock::new(BTreeMap::new())),
             encryption_key,
             client_secret_observable,
-            relay_status_sender,
+            relay_status_sender: Arc::new(relay_status_sender),
+            _relay_status_keeper: Arc::new(relay_status_keeper),
             connection_monitors: Arc::new(RwLock::new(BTreeMap::new())),
             session_manager,
         };

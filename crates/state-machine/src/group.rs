@@ -15,10 +15,8 @@ use crate::{
     state::encrypt_group_event_content,
 };
 
-use tokio::sync::{
-    RwLock,
-    broadcast::{Sender, channel},
-};
+use async_broadcast::{Receiver, Sender};
+use tokio::sync::RwLock;
 
 // Import the unified GroupState from app-primitives
 use zoe_app_primitives::{GroupState, GroupStateError};
@@ -38,7 +36,10 @@ pub struct GroupManager {
     /// Key is the Blake3 hash of the CreateGroup message (which serves as both group ID and root event ID)
     pub(crate) groups: Arc<RwLock<HashMap<MessageId, GroupSession>>>,
 
-    broadcast_channel: Sender<GroupDataUpdate>,
+    broadcast_channel: Arc<Sender<GroupDataUpdate>>,
+    /// Keeper receiver to prevent broadcast channel closure (not actively used)
+    /// Arc-wrapped to ensure channel stays open even when GroupManager instances are cloned and dropped
+    _broadcast_keeper: Arc<async_broadcast::InactiveReceiver<GroupDataUpdate>>,
 }
 
 /// Result of creating a new group
@@ -63,14 +64,16 @@ impl GroupManagerBuilder {
 
     pub fn build(self) -> GroupManager {
         let GroupManagerBuilder { sessions } = self;
-        let (tx, _rx) = channel(10);
+        let (tx, rx) = async_broadcast::broadcast(1000);
+        let broadcast_keeper = rx.deactivate();
         GroupManager {
             groups: Arc::new(RwLock::new(HashMap::from_iter(
                 sessions
                     .into_iter()
                     .map(|session| (session.state.group_id, session)),
             ))),
-            broadcast_channel: tx,
+            broadcast_channel: Arc::new(tx),
+            _broadcast_keeper: Arc::new(broadcast_keeper),
         }
     }
 }
@@ -183,7 +186,7 @@ impl GroupManager {
         // Broadcast the group addition
         if let Err(e) = self
             .broadcast_channel
-            .send(GroupDataUpdate::GroupAdded(group_session))
+            .try_broadcast(GroupDataUpdate::GroupAdded(group_session))
         {
             tracing::error!(error=?e, "Failed to broadcast group addition");
         }
@@ -296,7 +299,7 @@ impl GroupManager {
                 // Broadcast the group update
                 let _ = self
                     .broadcast_channel
-                    .send(GroupDataUpdate::GroupUpdated(group_session.clone()));
+                    .try_broadcast(GroupDataUpdate::GroupUpdated(group_session.clone()));
             }
             return Ok(());
         }
@@ -323,7 +326,7 @@ impl GroupManager {
         // Broadcast the group update
         let _ = self
             .broadcast_channel
-            .send(GroupDataUpdate::GroupUpdated(group_session.clone()));
+            .try_broadcast(GroupDataUpdate::GroupUpdated(group_session.clone()));
 
         Ok(())
     }
@@ -406,7 +409,7 @@ impl GroupManager {
         self.groups.write().await.insert(group_id, session.clone());
         let _ = self
             .broadcast_channel
-            .send(GroupDataUpdate::GroupAdded(session));
+            .try_broadcast(GroupDataUpdate::GroupAdded(session));
     }
 
     /// Remove a group session
@@ -414,7 +417,7 @@ impl GroupManager {
         if let Some(session) = self.groups.write().await.remove(group_id) {
             let _ = self
                 .broadcast_channel
-                .send(GroupDataUpdate::GroupRemoved(session.clone()));
+                .try_broadcast(GroupDataUpdate::GroupRemoved(session.clone()));
             Some(session)
         } else {
             None
@@ -435,13 +438,13 @@ impl GroupManager {
         session.rotate_key(new_key);
         let _ = self
             .broadcast_channel
-            .send(GroupDataUpdate::GroupUpdated(session.clone()));
+            .try_broadcast(GroupDataUpdate::GroupUpdated(session.clone()));
         Ok(())
     }
 
     /// Subscribe to group updates
-    pub fn subscribe_to_updates(&self) -> tokio::sync::broadcast::Receiver<GroupDataUpdate> {
-        self.broadcast_channel.subscribe()
+    pub fn subscribe_to_updates(&self) -> Receiver<GroupDataUpdate> {
+        self.broadcast_channel.new_receiver()
     }
 
     /// Create a subscription filter for a specific group

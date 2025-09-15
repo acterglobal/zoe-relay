@@ -18,6 +18,7 @@ postcard = "1.0"
 # AES-GCM removed - only using ChaCha20-Poly1305 from wire-protocol
 rand = "0.8"
 thiserror = "1.0"
+async-broadcast = { workspace = true }
 
 [dev-dependencies]
 rand = "0.8"
