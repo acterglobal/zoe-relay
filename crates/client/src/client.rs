@@ -1,11 +1,11 @@
 use crate::services::MultiRelayMessageManager;
 use crate::services::blob_store::MultiRelayBlobService;
 use crate::{FileStorage, RelayClient, SessionManager};
+use async_broadcast;
 use eyeball::SharedObservable;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tokio::sync::broadcast;
 use tokio::task::JoinHandle;
 use zoe_client_storage::SqliteMessageStorage;
 use zoe_wire_protocol::KeyId;
@@ -51,7 +51,10 @@ pub struct Client {
     /// Observable state for client secret updates - third parties can subscribe to changes
     pub(crate) client_secret_observable: SharedObservable<ClientSecret>,
     /// Broadcast channel for per-relay connection status updates
-    pub(crate) relay_status_sender: broadcast::Sender<RelayStatusUpdate>,
+    pub(crate) relay_status_sender: Arc<async_broadcast::Sender<RelayStatusUpdate>>,
+    /// Keeper receiver to prevent relay status broadcast channel closure (not actively used)
+    /// Arc-wrapped to ensure channel stays open even when Client instances are cloned and dropped
+    _relay_status_keeper: Arc<async_broadcast::InactiveReceiver<RelayStatusUpdate>>,
     /// Connection monitoring tasks for each relay
     pub(crate) connection_monitors: Arc<RwLock<BTreeMap<KeyId, JoinHandle<()>>>>,
     /// Session manager for the client

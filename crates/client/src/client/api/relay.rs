@@ -5,9 +5,10 @@ use crate::{
     ClientError, OverallConnectionStatus, RelayClient, RelayClientBuilder, RelayConnectionInfo,
     RelayConnectionStatus, RelayInfo, RelayStatusUpdate,
 };
+use async_broadcast;
 use std::net::SocketAddr;
 use std::sync::Arc;
-use tokio::sync::{broadcast, oneshot};
+use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
 use tokio::time::Duration;
 use zoe_app_primitives::RelayAddress;
@@ -686,7 +687,7 @@ impl Client {
         };
 
         // Send to broadcast channel - ignore if no receivers
-        let _ = self.relay_status_sender.send(status_update);
+        let _ = self.relay_status_sender.try_broadcast(status_update);
     }
 }
 
@@ -696,7 +697,7 @@ impl Client {
     ///
     /// This provides real-time updates about individual relay connection status changes.
     /// Each relay reports its status independently via this broadcast channel.
-    pub fn subscribe_to_relay_status(&self) -> broadcast::Receiver<RelayStatusUpdate> {
-        self.relay_status_sender.subscribe()
+    pub fn subscribe_to_relay_status(&self) -> async_broadcast::Receiver<RelayStatusUpdate> {
+        self.relay_status_sender.new_receiver()
     }
 }
