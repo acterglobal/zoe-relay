@@ -1,11 +1,11 @@
 use serde::{Deserialize, Serialize};
 
-use zoe_app_primitives::GroupActivityEvent;
+use zoe_app_primitives::group::events::GroupActivityEvent;
 use zoe_wire_protocol::{ChaCha20Poly1305Content, EncryptionKey, MessageId};
 
 // GroupState and GroupMember are now unified in app-primitives
 // Re-export them here for backwards compatibility
-pub use zoe_app_primitives::{GroupMember, GroupState};
+pub use zoe_app_primitives::{group::states::GroupMember, group::states::GroupState};
 
 #[cfg(feature = "frb-api")]
 use flutter_rust_bridge::frb;
@@ -26,7 +26,7 @@ pub enum GroupSessionError {
 /// Complete group session state including both group state and encryption keys
 /// Since both are stored in the same encrypted database and always used together,
 /// combining them reduces complexity and eliminates synchronization issues.
-#[cfg_attr(feature = "frb-api", frb(opaque))]
+#[cfg_attr(feature = "frb-api", frb(opaque, ignore_all))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GroupSession {
     /// The group's business logic state (members, roles, metadata, etc.)

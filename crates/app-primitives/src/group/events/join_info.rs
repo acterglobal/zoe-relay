@@ -1,8 +1,13 @@
 use serde::{Deserialize, Serialize};
 
-use super::{GroupInfo, GroupKeyInfo};
-use crate::{Metadata, RelayEndpoint};
+use super::GroupInfo;
+use crate::group::events::key_info::GroupKeyInfo;
+use crate::{metadata::Metadata, relay::RelayEndpoint};
 
+#[cfg(feature = "frb-api")]
+use flutter_rust_bridge::frb;
+
+#[cfg_attr(feature = "frb-api", frb(opaque, ignore_all))]
 /// Complete information needed for a participant to join an encrypted group
 ///
 /// This structure contains everything a new participant needs to join and
@@ -83,8 +88,8 @@ impl GroupJoinInfo {
     }
 
     /// Get the primary (first priority) relay endpoint
-    pub fn primary_relay(&self) -> Option<&RelayEndpoint> {
-        self.relay_endpoints.first()
+    pub fn primary_relay(&self) -> Option<RelayEndpoint> {
+        self.relay_endpoints.first().cloned()
     }
 
     /// Get all relay endpoints ordered by priority

@@ -32,7 +32,3 @@ pub use system_check::{
     DiagnosticCollector, DiagnosticLevel, DiagnosticMessage, SystemCheck, SystemCheckConfig,
     SystemCheckOutcome, SystemCheckResults, TestCategory, TestInfo, TestResult,
 };
-
-// Re-export FileRef and Image from app-primitives for convenience
-pub use zoe_app_primitives::{FileRef, Image};
-pub use zoe_wire_protocol::{SigningKey, VerifyingKey};

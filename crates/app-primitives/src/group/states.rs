@@ -2,9 +2,12 @@ use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashSet};
 use zoe_wire_protocol::{MessageId, VerifyingKey};
 
-use super::events::roles::GroupRole;
-use super::events::{GroupActivityEvent, GroupSettings};
-use crate::{IdentityInfo, IdentityRef, IdentityType, Metadata, Permission};
+use super::events::{GroupActivityEvent, roles::GroupRole, settings::GroupSettings};
+use crate::{
+    group::events::{key_info::GroupKeyInfo, permissions::Permission},
+    identity::{IdentityInfo, IdentityRef, IdentityType},
+    metadata::Metadata,
+};
 
 #[cfg(feature = "frb-api")]
 use flutter_rust_bridge::frb;
@@ -205,6 +208,7 @@ use flutter_rust_bridge::frb;
 /// - **Auditable**: Full history of identity changes
 /// - **Consistent**: Same view across all group members  
 /// - **Secure**: Cryptographically signed and verified
+#[cfg_attr(feature = "frb-api", frb(opaque, ignore_all))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GroupMembership {
     /// Identity information for keys and their aliases: (key_bytes, identity_type) -> identity_info
@@ -409,6 +413,7 @@ pub type GroupStateResult<T> = Result<T, GroupStateError>;
 /// }
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "frb-api", frb(opaque, ignore_all))]
 pub struct GroupMember {
     /// Member's public key encoded as bytes for serialization compatibility
     pub key: IdentityRef,
@@ -575,7 +580,7 @@ pub struct GroupMember {
 /// let generic_meta = group_state.generic_metadata();
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg_attr(feature = "frb-api", frb(opaque))]
+#[cfg_attr(feature = "frb-api", frb(opaque, ignore_all))]
 pub struct GroupState {
     /// The group identifier - this is the Blake3 hash of the CreateGroup message
     /// Also serves as the root event ID (used as channel tag)
@@ -607,6 +612,7 @@ pub struct GroupState {
     pub version: u64,
 }
 
+#[cfg_attr(feature = "frb-api", frb(ignore))]
 impl GroupState {
     /// Create a new group state from a group creation event.
     ///
@@ -715,7 +721,7 @@ impl GroupState {
     }
 
     /// Convert to GroupInfo for events (extracts the core group information)
-    pub fn to_group_info(&self, key_info: super::events::GroupKeyInfo) -> super::events::GroupInfo {
+    pub fn to_group_info(&self, key_info: GroupKeyInfo) -> super::events::GroupInfo {
         super::events::GroupInfo {
             name: self.name.clone(),
             settings: self.settings.clone(),
@@ -1004,9 +1010,9 @@ impl GroupState {
     }
 
     /// Get a member's role
-    pub fn member_role(&self, user: &VerifyingKey) -> Option<&GroupRole> {
+    pub fn member_role(&self, user: &VerifyingKey) -> Option<GroupRole> {
         let user_ref = IdentityRef::Key(user.clone());
-        self.members.get(&user_ref).map(|m| &m.role)
+        self.members.get(&user_ref).map(|m| m.role.clone())
     }
 
     /// Extract the group description from structured metadata.
@@ -1154,9 +1160,13 @@ impl GroupState {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::group::events::key_info::GroupKeyInfo;
     use crate::group::events::roles::GroupRole;
-    use crate::group::events::{GroupActivityEvent, GroupInfo, GroupKeyInfo, GroupSettings};
-    use crate::{IdentityInfo, IdentityType, Metadata, Permission};
+    use crate::group::events::settings::GroupSettings;
+    use crate::group::events::{GroupActivityEvent, GroupInfo};
+    use crate::group::states::Permission;
+    use crate::identity::{IdentityInfo, IdentityType};
+    use crate::metadata::Metadata;
 
     use rand::rngs::OsRng;
     use zoe_wire_protocol::{KeyPair, VerifyingKey};
@@ -1386,7 +1396,7 @@ mod tests {
         assert!(group_state.is_member(&creator_key));
         assert_eq!(
             group_state.member_role(&creator_key),
-            Some(&GroupRole::Owner)
+            Some(&GroupRole::Owner).cloned()
         );
     }
 
@@ -1460,7 +1470,7 @@ mod tests {
 
         assert_eq!(
             group_state.member_role(&creator_key),
-            Some(&GroupRole::Owner)
+            Some(&GroupRole::Owner).cloned()
         );
 
         let non_member_key = create_test_verifying_key();
@@ -1595,7 +1605,7 @@ mod tests {
         // Verify new member has default role
         assert_eq!(
             group_state.member_role(&new_member_key),
-            Some(&GroupRole::Member)
+            Some(&GroupRole::Member).cloned()
         );
     }
 
@@ -1716,7 +1726,7 @@ mod tests {
         assert!(result.is_ok());
         assert_eq!(
             group_state.member_role(&member_key),
-            Some(&GroupRole::Admin)
+            Some(&GroupRole::Admin).cloned()
         );
         assert_eq!(group_state.version, 3);
     }
@@ -2139,7 +2149,7 @@ mod tests {
 
         assert_eq!(
             group_state.member_role(&member1_key),
-            Some(&GroupRole::Admin)
+            Some(&GroupRole::Admin).cloned()
         );
         assert_eq!(group_state.version, 4);
 
@@ -2159,7 +2169,7 @@ mod tests {
 
         assert_eq!(
             group_state.member_role(&member2_key),
-            Some(&GroupRole::Moderator)
+            Some(&GroupRole::Moderator).cloned()
         );
         assert_eq!(group_state.version, 5);
 

@@ -364,7 +364,7 @@ async fn create_client(args: &RelayClientArgs) -> Result<Client, Box<dyn std::er
         let server_addr = resolve_to_socket_addr(&args.relay_address).await?;
 
         info!("🔗 Establishing relay connection...");
-        use zoe_app_primitives::RelayAddress;
+        use zoe_app_primitives::connection::RelayAddress;
 
         let relay_address = RelayAddress::new(server_public_key)
             .with_address(server_addr.into())

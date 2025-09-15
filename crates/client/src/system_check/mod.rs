@@ -315,16 +315,17 @@ impl SystemCheckResults {
     }
 
     /// Get the first failed test, if any
-    pub fn first_failure(&self) -> Option<&TestInfo> {
+    pub fn first_failure(&self) -> Option<TestInfo> {
         self.results
             .values()
             .flat_map(|tests| tests.iter())
             .find(|test| test.result.is_failed())
+            .cloned()
     }
 
     /// Get results for a specific category
-    pub fn get_category_results(&self, category: TestCategory) -> Option<&Vec<TestInfo>> {
-        self.results.get(&category)
+    pub fn get_category_results(&self, category: TestCategory) -> Option<Vec<TestInfo>> {
+        self.results.get(&category).cloned()
     }
 
     /// Check if a specific category has any failures

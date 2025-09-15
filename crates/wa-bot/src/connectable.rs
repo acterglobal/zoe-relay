@@ -5,7 +5,7 @@ use anyhow::Result;
 use tokio_stream::{Stream, StreamExt as TokioStreamExt};
 use tracing::{info, warn};
 use whatsmeow::{ConnectionStatus, WhatsAppBot};
-use zoe_app_primitives::{QrOptions, display_qr_code};
+use zoe_app_primitives::qr::{QrOptions, display_qr_code};
 
 /// Extension trait for WhatsAppBot to add convenience methods
 #[async_trait::async_trait]

@@ -1,5 +1,5 @@
 use std::net::SocketAddr;
-use zoe_app_primitives::RelayAddress;
+use zoe_app_primitives::connection::RelayAddress;
 use zoe_wire_protocol::KeyId;
 
 /// Connection information for a relay server

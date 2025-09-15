@@ -1,6 +1,6 @@
 use crate::Client;
 use flutter_rust_bridge::frb;
-use zoe_app_primitives::RelayAddress;
+use zoe_app_primitives::connection::RelayAddress;
 use zoe_wire_protocol::VerifyingKey;
 
 mod for_std;

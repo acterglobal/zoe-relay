@@ -5,6 +5,9 @@
 
 use blake3::Hasher;
 
+#[cfg(feature = "frb-api")]
+use flutter_rust_bridge::frb;
+
 /// 64 carefully chosen emojis for maximum visual distinction
 ///
 /// These emojis are organized into categories to avoid confusion and ensure
@@ -63,6 +66,7 @@ pub const EMOJI_SET: [&str; 64] = [
 /// let emojis = derive_emoji_verification(&shared_secret);
 /// println!("Verify these emojis match: {}", emojis.join(" "));
 /// ```
+#[cfg_attr(feature = "frb-api", frb(ignore))]
 pub fn derive_emoji_verification(shared_secret: &[u8; 32]) -> [&'static str; 6] {
     // Derive verification fingerprint using BLAKE3 with domain separation
     let mut hasher = Hasher::new();

@@ -262,10 +262,10 @@ pub enum PublishResult {
 
 impl PublishResult {
     /// Get the global stream ID if available (None for expired messages)
-    pub fn global_stream_id(&self) -> Option<&str> {
+    pub fn global_stream_id(&self) -> Option<String> {
         match self {
-            PublishResult::StoredNew { global_stream_id } => Some(global_stream_id),
-            PublishResult::AlreadyExists { global_stream_id } => Some(global_stream_id),
+            PublishResult::StoredNew { global_stream_id } => Some(global_stream_id.clone()),
+            PublishResult::AlreadyExists { global_stream_id } => Some(global_stream_id.clone()),
             PublishResult::Expired => None,
         }
     }

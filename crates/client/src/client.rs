@@ -67,7 +67,7 @@ mod tests {
     use std::net::{IpAddr, Ipv4Addr, SocketAddr};
     use tempfile::TempDir;
     use tokio::fs;
-    use zoe_app_primitives::RelayAddress;
+    use zoe_app_primitives::connection::RelayAddress;
     use zoe_wire_protocol::KeyPair;
 
     async fn create_test_client_offline() -> (Client, TempDir, TempDir) {

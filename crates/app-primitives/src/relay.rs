@@ -3,13 +3,17 @@ use std::net::SocketAddr;
 use serde::{Deserialize, Serialize};
 use zoe_wire_protocol::Ed25519VerifyingKey;
 
-use crate::Metadata;
+use crate::metadata::Metadata;
+
+#[cfg(feature = "frb-api")]
+use flutter_rust_bridge::frb;
 
 /// Relay endpoint information for group participants
 ///
 /// Contains the network address and public key needed to connect to a relay server.
 /// Multiple relay endpoints can be provided to a group participant for redundancy,
 /// with the list order indicating priority preference.
+#[cfg_attr(feature = "frb-api", frb(opaque, ignore_all))]
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RelayEndpoint {
     /// Network address of the relay server
@@ -38,6 +42,7 @@ pub struct RelayEndpoint {
     pub metadata: Vec<Metadata>,
 }
 
+#[cfg_attr(feature = "frb-api", frb(ignore))]
 impl RelayEndpoint {
     /// Create a new relay endpoint with minimal required fields
     pub fn new(address: SocketAddr, public_key: Ed25519VerifyingKey) -> Self {

@@ -8,17 +8,21 @@ use std::collections::BTreeMap;
 // Re-export encryption types from zoe-encrypted-storage for convenience
 pub use zoe_encrypted_storage::{CompressionConfig, ConvergentEncryptionInfo};
 
-use crate::Metadata;
+use crate::metadata::Metadata;
 
 pub mod image;
 
 pub use image::Image;
+
+#[cfg(feature = "frb-api")]
+use flutter_rust_bridge::frb;
 
 /// Reference to a stored file, containing everything needed to retrieve it
 ///
 /// This type represents metadata for files that have been encrypted using
 /// convergent encryption and stored in a content-addressable blob store.
 /// It contains all the information needed to retrieve and decrypt the file later.
+#[cfg_attr(feature = "frb-api", frb(opaque, ignore_all))]
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct FileRef {
     /// Hash of the encrypted blob in storage
@@ -104,8 +108,8 @@ impl FileRef {
     }
 
     /// Get the filename (if available)
-    pub fn filename(&self) -> Option<&str> {
-        self.filename.as_deref()
+    pub fn filename(&self) -> Option<String> {
+        self.filename.clone()
     }
 
     /// Get file extension from the filename (if available)
@@ -184,7 +188,10 @@ mod tests {
     fn test_file_ref_filename() {
         // Test with filename
         let file_ref_with_name = create_test_file_ref();
-        assert_eq!(file_ref_with_name.filename(), Some("test_file.txt"));
+        assert_eq!(
+            file_ref_with_name.filename(),
+            Some("test_file.txt".to_string())
+        );
 
         // Test without filename
         let file_ref_no_name =
@@ -364,7 +371,7 @@ mod tests {
 
     #[test]
     fn test_file_ref_metadata_operations() {
-        use crate::Metadata;
+        use crate::metadata::Metadata;
 
         let metadata = vec![Metadata::Generic {
             key: "initial".to_string(),

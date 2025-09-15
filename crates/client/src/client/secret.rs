@@ -3,7 +3,7 @@ use crate::error::Result;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::net::SocketAddr;
 use std::sync::Arc;
-use zoe_app_primitives::RelayAddress;
+use zoe_app_primitives::connection::RelayAddress;
 use zoe_wire_protocol::{KeyPair, VerifyingKey};
 
 #[cfg(feature = "frb-api")]

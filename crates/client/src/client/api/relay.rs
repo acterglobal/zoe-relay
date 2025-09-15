@@ -11,7 +11,7 @@ use std::sync::Arc;
 use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
 use tokio::time::Duration;
-use zoe_app_primitives::RelayAddress;
+use zoe_app_primitives::connection::RelayAddress;
 use zoe_wire_protocol::{KeyId, VerifyingKey};
 
 #[cfg(feature = "frb-api")]

@@ -6,7 +6,10 @@ use std::{
     path::PathBuf,
 };
 use tracing::info;
-use zoe_app_primitives::{display_qr_code, NetworkAddress, QrOptions, RelayAddress};
+use zoe_app_primitives::{
+    connection::{NetworkAddress, RelayAddress},
+    qr::{display_qr_code, QrOptions},
+};
 use zoe_relay::ZoeRelayServer;
 use zoe_wire_protocol::{Algorithm, KeyPair, VerifyingKey};
 

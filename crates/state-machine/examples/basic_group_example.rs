@@ -1,6 +1,9 @@
+use zoe_app_primitives::group::events::key_info::GroupKeyInfo;
+use zoe_app_primitives::group::events::settings::GroupSettings;
+use zoe_app_primitives::group::events::{CreateGroup, GroupInfo};
+use zoe_app_primitives::metadata::Metadata;
+use zoe_state_machine::{GroupManager, group::create_group_activity_event};
 use zoe_wire_protocol::KeyPair;
-
-use zoe_state_machine::{GroupManager, GroupSettings, create_group_activity_event};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -13,17 +16,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Alice creates a group
     let metadata = vec![
-        zoe_app_primitives::Metadata::Description("A test group for the DGA protocol".to_string()),
-        zoe_app_primitives::Metadata::Generic {
+        Metadata::Description("A test group for the DGA protocol".to_string()),
+        Metadata::Generic {
             key: "category".to_string(),
             value: "testing".to_string(),
         },
     ];
 
-    let group_info = zoe_app_primitives::GroupInfo {
+    let group_info = GroupInfo {
         name: "My Test Group".to_string(),
         settings: GroupSettings::default(),
-        key_info: zoe_app_primitives::GroupKeyInfo::new_chacha20_poly1305(
+        key_info: GroupKeyInfo::new_chacha20_poly1305(
             vec![], // This will be filled in by create_group
             zoe_wire_protocol::crypto::KeyDerivationInfo {
                 method: zoe_wire_protocol::crypto::KeyDerivationMethod::ChaCha20Poly1305Keygen,
@@ -35,7 +38,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         metadata,
     };
 
-    let create_group = zoe_app_primitives::CreateGroup::new(group_info);
+    let create_group = CreateGroup::new(group_info);
 
     let create_result = dga
         .create_group(

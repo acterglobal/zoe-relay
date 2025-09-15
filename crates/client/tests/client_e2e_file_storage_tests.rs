@@ -9,7 +9,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tempfile::TempDir;
 
 use tracing::info;
-use zoe_app_primitives::{NetworkAddress, RelayAddress};
+use zoe_app_primitives::connection::{NetworkAddress, RelayAddress};
 use zoe_blob_store::BlobServiceImpl;
 use zoe_client::Client;
 use zoe_message_store::RedisMessageStorage;

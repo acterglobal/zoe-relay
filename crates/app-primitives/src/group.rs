@@ -168,19 +168,16 @@
 // Re-export all types from submodules for backwards compatibility
 pub mod events;
 pub mod states;
-
-pub use events::*;
-
-// Re-export the unified GroupState as the primary state type
-pub use states::{GroupMember, GroupMembership, GroupState, GroupStateError, GroupStateResult};
-
 #[cfg(test)]
 mod tests {
+    use super::events::join_info::GroupJoinInfo;
+    use super::events::key_info::GroupKeyInfo;
     use super::events::permissions::{GroupAction, GroupPermissions, Permission};
     use super::events::roles::GroupRole;
     use super::events::settings::{EncryptionSettings, GroupSettings};
-    use super::events::{GroupActivityEvent, GroupInfo, GroupJoinInfo, GroupKeyInfo};
-    use crate::{Metadata, RelayEndpoint};
+    use super::events::{GroupActivityEvent, GroupInfo};
+    use crate::metadata::Metadata;
+    use crate::relay::RelayEndpoint;
     use std::net::{IpAddr, Ipv4Addr, SocketAddr};
     use zoe_wire_protocol::{Ed25519VerifyingKey, KeyPair, VerifyingKey};
 
@@ -326,7 +323,7 @@ mod tests {
 
         assert_eq!(key_info.key_id(), &key_id);
         assert_eq!(key_info.algorithm(), "ChaCha20-Poly1305");
-        assert_eq!(key_info.derivation_info(), Some(&derivation_info));
+        assert_eq!(key_info.derivation_info(), Some(&derivation_info).cloned());
     }
 
     #[test]
@@ -473,13 +470,13 @@ mod tests {
 
         // Test initial state
         assert!(join_info.has_relays());
-        assert_eq!(join_info.primary_relay(), Some(&relay1));
+        assert_eq!(join_info.primary_relay(), Some(&relay1).cloned());
         assert_eq!(join_info.relays_by_priority().len(), 1);
 
         // Add another relay
         join_info = join_info.add_relay(relay2.clone());
         assert_eq!(join_info.relays_by_priority().len(), 2);
-        assert_eq!(join_info.primary_relay(), Some(&relay1)); // First one is still primary
+        assert_eq!(join_info.primary_relay(), Some(&relay1).cloned()); // First one is still primary
 
         // Test with no relays
         let empty_join_info = GroupJoinInfo::new(

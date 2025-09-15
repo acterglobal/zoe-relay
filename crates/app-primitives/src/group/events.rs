@@ -1,8 +1,12 @@
 use forward_compatible_enum::ForwardCompatibleEnum;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
-use super::roles::GroupRole;
-use crate::{IdentityInfo, IdentityRef, Metadata};
+use super::events::{roles::GroupRole, settings::GroupSettings};
+use crate::{
+    group::events::key_info::GroupKeyInfo,
+    identity::{IdentityInfo, IdentityRef},
+    metadata::Metadata,
+};
 
 pub mod join_info;
 pub mod key_info;
@@ -10,10 +14,8 @@ pub mod permissions;
 pub mod roles;
 pub mod settings;
 
-pub use join_info::*;
-pub use key_info::*;
-pub use permissions::*;
-pub use settings::*;
+#[cfg(feature = "frb-api")]
+use flutter_rust_bridge::frb;
 
 /// Activity events for encrypted group management in the DGA protocol
 ///
@@ -22,6 +24,7 @@ pub use settings::*;
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct CreateGroup(GroupInfo);
 
+#[cfg_attr(feature = "frb-api", frb(opaque, ignore_all))]
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct GroupInfo {
     /// Human-readable group name

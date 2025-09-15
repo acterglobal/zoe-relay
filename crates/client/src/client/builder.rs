@@ -11,7 +11,7 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use zoe_app_primitives::{CompressionConfig, RelayAddress};
+use zoe_app_primitives::{connection::RelayAddress, file::CompressionConfig};
 use zoe_client_storage::{SqliteMessageStorage, StorageConfig};
 use zoe_wire_protocol::{KeyPair, VerifyingKey};
 

@@ -1,5 +1,13 @@
+use crate::group::{
+    create_group_activity_event, create_leave_group_event, create_role_update_event,
+};
 use crate::*;
 use rand::thread_rng;
+use zoe_app_primitives::group::events::key_info::GroupKeyInfo;
+use zoe_app_primitives::group::events::roles::GroupRole;
+use zoe_app_primitives::group::events::settings::GroupSettings;
+use zoe_app_primitives::group::events::{CreateGroup, GroupActivityEvent, GroupInfo};
+use zoe_app_primitives::metadata::Metadata;
 use zoe_wire_protocol::{KeyPair, Tag};
 
 fn create_test_keys() -> (KeyPair, KeyPair) {
@@ -9,19 +17,19 @@ fn create_test_keys() -> (KeyPair, KeyPair) {
     (alice_key, bob_key)
 }
 
-fn create_test_group() -> zoe_app_primitives::CreateGroup {
+fn create_test_group() -> CreateGroup {
     let metadata = vec![
-        zoe_app_primitives::Metadata::Description("A test group for unit tests".to_string()),
-        zoe_app_primitives::Metadata::Generic {
+        Metadata::Description("A test group for unit tests".to_string()),
+        Metadata::Generic {
             key: "category".to_string(),
             value: "testing".to_string(),
         },
     ];
 
-    let group_info = zoe_app_primitives::GroupInfo {
+    let group_info = GroupInfo {
         name: "Test Group".to_string(),
         settings: GroupSettings::default(),
-        key_info: zoe_app_primitives::GroupKeyInfo::new_chacha20_poly1305(
+        key_info: GroupKeyInfo::new_chacha20_poly1305(
             vec![], // This will be filled in by create_group
             zoe_wire_protocol::crypto::KeyDerivationInfo {
                 method: zoe_wire_protocol::crypto::KeyDerivationMethod::ChaCha20Poly1305Keygen,
@@ -33,7 +41,7 @@ fn create_test_group() -> zoe_app_primitives::CreateGroup {
         metadata,
     };
 
-    zoe_app_primitives::CreateGroup::new(group_info)
+    CreateGroup::new(group_info)
 }
 
 #[tokio::test]
@@ -67,7 +75,7 @@ async fn test_create_encrypted_group() {
     assert!(group_state.is_member(&alice_key.public_key()));
     assert_eq!(
         group_state.member_role(&alice_key.public_key()),
-        Some(&GroupRole::Owner)
+        Some(GroupRole::Owner)
     );
 }
 
@@ -188,7 +196,7 @@ async fn test_new_member_via_activity() {
     assert!(group_state.is_member(&bob_key.public_key()));
     assert_eq!(
         group_state.member_role(&bob_key.public_key()),
-        Some(&GroupRole::Member)
+        Some(GroupRole::Member)
     );
 }
 
@@ -220,7 +228,8 @@ async fn test_role_update() {
     dga.process_group_event(&bob_message).await.unwrap();
 
     // Alice promotes Bob to Admin
-    let role_update = create_role_update_event(bob_key.public_key(), GroupRole::Admin);
+    let role_update: GroupActivityEvent<()> =
+        create_role_update_event(bob_key.public_key(), GroupRole::Admin);
 
     let role_message = dga
         .create_group_event_message(result.group_id, role_update, &alice_key, timestamp + 10)
@@ -233,7 +242,7 @@ async fn test_role_update() {
     let group_state = dga.group_state(&result.group_id).await.unwrap();
     assert_eq!(
         group_state.member_role(&bob_key.public_key()),
-        Some(&GroupRole::Admin)
+        Some(GroupRole::Admin)
     );
 }
 
@@ -274,7 +283,8 @@ async fn test_leave_group_event() {
     );
 
     // Bob leaves the group
-    let leave_event = create_leave_group_event(Some("Thanks for having me!".to_string()));
+    let leave_event: GroupActivityEvent<()> =
+        create_leave_group_event(Some("Thanks for having me!".to_string()));
 
     let leave_message = bob_dga
         .create_group_event_message(result.group_id, leave_event, &bob_key, timestamp + 10)
@@ -352,7 +362,7 @@ async fn test_permission_denied_for_role_update() {
     dga.process_group_event(&bob_message).await.unwrap();
 
     // Bob (regular member) tries to update Alice's role (should fail)
-    let role_update = create_role_update_event(
+    let role_update: GroupActivityEvent<()> = create_role_update_event(
         alice_key.public_key(),
         GroupRole::Member, // Trying to demote the owner
     );
@@ -422,8 +432,8 @@ async fn test_group_key_generation() {
 
 #[tokio::test]
 async fn test_create_key_from_mnemonic() {
-    use crate::MnemonicPhrase;
-    use bip39::Language;
+    use zoe_wire_protocol::MnemonicPhrase;
+    use zoe_wire_protocol::bip39::Language;
 
     // Use a known test mnemonic
     let mnemonic = MnemonicPhrase::from_phrase(
@@ -453,7 +463,7 @@ async fn test_create_key_from_mnemonic() {
 
 #[tokio::test]
 async fn test_recover_key_from_mnemonic() {
-    use crate::MnemonicPhrase;
+    use zoe_wire_protocol::MnemonicPhrase;
 
     // Generate a mnemonic and derive a key
     let mnemonic = MnemonicPhrase::generate().unwrap();
@@ -485,7 +495,8 @@ async fn test_recover_key_from_mnemonic() {
 
 #[tokio::test]
 async fn test_mnemonic_key_integration_with_group_creation() {
-    use crate::{GroupSettings, MnemonicPhrase};
+    use zoe_app_primitives::group::events::settings::GroupSettings;
+    use zoe_wire_protocol::MnemonicPhrase;
 
     let dga = GroupManager::builder().build();
     let alice_key = KeyPair::generate_ml_dsa65(&mut rand::thread_rng());
@@ -503,17 +514,17 @@ async fn test_mnemonic_key_integration_with_group_creation() {
 
     // Create group with mnemonic-derived key
     let metadata = vec![
-        zoe_app_primitives::Metadata::Description("Testing mnemonic key integration".to_string()),
-        zoe_app_primitives::Metadata::Generic {
+        Metadata::Description("Testing mnemonic key integration".to_string()),
+        Metadata::Generic {
             key: "key_source".to_string(),
             value: "mnemonic".to_string(),
         },
     ];
 
-    let group_info = zoe_app_primitives::GroupInfo {
+    let group_info = GroupInfo {
         name: "Integration Test Group".to_string(),
         settings: GroupSettings::default(),
-        key_info: zoe_app_primitives::GroupKeyInfo::new_chacha20_poly1305(
+        key_info: GroupKeyInfo::new_chacha20_poly1305(
             vec![], // This will be filled in by create_group
             zoe_wire_protocol::crypto::KeyDerivationInfo {
                 method: zoe_wire_protocol::crypto::KeyDerivationMethod::ChaCha20Poly1305Keygen,
@@ -525,7 +536,7 @@ async fn test_mnemonic_key_integration_with_group_creation() {
         metadata,
     };
 
-    let create_group = zoe_app_primitives::CreateGroup::new(group_info);
+    let create_group = CreateGroup::new(group_info);
 
     let result = dga
         .create_group(
@@ -550,7 +561,7 @@ async fn test_mnemonic_key_integration_with_group_creation() {
 
 #[tokio::test]
 async fn test_invalid_mnemonic_phrase_error() {
-    use crate::MnemonicPhrase;
+    use zoe_wire_protocol::MnemonicPhrase;
     use zoe_wire_protocol::bip39::Language;
 
     // Test with invalid mnemonic phrase
@@ -564,7 +575,7 @@ async fn test_invalid_mnemonic_phrase_error() {
 
 #[tokio::test]
 async fn test_mnemonic_key_different_contexts_produce_different_keys() {
-    use crate::MnemonicPhrase;
+    use zoe_wire_protocol::MnemonicPhrase;
 
     let mnemonic = MnemonicPhrase::generate().unwrap();
     let passphrase = "same-passphrase";
@@ -592,7 +603,7 @@ async fn test_mnemonic_key_different_contexts_produce_different_keys() {
 
 #[tokio::test]
 async fn test_mnemonic_key_different_passphrases_produce_different_keys() {
-    use crate::MnemonicPhrase;
+    use zoe_wire_protocol::MnemonicPhrase;
 
     let mnemonic = MnemonicPhrase::generate().unwrap();
     let group_name = "same-group";
@@ -667,12 +678,12 @@ async fn test_group_manager_cloning_preserves_broadcast_channel() {
     // Verify the updates are GroupAdded events
     match update1.unwrap().unwrap() {
         GroupDataUpdate::GroupAdded(_) => (),
-        other => panic!("Expected GroupAdded, got {:?}", other),
+        other => panic!("Expected GroupAdded, got {other:?}"),
     }
 
     match update2.unwrap().unwrap() {
         GroupDataUpdate::GroupAdded(_) => (),
-        other => panic!("Expected GroupAdded, got {:?}", other),
+        other => panic!("Expected GroupAdded, got {other:?}"),
     }
 
     // Drop the remaining managers
@@ -697,6 +708,6 @@ async fn test_group_manager_cloning_preserves_broadcast_channel() {
 
     match update3.unwrap().unwrap() {
         GroupDataUpdate::GroupAdded(_) => (),
-        other => panic!("Expected GroupAdded, got {:?}", other),
+        other => panic!("Expected GroupAdded, got {other:?}"),
     }
 }

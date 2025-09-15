@@ -4,7 +4,7 @@ use zoe_wire_protocol::{KeyPair, MessageId, VerifyingKey};
 // Random number generation imports removed - no longer needed
 // Temporary import for Ed25519 workaround in create_role_update_event
 
-use zoe_app_primitives::{GroupInfo, IdentityRef};
+use zoe_app_primitives::{group::events::GroupInfo, identity::IdentityRef};
 // Random number generation moved to wire-protocol crypto module
 use std::{collections::HashMap, sync::Arc};
 
@@ -15,13 +15,16 @@ use crate::{
     state::GroupSession,
     state::encrypt_group_event_content,
 };
-use zoe_app_primitives::{GroupActivityEvent, GroupKeyInfo, events::roles::GroupRole};
+use zoe_app_primitives::{
+    group::events::key_info::GroupKeyInfo,
+    group::events::{GroupActivityEvent, roles::GroupRole},
+};
 
 use async_broadcast::{Receiver, Sender};
 use tokio::sync::RwLock;
 
 // Import the unified GroupState from app-primitives
-use zoe_app_primitives::{GroupState, GroupStateError};
+use zoe_app_primitives::{group::states::GroupState, group::states::GroupStateError};
 use zoe_wire_protocol::{Content, EncryptionKey, MnemonicPhrase};
 
 #[cfg(feature = "frb-api")]
@@ -135,7 +138,7 @@ impl GroupManager {
         let groups = self.groups.read().await;
         groups
             .get(group_id)
-            .and_then(|session| session.state.member_role(user).cloned())
+            .and_then(|session| session.state.member_role(user).clone())
     }
 }
 
@@ -176,7 +179,7 @@ impl GroupManager {
     /// Create a new encrypted group, returning the root event message to be sent
     pub async fn create_group(
         &self,
-        create_group: zoe_app_primitives::CreateGroup,
+        create_group: zoe_app_primitives::group::events::CreateGroup,
         encryption_key: Option<EncryptionKey>,
         creator: &KeyPair,
         timestamp: u64,

@@ -1,9 +1,9 @@
 use super::super::Client;
 use crate::ClientError;
-use crate::FileRef;
 use crate::error::Result;
 use std::path::PathBuf;
 use tokio::fs;
+use zoe_app_primitives::file::FileRef;
 
 #[cfg(feature = "frb-api")]
 use flutter_rust_bridge::frb;

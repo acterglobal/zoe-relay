@@ -45,11 +45,11 @@ impl GroupKeyInfo {
     }
 
     /// Get the derivation info if available
-    pub fn derivation_info(&self) -> Option<&zoe_wire_protocol::crypto::KeyDerivationInfo> {
+    pub fn derivation_info(&self) -> Option<zoe_wire_protocol::crypto::KeyDerivationInfo> {
         match self {
             Self::ChaCha20Poly1305 {
                 derivation_info, ..
-            } => Some(derivation_info),
+            } => Some(derivation_info.clone()),
         }
     }
 

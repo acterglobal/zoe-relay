@@ -232,6 +232,7 @@ impl From<String> for NetworkAddress {
 /// Contains the public key and network addresses needed to connect to a service.
 /// This structure is designed to be compact and suitable for QR code encoding.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "frb-api", frb(opaque, ignore_all))]
 pub struct RelayAddress {
     /// Public key of the service
     ///
@@ -253,7 +254,7 @@ pub struct RelayAddress {
     pub name: Option<String>,
 }
 
-#[cfg_attr(feature = "frb-api", frb(opaque))]
+#[cfg_attr(feature = "frb-api", frb(ignore))]
 impl RelayAddress {
     /// Create a new connection info with minimal required fields
     pub fn new(public_key: VerifyingKey) -> Self {
@@ -308,8 +309,8 @@ impl RelayAddress {
     }
 
     /// Get the first address, if any
-    pub fn primary_address(&self) -> Option<&NetworkAddress> {
-        self.addresses.iter().next()
+    pub fn primary_address(&self) -> Option<NetworkAddress> {
+        self.addresses.iter().next().cloned()
     }
 
     /// Get the relay ID (public key ID)

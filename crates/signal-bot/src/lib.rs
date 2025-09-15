@@ -38,7 +38,7 @@ use presage_store_sqlite::SqliteStore;
 use std::path::PathBuf;
 use tokio::time::{Duration, sleep};
 use tracing::{error, info};
-use zoe_app_primitives::{QrOptions, display_qr_code_from_string};
+use zoe_app_primitives::qr::{QrOptions, display_qr_code_from_string};
 
 pub use presage;
 pub use presage_store_sqlite;

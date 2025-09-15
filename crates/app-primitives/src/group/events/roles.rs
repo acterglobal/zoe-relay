@@ -3,6 +3,9 @@ use serde::{Deserialize, Serialize};
 
 use super::permissions::Permission;
 
+#[cfg(feature = "frb-api")]
+use flutter_rust_bridge::frb;
+
 /// Roles within a group
 ///
 /// Hierarchical roles that determine what actions a member can perform.
@@ -11,6 +14,7 @@ use super::permissions::Permission;
     Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, U32Discriminants,
 )]
 #[u32_discriminants(fallback = "Member")]
+#[cfg_attr(feature = "frb-api", frb(non_opaque))]
 pub enum GroupRole {
     /// Group owner (highest privilege)
     ///

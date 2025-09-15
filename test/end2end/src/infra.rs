@@ -15,7 +15,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tempfile::TempDir;
 use tokio::time::timeout;
 use tracing::{debug, info, warn};
-use zoe_app_primitives::CompressionConfig;
+use zoe_app_primitives::file::CompressionConfig;
 use zoe_blob_store::BlobServiceImpl;
 use zoe_client::services::MessagesManagerTrait;
 use zoe_client::{RelayClient, RelayClientBuilder};
@@ -842,35 +842,37 @@ mod tests {
 
         // Create the group using app-primitives structures
         let metadata = vec![
-            zoe_app_primitives::Metadata::Description(
+            zoe_app_primitives::metadata::Metadata::Description(
                 "A test group for end-to-end testing".to_string(),
             ),
-            zoe_app_primitives::Metadata::Generic {
+            zoe_app_primitives::metadata::Metadata::Generic {
                 key: "test_type".to_string(),
                 value: "e2e".to_string(),
             },
-            zoe_app_primitives::Metadata::Generic {
+            zoe_app_primitives::metadata::Metadata::Generic {
                 key: "created_by".to_string(),
                 value: "client1".to_string(),
             },
         ];
 
-        let group_info = zoe_app_primitives::GroupInfo {
+        let group_info = zoe_app_primitives::group::events::GroupInfo {
             name: "E2E Test Group".to_string(),
-            settings: zoe_app_primitives::GroupSettings::new(),
-            key_info: zoe_app_primitives::GroupKeyInfo::new_chacha20_poly1305(
-                vec![], // This will be filled in by create_group
-                zoe_wire_protocol::crypto::KeyDerivationInfo {
-                    method: zoe_wire_protocol::crypto::KeyDerivationMethod::ChaCha20Poly1305Keygen,
-                    salt: vec![],
-                    argon2_params: zoe_wire_protocol::crypto::Argon2Params::default(),
-                    context: "dga-group-key".to_string(),
-                },
-            ),
+            settings: zoe_app_primitives::group::events::settings::GroupSettings::new(),
+            key_info:
+                zoe_app_primitives::group::events::key_info::GroupKeyInfo::new_chacha20_poly1305(
+                    vec![], // This will be filled in by create_group
+                    zoe_wire_protocol::crypto::KeyDerivationInfo {
+                        method:
+                            zoe_wire_protocol::crypto::KeyDerivationMethod::ChaCha20Poly1305Keygen,
+                        salt: vec![],
+                        argon2_params: zoe_wire_protocol::crypto::Argon2Params::default(),
+                        context: "dga-group-key".to_string(),
+                    },
+                ),
             metadata,
         };
 
-        let create_group = zoe_app_primitives::CreateGroup::new(group_info);
+        let create_group = zoe_app_primitives::group::events::CreateGroup::new(group_info);
 
         let create_group_result = dga1
             .create_group(

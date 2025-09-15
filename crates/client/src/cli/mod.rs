@@ -148,7 +148,7 @@ pub async fn full_cli_client(args: RelayClientArgs) -> Result<Client, ClientErro
 
     // Now manually establish the relay connection and wait for it to be ready
     info!("🔗 Establishing relay connection...");
-    use zoe_app_primitives::RelayAddress;
+    use zoe_app_primitives::connection::RelayAddress;
     let relay_address = RelayAddress::new(server_public_key)
         .with_address(server_addr.into())
         .with_name("CLI Server".to_string());

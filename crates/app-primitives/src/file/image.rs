@@ -2,12 +2,16 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-use crate::{FileRef, Metadata};
+use crate::{file::FileRef, metadata::Metadata};
+
+#[cfg(feature = "frb-api")]
+use flutter_rust_bridge::frb;
 
 /// Image reference with metadata
 ///
 /// Contains a file reference to an image along with image-specific metadata
 /// such as dimensions, format, and other properties useful for displaying images.
+#[cfg_attr(feature = "frb-api", frb(opaque, ignore_all))]
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Image {
     /// Reference to the stored image file
@@ -299,7 +303,7 @@ mod tests {
 
     #[test]
     fn test_image_with_complex_metadata() {
-        use crate::Metadata;
+        use crate::metadata::Metadata;
 
         let complex_metadata = vec![
             Metadata::Generic {

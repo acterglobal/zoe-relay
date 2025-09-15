@@ -628,7 +628,7 @@ async fn run_test_pqxdh_connection(
     info!("💬 Message to send: {}", message);
 
     // Get session manager and create PQXDH handler for WhatsApp bot protocol
-    let session_manager = zoe_client.session_manager().await;
+    let session_manager = zoe_client.session_manager();
     let pqxdh_handler = session_manager
         .pqxdh_handler(PqxdhInboxProtocol::WhatsAppBot)
         .await

@@ -1,11 +1,16 @@
 use serde::{Deserialize, Serialize};
 use zoe_wire_protocol::VerifyingKey;
 
-use crate::Metadata;
+use crate::metadata::Metadata;
+
+#[cfg(feature = "frb-api")]
+use flutter_rust_bridge::frb;
 
 /// Unified identity type - either a raw VerifyingKey or a VerifyingKey + alias
 ///
 /// This is the fundamental identity concept in the system.
+
+#[cfg_attr(feature = "frb-api", frb(opaque, ignore_all))]
 #[derive(Debug, Clone, Hash, PartialEq, PartialOrd, Eq, Ord, Serialize, Deserialize)]
 pub enum IdentityRef {
     /// Raw verifying key identity (always valid, no declaration needed)
@@ -61,7 +66,7 @@ pub enum IdentityType {
         alias_id: String,
     },
 }
-
+#[cfg_attr(feature = "frb-api", frb(opaque, ignore_all))]
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct IdentityInfo {
     /// The display name for this identity

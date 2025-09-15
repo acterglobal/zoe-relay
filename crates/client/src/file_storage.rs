@@ -36,7 +36,7 @@ use std::path::Path;
 use std::sync::Arc;
 use tokio::fs;
 use tracing::{debug, info, warn};
-use zoe_app_primitives::FileRef;
+use zoe_app_primitives::file::FileRef;
 use zoe_blob_store::BlobClient;
 use zoe_encrypted_storage::{CompressionConfig, ConvergentEncryption};
 use zoe_wire_protocol::BlobId;
@@ -497,7 +497,7 @@ mod tests {
 
         // Verify metadata
         assert_eq!(stored_info.original_size(), test_content.len());
-        assert_eq!(stored_info.filename(), Some("test_file.txt"));
+        assert_eq!(stored_info.filename(), Some("test_file.txt".to_string()));
         assert!(stored_info.content_type.is_some());
 
         // Retrieve the file
@@ -524,7 +524,7 @@ mod tests {
 
         // Verify metadata
         assert_eq!(stored_info.original_size(), test_data.len());
-        assert_eq!(stored_info.filename(), Some(reference_name));
+        assert_eq!(stored_info.filename(), Some(reference_name.to_string()));
         assert_eq!(stored_info.content_type, content_type);
 
         // Retrieve the data

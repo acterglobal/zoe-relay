@@ -2,7 +2,7 @@ use std::net::Ipv4Addr;
 use std::time::Duration;
 use tempfile::TempDir;
 use tokio::time::timeout;
-use zoe_app_primitives::{NetworkAddress, RelayAddress};
+use zoe_app_primitives::connection::{NetworkAddress, RelayAddress};
 use zoe_client::{Client, RelayConnectionStatus};
 use zoe_wire_protocol::KeyPair;
 

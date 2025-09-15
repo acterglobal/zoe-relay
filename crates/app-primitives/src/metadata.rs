@@ -1,7 +1,10 @@
 use forward_compatible_enum::ForwardCompatibleEnum;
 
-use crate::Image;
+use crate::file::Image;
+#[cfg(feature = "frb-api")]
+use flutter_rust_bridge::frb;
 
+#[cfg_attr(feature = "frb-api", frb(opaque))]
 #[derive(Debug, Clone, PartialEq, Eq, ForwardCompatibleEnum)]
 pub enum Metadata {
     #[discriminant(0)]

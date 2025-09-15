@@ -51,7 +51,7 @@ impl ZoeWhatsAppBotBuilder {
         let wa_bot_protocol = PqxdhInboxProtocol::WhatsAppBot;
 
         // Get session manager and PQXDH handler
-        let session_manager = zoe_client.session_manager().await;
+        let session_manager = zoe_client.session_manager();
         let pqxdh_handler = session_manager
             .pqxdh_handler(wa_bot_protocol)
             .await
