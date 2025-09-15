@@ -7,6 +7,9 @@ use zoe_wire_protocol::{ChaCha20Poly1305Content, EncryptionKey, MessageId};
 // Re-export them here for backwards compatibility
 pub use zoe_app_primitives::{GroupMember, GroupState};
 
+#[cfg(feature = "frb-api")]
+use flutter_rust_bridge::frb;
+
 #[derive(Debug, thiserror::Error)]
 pub enum GroupSessionError {
     /// Crypto error
@@ -23,6 +26,7 @@ pub enum GroupSessionError {
 /// Complete group session state including both group state and encryption keys
 /// Since both are stored in the same encrypted database and always used together,
 /// combining them reduces complexity and eliminates synchronization issues.
+#[cfg_attr(feature = "frb-api", frb(opaque))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GroupSession {
     /// The group's business logic state (members, roles, metadata, etc.)
@@ -50,6 +54,7 @@ where
         .map_err(|e| GroupSessionError::Crypto(format!("Group event encryption failed: {e}")))
 }
 
+#[cfg_attr(feature = "frb-api", frb(ignore))]
 impl GroupSession {
     /// Create a new group session with initial state and encryption key
     pub fn new(state: GroupState, encryption_key: EncryptionKey) -> Self {
@@ -107,6 +112,7 @@ impl GroupSession {
 }
 
 /// A snapshot of a group's state at a specific point in time
+#[cfg_attr(feature = "frb-api", frb(ignore))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GroupStateSnapshot {
     pub state: GroupState,

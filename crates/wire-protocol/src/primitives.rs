@@ -2,6 +2,9 @@ use crate::Hash;
 use serde::{Deserialize, Serialize};
 use std::ops::Deref;
 
+#[cfg(feature = "frb-api")]
+use flutter_rust_bridge::frb;
+
 /// A unique identifier for cryptographic keys
 ///
 /// This is a Blake3 hash that uniquely identifies a key, typically computed
@@ -216,8 +219,10 @@ impl rusqlite::types::FromSql for BlobId {
 /// This is a Blake3 hash that uniquely identifies message content, computed
 /// from the message's serialized bytes (excluding signature to handle ML-DSA randomness).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[cfg_attr(feature = "frb-api", frb(opaque))]
 pub struct MessageId(pub Hash);
 
+#[cfg_attr(feature = "frb-api", frb)]
 impl MessageId {
     /// Create a new MessageId from a Hash
     pub fn new(hash: Hash) -> Self {

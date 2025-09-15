@@ -3,6 +3,10 @@ name = "zoe-state-machine"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+default = []
+frb-api = ["dep:flutter_rust_bridge","zoe-app-primitives/frb-api"]
+
 [dependencies]
 # App primitives for common types
 zoe-app-primitives = { path = "../app-primitives" }
@@ -20,8 +24,18 @@ rand = "0.8"
 thiserror = "1.0"
 async-broadcast = { workspace = true }
 
+
+flutter_rust_bridge = { workspace = true, optional = true }
+
+
 [dev-dependencies]
 rand = "0.8"
 chrono = "0.4"
 hex = "0.4"
 tokio = { version = "1.0", features = ["macros", "rt"] }
+
+
+
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(frb_expand)'] }

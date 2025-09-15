@@ -107,7 +107,7 @@
 //!
 //! // Creator automatically becomes Owner
 //! assert_eq!(
-//!     group_state.get_member_role(&creator_public_key),
+//!     group_state.member_role(&creator_public_key),
 //!     Some(&GroupRole::Owner)
 //! );
 //! ```

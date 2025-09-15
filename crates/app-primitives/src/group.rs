@@ -359,8 +359,7 @@ mod tests {
 
     #[test]
     fn test_encryption_settings_builder() {
-        let settings = EncryptionSettings::new()
-            .with_key_rotation(3600);
+        let settings = EncryptionSettings::new().with_key_rotation(3600);
 
         assert!(settings.key_rotation_enabled);
         assert_eq!(settings.key_rotation_interval, Some(3600));

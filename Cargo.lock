@@ -9603,6 +9603,7 @@ dependencies = [
  "blake3",
  "chrono",
  "ed25519-dalek",
+ "flutter_rust_bridge",
  "hex",
  "libcrux-ml-dsa",
  "postcard",

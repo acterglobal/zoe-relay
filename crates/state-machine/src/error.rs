@@ -3,6 +3,10 @@ use zoe_wire_protocol::MessageFullError;
 
 use crate::state::GroupSessionError;
 
+#[cfg(feature = "frb-api")]
+use flutter_rust_bridge::frb;
+
+#[cfg_attr(feature = "frb-api", frb(opaque))]
 #[derive(Error, Debug)]
 pub enum GroupError {
     #[error("Serialization error: {0}")]

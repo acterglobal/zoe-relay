@@ -14,6 +14,9 @@
 use libcrux_ml_dsa::ml_dsa_65::MLDSA65SigningKey;
 use x25519_dalek::{PublicKey as X25519PublicKey, StaticSecret as X25519PrivateKey};
 
+#[cfg(feature = "frb-api")]
+use flutter_rust_bridge::frb;
+
 // ChaCha20-Poly1305 and mnemonic support
 use argon2::{Argon2, PasswordHasher};
 use bip39::{Language, Mnemonic};
@@ -178,6 +181,7 @@ impl Default for Argon2Params {
 }
 
 /// ChaCha20-Poly1305 encryption key
+#[cfg_attr(feature = "frb-api", frb(opaque))]
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct EncryptionKey {
     /// The actual key bytes (32 bytes for ChaCha20)

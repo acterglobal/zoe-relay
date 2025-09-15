@@ -11,9 +11,11 @@ use std::{collections::HashMap, sync::Arc};
 use zoe_wire_protocol::{Kind, Message, MessageFull, Tag};
 
 use crate::{
-    GroupActivityEvent, GroupError, GroupKeyInfo, GroupResult, GroupRole, GroupSession,
+    error::{GroupError, GroupResult},
+    state::GroupSession,
     state::encrypt_group_event_content,
 };
+use zoe_app_primitives::{GroupActivityEvent, GroupKeyInfo, events::roles::GroupRole};
 
 use async_broadcast::{Receiver, Sender};
 use tokio::sync::RwLock;
@@ -22,6 +24,10 @@ use tokio::sync::RwLock;
 use zoe_app_primitives::{GroupState, GroupStateError};
 use zoe_wire_protocol::{Content, EncryptionKey, MnemonicPhrase};
 
+#[cfg(feature = "frb-api")]
+use flutter_rust_bridge::frb;
+
+#[cfg_attr(feature = "frb-api", frb(ignore))]
 #[derive(Debug, Clone)]
 pub enum GroupDataUpdate {
     GroupAdded(GroupSession),
@@ -30,6 +36,7 @@ pub enum GroupDataUpdate {
 }
 
 /// Digital Group Assistant - manages encrypted groups using the wire protocol
+#[cfg_attr(feature = "frb-api", frb(opaque))]
 #[derive(Debug, Clone)]
 pub struct GroupManager {
     /// All group states managed by this DGA instance
@@ -43,6 +50,7 @@ pub struct GroupManager {
 }
 
 /// Result of creating a new group
+#[cfg_attr(feature = "frb-api", frb(ignore))]
 #[derive(Debug, Clone)]
 pub struct CreateGroupResult {
     /// The created group's unique identifier (Blake3 hash of the CreateGroup message)
@@ -51,7 +59,6 @@ pub struct CreateGroupResult {
     /// The full message that was created
     pub message: MessageFull,
 }
-
 pub struct GroupManagerBuilder {
     sessions: Vec<GroupSession>,
 }
@@ -78,17 +85,65 @@ impl GroupManagerBuilder {
     }
 }
 
-// Helper function removed - now using KeyPair enum which provides direct access to verifying key
+#[cfg_attr(feature = "frb-api", frb)]
+impl GroupManager {
+    /// Generate a new encryption key for a group (ChaCha20-Poly1305)
+    pub fn generate_group_key(timestamp: u64) -> EncryptionKey {
+        EncryptionKey::generate(timestamp)
+    }
+    /// Get a group's current state
+    pub async fn group_state(&self, group_id: &MessageId) -> Option<GroupState> {
+        let groups = self.groups.read().await;
+        groups.get(group_id).map(|session| session.state.clone())
+    }
+    /// Get a group session (state + encryption)
+    pub async fn group_session(&self, group_id: &MessageId) -> Option<GroupSession> {
+        let groups = self.groups.read().await;
+        groups.get(group_id).cloned()
+    }
 
+    /// Get all managed group sessions
+    pub async fn all_group_sessions(&self) -> HashMap<MessageId, GroupSession> {
+        let groups = self.groups.read().await;
+        groups.clone()
+    }
+
+    /// Get all managed groups (state only, for backward compatibility)
+    pub async fn all_groups(&self) -> HashMap<MessageId, GroupState> {
+        let groups = self.groups.read().await;
+        groups
+            .iter()
+            .map(|(id, session)| (*id, session.state.clone()))
+            .collect()
+    }
+
+    /// Check if a user is a member of a specific group
+    pub async fn is_member(&self, group_id: &MessageId, user: &VerifyingKey) -> bool {
+        let groups = self.groups.read().await;
+        groups
+            .get(group_id)
+            .map(|session| session.state.is_member(user))
+            .unwrap_or(false)
+    }
+
+    /// Get a user's role in a specific group
+    pub async fn member_role(
+        &self,
+        group_id: &MessageId,
+        user: &VerifyingKey,
+    ) -> Option<GroupRole> {
+        let groups = self.groups.read().await;
+        groups
+            .get(group_id)
+            .and_then(|session| session.state.member_role(user).cloned())
+    }
+}
+
+#[cfg_attr(feature = "frb-api", frb(ignore))]
 impl GroupManager {
     /// Create a new DGA instance builder
     pub fn builder() -> GroupManagerBuilder {
         GroupManagerBuilder { sessions: vec![] }
-    }
-
-    /// Generate a new encryption key for a group (ChaCha20-Poly1305)
-    pub fn generate_group_key(timestamp: u64) -> EncryptionKey {
-        EncryptionKey::generate(timestamp)
     }
 
     /// Create a group key from a mnemonic phrase
@@ -346,56 +401,8 @@ impl GroupManager {
         ))
     }
 
-    /// Get a group's current state
-    pub async fn get_group_state(&self, group_id: &MessageId) -> Option<GroupState> {
-        let groups = self.groups.read().await;
-        groups.get(group_id).map(|session| session.state.clone())
-    }
-
-    /// Get a group session (state + encryption)
-    pub async fn get_group_session(&self, group_id: &MessageId) -> Option<GroupSession> {
-        let groups = self.groups.read().await;
-        groups.get(group_id).cloned()
-    }
-
-    /// Get all managed group sessions
-    pub async fn get_all_group_sessions(&self) -> HashMap<MessageId, GroupSession> {
-        let groups = self.groups.read().await;
-        groups.clone()
-    }
-
-    /// Get all managed groups (state only, for backward compatibility)
-    pub async fn get_all_groups(&self) -> HashMap<MessageId, GroupState> {
-        let groups = self.groups.read().await;
-        groups
-            .iter()
-            .map(|(id, session)| (*id, session.state.clone()))
-            .collect()
-    }
-
-    /// Check if a user is a member of a specific group
-    pub async fn is_member(&self, group_id: &MessageId, user: &VerifyingKey) -> bool {
-        let groups = self.groups.read().await;
-        groups
-            .get(group_id)
-            .map(|session| session.state.is_member(user))
-            .unwrap_or(false)
-    }
-
-    /// Get a user's role in a specific group
-    pub async fn get_member_role(
-        &self,
-        group_id: &MessageId,
-        user: &VerifyingKey,
-    ) -> Option<GroupRole> {
-        let groups = self.groups.read().await;
-        groups
-            .get(group_id)
-            .and_then(|session| session.state.get_member_role(user).cloned())
-    }
-
     /// List all groups a user is a member of
-    pub async fn get_user_groups(&self, user: &VerifyingKey) -> Vec<GroupState> {
+    pub async fn user_groups(&self, user: &VerifyingKey) -> Vec<GroupState> {
         let groups = self.groups.read().await;
         groups
             .values()
@@ -472,7 +479,7 @@ impl Default for GroupManager {
 // Helper functions for common encrypted group operations
 
 /// Create a leave group event
-pub fn create_leave_group_event(message: Option<String>) -> GroupActivityEvent<()> {
+pub fn create_leave_group_event<T>(message: Option<String>) -> GroupActivityEvent<T> {
     GroupActivityEvent::LeaveGroup { message }
 }
 
@@ -480,7 +487,7 @@ pub fn create_leave_group_event(message: Option<String>) -> GroupActivityEvent<(
 /// TODO: This function is temporarily disabled due to IdentityRef expecting Ed25519 keys
 /// while the message system now uses ML-DSA keys. This needs to be updated when
 /// IdentityRef is migrated to ML-DSA.
-pub fn create_role_update_event(member: VerifyingKey, role: GroupRole) -> GroupActivityEvent<()> {
+pub fn create_role_update_event<T>(member: VerifyingKey, role: GroupRole) -> GroupActivityEvent<T> {
     // Use the provided ML-DSA member key directly
     GroupActivityEvent::AssignRole {
         target: IdentityRef::Key(member),
@@ -494,6 +501,6 @@ pub fn create_group_activity_event<T>(activity_data: T) -> GroupActivityEvent<T>
 }
 
 /// Create a group update event
-pub fn create_group_update_event(group_info: GroupInfo) -> GroupActivityEvent<()> {
+pub fn create_group_update_event<T>(group_info: GroupInfo) -> GroupActivityEvent<T> {
     GroupActivityEvent::UpdateGroup(group_info)
 }

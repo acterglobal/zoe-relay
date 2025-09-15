@@ -4,6 +4,7 @@ use super::{
 use crate::error::Result;
 use std::sync::Arc;
 use zoe_blob_store::BlobClient;
+use zoe_state_machine::GroupManager;
 use zoe_wire_protocol::{KeyPair, VerifyingKey};
 
 #[cfg(not(feature = "frb-api"))]
@@ -36,6 +37,23 @@ impl Client {
     pub fn id_hex(&self) -> String {
         hex::encode(self.client_secret.inner_keypair.id())
     }
+
+    /// Close the client and clean up all resources
+    /// Get access to the session manager for PQXDH operations
+    ///
+    /// This provides access to the underlying session manager which handles
+    /// PQXDH protocol handlers and state management.
+    ///
+    /// # Returns
+    ///
+    /// A reference to the `SessionManager`
+    pub async fn session_manager(&self) -> Arc<ZoeClientSessionManager> {
+        self.session_manager.clone()
+    }
+
+    pub async fn group_manager(&self) -> Arc<GroupManager> {
+        self.session_manager.group_manager().clone()
+    }
 }
 
 #[cfg_attr(feature = "frb-api", frb(ignore))]
@@ -63,19 +81,6 @@ impl Client {
     /// Get the client's keypair
     pub fn keypair(&self) -> &Arc<KeyPair> {
         &self.client_secret.inner_keypair
-    }
-
-    /// Close the client and clean up all resources
-    /// Get access to the session manager for PQXDH operations
-    ///
-    /// This provides access to the underlying session manager which handles
-    /// PQXDH protocol handlers and state management.
-    ///
-    /// # Returns
-    ///
-    /// A reference to the `SessionManager`
-    pub async fn session_manager(&self) -> &Arc<ZoeClientSessionManager> {
-        &self.session_manager
     }
     /// Get a reference to the blob client for advanced operations
     ///

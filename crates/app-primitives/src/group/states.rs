@@ -6,6 +6,9 @@ use super::events::roles::GroupRole;
 use super::events::{GroupActivityEvent, GroupSettings};
 use crate::{IdentityInfo, IdentityRef, IdentityType, Metadata, Permission};
 
+#[cfg(feature = "frb-api")]
+use flutter_rust_bridge::frb;
+
 /// Advanced identity and membership management for distributed groups.
 ///
 /// `GroupMembership` handles the complex identity scenarios that arise in distributed,
@@ -572,6 +575,7 @@ pub struct GroupMember {
 /// let generic_meta = group_state.generic_metadata();
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "frb-api", frb(opaque))]
 pub struct GroupState {
     /// The group identifier - this is the Blake3 hash of the CreateGroup message
     /// Also serves as the root event ID (used as channel tag)
@@ -655,7 +659,7 @@ impl GroupState {
     /// assert_eq!(group_state.version, 1);
     /// assert!(group_state.is_member(&creator_key.public_key()));
     /// assert_eq!(
-    ///     group_state.get_member_role(&creator_key.public_key()),
+    ///     group_state.member_role(&creator_key.public_key()),
     ///     Some(&GroupRole::Owner)
     /// );
     /// ```
@@ -1000,7 +1004,7 @@ impl GroupState {
     }
 
     /// Get a member's role
-    pub fn get_member_role(&self, user: &VerifyingKey) -> Option<&GroupRole> {
+    pub fn member_role(&self, user: &VerifyingKey) -> Option<&GroupRole> {
         let user_ref = IdentityRef::Key(user.clone());
         self.members.get(&user_ref).map(|m| &m.role)
     }
@@ -1381,7 +1385,7 @@ mod tests {
         // Verify creator is added as owner
         assert!(group_state.is_member(&creator_key));
         assert_eq!(
-            group_state.get_member_role(&creator_key),
+            group_state.member_role(&creator_key),
             Some(&GroupRole::Owner)
         );
     }
@@ -1443,7 +1447,7 @@ mod tests {
     }
 
     #[test]
-    fn test_group_state_get_member_role() {
+    fn test_group_state_member_role() {
         let creator_key = create_test_verifying_key();
         let group_state = GroupState::new(
             create_test_message_id(5),
@@ -1455,12 +1459,12 @@ mod tests {
         );
 
         assert_eq!(
-            group_state.get_member_role(&creator_key),
+            group_state.member_role(&creator_key),
             Some(&GroupRole::Owner)
         );
 
         let non_member_key = create_test_verifying_key();
-        assert_eq!(group_state.get_member_role(&non_member_key), None);
+        assert_eq!(group_state.member_role(&non_member_key), None);
     }
 
     #[test]
@@ -1590,7 +1594,7 @@ mod tests {
 
         // Verify new member has default role
         assert_eq!(
-            group_state.get_member_role(&new_member_key),
+            group_state.member_role(&new_member_key),
             Some(&GroupRole::Member)
         );
     }
@@ -1711,7 +1715,7 @@ mod tests {
 
         assert!(result.is_ok());
         assert_eq!(
-            group_state.get_member_role(&member_key),
+            group_state.member_role(&member_key),
             Some(&GroupRole::Admin)
         );
         assert_eq!(group_state.version, 3);
@@ -2134,7 +2138,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(
-            group_state.get_member_role(&member1_key),
+            group_state.member_role(&member1_key),
             Some(&GroupRole::Admin)
         );
         assert_eq!(group_state.version, 4);
@@ -2154,7 +2158,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(
-            group_state.get_member_role(&member2_key),
+            group_state.member_role(&member2_key),
             Some(&GroupRole::Moderator)
         );
         assert_eq!(group_state.version, 5);

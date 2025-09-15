@@ -906,7 +906,7 @@ mod tests {
         // For this test, we simulate the second client receiving the shared encryption key
 
         let group_session = dga1
-            .get_group_session(&create_group_result.group_id)
+            .group_session(&create_group_result.group_id)
             .await
             .ok_or_else(|| anyhow::anyhow!("Failed to get created group session"))?;
 
@@ -995,7 +995,7 @@ mod tests {
 
         // Get the group state from client 2's DGA
         let client2_group_state = dga2
-            .get_group_state(&create_group_result.group_id)
+            .group_state(&create_group_result.group_id)
             .await
             .ok_or_else(|| {
                 anyhow::anyhow!("Client 2 should have the group state after processing events")

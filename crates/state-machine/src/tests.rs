@@ -49,11 +49,11 @@ async fn test_create_encrypted_group() {
         .unwrap();
 
     // Verify group was created
-    let group_state = dga.get_group_state(&result.group_id).await;
+    let group_state = dga.group_state(&result.group_id).await;
     assert!(group_state.is_some());
 
     // Verify group has encryption key (now part of GroupSession)
-    let group_session = dga.get_group_session(&result.group_id).await;
+    let group_session = dga.group_session(&result.group_id).await;
     assert!(group_session.is_some());
 
     // Verify group state
@@ -66,7 +66,7 @@ async fn test_create_encrypted_group() {
     assert_eq!(group_state.members.len(), 1);
     assert!(group_state.is_member(&alice_key.public_key()));
     assert_eq!(
-        group_state.get_member_role(&alice_key.public_key()),
+        group_state.member_role(&alice_key.public_key()),
         Some(&GroupRole::Owner)
     );
 }
@@ -93,7 +93,7 @@ async fn test_process_encrypted_create_group_event() {
 
     // Create a fresh DGA instance and add the complete group session
     let fresh_dga = GroupManager::builder().build();
-    let group_session = dga.get_group_session(&result.group_id).await.unwrap();
+    let group_session = dga.group_session(&result.group_id).await.unwrap();
     fresh_dga
         .add_group_session(result.group_id, group_session)
         .await;
@@ -105,7 +105,7 @@ async fn test_process_encrypted_create_group_event() {
         .unwrap();
 
     // Verify the group was created
-    let group_state = fresh_dga.get_group_state(&result.group_id).await.unwrap();
+    let group_state = fresh_dga.group_state(&result.group_id).await.unwrap();
     assert_eq!(group_state.name, "Test Group");
     assert_eq!(
         group_state.description(),
@@ -140,7 +140,7 @@ async fn test_encrypted_group_activity() {
     dga.process_group_event(&activity_message).await.unwrap();
 
     // Verify Alice is still the only member (she was already the creator)
-    let group_state = dga.get_group_state(&result.group_id).await.unwrap();
+    let group_state = dga.group_state(&result.group_id).await.unwrap();
     assert_eq!(group_state.members.len(), 1);
     assert!(group_state.is_member(&alice_key.public_key()));
 }
@@ -163,7 +163,7 @@ async fn test_new_member_via_activity() {
 
     // Create a separate DGA instance for Bob and give him the complete session
     let bob_dga = GroupManager::builder().build();
-    let group_session = dga.get_group_session(&result.group_id).await.unwrap();
+    let group_session = dga.group_session(&result.group_id).await.unwrap();
     bob_dga
         .add_group_session(result.group_id, group_session)
         .await;
@@ -182,12 +182,12 @@ async fn test_new_member_via_activity() {
     dga.process_group_event(&bob_message).await.unwrap();
 
     // Verify Bob is now an active member
-    let group_state = dga.get_group_state(&result.group_id).await.unwrap();
+    let group_state = dga.group_state(&result.group_id).await.unwrap();
     assert_eq!(group_state.members.len(), 2);
     assert!(group_state.is_member(&alice_key.public_key()));
     assert!(group_state.is_member(&bob_key.public_key()));
     assert_eq!(
-        group_state.get_member_role(&bob_key.public_key()),
+        group_state.member_role(&bob_key.public_key()),
         Some(&GroupRole::Member)
     );
 }
@@ -207,7 +207,7 @@ async fn test_role_update() {
 
     // Simulate Bob joining by sending an activity
     let bob_dga = GroupManager::builder().build();
-    let group_session = dga.get_group_session(&result.group_id).await.unwrap();
+    let group_session = dga.group_session(&result.group_id).await.unwrap();
     bob_dga
         .add_group_session(result.group_id, group_session)
         .await;
@@ -230,9 +230,9 @@ async fn test_role_update() {
     dga.process_group_event(&role_message).await.unwrap();
 
     // Verify Bob's role was updated
-    let group_state = dga.get_group_state(&result.group_id).await.unwrap();
+    let group_state = dga.group_state(&result.group_id).await.unwrap();
     assert_eq!(
-        group_state.get_member_role(&bob_key.public_key()),
+        group_state.member_role(&bob_key.public_key()),
         Some(&GroupRole::Admin)
     );
 }
@@ -252,7 +252,7 @@ async fn test_leave_group_event() {
 
     // Add Bob as a member first
     let bob_dga = GroupManager::builder().build();
-    let group_session = dga.get_group_session(&result.group_id).await.unwrap();
+    let group_session = dga.group_session(&result.group_id).await.unwrap();
     bob_dga
         .add_group_session(result.group_id, group_session)
         .await;
@@ -265,7 +265,7 @@ async fn test_leave_group_event() {
 
     // Verify Bob is a member
     assert_eq!(
-        dga.get_group_state(&result.group_id)
+        dga.group_state(&result.group_id)
             .await
             .unwrap()
             .members
@@ -284,7 +284,7 @@ async fn test_leave_group_event() {
     dga.process_group_event(&leave_message).await.unwrap();
 
     // Verify Bob is no longer in active members
-    let group_state = dga.get_group_state(&result.group_id).await.unwrap();
+    let group_state = dga.group_state(&result.group_id).await.unwrap();
     assert_eq!(group_state.members.len(), 1);
     assert!(!group_state.is_member(&bob_key.public_key()));
     assert!(group_state.is_member(&alice_key.public_key()));
@@ -340,7 +340,7 @@ async fn test_permission_denied_for_role_update() {
 
     // Add Bob as a regular member
     let bob_dga = GroupManager::builder().build();
-    let group_session = dga.get_group_session(&result.group_id).await.unwrap();
+    let group_session = dga.group_session(&result.group_id).await.unwrap();
     bob_dga
         .add_group_session(result.group_id, group_session)
         .await;
@@ -538,11 +538,11 @@ async fn test_mnemonic_key_integration_with_group_creation() {
         .unwrap();
 
     // Verify group was created successfully
-    assert!(dga.get_group_session(&result.group_id).await.is_some());
-    assert!(dga.get_group_session(&result.group_id).await.is_some());
+    assert!(dga.group_session(&result.group_id).await.is_some());
+    assert!(dga.group_session(&result.group_id).await.is_some());
 
     // Verify the key is properly stored
-    let group_session = dga.get_group_session(&result.group_id).await.unwrap();
+    let group_session = dga.group_session(&result.group_id).await.unwrap();
     let stored_key = &group_session.current_key;
     assert_eq!(stored_key.key, encryption_key.key);
     assert_eq!(stored_key.key_id, encryption_key.key_id);

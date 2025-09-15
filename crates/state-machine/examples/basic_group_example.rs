@@ -80,7 +80,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     dga.process_group_event(&activity_message).await?;
 
     // Check the group state
-    let group_state = dga.get_group_state(&create_result.group_id).await.unwrap();
+    let group_state = dga.group_state(&create_result.group_id).await.unwrap();
     println!(
         "Group '{}' now has {} active members",
         group_state.name,
