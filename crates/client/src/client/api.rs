@@ -3,8 +3,8 @@ use super::{
 };
 use crate::error::Result;
 use std::sync::Arc;
-use zoe_blob_store::BlobClient;
-use zoe_state_machine::GroupManager;
+use zoe_blob_store::client::BlobClient;
+use zoe_state_machine::group::GroupManager;
 use zoe_wire_protocol::{KeyPair, VerifyingKey};
 
 #[cfg(not(feature = "frb-api"))]

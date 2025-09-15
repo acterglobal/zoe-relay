@@ -25,7 +25,7 @@ pub enum ClientError {
     #[error("Encryption error: {0}")]
     Encryption(#[from] zoe_encrypted_storage::ConvergentEncryptionError),
     #[error("Blob store error: {0}")]
-    BlobStore(#[from] zoe_blob_store::BlobStoreError),
+    BlobStore(#[from] zoe_blob_store::error::BlobStoreError),
     #[error("Challenge error: {0}")]
     Challenge(#[from] anyhow::Error),
     #[error("Protocol error: {0}")]

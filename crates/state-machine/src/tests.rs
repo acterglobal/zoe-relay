@@ -1,7 +1,7 @@
+use crate::group::{GroupDataUpdate, GroupManager};
 use crate::group::{
     create_group_activity_event, create_leave_group_event, create_role_update_event,
 };
-use crate::*;
 use rand::thread_rng;
 use zoe_app_primitives::group::events::key_info::GroupKeyInfo;
 use zoe_app_primitives::group::events::roles::GroupRole;

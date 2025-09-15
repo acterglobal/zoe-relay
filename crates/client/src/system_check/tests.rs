@@ -10,9 +10,9 @@ use tempfile::TempDir;
 use tracing::info;
 
 use zoe_app_primitives::connection::{NetworkAddress, RelayAddress};
-use zoe_blob_store::BlobServiceImpl;
-use zoe_message_store::RedisMessageStorage;
-use zoe_relay::{RelayServer, RelayServiceRouter};
+use zoe_blob_store::service::BlobServiceImpl;
+use zoe_message_store::storage::RedisMessageStorage;
+use zoe_relay::{relay::RelayServer, services::RelayServiceRouter};
 use zoe_wire_protocol::{KeyPair, VerifyingKey};
 
 use super::{

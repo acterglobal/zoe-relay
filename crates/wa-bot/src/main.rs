@@ -3,14 +3,15 @@ use clap::{Parser, Subcommand};
 use futures::StreamExt;
 use std::sync::Arc;
 use tracing::{error, info, warn};
+use whatsmeow::WhatsAppBot;
 use zoe_client::cli::{
     RelayClientArgs, RelayClientDefaultCommands, full_cli_client, main_setup, run_default_command,
     run_with_health_check,
 };
 use zoe_wa_bot::{
-    WhatsAppBot, ZoeWhatsAppBotBuilder,
     bot::ZoeBridgeBot,
     bridge_event::BridgeEvent,
+    builder::ZoeWhatsAppBotBuilder,
     connectable::{WhatsAppBotExt, connect_whatsapp_bot},
     util::{extract_name_from_jid, should_display_message},
 };

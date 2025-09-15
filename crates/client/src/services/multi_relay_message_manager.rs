@@ -836,7 +836,7 @@ mod tests {
             .returning(|_| Ok(vec![]));
         // Mock the expected calls for group manager initialization
         mock_state_storage
-            .expect_list_namespace_data::<zoe_state_machine::GroupSession>()
+            .expect_list_namespace_data::<zoe_state_machine::state::GroupSession>()
             .returning(|_| Ok(vec![]));
 
         let mock_state_storage = Arc::new(mock_state_storage);

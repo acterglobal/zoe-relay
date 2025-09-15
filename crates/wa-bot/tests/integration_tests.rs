@@ -1,7 +1,7 @@
 /// Integration tests for the WhatsApp bot
 use anyhow::Result;
+use whatsmeow::WhatsAppBot;
 use zoe_wa_bot::{
-    WhatsAppBot,
     connectable::WhatsAppBotExt,
     util::{extract_name_from_jid, should_display_message},
 };

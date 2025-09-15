@@ -7,8 +7,9 @@ use std::sync::{Arc, Once};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::Notify;
 use tokio::time::{timeout, Duration};
-use zoe_relay::Service;
-use zoe_relay::{ConnectionInfo, RelayServer, ServiceRouter};
+use zoe_relay::router::Service;
+use zoe_relay::{relay::RelayServer, router::ServiceRouter};
+use zoe_wire_protocol::ConnectionInfo;
 use zoe_wire_protocol::KeyPair;
 use zoe_wire_protocol::StreamPair;
 

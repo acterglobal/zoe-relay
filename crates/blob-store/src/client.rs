@@ -12,7 +12,7 @@ use tarpc::context;
 use tracing::{error, info, warn};
 use zoe_wire_protocol::{BlobId, BlobService};
 
-use crate::{BlobServiceImpl, BlobStoreError};
+use crate::{error::BlobStoreError, service::BlobServiceImpl};
 
 /// Client-side blob store with sync capabilities
 #[derive(Clone)]
@@ -460,13 +460,14 @@ mod tests {
     }
 
     // Helper function to create an in-process remote server for testing
-    async fn create_test_remote_service() -> crate::BlobServiceImpl {
+    async fn create_test_remote_service() -> BlobServiceImpl {
+        use crate::service::BlobServiceImpl;
         use tempfile::TempDir;
 
         let temp_dir = TempDir::new().unwrap();
         let data_dir = temp_dir.path().to_path_buf();
 
-        let service = crate::BlobServiceImpl::new(data_dir).await.unwrap();
+        let service = BlobServiceImpl::new(data_dir).await.unwrap();
 
         // Prevent temp_dir from being dropped
         std::mem::forget(temp_dir);

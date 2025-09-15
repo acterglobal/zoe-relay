@@ -102,15 +102,17 @@ use anyhow::Result;
 use quinn::{Connection, Endpoint};
 use std::sync::Arc;
 use std::{net::SocketAddr, path::PathBuf};
-use zoe_blob_store::{BlobServiceImpl, BlobStoreError};
-use zoe_message_store::RedisMessageStorage;
+use zoe_blob_store::{error::BlobStoreError, service::BlobServiceImpl};
+use zoe_message_store::storage::RedisMessageStorage;
 use zoe_wire_protocol::{ConnectionInfo, CryptoError, VerifyingKey};
 
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tracing::{debug, error, info};
 use zoe_wire_protocol::{connection::server::create_server_endpoint, KeyPair, StreamPair};
 
-use crate::{RelayServiceRouter, Service, ServiceError, ServiceRouter};
+use crate::{
+    error::ServiceError, router::Service, router::ServiceRouter, services::RelayServiceRouter,
+};
 
 #[derive(Debug, thiserror::Error)]
 pub enum RelayServerBuilderError {
@@ -124,7 +126,7 @@ pub enum RelayServerBuilderError {
     RedisUrlNotSet,
 
     #[error("Redis message storage error: {0}")]
-    RedisMessageStorageError(zoe_message_store::MessageStoreError),
+    RedisMessageStorageError(zoe_message_store::error::MessageStoreError),
 
     #[error("Relay server error: {0}")]
     RelayServerError(RelayServerError),

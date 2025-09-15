@@ -10,5 +10,5 @@ pub mod state;
 #[cfg(test)]
 mod tests;
 
-pub use group::{GroupDataUpdate, GroupManager};
-pub use state::{GroupSession, GroupStateSnapshot};
+// Note: Client crate is allowed to re-export from state-machine
+// but state-machine itself should not re-export

@@ -41,7 +41,7 @@ use tokio::sync::RwLock;
 use tokio::task::JoinHandle;
 
 use zoe_client_storage::{StateNamespace, StateStorage, StorageError};
-use zoe_state_machine::{GroupDataUpdate, GroupManager};
+use zoe_state_machine::group::{GroupDataUpdate, GroupManager};
 use zoe_wire_protocol::PqxdhInboxProtocol;
 
 use crate::pqxdh::PqxdhProtocolHandler;
@@ -210,7 +210,7 @@ impl<S: StateStorage + 'static, M: MessagesManagerTrait + 'static> SessionManage
         client_keypair: Arc<zoe_wire_protocol::KeyPair>,
     ) -> SessionManagerResult<(GroupManager, JoinHandle<()>)> {
         let namespace = StateNamespace::GroupSession(KeyId::from(*client_keypair.id()));
-        let sessions: Vec<(Vec<u8>, zoe_state_machine::GroupSession)> = storage
+        let sessions: Vec<(Vec<u8>, zoe_state_machine::state::GroupSession)> = storage
             .list_namespace_data(&namespace)
             .await
             .map_err(SessionManagerError::Storage)?;
@@ -421,7 +421,7 @@ mod tests {
             .expect_list_namespace_data::<PqxdhProtocolState>()
             .returning(|_| Ok(Vec::new()));
         mock_storage
-            .expect_list_namespace_data::<zoe_state_machine::GroupSession>()
+            .expect_list_namespace_data::<zoe_state_machine::state::GroupSession>()
             .returning(|_| Ok(Vec::new()));
 
         let manager = SessionManagerBuilder::new(Arc::new(mock_storage), Arc::new(mock_messages))
@@ -466,7 +466,7 @@ mod tests {
             .expect_list_namespace_data::<PqxdhProtocolState>()
             .returning(|_| Ok(Vec::new()));
         mock_storage
-            .expect_list_namespace_data::<zoe_state_machine::GroupSession>()
+            .expect_list_namespace_data::<zoe_state_machine::state::GroupSession>()
             .returning(|_| Ok(Vec::new()));
 
         // Mock storage for initial state persistence
@@ -509,7 +509,7 @@ mod tests {
             .expect_list_namespace_data::<PqxdhProtocolState>()
             .returning(|_| Ok(Vec::new()));
         mock_storage
-            .expect_list_namespace_data::<zoe_state_machine::GroupSession>()
+            .expect_list_namespace_data::<zoe_state_machine::state::GroupSession>()
             .returning(|_| Ok(Vec::new()));
 
         // Mock storage for initial state persistence (should only be called once)
@@ -559,7 +559,7 @@ mod tests {
 
         // Mock storage to return empty group session data
         mock_storage
-            .expect_list_namespace_data::<zoe_state_machine::GroupSession>()
+            .expect_list_namespace_data::<zoe_state_machine::state::GroupSession>()
             .returning(|_| Ok(Vec::new()));
 
         let manager = SessionManagerBuilder::new(Arc::new(mock_storage), Arc::new(mock_messages))
@@ -609,7 +609,7 @@ mod tests {
             .expect_list_namespace_data::<PqxdhProtocolState>()
             .returning(|_| Ok(Vec::new()));
         mock_storage
-            .expect_list_namespace_data::<zoe_state_machine::GroupSession>()
+            .expect_list_namespace_data::<zoe_state_machine::state::GroupSession>()
             .returning(|_| Ok(Vec::new()));
 
         // Mock storage for initial state persistence (2 protocols)

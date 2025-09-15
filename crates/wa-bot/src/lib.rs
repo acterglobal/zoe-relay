@@ -4,5 +4,5 @@ pub mod builder;
 pub mod connectable;
 pub mod util;
 
-pub use builder::ZoeWhatsAppBotBuilder;
-pub use whatsmeow::WhatsAppBot;
+// Note: Client crate is allowed to re-export from wa-bot
+// but wa-bot itself should not re-export

@@ -37,7 +37,7 @@ use std::sync::Arc;
 use tokio::fs;
 use tracing::{debug, info, warn};
 use zoe_app_primitives::file::FileRef;
-use zoe_blob_store::BlobClient;
+use zoe_blob_store::client::BlobClient;
 use zoe_encrypted_storage::{CompressionConfig, ConvergentEncryption};
 use zoe_wire_protocol::BlobId;
 

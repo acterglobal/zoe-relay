@@ -16,11 +16,11 @@ use tempfile::TempDir;
 use tokio::time::timeout;
 use tracing::{debug, info, warn};
 use zoe_app_primitives::file::CompressionConfig;
-use zoe_blob_store::BlobServiceImpl;
+use zoe_blob_store::service::BlobServiceImpl;
 use zoe_client::services::MessagesManagerTrait;
 use zoe_client::{RelayClient, RelayClientBuilder};
-use zoe_message_store::RedisMessageStorage;
-use zoe_relay::{RelayServer, RelayServiceRouter};
+use zoe_message_store::storage::RedisMessageStorage;
+use zoe_relay::{relay::RelayServer, services::RelayServiceRouter};
 use zoe_wire_protocol::BlobId;
 use zoe_wire_protocol::{
     Algorithm, KeyPair, Kind, Message, MessageFilters, MessageFull, Tag, VerifyingKey,
@@ -836,9 +836,10 @@ mod tests {
         // Step 1: Client 1 creates a new group using state machine
         // First, generate a shared encryption key that both clients will use
         let timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
-        let shared_encryption_key = zoe_state_machine::GroupManager::generate_group_key(timestamp);
+        let shared_encryption_key =
+            zoe_state_machine::group::GroupManager::generate_group_key(timestamp);
 
-        let dga1 = zoe_state_machine::GroupManager::builder().build();
+        let dga1 = zoe_state_machine::group::GroupManager::builder().build();
 
         // Create the group using app-primitives structures
         let metadata = vec![
@@ -916,7 +917,7 @@ mod tests {
             .ok_or_else(|| anyhow::anyhow!("Failed to get created group session"))?;
 
         // Client 2 sets up their DGA and receives the complete group session
-        let dga2 = zoe_state_machine::GroupManager::builder().build();
+        let dga2 = zoe_state_machine::group::GroupManager::builder().build();
         dga2.add_group_session(create_group_result.group_id, group_session.clone())
             .await;
 

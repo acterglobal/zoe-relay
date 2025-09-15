@@ -1,4 +1,4 @@
-use crate::Service;
+use crate::router::Service;
 use async_trait::async_trait;
 use futures::StreamExt;
 use tarpc::{
@@ -6,7 +6,7 @@ use tarpc::{
     server::{BaseChannel, Channel},
 };
 use tokio_util::codec::LengthDelimitedCodec;
-use zoe_blob_store::BlobServiceImpl;
+use zoe_blob_store::service::BlobServiceImpl;
 use zoe_wire_protocol::{BlobError, BlobService as _, PostcardFormat, StreamPair};
 
 #[derive(Debug, thiserror::Error)]

@@ -29,12 +29,12 @@ fn setup_tracing() {
         .ok(); // Ignore errors if already initialized
 }
 
-async fn setup_test_storage() -> zoe_message_store::RedisMessageStorage {
+async fn setup_test_storage() -> zoe_message_store::storage::RedisMessageStorage {
     // Use a random database number to avoid conflicts between parallel tests
     let db_num = rand::random::<u8>() % 15 + 1; // Use databases 1-15 (avoid 0 which might be used elsewhere)
     let redis_url = format!("redis://127.0.0.1:6379/{db_num}");
 
-    let storage = zoe_message_store::RedisMessageStorage::new(redis_url)
+    let storage = zoe_message_store::storage::RedisMessageStorage::new(redis_url)
         .await
         .expect("Failed to create storage");
 

@@ -5,7 +5,7 @@ use tracing::{error, info};
 
 use zoe_wire_protocol::{BlobError, BlobHealth, BlobId, BlobInfo, BlobResult, BlobService};
 
-use crate::BlobStoreError;
+use crate::error::BlobStoreError;
 
 /// Implementation of the blob service using Iroh's filesystem store
 #[derive(Clone)]

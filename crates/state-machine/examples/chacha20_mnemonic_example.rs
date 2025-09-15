@@ -2,7 +2,7 @@ use zoe_app_primitives::group::events::key_info::GroupKeyInfo;
 use zoe_app_primitives::group::events::settings::GroupSettings;
 use zoe_app_primitives::group::events::{CreateGroup, GroupInfo};
 use zoe_app_primitives::metadata::Metadata;
-use zoe_state_machine::GroupManager;
+use zoe_state_machine::group::GroupManager;
 use zoe_wire_protocol::{KeyPair, MnemonicPhrase};
 
 #[tokio::main]

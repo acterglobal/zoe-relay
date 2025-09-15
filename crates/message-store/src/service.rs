@@ -1,4 +1,5 @@
-use crate::RedisMessageStorage;
+use crate::error::MessageStoreError;
+use crate::storage::RedisMessageStorage;
 use futures::StreamExt;
 use std::sync::Arc;
 use tokio::sync::{mpsc, RwLock};
@@ -46,7 +47,7 @@ impl MessagesRpcService {
         )
     }
 
-    async fn start_subscription_task(&self) -> Result<(), crate::MessageStoreError> {
+    async fn start_subscription_task(&self) -> Result<(), MessageStoreError> {
         let config = self.subscription.read().await;
 
         // Spawn the background subscription task
@@ -80,7 +81,7 @@ impl MessagesRpcService {
         Ok(())
     }
 
-    async fn abort_subscription_task(&self) -> Result<(), crate::MessageStoreError> {
+    async fn abort_subscription_task(&self) -> Result<(), MessageStoreError> {
         if let Some(task_handle) = self.task_handle.write().await.take() {
             task_handle.abort();
         }
@@ -96,7 +97,7 @@ async fn subscription_task(
     limit: Option<usize>,
     subscription: Arc<RwLock<SubscriptionConfig>>,
     sender: mpsc::UnboundedSender<StreamMessage>,
-) -> Result<(), crate::MessageStoreError> {
+) -> Result<(), MessageStoreError> {
     let task_id = format!("{:p}", &sender);
     info!(
         "🔄 Starting subscription task {} with filters: {:?}",
@@ -158,7 +159,7 @@ async fn handle_catch_up_request(
     service: Arc<RedisMessageStorage>,
     request: CatchUpRequest,
     sender: mpsc::UnboundedSender<CatchUpResponse>,
-) -> Result<(), crate::MessageStoreError> {
+) -> Result<(), MessageStoreError> {
     info!("Handling catch-up request: {:?}", request);
 
     let stream = service.catch_up(&request.filter, request.since).await?;
@@ -185,7 +186,7 @@ async fn handle_catch_up_request(
 
                     if let Err(e) = sender.send(response) {
                         warn!("Relay service closed, stopping catch-up: {}", e);
-                        return Err(crate::MessageStoreError::Internal(format!(
+                        return Err(MessageStoreError::Internal(format!(
                             "Relay service closed, stopping catch-up: {e}",
                         )));
                     }
@@ -210,7 +211,7 @@ async fn handle_catch_up_request(
 
     if let Err(e) = sender.send(response) {
         warn!("Relay service closed during final catch-up send: {}", e);
-        return Err(crate::MessageStoreError::Internal(format!(
+        return Err(MessageStoreError::Internal(format!(
             "Relay service closed during final catch-up send: {e}"
         )));
     }

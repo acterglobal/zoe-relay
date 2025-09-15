@@ -1,10 +1,12 @@
-use crate::Service;
+use crate::router::Service;
 use async_trait::async_trait;
 use futures::{SinkExt, StreamExt};
 use std::sync::Arc;
 use tarpc::server::{BaseChannel, Channel};
 use tracing::{debug, error, info};
-use zoe_message_store::{MessageStoreError, MessagesRpcService, RedisMessageStorage};
+use zoe_message_store::{
+    error::MessageStoreError, service::MessagesRpcService, storage::RedisMessageStorage,
+};
 use zoe_wire_protocol::{
     MessageService as _, MessageServiceResponseWrap, MessagesServiceRequestWrap, StreamPair,
 };

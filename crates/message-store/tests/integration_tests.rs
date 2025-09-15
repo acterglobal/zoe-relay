@@ -1,7 +1,7 @@
 use futures_util::StreamExt;
 use rand::rngs::OsRng;
 use std::{sync::Arc, time::SystemTime};
-use zoe_message_store::RedisMessageStorage;
+use zoe_message_store::storage::RedisMessageStorage;
 use zoe_wire_protocol::{
     Filter, FilterOperation, FilterUpdateRequest, KeyId, KeyPair, Kind, Message, MessageFilters,
     MessageFull, MessageId, Tag, VerifyingKey,
