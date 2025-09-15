@@ -71,7 +71,7 @@ runs:
           sleep 5
         done
         
-        sudo apt-get install -y libsqlcipher-dev protobuf-compiler cmake
+        sudo apt-get install -y libsqlcipher-dev protobuf-compiler cmake libssl-dev
         
         # For Android targets, don't set SQLCipher library paths - use bundled feature instead
         if ! echo "${{ inputs.targets }}" | grep -q "android"; then
@@ -299,14 +299,31 @@ runs:
         LIBSQLITE3_SYS_USE_BUNDLED = "1"
         SQLCIPHER_STATIC = "1"
         
-        # BINDGEN configuration for header resolution
-        BINDGEN_EXTRA_CLANG_ARGS_x86_64_linux_android = "--sysroot=$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot -I$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include -I$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include/x86_64-linux-android"
-        BINDGEN_EXTRA_CLANG_ARGS_armv7_linux_androideabi = "--sysroot=$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot -I$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include -I$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include/arm-linux-androideabi"
-        BINDGEN_EXTRA_CLANG_ARGS_aarch64_linux_android = "--sysroot=$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot -I$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include -I$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include/aarch64-linux-android"
-        BINDGEN_EXTRA_CLANG_ARGS_i686_linux_android = "--sysroot=$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot -I$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include -I$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include/i686-linux-android"
+        # OpenSSL configuration for Android targets - use system OpenSSL headers
+        OPENSSL_DIR = "/usr"
+        OPENSSL_INCLUDE_DIR = "/usr/include/openssl"
+        OPENSSL_LIB_DIR = "/usr/lib/x86_64-linux-gnu"
+        
+        # For Android builds, we need to tell SQLCipher to use the host OpenSSL headers
+        # but link against the bundled crypto implementation
+        OPENSSL_DIR_x86_64_linux_android = "/usr"
+        OPENSSL_DIR_armv7_linux_androideabi = "/usr"
+        OPENSSL_DIR_aarch64_linux_android = "/usr"
+        OPENSSL_DIR_i686_linux_android = "/usr"
+        
+        OPENSSL_INCLUDE_DIR_x86_64_linux_android = "/usr/include"
+        OPENSSL_INCLUDE_DIR_armv7_linux_androideabi = "/usr/include"
+        OPENSSL_INCLUDE_DIR_aarch64_linux_android = "/usr/include"
+        OPENSSL_INCLUDE_DIR_i686_linux_android = "/usr/include"
+        
+        # BINDGEN configuration for header resolution including OpenSSL headers
+        BINDGEN_EXTRA_CLANG_ARGS_x86_64_linux_android = "--sysroot=$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot -I$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include -I$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include/x86_64-linux-android -I/usr/include"
+        BINDGEN_EXTRA_CLANG_ARGS_armv7_linux_androideabi = "--sysroot=$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot -I$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include -I$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include/arm-linux-androideabi -I/usr/include"
+        BINDGEN_EXTRA_CLANG_ARGS_aarch64_linux_android = "--sysroot=$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot -I$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include -I$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include/aarch64-linux-android -I/usr/include"
+        BINDGEN_EXTRA_CLANG_ARGS_i686_linux_android = "--sysroot=$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot -I$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include -I$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include/i686-linux-android -I/usr/include"
         CARGO_EOF
         
-        # Replace $ANDROID_NDK_HOME with actual path in config file
+        # Replace variables with actual paths in config file
         sed -i "s|\$ANDROID_NDK_HOME|$ANDROID_NDK_HOME|g" ~/.cargo/config.toml
     
     - name: Install cross-compilation tools (Linux ARM)
