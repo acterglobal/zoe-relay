@@ -617,3 +617,86 @@ async fn test_mnemonic_key_different_passphrases_produce_different_keys() {
     assert_eq!(info1.context, info2.context);
     assert_ne!(info1.salt, info2.salt); // Different random salts
 }
+
+#[tokio::test]
+async fn test_group_manager_cloning_preserves_broadcast_channel() {
+    use tokio::time::{Duration, timeout};
+
+    // Create a GroupManager
+    let manager1 = GroupManager::builder().build();
+
+    // Clone it multiple times to simulate real-world usage
+    let manager2 = manager1.clone();
+    let manager3 = manager1.clone();
+    let manager4 = manager1.clone();
+
+    // Subscribe to updates from one of the clones
+    let mut receiver1 = manager2.subscribe_to_updates();
+    let mut receiver2 = manager3.subscribe_to_updates();
+
+    // Create a test group to generate an update
+    let (alice_key, _) = create_test_keys();
+    let create_group = create_test_group();
+    let timestamp = 1234567890;
+
+    // Drop some manager instances to test that the channel stays open
+    drop(manager2);
+    drop(manager3);
+
+    // Create a group using the remaining manager - this should broadcast an update
+    let result = manager1
+        .create_group(create_group, None, &alice_key, timestamp)
+        .await;
+
+    assert!(result.is_ok(), "Group creation should succeed");
+
+    // Both receivers should still work even though some managers were dropped
+    // This verifies that Arc-wrapped broadcast components keep the channel open
+    let update1 = timeout(Duration::from_millis(100), receiver1.recv()).await;
+    let update2 = timeout(Duration::from_millis(100), receiver2.recv()).await;
+
+    assert!(
+        update1.is_ok(),
+        "First receiver should receive update despite manager being dropped"
+    );
+    assert!(
+        update2.is_ok(),
+        "Second receiver should receive update despite manager being dropped"
+    );
+
+    // Verify the updates are GroupAdded events
+    match update1.unwrap().unwrap() {
+        GroupDataUpdate::GroupAdded(_) => (),
+        other => panic!("Expected GroupAdded, got {:?}", other),
+    }
+
+    match update2.unwrap().unwrap() {
+        GroupDataUpdate::GroupAdded(_) => (),
+        other => panic!("Expected GroupAdded, got {:?}", other),
+    }
+
+    // Drop the remaining managers
+    drop(manager1);
+    drop(manager4);
+
+    // Create a new manager and verify it can still create its own broadcast channel
+    let new_manager = GroupManager::builder().build();
+    let mut new_receiver = new_manager.subscribe_to_updates();
+
+    // Create another group to test the new manager
+    let create_group2 = create_test_group();
+    let result2 = new_manager
+        .create_group(create_group2, None, &alice_key, timestamp + 1)
+        .await;
+
+    assert!(result2.is_ok(), "New manager should work independently");
+
+    // New receiver should get the update
+    let update3 = timeout(Duration::from_millis(100), new_receiver.recv()).await;
+    assert!(update3.is_ok(), "New manager's receiver should work");
+
+    match update3.unwrap().unwrap() {
+        GroupDataUpdate::GroupAdded(_) => (),
+        other => panic!("Expected GroupAdded, got {:?}", other),
+    }
+}
