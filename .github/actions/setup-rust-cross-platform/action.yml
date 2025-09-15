@@ -215,6 +215,34 @@ runs:
         
         echo "NDK installed at: $PWD/$NDK_DIR"
         ls -la "$PWD/$NDK_DIR" | head -10
+        
+        # Build minimal OpenSSL for Android to provide headers
+        echo "Building minimal OpenSSL for Android..."
+        wget -q https://www.openssl.org/source/openssl-1.1.1w.tar.gz
+        tar -xzf openssl-1.1.1w.tar.gz
+        cd openssl-1.1.1w
+        
+        # Set up environment for OpenSSL Android build
+        export ANDROID_NDK_ROOT="$PWD/../$NDK_DIR"
+        export PATH="$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/bin:$PATH"
+        
+        # Create a simple script to build headers only
+        mkdir -p ../openssl-android-headers
+        
+        # Configure for Android (we only need headers, not full build)
+        ./Configure android-arm64 -D__ANDROID_API__=21 --prefix="$PWD/../openssl-android-headers" --openssldir="$PWD/../openssl-android-headers"
+        
+        # Generate headers
+        make include/openssl/opensslconf.h
+        make include/openssl/opensslv.h
+        
+        # Copy headers to our target directory
+        cp -r include/openssl ../openssl-android-headers/
+        
+        cd ..
+        
+        # Set environment variable for OpenSSL headers
+        echo "OPENSSL_ANDROID_HEADERS=$PWD/openssl-android-headers" >> $GITHUB_ENV
     
     - name: Setup Android environment
       if: inputs.install_android_ndk == 'true' && runner.os == 'Linux'
@@ -299,32 +327,16 @@ runs:
         LIBSQLITE3_SYS_USE_BUNDLED = "1"
         SQLCIPHER_STATIC = "1"
         
-        # OpenSSL configuration for Android targets - use system OpenSSL headers
-        OPENSSL_DIR = "/usr"
-        OPENSSL_INCLUDE_DIR = "/usr/include/openssl"
-        OPENSSL_LIB_DIR = "/usr/lib/x86_64-linux-gnu"
-        
-        # For Android builds, we need to tell SQLCipher to use the host OpenSSL headers
-        # but link against the bundled crypto implementation
-        OPENSSL_DIR_x86_64_linux_android = "/usr"
-        OPENSSL_DIR_armv7_linux_androideabi = "/usr"
-        OPENSSL_DIR_aarch64_linux_android = "/usr"
-        OPENSSL_DIR_i686_linux_android = "/usr"
-        
-        OPENSSL_INCLUDE_DIR_x86_64_linux_android = "/usr/include"
-        OPENSSL_INCLUDE_DIR_armv7_linux_androideabi = "/usr/include"
-        OPENSSL_INCLUDE_DIR_aarch64_linux_android = "/usr/include"
-        OPENSSL_INCLUDE_DIR_i686_linux_android = "/usr/include"
-        
-        # BINDGEN configuration for header resolution including OpenSSL headers
-        BINDGEN_EXTRA_CLANG_ARGS_x86_64_linux_android = "--sysroot=$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot -I$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include -I$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include/x86_64-linux-android -I/usr/include"
-        BINDGEN_EXTRA_CLANG_ARGS_armv7_linux_androideabi = "--sysroot=$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot -I$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include -I$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include/arm-linux-androideabi -I/usr/include"
-        BINDGEN_EXTRA_CLANG_ARGS_aarch64_linux_android = "--sysroot=$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot -I$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include -I$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include/aarch64-linux-android -I/usr/include"
-        BINDGEN_EXTRA_CLANG_ARGS_i686_linux_android = "--sysroot=$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot -I$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include -I$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include/i686-linux-android -I/usr/include"
+        # BINDGEN configuration for header resolution including Android OpenSSL headers
+        BINDGEN_EXTRA_CLANG_ARGS_x86_64_linux_android = "--sysroot=$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot -I$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include -I$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include/x86_64-linux-android -I$OPENSSL_ANDROID_HEADERS"
+        BINDGEN_EXTRA_CLANG_ARGS_armv7_linux_androideabi = "--sysroot=$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot -I$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include -I$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include/arm-linux-androideabi -I$OPENSSL_ANDROID_HEADERS"
+        BINDGEN_EXTRA_CLANG_ARGS_aarch64_linux_android = "--sysroot=$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot -I$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include -I$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include/aarch64-linux-android -I$OPENSSL_ANDROID_HEADERS"
+        BINDGEN_EXTRA_CLANG_ARGS_i686_linux_android = "--sysroot=$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot -I$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include -I$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include/i686-linux-android -I$OPENSSL_ANDROID_HEADERS"
         CARGO_EOF
         
         # Replace variables with actual paths in config file
         sed -i "s|\$ANDROID_NDK_HOME|$ANDROID_NDK_HOME|g" ~/.cargo/config.toml
+        sed -i "s|\$OPENSSL_ANDROID_HEADERS|$OPENSSL_ANDROID_HEADERS|g" ~/.cargo/config.toml
     
     - name: Install cross-compilation tools (Linux ARM)
       if: contains(inputs.targets, 'aarch64-unknown-linux-gnu') && runner.os == 'Linux'
