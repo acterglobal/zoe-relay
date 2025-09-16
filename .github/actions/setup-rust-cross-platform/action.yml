@@ -226,7 +226,11 @@ runs:
       shell: bash
       run: |
         cargo install --force --locked bindgen-cli
-    
+
+    - name: Setup Android SDK (Android builds only)
+      if: inputs.install_android_ndk == 'true'
+      uses: android-actions/setup-android@v3
+      
     - name: Install Android NDK (${ env.NDK_VERSION })
       if: inputs.install_android_ndk == 'true' && runner.os == 'Linux'
       shell: bash
@@ -234,7 +238,9 @@ runs:
         set -e
         $ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager --install "ndk;${ env.NDK_VERSION }"
         ANDROID_NDK_HOME="$ANDROID_SDK_ROOT/ndk/${ env.NDK_VERSION }"
-        
+
+        echo "ANDROID_NDK_HOME=$ANDROID_NDK_HOME" >> $GITHUB_ENV
+
         # Create symlinks for OpenSSL build tools
         # The OpenSSL build system expects GNU-style tool names, but Android NDK uses LLVM
         mkdir -p /tmp/android-tools
