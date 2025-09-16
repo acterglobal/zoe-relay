@@ -36,6 +36,10 @@ outputs:
     description: 'Rust cache key used'
     value: ${{ steps.cache.outputs.cache-primary-key }}
 
+env:
+  NDK_VERSION: 'r27.0.12077973'
+  ANDROID_MIN_VERSION: '21'
+
 runs:
   using: 'composite'
   steps:
@@ -58,7 +62,7 @@ runs:
       with:
         tool: ${{ inputs.tools || '' }}
     
-    - name: Install SQLCipher and Protobuf (Linux)
+    - name: Update package lists (Linux)
       if: runner.os == 'Linux'
       shell: bash
       run: |
@@ -70,67 +74,78 @@ runs:
           echo "Initial apt-get update failed, retrying in 5 seconds... ($i/3)"
           sleep 5
         done
-        
+
+    - name: Install base dependencies (Linux)
+      if: runner.os == 'Linux'
+      shell: bash
+      run: |
         sudo apt-get install -y libsqlcipher-dev protobuf-compiler cmake
+
+    - name: Set SQLCipher paths for native Linux builds
+      if: runner.os == 'Linux' && !contains(inputs.targets, 'android')
+      shell: bash
+      run: |
+        # Only set SQLCipher paths for native Linux builds, not Android cross-compilation
+        echo "SQLCIPHER_LIB_DIR=/usr/lib/x86_64-linux-gnu" >> $GITHUB_ENV
+        echo "SQLCIPHER_INCLUDE_DIR=/usr/include/sqlcipher" >> $GITHUB_ENV
+
+    - name: Try installing ARM64 packages (simple approach)
+      if: runner.os == 'Linux' && contains(inputs.targets, 'aarch64-unknown-linux-gnu')
+      id: arm64-simple
+      shell: bash
+      continue-on-error: true
+      run: |
+        echo "Setting up ARM64 cross-compilation environment..."
+        sudo apt-get install -y libssl-dev pkg-config gcc-aarch64-linux-gnu
+
+    - name: Setup ARM64 architecture and repositories (fallback)
+      if: runner.os == 'Linux' && contains(inputs.targets, 'aarch64-unknown-linux-gnu') && steps.arm64-simple.outcome == 'failure'
+      shell: bash
+      run: |
+        echo "Standard ARM64 packages not available, trying with architecture setup..."
         
-        # For Android targets, don't set SQLCipher library paths - use bundled feature instead
-        if ! echo "${{ inputs.targets }}" | grep -q "android"; then
-          # Only set SQLCipher paths for native Linux builds, not Android cross-compilation
-          echo "SQLCIPHER_LIB_DIR=/usr/lib/x86_64-linux-gnu" >> $GITHUB_ENV
-          echo "SQLCIPHER_INCLUDE_DIR=/usr/include/sqlcipher" >> $GITHUB_ENV
-        fi
+        # Add arm64 architecture and configure sources for cross-compilation
+        sudo dpkg --add-architecture arm64
         
-        # Install OpenSSL dev packages for cross-compilation
-        if echo "${{ inputs.targets }}" | grep -q "aarch64-unknown-linux-gnu"; then
-          echo "Setting up ARM64 cross-compilation environment..."
-          
-          # Try to install ARM64 packages without adding custom sources first
-          # This approach is more conservative and less likely to cause repository issues
-          if sudo apt-get install -y libssl-dev pkg-config gcc-aarch64-linux-gnu; then
-            echo "ARM64 cross-compilation packages installed successfully"
-          else
-            echo "Standard ARM64 packages not available, trying with architecture setup..."
-            
-            # Add arm64 architecture and configure sources for cross-compilation
-            sudo dpkg --add-architecture arm64
-            
-            # Update sources.list to include ports for arm64 packages (without security repo)
-            sudo tee /etc/apt/sources.list.d/arm64-cross.list > /dev/null <<EOF
+        # Update sources.list to include ports for arm64 packages (without security repo)
+        sudo tee /etc/apt/sources.list.d/arm64-cross.list > /dev/null <<EOF
         deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports/ noble main restricted universe multiverse
         deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports/ noble-updates main restricted universe multiverse
         deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports/ noble-backports main restricted universe multiverse
         EOF
-            
-            # Update package lists with retry logic and error handling
-            echo "Updating package lists for ARM64 cross-compilation..."
-            for i in {1..3}; do
-              if sudo apt-get update -o APT::Update::Error-Mode=any; then
-                echo "Package lists updated successfully"
-                break
-              fi
-              echo "apt-get update failed, retrying in 10 seconds... ($i/3)"
-              sleep 10
-              if [ $i -eq 3 ]; then
-                echo "Warning: apt-get update failed after 3 attempts, continuing anyway..."
-                # Try to continue with available packages
-              fi
-            done
-            
-            # Install cross-compilation packages with fallback
-            if ! sudo apt-get install -y libssl-dev:arm64 libssl-dev pkg-config gcc-aarch64-linux-gnu; then
-              echo "Failed to install ARM64 packages, trying alternative approach..."
-              # Fallback: install only what's available
-              sudo apt-get install -y --no-install-recommends libssl-dev pkg-config gcc-aarch64-linux-gnu || true
-            fi
+        
+        # Update package lists with retry logic and error handling
+        echo "Updating package lists for ARM64 cross-compilation..."
+        for i in {1..3}; do
+          if sudo apt-get update -o APT::Update::Error-Mode=any; then
+            echo "Package lists updated successfully"
+            break
           fi
-          
-          # Set up pkg-config for cross-compilation
-          echo "PKG_CONFIG_ALLOW_CROSS=1" >> $GITHUB_ENV
-          echo "PKG_CONFIG_PATH=/usr/lib/aarch64-linux-gnu/pkgconfig" >> $GITHUB_ENV
-          echo "OPENSSL_DIR=/usr" >> $GITHUB_ENV
+          echo "apt-get update failed, retrying in 10 seconds... ($i/3)"
+          sleep 10
+          if [ $i -eq 3 ]; then
+            echo "Warning: apt-get update failed after 3 attempts, continuing anyway..."
+            # Try to continue with available packages
+          fi
+        done
+
+        # Install cross-compilation packages with fallback
+        if ! sudo apt-get install -y libssl-dev:arm64 libssl-dev pkg-config gcc-aarch64-linux-gnu; then
+          echo "Failed to install ARM64 packages, trying alternative approach..."
+          # Fallback: install only what's available
+          sudo apt-get install -y --no-install-recommends libssl-dev pkg-config gcc-aarch64-linux-gnu || true
         fi
+
+    - name: Configure ARM64 cross-compilation environment
+      if: runner.os == 'Linux' && contains(inputs.targets, 'aarch64-unknown-linux-gnu')
+      shell: bash
+      run: |
+        # Set up pkg-config for cross-compilation
+        echo "PKG_CONFIG_ALLOW_CROSS=1" >> $GITHUB_ENV
+        echo "PKG_CONFIG_PATH=/usr/lib/aarch64-linux-gnu/pkgconfig" >> $GITHUB_ENV
+        echo "OPENSSL_DIR=/usr" >> $GITHUB_ENV
     
-    - name: Install SQLCipher and Protobuf (macOS)
+    - name: Install base dependencies (macOS)
       if: runner.os == 'macOS'
       shell: bash
       run: |
@@ -138,45 +153,51 @@ runs:
         brew install sqlcipher protobuf cmake llvm
         echo "/opt/homebrew/opt/llvm/bin" >> $GITHUB_PATH
         echo "LIBCLANG_PATH=/opt/homebrew/opt/llvm/lib" >> $GITHUB_ENV
-        
+
+    - name: Set SQLCipher paths & iOS deployment for  iOS builds
+      if: runner.os == 'macOS' && !contains(inputs.targets, 'apple-ios')
+      shell: bash
+      run: |
         # Set SQLCipher library paths for Rust linking (macOS only, not iOS)
-        if ! echo "${{ inputs.targets }}" | grep -q "apple-ios"; then
-          echo "LIBRARY_PATH=/opt/homebrew/lib:/usr/local/lib" >> $GITHUB_ENV
-          echo "SQLCIPHER_LIB_DIR=/opt/homebrew/lib" >> $GITHUB_ENV
-          echo "SQLCIPHER_INCLUDE_DIR=/opt/homebrew/include" >> $GITHUB_ENV
-        fi
+        echo "LIBRARY_PATH=/opt/homebrew/lib:/usr/local/lib" >> $GITHUB_ENV
+        echo "SQLCIPHER_LIB_DIR=/opt/homebrew/lib" >> $GITHUB_ENV
+        echo "SQLCIPHER_INCLUDE_DIR=/opt/homebrew/include" >> $GITHUB_ENV
         
-        # Set up iOS SDK paths for bindgen
-        if echo "${{ inputs.targets }}" | grep -q "apple-ios"; then
-          # Set iOS deployment target to avoid version mismatch
-          echo "IPHONEOS_DEPLOYMENT_TARGET=12.0" >> $GITHUB_ENV
-          
-          # Set up for both device and simulator SDKs
-          if echo "${{ inputs.targets }}" | grep -q "x86_64-apple-ios"; then
-            IOS_SDK_PATH=$(xcrun --sdk iphonesimulator --show-sdk-path)
-            echo "BINDGEN_EXTRA_CLANG_ARGS_x86_64_apple_ios=-isysroot $IOS_SDK_PATH -target x86_64-apple-ios-simulator -mios-simulator-version-min=12.0" >> $GITHUB_ENV
-            echo "CARGO_TARGET_X86_64_APPLE_IOS_LINKER=$(xcrun --find --sdk iphonesimulator clang)" >> $GITHUB_ENV
-            echo "CC_x86_64_apple_ios=$(xcrun --find --sdk iphonesimulator clang)" >> $GITHUB_ENV
-            echo "AR_x86_64_apple_ios=$(xcrun --find --sdk iphonesimulator ar)" >> $GITHUB_ENV
-            echo "CFLAGS_x86_64_apple_ios=-mios-simulator-version-min=12.0" >> $GITHUB_ENV
-          fi
-          if echo "${{ inputs.targets }}" | grep -q "aarch64-apple-ios"; then
-            IOS_SDK_PATH=$(xcrun --sdk iphoneos --show-sdk-path)
-            echo "BINDGEN_EXTRA_CLANG_ARGS_aarch64_apple_ios=-isysroot $IOS_SDK_PATH -target arm64-apple-ios -mios-version-min=12.0" >> $GITHUB_ENV
-            echo "CARGO_TARGET_AARCH64_APPLE_IOS_LINKER=$(xcrun --find --sdk iphoneos clang)" >> $GITHUB_ENV
-            echo "CC_aarch64_apple_ios=$(xcrun --find --sdk iphoneos clang)" >> $GITHUB_ENV
-            echo "AR_aarch64_apple_ios=$(xcrun --find --sdk iphoneos ar)" >> $GITHUB_ENV
-            echo "CFLAGS_aarch64_apple_ios=-mios-version-min=12.0" >> $GITHUB_ENV
-          fi
-          if echo "${{ inputs.targets }}" | grep -q "aarch64-apple-ios-sim"; then
-            IOS_SDK_PATH=$(xcrun --sdk iphonesimulator --show-sdk-path)
-            echo "BINDGEN_EXTRA_CLANG_ARGS_aarch64_apple_ios_sim=-isysroot $IOS_SDK_PATH -target arm64-apple-ios-simulator -mios-simulator-version-min=12.0" >> $GITHUB_ENV
-            echo "CARGO_TARGET_AARCH64_APPLE_IOS_SIM_LINKER=$(xcrun --find --sdk iphonesimulator clang)" >> $GITHUB_ENV
-            echo "CC_aarch64_apple_ios_sim=$(xcrun --find --sdk iphonesimulator clang)" >> $GITHUB_ENV
-            echo "AR_aarch64_apple_ios_sim=$(xcrun --find --sdk iphonesimulator ar)" >> $GITHUB_ENV
-            echo "CFLAGS_aarch64_apple_ios_sim=-mios-simulator-version-min=12.0" >> $GITHUB_ENV
-          fi
-        fi
+        # Set iOS deployment target to avoid version mismatch
+        echo "IPHONEOS_DEPLOYMENT_TARGET=12.0" >> $GITHUB_ENV
+
+    - name: Configure iOS x86_64 simulator target
+      if: runner.os == 'macOS' && contains(inputs.targets, 'x86_64-apple-ios')
+      shell: bash
+      run: |
+        IOS_SDK_PATH=$(xcrun --sdk iphonesimulator --show-sdk-path)
+        echo "BINDGEN_EXTRA_CLANG_ARGS_x86_64_apple_ios=-isysroot $IOS_SDK_PATH -target x86_64-apple-ios-simulator -mios-simulator-version-min=12.0" >> $GITHUB_ENV
+        echo "CARGO_TARGET_X86_64_APPLE_IOS_LINKER=$(xcrun --find --sdk iphonesimulator clang)" >> $GITHUB_ENV
+        echo "CC_x86_64_apple_ios=$(xcrun --find --sdk iphonesimulator clang)" >> $GITHUB_ENV
+        echo "AR_x86_64_apple_ios=$(xcrun --find --sdk iphonesimulator ar)" >> $GITHUB_ENV
+        echo "CFLAGS_x86_64_apple_ios=-mios-simulator-version-min=12.0" >> $GITHUB_ENV
+
+    - name: Configure iOS aarch64 device target
+      if: runner.os == 'macOS' && contains(inputs.targets, 'aarch64-apple-ios')
+      shell: bash
+      run: |
+        IOS_SDK_PATH=$(xcrun --sdk iphoneos --show-sdk-path)
+        echo "BINDGEN_EXTRA_CLANG_ARGS_aarch64_apple_ios=-isysroot $IOS_SDK_PATH -target arm64-apple-ios -mios-version-min=12.0" >> $GITHUB_ENV
+        echo "CARGO_TARGET_AARCH64_APPLE_IOS_LINKER=$(xcrun --find --sdk iphoneos clang)" >> $GITHUB_ENV
+        echo "CC_aarch64_apple_ios=$(xcrun --find --sdk iphoneos clang)" >> $GITHUB_ENV
+        echo "AR_aarch64_apple_ios=$(xcrun --find --sdk iphoneos ar)" >> $GITHUB_ENV
+        echo "CFLAGS_aarch64_apple_ios=-mios-version-min=12.0" >> $GITHUB_ENV
+
+    - name: Configure iOS aarch64 simulator target
+      if: runner.os == 'macOS' && contains(inputs.targets, 'aarch64-apple-ios-sim')
+      shell: bash
+      run: |
+        IOS_SDK_PATH=$(xcrun --sdk iphonesimulator --show-sdk-path)
+        echo "BINDGEN_EXTRA_CLANG_ARGS_aarch64_apple_ios_sim=-isysroot $IOS_SDK_PATH -target arm64-apple-ios-simulator -mios-simulator-version-min=12.0" >> $GITHUB_ENV
+        echo "CARGO_TARGET_AARCH64_APPLE_IOS_SIM_LINKER=$(xcrun --find --sdk iphonesimulator clang)" >> $GITHUB_ENV
+        echo "CC_aarch64_apple_ios_sim=$(xcrun --find --sdk iphonesimulator clang)" >> $GITHUB_ENV
+        echo "AR_aarch64_apple_ios_sim=$(xcrun --find --sdk iphonesimulator ar)" >> $GITHUB_ENV
+        echo "CFLAGS_aarch64_apple_ios_sim=-mios-simulator-version-min=12.0" >> $GITHUB_ENV
     
     - name: Install SQLCipher, Protobuf and CMake (Windows)
       if: runner.os == 'Windows'
@@ -206,37 +227,28 @@ runs:
       run: |
         cargo install --force --locked bindgen-cli
     
-    - name: Install Android NDK
+    - name: Download Android NDK (latest)
       if: inputs.install_android_ndk == 'true' && runner.os == 'Linux'
+      id: ndk-download-latest
       shell: bash
       run: |
         set -e
-        echo "Downloading Android NDK..."
-        if ! wget -q https://dl.google.com/android/repository/android-ndk-r27.0.12077973-linux.zip; then
-          echo "Failed to download NDK, trying alternative URL..."
-          wget -q https://dl.google.com/android/repository/android-ndk-r26c-linux.zip
-          NDK_DIR="android-ndk-r26c"
-        else
-          NDK_DIR="android-ndk-r27.0.12077973"
-        fi
+        echo "Downloading Android NDK ${ env.NDK_VERSION }..."
+        wget -q https://dl.google.com/android/repository/android-ndk-${ env.NDK_VERSION }-linux.zip
+        NDK_FILE="android-ndk-${ env.NDK_VERSION }-linux.zip"
+        NDK_DIR="android-ndk-${ env.NDK_VERSION }"
         
-        echo "Extracting NDK..."
-        if [ -f "android-ndk-r27.0.12077973-linux.zip" ]; then
-          unzip -q android-ndk-r27.0.12077973-linux.zip
-          NDK_DIR="android-ndk-r27.0.12077973"
-        elif [ -f "android-ndk-r26c-linux.zip" ]; then
-          unzip -q android-ndk-r26c-linux.zip
-          NDK_DIR="android-ndk-r26c"
-        fi
+        echo "Extracting $NDK_FILE..."
+        unzip -q "$NDK_FILE"
         
-        echo "Setting up NDK environment variables..."
+        echo "NDK_DIR=$NDK_DIR" >> $GITHUB_ENV
+        echo "NDK installed at: $PWD/$NDK_DIR"
+        ls -la "$PWD/$NDK_DIR" | head -10
+        
         echo "ANDROID_NDK_HOME=$PWD/$NDK_DIR" >> $GITHUB_ENV
         echo "NDK_HOME=$PWD/$NDK_DIR" >> $GITHUB_ENV
         echo "ANDROID_NDK_ROOT=$PWD/$NDK_DIR" >> $GITHUB_ENV
         echo "ANDROID_NDK=$PWD/$NDK_DIR" >> $GITHUB_ENV
-        
-        echo "NDK installed at: $PWD/$NDK_DIR"
-        ls -la "$PWD/$NDK_DIR" | head -10
         
         # Create symlinks for OpenSSL build tools
         # The OpenSSL build system expects GNU-style tool names, but Android NDK uses LLVM
@@ -248,18 +260,6 @@ runs:
         
         # Add tools directory to PATH
         echo "/tmp/android-tools:$PWD/$NDK_DIR/toolchains/llvm/prebuilt/linux-x86_64/bin:$PATH" >> $GITHUB_PATH
-    
-    - name: Setup Android environment
-      if: inputs.install_android_ndk == 'true' && runner.os == 'Linux'
-      shell: bash
-      run: |
-        # Verify NDK_HOME is set from previous step
-        if [ -z "$ANDROID_NDK_HOME" ]; then
-          echo "ERROR: ANDROID_NDK_HOME not set by previous step"
-          exit 1
-        fi
-        
-        echo "Using Android NDK at: $ANDROID_NDK_HOME"
         
         mkdir -p ~/.cargo
         cat >> ~/.cargo/config.toml << CARGO_EOF
@@ -305,14 +305,14 @@ runs:
         RANLIB_x86_64_linux_android = "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ranlib"
         
         # Android platform configuration
-        ANDROID_PLATFORM = "android-21"
-        ANDROID_NATIVE_API_LEVEL = "21"
+        ANDROID_PLATFORM = "android-${ env.ANDROID_MIN_VERSION }"
+        ANDROID_NATIVE_API_LEVEL = "${ env.ANDROID_MIN_VERSION }"
         
         # CMake configuration for Android
         CMAKE_TOOLCHAIN_FILE = "$ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake"
         CMAKE_ANDROID_NDK = "$ANDROID_NDK_HOME"
-        CMAKE_ANDROID_API = "21"
-        CMAKE_ANDROID_API_MIN = "21"
+        CMAKE_ANDROID_API = "${ env.ANDROID_MIN_VERSION }"
+        CMAKE_ANDROID_API_MIN = "${ env.ANDROID_MIN_VERSION }"
         
         # Target-specific CMake configuration
         CMAKE_TOOLCHAIN_FILE_x86_64_linux_android = "$ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake"
@@ -348,19 +348,23 @@ runs:
         sed -i "s|\$ANDROID_NDK_HOME|$ANDROID_NDK_HOME|g" ~/.cargo/config.toml
     
     - name: Install cross-compilation tools (Linux ARM)
-      if: contains(inputs.targets, 'aarch64-unknown-linux-gnu') && runner.os == 'Linux'
+      if: runner.os == 'Linux' && contains(inputs.targets, 'aarch64-unknown-linux-gnu')
       shell: bash
       run: |
         sudo apt-get update
         sudo apt-get install -y gcc-aarch64-linux-gnu
-        
+
         # Setup linker configuration for aarch64-unknown-linux-gnu
         mkdir -p ~/.cargo
         cat >> ~/.cargo/config.toml << 'CARGO_EOF'
         [target.aarch64-unknown-linux-gnu]
         linker = "aarch64-linux-gnu-gcc"
         CARGO_EOF
-        
+
+    - name: Set ARM64 cross-compilation environment variables
+      if: runner.os == 'Linux' && contains(inputs.targets, 'aarch64-unknown-linux-gnu')
+      shell: bash
+      run: |
         # Set environment variables for C compiler and archiver
         echo "CC_aarch64_unknown_linux_gnu=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
         echo "AR_aarch64_unknown_linux_gnu=aarch64-linux-gnu-ar" >> $GITHUB_ENV
