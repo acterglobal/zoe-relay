@@ -37,7 +37,7 @@ outputs:
     value: ${{ steps.cache.outputs.cache-primary-key }}
 
 env:
-  NDK_VERSION: 'r27.0.12077973'
+  NDK_VERSION: '27.0.12077973'
   ANDROID_MIN_VERSION: '21'
 
 runs:
@@ -227,28 +227,13 @@ runs:
       run: |
         cargo install --force --locked bindgen-cli
     
-    - name: Download Android NDK (latest)
+    - name: Install Android NDK (${ env.NDK_VERSION })
       if: inputs.install_android_ndk == 'true' && runner.os == 'Linux'
-      id: ndk-download-latest
       shell: bash
       run: |
         set -e
-        echo "Downloading Android NDK ${ env.NDK_VERSION }..."
-        wget -q https://dl.google.com/android/repository/android-ndk-${ env.NDK_VERSION }-linux.zip
-        NDK_FILE="android-ndk-${ env.NDK_VERSION }-linux.zip"
-        NDK_DIR="android-ndk-${ env.NDK_VERSION }"
-        
-        echo "Extracting $NDK_FILE..."
-        unzip -q "$NDK_FILE"
-        
-        echo "NDK_DIR=$NDK_DIR" >> $GITHUB_ENV
-        echo "NDK installed at: $PWD/$NDK_DIR"
-        ls -la "$PWD/$NDK_DIR" | head -10
-        
-        echo "ANDROID_NDK_HOME=$PWD/$NDK_DIR" >> $GITHUB_ENV
-        echo "NDK_HOME=$PWD/$NDK_DIR" >> $GITHUB_ENV
-        echo "ANDROID_NDK_ROOT=$PWD/$NDK_DIR" >> $GITHUB_ENV
-        echo "ANDROID_NDK=$PWD/$NDK_DIR" >> $GITHUB_ENV
+        $ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager --install "ndk;${ env.NDK_VERSION }"
+        ANDROID_NDK_HOME="$ANDROID_SDK_ROOT/ndk/${ env.NDK_VERSION }"
         
         # Create symlinks for OpenSSL build tools
         # The OpenSSL build system expects GNU-style tool names, but Android NDK uses LLVM
@@ -393,7 +378,6 @@ runs:
         
         if [ "${{ inputs.install_android_ndk }}" = "true" ]; then
           echo "ANDROID_NDK_HOME: ${ANDROID_NDK_HOME:-not set}"
-          echo "NDK_HOME: ${NDK_HOME:-not set}"
         fi
         
         echo "=== Cargo config ==="
