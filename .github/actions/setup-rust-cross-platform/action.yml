@@ -31,14 +31,21 @@ inputs:
     required: false
     default: 'false'
 
+  android_ndk_version:
+    description: 'Android NDK version'
+    required: false
+    default: '27.0.12077973'
+
+  android_min_version:
+    description: 'Android minimum version'
+    required: false
+    default: '21'
+
 outputs:
   cache_key:
     description: 'Rust cache key used'
     value: ${{ steps.cache.outputs.cache-primary-key }}
 
-env:
-  NDK_VERSION: '27.0.12077973'
-  ANDROID_MIN_VERSION: '21'
 
 runs:
   using: 'composite'
@@ -231,13 +238,13 @@ runs:
       if: inputs.install_android_ndk == 'true'
       uses: android-actions/setup-android@v3
       
-    - name: Install Android NDK (${ env.NDK_VERSION })
+    - name: Install Android NDK (${{ inputs.android_ndk_version }})
       if: inputs.install_android_ndk == 'true' && runner.os == 'Linux'
       shell: bash
       run: |
         set -e
-        $ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager --install "ndk;${ env.NDK_VERSION }"
-        ANDROID_NDK_HOME="$ANDROID_SDK_ROOT/ndk/${ env.NDK_VERSION }"
+        $ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager --install "ndk;${ inputs.android_ndk_version }"
+        ANDROID_NDK_HOME="$ANDROID_SDK_ROOT/ndk/${ inputs.android_ndk_version }"
 
         echo "ANDROID_NDK_HOME=$ANDROID_NDK_HOME" >> $GITHUB_ENV
 
@@ -296,14 +303,14 @@ runs:
         RANLIB_x86_64_linux_android = "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ranlib"
         
         # Android platform configuration
-        ANDROID_PLATFORM = "android-${ env.ANDROID_MIN_VERSION }"
-        ANDROID_NATIVE_API_LEVEL = "${ env.ANDROID_MIN_VERSION }"
+        ANDROID_PLATFORM = "android-${ inputs.android_min_version }"
+        ANDROID_NATIVE_API_LEVEL = "${ inputs.android_min_version }"
         
         # CMake configuration for Android
         CMAKE_TOOLCHAIN_FILE = "$ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake"
         CMAKE_ANDROID_NDK = "$ANDROID_NDK_HOME"
-        CMAKE_ANDROID_API = "${ env.ANDROID_MIN_VERSION }"
-        CMAKE_ANDROID_API_MIN = "${ env.ANDROID_MIN_VERSION }"
+        CMAKE_ANDROID_API = "${ inputs.android_min_version }"
+        CMAKE_ANDROID_API_MIN = "${ inputs.android_min_version }"
         
         # Target-specific CMake configuration
         CMAKE_TOOLCHAIN_FILE_x86_64_linux_android = "$ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake"
