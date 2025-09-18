@@ -38,6 +38,8 @@ pub enum ClientError {
     SessionManager(#[from] SessionManagerError),
     #[error("Storage error: {0}")]
     Storage(#[from] zoe_client_storage::StorageError),
+    #[error("Group error: {0}")]
+    Group(#[from] zoe_state_machine::error::GroupError),
 }
 
 pub type Result<T> = std::result::Result<T, ClientError>;

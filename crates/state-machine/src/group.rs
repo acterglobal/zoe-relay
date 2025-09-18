@@ -1,12 +1,20 @@
 // ChaCha20-Poly1305 and AES-GCM functionality moved to crypto module
 use serde::Serialize;
-use zoe_wire_protocol::{KeyPair, MessageId, VerifyingKey};
+use zoe_wire_protocol::{ChaCha20Poly1305Content, KeyPair, MessageId, VerifyingKey};
 // Random number generation imports removed - no longer needed
 // Temporary import for Ed25519 workaround in create_role_update_event
 
-use zoe_app_primitives::{group::events::GroupInfo, identity::IdentityRef};
+use zoe_app_primitives::{
+    group::events::{GroupInfo, settings::GroupSettings},
+    identity::IdentityRef,
+    metadata::Metadata,
+};
 // Random number generation moved to wire-protocol crypto module
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    collections::HashMap,
+    sync::Arc,
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 use zoe_wire_protocol::{Kind, Message, MessageFull, Tag};
 
@@ -30,7 +38,7 @@ use zoe_wire_protocol::{Content, EncryptionKey, MnemonicPhrase};
 #[cfg(feature = "frb-api")]
 use flutter_rust_bridge::frb;
 
-#[cfg_attr(feature = "frb-api", frb(ignore))]
+#[cfg_attr(feature = "frb-api", frb(non_opaque))]
 #[derive(Debug, Clone)]
 pub enum GroupDataUpdate {
     GroupAdded(GroupSession),
@@ -62,10 +70,12 @@ pub struct CreateGroupResult {
     /// The full message that was created
     pub message: MessageFull,
 }
+#[cfg_attr(feature = "frb-api", frb(ignore))]
 pub struct GroupManagerBuilder {
     sessions: Vec<GroupSession>,
 }
 
+#[cfg_attr(feature = "frb-api", frb(ignore))]
 impl GroupManagerBuilder {
     pub fn with_sessions(mut self, sessions: Vec<GroupSession>) -> Self {
         self.sessions = sessions;
@@ -91,8 +101,8 @@ impl GroupManagerBuilder {
 #[cfg_attr(feature = "frb-api", frb)]
 impl GroupManager {
     /// Generate a new encryption key for a group (ChaCha20-Poly1305)
-    pub fn generate_group_key(timestamp: u64) -> EncryptionKey {
-        EncryptionKey::generate(timestamp)
+    pub fn generate_group_key() -> EncryptionKey {
+        EncryptionKey::generate()
     }
     /// Get a group's current state
     pub async fn group_state(&self, group_id: &MessageId) -> Option<GroupState> {
@@ -154,11 +164,10 @@ impl GroupManager {
         mnemonic: &MnemonicPhrase,
         passphrase: &str,
         group_name: &str,
-        timestamp: u64,
     ) -> GroupResult<EncryptionKey> {
         let context = format!("dga-group-{group_name}");
 
-        EncryptionKey::from_mnemonic(mnemonic, passphrase, &context, timestamp)
+        EncryptionKey::from_mnemonic(mnemonic, passphrase, &context)
             .map_err(|e| GroupError::CryptoError(format!("Key derivation failed: {e}")))
     }
 
@@ -168,46 +177,25 @@ impl GroupManager {
         passphrase: &str,
         group_name: &str,
         salt: &[u8; 32],
-        timestamp: u64,
     ) -> GroupResult<EncryptionKey> {
         let context = format!("dga-group-{group_name}");
 
-        EncryptionKey::from_mnemonic_with_salt(mnemonic, passphrase, &context, salt, timestamp)
+        EncryptionKey::from_mnemonic_with_salt(mnemonic, passphrase, &context, salt)
             .map_err(|e| GroupError::CryptoError(format!("Key recovery failed: {e}")))
     }
 
     /// Create a new encrypted group, returning the root event message to be sent
     pub async fn create_group(
         &self,
-        create_group: zoe_app_primitives::group::events::CreateGroup,
-        encryption_key: Option<EncryptionKey>,
+        create_group: CreateGroupBuilder,
         creator: &KeyPair,
-        timestamp: u64,
     ) -> GroupResult<CreateGroupResult> {
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|e| GroupError::CryptoError(format!("Failed to get timestamp: {e}")))?
+            .as_secs();
         // Generate or use provided encryption key
-        let encryption_key = encryption_key.unwrap_or_else(|| Self::generate_group_key(timestamp));
-
-        // Get the group info from the CreateGroup object and update its key_info
-        let mut group_info = create_group.into_group_info();
-
-        // Update the key info with the actual encryption key metadata
-        group_info.key_info = GroupKeyInfo::ChaCha20Poly1305 {
-            key_id: encryption_key.key_id.clone(),
-            derivation_info: encryption_key.derivation_info.clone().unwrap_or_else(|| {
-                // Default derivation info if none provided
-                zoe_wire_protocol::crypto::KeyDerivationInfo {
-                    method: zoe_wire_protocol::crypto::KeyDerivationMethod::ChaCha20Poly1305Keygen,
-                    salt: vec![],
-                    argon2_params: zoe_wire_protocol::crypto::Argon2Params::default(),
-                    context: "dga-group-key".to_string(),
-                }
-            }),
-        };
-
-        let event: GroupActivityEvent<()> = GroupActivityEvent::UpdateGroup(group_info.clone());
-
-        // Encrypt the event before creating the wire protocol message
-        let encrypted_payload = encrypt_group_event_content(&encryption_key, &event)?;
+        let (enc_key, encrypted_payload, group_info) = create_group.build()?;
 
         // Create the wire protocol message with encrypted payload
         let message = Message::new_v0_encrypted(
@@ -222,18 +210,18 @@ impl GroupManager {
         let message_full = MessageFull::new(message, creator)?;
         let group_id = message_full.id(); // The group ID is the Blake3 hash of this message
 
-        // Create the initial group state using the unified constructor
-        let group_state = GroupState::new(
-            *group_id,
-            group_info.name.clone(),
-            group_info.settings.clone(),
-            group_info.metadata.clone(),
-            creator.public_key(),
-            timestamp,
-        );
-
         // Create the unified group session
-        let group_session = GroupSession::new(group_state, encryption_key);
+        let group_session = GroupSession::new(
+            GroupState::new(
+                *group_id,
+                group_info.name,
+                group_info.settings,
+                group_info.metadata,
+                creator.public_key().clone(),
+                timestamp,
+            ),
+            enc_key,
+        );
 
         // Store the group session
         self.groups
@@ -339,7 +327,7 @@ impl GroupManager {
         };
 
         // Handle the root event (group creation) specially
-        if let GroupActivityEvent::UpdateGroup(group_info) = &event {
+        if let GroupActivityEvent::CreateGroup(group_info) = &event {
             // This is a root event - the group session should already exist from create_group
             // Just verify it exists and update if needed
             let mut groups = self.groups.write().await;
@@ -473,6 +461,66 @@ impl GroupManager {
     }
 }
 
+#[cfg_attr(feature = "frb-api", frb(opaque))]
+#[derive(Debug, Clone, PartialEq, Default, Eq)]
+pub struct CreateGroupBuilder {
+    title: String,
+    description: Option<String>,
+    group_settings: GroupSettings,
+    metadata: Vec<Metadata>,
+}
+
+#[cfg_attr(feature = "frb-api", frb)]
+impl CreateGroupBuilder {
+    pub fn new(title: String) -> Self {
+        Self {
+            title,
+            ..Default::default()
+        }
+    }
+
+    pub fn name(mut self, name: String) -> Self {
+        self.title = name;
+        self
+    }
+    pub fn description(mut self, description: String) -> Self {
+        self.description = Some(description);
+        self
+    }
+    pub fn group_settings(mut self, group_settings: GroupSettings) -> Self {
+        self.group_settings = group_settings;
+        self
+    }
+
+    pub fn metadata(mut self, metadata: Metadata) -> Self {
+        self.metadata.push(metadata);
+        self
+    }
+}
+
+impl CreateGroupBuilder {
+    fn build(self) -> Result<(EncryptionKey, ChaCha20Poly1305Content, GroupInfo), GroupError> {
+        let enc_key = EncryptionKey::generate();
+        let key_info = GroupKeyInfo::new_chacha20_poly1305(enc_key.key_id);
+        let mut metadata = self.metadata;
+        if let Some(description) = self.description {
+            metadata.push(Metadata::Description(description));
+        }
+        let group_info = GroupInfo {
+            name: self.title,
+            settings: self.group_settings,
+            key_info,
+            metadata,
+        };
+        // Encrypt the event before creating the wire protocol message
+        let encrypted_payload = encrypt_group_event_content::<()>(
+            &enc_key,
+            &GroupActivityEvent::CreateGroup(group_info.clone()),
+        )?;
+        Ok((enc_key, encrypted_payload, group_info))
+    }
+}
+
 impl Default for GroupManager {
     fn default() -> Self {
         Self::builder().build()
@@ -501,9 +549,4 @@ pub fn create_role_update_event<T>(member: VerifyingKey, role: GroupRole) -> Gro
 /// Create a custom group activity event
 pub fn create_group_activity_event<T>(activity_data: T) -> GroupActivityEvent<T> {
     GroupActivityEvent::Activity(activity_data)
-}
-
-/// Create a group update event
-pub fn create_group_update_event<T>(group_info: GroupInfo) -> GroupActivityEvent<T> {
-    GroupActivityEvent::UpdateGroup(group_info)
 }

@@ -836,52 +836,26 @@ mod tests {
         // Step 1: Client 1 creates a new group using state machine
         // First, generate a shared encryption key that both clients will use
         let timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
-        let shared_encryption_key =
-            zoe_state_machine::group::GroupManager::generate_group_key(timestamp);
+        let shared_encryption_key = zoe_state_machine::group::GroupManager::generate_group_key();
 
         let dga1 = zoe_state_machine::group::GroupManager::builder().build();
 
         // Create the group using app-primitives structures
-        let metadata = vec![
-            zoe_app_primitives::metadata::Metadata::Description(
-                "A test group for end-to-end testing".to_string(),
-            ),
-            zoe_app_primitives::metadata::Metadata::Generic {
-                key: "test_type".to_string(),
-                value: "e2e".to_string(),
-            },
-            zoe_app_primitives::metadata::Metadata::Generic {
-                key: "created_by".to_string(),
-                value: "client1".to_string(),
-            },
-        ];
-
-        let group_info = zoe_app_primitives::group::events::GroupInfo {
-            name: "E2E Test Group".to_string(),
-            settings: zoe_app_primitives::group::events::settings::GroupSettings::new(),
-            key_info:
-                zoe_app_primitives::group::events::key_info::GroupKeyInfo::new_chacha20_poly1305(
-                    vec![], // This will be filled in by create_group
-                    zoe_wire_protocol::crypto::KeyDerivationInfo {
-                        method:
-                            zoe_wire_protocol::crypto::KeyDerivationMethod::ChaCha20Poly1305Keygen,
-                        salt: vec![],
-                        argon2_params: zoe_wire_protocol::crypto::Argon2Params::default(),
-                        context: "dga-group-key".to_string(),
-                    },
-                ),
-            metadata,
-        };
-
-        let create_group = zoe_app_primitives::group::events::CreateGroup::new(group_info);
+        let create_group =
+            zoe_state_machine::group::CreateGroupBuilder::new("E2E Test Group".to_string())
+                .description("A test group for end-to-end testing".to_string())
+                .group_settings(zoe_app_primitives::group::events::settings::GroupSettings::new())
+                .metadata(zoe_app_primitives::metadata::Metadata::Generic {
+                    key: "test_type".to_string(),
+                    value: "e2e".to_string(),
+                })
+                .metadata(zoe_app_primitives::metadata::Metadata::Generic {
+                    key: "created_by".to_string(),
+                    value: "client1".to_string(),
+                });
 
         let create_group_result = dga1
-            .create_group(
-                create_group,
-                Some(shared_encryption_key.clone()),
-                client1.keypair(),
-                timestamp,
-            )
+            .create_group(create_group, client1.keypair())
             .await
             .map_err(|e| anyhow::anyhow!("Failed to create group: {}", e))?;
 
@@ -929,7 +903,7 @@ mod tests {
         info!("   📛 Group Name: {}", group_session.state.name);
         info!(
             "   🔐 Key ID: {}",
-            hex::encode(&group_session.current_key.key_id)
+            hex::encode(group_session.current_key.key_id.as_bytes())
         );
 
         // Step 4: Client 2 subscribes to messages from client 1 to catch the group creation event

@@ -1,8 +1,5 @@
-use zoe_app_primitives::group::events::key_info::GroupKeyInfo;
 use zoe_app_primitives::group::events::settings::GroupSettings;
-use zoe_app_primitives::group::events::{CreateGroup, GroupInfo};
-use zoe_app_primitives::metadata::Metadata;
-use zoe_state_machine::group::GroupManager;
+use zoe_state_machine::group::{CreateGroupBuilder, GroupManager};
 use zoe_wire_protocol::{KeyPair, MnemonicPhrase};
 
 #[tokio::main]
@@ -29,52 +26,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Create a group key from the mnemonic
     let group_name = "Secret Project Team";
     let passphrase = "additional-security-passphrase"; // Optional but recommended
-    let timestamp = chrono::Utc::now().timestamp() as u64;
+    let _timestamp = chrono::Utc::now().timestamp() as u64;
 
-    let encryption_key =
-        GroupManager::create_key_from_mnemonic(&mnemonic, passphrase, group_name, timestamp)?;
+    let encryption_key = GroupManager::create_key_from_mnemonic(&mnemonic, passphrase, group_name)?;
 
     println!("🔑 Created encryption key using ChaCha20-Poly1305");
-    println!("Key ID: {:?}", hex::encode(&encryption_key.key_id));
+    println!(
+        "Key ID: {:?}",
+        hex::encode(encryption_key.key_id.as_bytes())
+    );
 
     // Alice creates a group with the mnemonic-derived key
-    let metadata = vec![
-        Metadata::Description("A secure group using ChaCha20 and mnemonic phrases".to_string()),
-        Metadata::Generic {
-            key: "encryption".to_string(),
-            value: "chacha20-poly1305".to_string(),
-        },
-        Metadata::Generic {
-            key: "key_derivation".to_string(),
-            value: "bip39+argon2".to_string(),
-        },
-    ];
+    let create_group = CreateGroupBuilder::new(group_name.to_string())
+        .description("A secure group using ChaCha20 and mnemonic phrases".to_string())
+        .group_settings(GroupSettings::default());
 
-    let group_info = GroupInfo {
-        name: group_name.to_string(),
-        settings: GroupSettings::default(),
-        key_info: GroupKeyInfo::new_chacha20_poly1305(
-            vec![], // This will be filled in by create_group
-            zoe_wire_protocol::crypto::KeyDerivationInfo {
-                method: zoe_wire_protocol::crypto::KeyDerivationMethod::ChaCha20Poly1305Keygen,
-                salt: vec![],
-                argon2_params: zoe_wire_protocol::crypto::Argon2Params::default(),
-                context: "dga-group-key".to_string(),
-            },
-        ),
-        metadata,
-    };
-
-    let create_group = CreateGroup::new(group_info);
-
-    let create_result = dga
-        .create_group(
-            create_group,
-            Some(encryption_key.clone()),
-            &alice_keypair,
-            timestamp,
-        )
-        .await?;
+    let create_result = dga.create_group(create_group, &alice_keypair).await?;
 
     println!("✅ Created group: {}", create_result.group_id);
     println!("   Using ChaCha20-Poly1305 encryption");
@@ -94,13 +61,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut salt_array = [0u8; 32];
     salt_array.copy_from_slice(&derivation_info.salt);
 
-    let recovered_key = GroupManager::recover_key_from_mnemonic(
-        &mnemonic,
-        passphrase,
-        group_name,
-        &salt_array,
-        timestamp,
-    )?;
+    let recovered_key =
+        GroupManager::recover_key_from_mnemonic(&mnemonic, passphrase, group_name, &salt_array)?;
 
     // Verify the keys are identical
     if encryption_key.key == recovered_key.key {

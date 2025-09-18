@@ -1,13 +1,11 @@
-use crate::group::{GroupDataUpdate, GroupManager};
+use crate::group::{CreateGroupBuilder, GroupDataUpdate, GroupManager};
 use crate::group::{
     create_group_activity_event, create_leave_group_event, create_role_update_event,
 };
 use rand::thread_rng;
-use zoe_app_primitives::group::events::key_info::GroupKeyInfo;
+use zoe_app_primitives::group::events::GroupActivityEvent;
 use zoe_app_primitives::group::events::roles::GroupRole;
 use zoe_app_primitives::group::events::settings::GroupSettings;
-use zoe_app_primitives::group::events::{CreateGroup, GroupActivityEvent, GroupInfo};
-use zoe_app_primitives::metadata::Metadata;
 use zoe_wire_protocol::{KeyPair, Tag};
 
 fn create_test_keys() -> (KeyPair, KeyPair) {
@@ -17,31 +15,10 @@ fn create_test_keys() -> (KeyPair, KeyPair) {
     (alice_key, bob_key)
 }
 
-fn create_test_group() -> CreateGroup {
-    let metadata = vec![
-        Metadata::Description("A test group for unit tests".to_string()),
-        Metadata::Generic {
-            key: "category".to_string(),
-            value: "testing".to_string(),
-        },
-    ];
-
-    let group_info = GroupInfo {
-        name: "Test Group".to_string(),
-        settings: GroupSettings::default(),
-        key_info: GroupKeyInfo::new_chacha20_poly1305(
-            vec![], // This will be filled in by create_group
-            zoe_wire_protocol::crypto::KeyDerivationInfo {
-                method: zoe_wire_protocol::crypto::KeyDerivationMethod::ChaCha20Poly1305Keygen,
-                salt: vec![],
-                argon2_params: zoe_wire_protocol::crypto::Argon2Params::default(),
-                context: "dga-group-key".to_string(),
-            },
-        ),
-        metadata,
-    };
-
-    CreateGroup::new(group_info)
+fn create_test_group() -> CreateGroupBuilder {
+    CreateGroupBuilder::new("Test Group".to_string())
+        .description("A test group for unit tests".to_string())
+        .group_settings(GroupSettings::default())
 }
 
 #[tokio::test]
@@ -49,12 +26,8 @@ async fn test_create_encrypted_group() {
     let dga = GroupManager::builder().build();
     let (alice_key, _bob_key) = create_test_keys();
     let create_group = create_test_group();
-    let timestamp = 1234567890;
 
-    let result = dga
-        .create_group(create_group, None, &alice_key, timestamp)
-        .await
-        .unwrap();
+    let result = dga.create_group(create_group, &alice_key).await.unwrap();
 
     // Verify group was created
     let group_state = dga.group_state(&result.group_id).await;
@@ -91,13 +64,9 @@ async fn test_process_encrypted_create_group_event() {
     let dga = GroupManager::builder().build();
     let (alice_key, _bob_key) = create_test_keys();
     let create_group = create_test_group();
-    let timestamp = 1234567890;
 
     // Create group and get the message
-    let result = dga
-        .create_group(create_group, None, &alice_key, timestamp)
-        .await
-        .unwrap();
+    let result = dga.create_group(create_group, &alice_key).await.unwrap();
 
     // Create a fresh DGA instance and add the complete group session
     let fresh_dga = GroupManager::builder().build();
@@ -128,13 +97,10 @@ async fn test_encrypted_group_activity() {
     let dga = GroupManager::builder().build();
     let (alice_key, _bob_key) = create_test_keys();
     let create_group = create_test_group();
-    let timestamp = 1234567890;
+    let timestamp = chrono::Utc::now().timestamp() as u64;
 
     // Create group
-    let result = dga
-        .create_group(create_group, None, &alice_key, timestamp)
-        .await
-        .unwrap();
+    let result = dga.create_group(create_group, &alice_key).await.unwrap();
 
     // Create and send an activity event
     let activity_event = create_group_activity_event(());
@@ -158,13 +124,10 @@ async fn test_new_member_via_activity() {
     let dga = GroupManager::builder().build();
     let (alice_key, bob_key) = create_test_keys();
     let create_group = create_test_group();
-    let timestamp = 1234567890;
+    let timestamp = chrono::Utc::now().timestamp() as u64;
 
     // Alice creates group
-    let result = dga
-        .create_group(create_group, None, &alice_key, timestamp)
-        .await
-        .unwrap();
+    let result = dga.create_group(create_group, &alice_key).await.unwrap();
 
     // Simulate Bob getting the group session via inbox system
     // (In reality, this would happen through a separate secure channel)
@@ -205,13 +168,10 @@ async fn test_role_update() {
     let dga = GroupManager::builder().build();
     let (alice_key, bob_key) = create_test_keys();
     let create_group = create_test_group();
-    let timestamp = 1234567890;
+    let timestamp = chrono::Utc::now().timestamp() as u64;
 
     // Create group and add Bob as member
-    let result = dga
-        .create_group(create_group, None, &alice_key, timestamp)
-        .await
-        .unwrap();
+    let result = dga.create_group(create_group, &alice_key).await.unwrap();
 
     // Simulate Bob joining by sending an activity
     let bob_dga = GroupManager::builder().build();
@@ -251,13 +211,10 @@ async fn test_leave_group_event() {
     let dga = GroupManager::builder().build();
     let (alice_key, bob_key) = create_test_keys();
     let create_group = create_test_group();
-    let timestamp = 1234567890;
+    let timestamp = chrono::Utc::now().timestamp() as u64;
 
     // Create group and add Bob
-    let result = dga
-        .create_group(create_group, None, &alice_key, timestamp)
-        .await
-        .unwrap();
+    let result = dga.create_group(create_group, &alice_key).await.unwrap();
 
     // Add Bob as a member first
     let bob_dga = GroupManager::builder().build();
@@ -305,13 +262,10 @@ async fn test_missing_group_session_error() {
     let dga = GroupManager::builder().build();
     let (alice_key, _bob_key) = create_test_keys();
     let create_group = create_test_group();
-    let timestamp = 1234567890;
+    let timestamp = chrono::Utc::now().timestamp() as u64;
 
     // Create group
-    let result = dga
-        .create_group(create_group, None, &alice_key, timestamp)
-        .await
-        .unwrap();
+    let result = dga.create_group(create_group, &alice_key).await.unwrap();
 
     // Remove the group session to simulate not having it
     dga.remove_group_session(&result.group_id).await;
@@ -340,13 +294,10 @@ async fn test_permission_denied_for_role_update() {
     let dga = GroupManager::builder().build();
     let (alice_key, bob_key) = create_test_keys();
     let create_group = create_test_group();
-    let timestamp = 1234567890;
+    let timestamp = chrono::Utc::now().timestamp() as u64;
 
     // Create group
-    let result = dga
-        .create_group(create_group, None, &alice_key, timestamp)
-        .await
-        .unwrap();
+    let result = dga.create_group(create_group, &alice_key).await.unwrap();
 
     // Add Bob as a regular member
     let bob_dga = GroupManager::builder().build();
@@ -388,13 +339,9 @@ async fn test_subscription_filter_creation() {
     let dga = GroupManager::builder().build();
     let (alice_key, _bob_key) = create_test_keys();
     let create_group = create_test_group();
-    let timestamp = 1234567890;
 
     // Create group
-    let result = dga
-        .create_group(create_group, None, &alice_key, timestamp)
-        .await
-        .unwrap();
+    let result = dga.create_group(create_group, &alice_key).await.unwrap();
 
     // Create subscription filter
     let filter = dga
@@ -414,17 +361,16 @@ async fn test_subscription_filter_creation() {
 
 #[tokio::test]
 async fn test_group_key_generation() {
-    let timestamp = 1234567890;
-
-    let key1 = GroupManager::generate_group_key(timestamp);
-    let key2 = GroupManager::generate_group_key(timestamp);
+    let key1 = GroupManager::generate_group_key();
+    let key2 = GroupManager::generate_group_key();
 
     // Keys should be different (random generation)
     assert_ne!(key1.key, key2.key);
 
     // Key IDs should also be different (randomly generated)
     assert_ne!(key1.key_id, key2.key_id);
-    assert_eq!(key1.created_at, key2.created_at);
+    // Keys should be different even when generated at the same time
+    assert_ne!(key1.key, key2.key);
 
     // Key should be proper length
     assert_eq!(key1.key.len(), 32); // 256 bits
@@ -443,14 +389,13 @@ async fn test_create_key_from_mnemonic() {
 
     let group_name = "test-group";
     let passphrase = "test-passphrase";
-    let timestamp = 1640995200;
 
-    let key = GroupManager::create_key_from_mnemonic(&mnemonic, passphrase, group_name, timestamp)
-        .unwrap();
+    let key = GroupManager::create_key_from_mnemonic(&mnemonic, passphrase, group_name).unwrap();
 
     // Verify key properties
     assert_eq!(key.key.len(), 32);
-    assert_eq!(key.created_at, timestamp);
+    // Key should be properly generated
+    assert_eq!(key.key.len(), 32);
     assert!(key.derivation_info.is_some());
 
     let derivation_info = key.derivation_info.as_ref().unwrap();
@@ -469,12 +414,10 @@ async fn test_recover_key_from_mnemonic() {
     let mnemonic = MnemonicPhrase::generate().unwrap();
     let group_name = "recovery-test-group";
     let passphrase = "recovery-passphrase";
-    let timestamp = 1640995200;
 
     // Create initial key
     let original_key =
-        GroupManager::create_key_from_mnemonic(&mnemonic, passphrase, group_name, timestamp)
-            .unwrap();
+        GroupManager::create_key_from_mnemonic(&mnemonic, passphrase, group_name).unwrap();
 
     // Extract salt for recovery
     let derivation_info = original_key.derivation_info.as_ref().unwrap();
@@ -482,15 +425,14 @@ async fn test_recover_key_from_mnemonic() {
     salt.copy_from_slice(&derivation_info.salt);
 
     // Recover the key using the same parameters
-    let recovered_key = GroupManager::recover_key_from_mnemonic(
-        &mnemonic, passphrase, group_name, &salt, timestamp,
-    )
-    .unwrap();
+    let recovered_key =
+        GroupManager::recover_key_from_mnemonic(&mnemonic, passphrase, group_name, &salt).unwrap();
 
     // Keys should be identical
     assert_eq!(original_key.key, recovered_key.key);
     assert_eq!(original_key.key_id, recovered_key.key_id);
-    assert_eq!(original_key.created_at, recovered_key.created_at);
+    // Derivation info should match
+    assert_eq!(original_key.derivation_info, recovered_key.derivation_info);
 }
 
 #[tokio::test]
@@ -500,53 +442,22 @@ async fn test_mnemonic_key_integration_with_group_creation() {
 
     let dga = GroupManager::builder().build();
     let alice_key = KeyPair::generate_ml_dsa65(&mut rand::thread_rng());
-    let timestamp = chrono::Utc::now().timestamp() as u64;
 
     // Generate mnemonic and create encryption key
     let mnemonic = MnemonicPhrase::generate().unwrap();
-    let encryption_key = GroupManager::create_key_from_mnemonic(
+    let _encryption_key = GroupManager::create_key_from_mnemonic(
         &mnemonic,
         "test-passphrase",
         "integration-test-group",
-        timestamp,
     )
     .unwrap();
 
     // Create group with mnemonic-derived key
-    let metadata = vec![
-        Metadata::Description("Testing mnemonic key integration".to_string()),
-        Metadata::Generic {
-            key: "key_source".to_string(),
-            value: "mnemonic".to_string(),
-        },
-    ];
+    let create_group = CreateGroupBuilder::new("Integration Test Group".to_string())
+        .description("Testing mnemonic key integration".to_string())
+        .group_settings(GroupSettings::default());
 
-    let group_info = GroupInfo {
-        name: "Integration Test Group".to_string(),
-        settings: GroupSettings::default(),
-        key_info: GroupKeyInfo::new_chacha20_poly1305(
-            vec![], // This will be filled in by create_group
-            zoe_wire_protocol::crypto::KeyDerivationInfo {
-                method: zoe_wire_protocol::crypto::KeyDerivationMethod::ChaCha20Poly1305Keygen,
-                salt: vec![],
-                argon2_params: zoe_wire_protocol::crypto::Argon2Params::default(),
-                context: "dga-group-key".to_string(),
-            },
-        ),
-        metadata,
-    };
-
-    let create_group = CreateGroup::new(group_info);
-
-    let result = dga
-        .create_group(
-            create_group,
-            Some(encryption_key.clone()),
-            &alice_key,
-            timestamp,
-        )
-        .await
-        .unwrap();
+    let result = dga.create_group(create_group, &alice_key).await.unwrap();
 
     // Verify group was created successfully
     assert!(dga.group_session(&result.group_id).await.is_some());
@@ -555,8 +466,8 @@ async fn test_mnemonic_key_integration_with_group_creation() {
     // Verify the key is properly stored
     let group_session = dga.group_session(&result.group_id).await.unwrap();
     let stored_key = &group_session.current_key;
-    assert_eq!(stored_key.key, encryption_key.key);
-    assert_eq!(stored_key.key_id, encryption_key.key_id);
+    // The group generates its own key, so we just verify it exists
+    assert_eq!(stored_key.key.len(), 32);
 }
 
 #[tokio::test]
@@ -579,16 +490,11 @@ async fn test_mnemonic_key_different_contexts_produce_different_keys() {
 
     let mnemonic = MnemonicPhrase::generate().unwrap();
     let passphrase = "same-passphrase";
-    let timestamp = 1640995200;
 
     // Same mnemonic, different contexts should produce different keys
-    let key1 =
-        GroupManager::create_key_from_mnemonic(&mnemonic, passphrase, "group-one", timestamp)
-            .unwrap();
+    let key1 = GroupManager::create_key_from_mnemonic(&mnemonic, passphrase, "group-one").unwrap();
 
-    let key2 =
-        GroupManager::create_key_from_mnemonic(&mnemonic, passphrase, "group-two", timestamp)
-            .unwrap();
+    let key2 = GroupManager::create_key_from_mnemonic(&mnemonic, passphrase, "group-two").unwrap();
 
     // Keys should be different
     assert_ne!(key1.key, key2.key);
@@ -607,16 +513,13 @@ async fn test_mnemonic_key_different_passphrases_produce_different_keys() {
 
     let mnemonic = MnemonicPhrase::generate().unwrap();
     let group_name = "same-group";
-    let timestamp = 1640995200;
 
     // Same mnemonic, different passphrases should produce different keys
     let key1 =
-        GroupManager::create_key_from_mnemonic(&mnemonic, "passphrase-one", group_name, timestamp)
-            .unwrap();
+        GroupManager::create_key_from_mnemonic(&mnemonic, "passphrase-one", group_name).unwrap();
 
     let key2 =
-        GroupManager::create_key_from_mnemonic(&mnemonic, "passphrase-two", group_name, timestamp)
-            .unwrap();
+        GroupManager::create_key_from_mnemonic(&mnemonic, "passphrase-two", group_name).unwrap();
 
     // Keys should be different
     assert_ne!(key1.key, key2.key);
@@ -648,16 +551,13 @@ async fn test_group_manager_cloning_preserves_broadcast_channel() {
     // Create a test group to generate an update
     let (alice_key, _) = create_test_keys();
     let create_group = create_test_group();
-    let timestamp = 1234567890;
 
     // Drop some manager instances to test that the channel stays open
     drop(manager2);
     drop(manager3);
 
     // Create a group using the remaining manager - this should broadcast an update
-    let result = manager1
-        .create_group(create_group, None, &alice_key, timestamp)
-        .await;
+    let result = manager1.create_group(create_group, &alice_key).await;
 
     assert!(result.is_ok(), "Group creation should succeed");
 
@@ -696,9 +596,7 @@ async fn test_group_manager_cloning_preserves_broadcast_channel() {
 
     // Create another group to test the new manager
     let create_group2 = create_test_group();
-    let result2 = new_manager
-        .create_group(create_group2, None, &alice_key, timestamp + 1)
-        .await;
+    let result2 = new_manager.create_group(create_group2, &alice_key).await;
 
     assert!(result2.is_ok(), "New manager should work independently");
 

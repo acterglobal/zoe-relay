@@ -4,7 +4,7 @@ use crate::file::Image;
 #[cfg(feature = "frb-api")]
 use flutter_rust_bridge::frb;
 
-#[cfg_attr(feature = "frb-api", frb(opaque))]
+#[cfg_attr(feature = "frb-api", frb(non_opaque))]
 #[derive(Debug, Clone, PartialEq, Eq, ForwardCompatibleEnum)]
 pub enum Metadata {
     #[discriminant(0)]

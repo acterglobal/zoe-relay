@@ -16,7 +16,7 @@ pub enum GroupError {
     Crypto(#[from] ed25519_dalek::SignatureError),
 
     #[error("Wire protocol error: {0}")]
-    WireProtocol(#[from] Box<dyn std::error::Error>),
+    WireProtocol(#[from] zoe_wire_protocol::MessageError),
 
     #[error("Group not found: {0}")]
     GroupNotFound(String),
