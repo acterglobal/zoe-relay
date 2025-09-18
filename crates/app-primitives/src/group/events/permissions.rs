@@ -3,8 +3,12 @@ use serde::{Deserialize, Serialize};
 
 use super::roles::GroupRole;
 
+#[cfg(feature = "frb-api")]
+use flutter_rust_bridge::frb;
+
 /// Actions that can be performed in a group
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "frb-api", frb(non_opaque))]
 pub enum GroupAction {
     /// Update group settings and metadata
     UpdateGroup,
@@ -20,6 +24,7 @@ pub enum GroupAction {
 ///
 /// Defines who can perform various actions within the group based on their role.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[cfg_attr(feature = "frb-api", frb(non_opaque))]
 pub struct GroupPermissions {
     /// Who can update group settings
     pub update_group: Permission,
@@ -36,6 +41,7 @@ pub struct GroupPermissions {
 /// Defines the minimum role level required to perform certain actions.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, U32Discriminants)]
 #[u32_discriminants(fallback = "AllMembers")]
+#[cfg_attr(feature = "frb-api", frb(non_opaque))]
 pub enum Permission {
     /// Only group owners
     #[discriminant(9)]

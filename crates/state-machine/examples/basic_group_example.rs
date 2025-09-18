@@ -1,8 +1,5 @@
-use zoe_app_primitives::group::events::key_info::GroupKeyInfo;
 use zoe_app_primitives::group::events::settings::GroupSettings;
-use zoe_app_primitives::group::events::{CreateGroup, GroupInfo};
-use zoe_app_primitives::metadata::Metadata;
-use zoe_state_machine::group::{GroupManager, create_group_activity_event};
+use zoe_state_machine::group::{CreateGroupBuilder, GroupManager, create_group_activity_event};
 use zoe_wire_protocol::KeyPair;
 
 #[tokio::main]
@@ -15,39 +12,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let alice_keypair = KeyPair::generate(&mut rng);
 
     // Alice creates a group
-    let metadata = vec![
-        Metadata::Description("A test group for the DGA protocol".to_string()),
-        Metadata::Generic {
-            key: "category".to_string(),
-            value: "testing".to_string(),
-        },
-    ];
+    let create_group = CreateGroupBuilder::new("My Test Group".to_string())
+        .description("A test group for the DGA protocol".to_string())
+        .group_settings(GroupSettings::default());
 
-    let group_info = GroupInfo {
-        name: "My Test Group".to_string(),
-        settings: GroupSettings::default(),
-        key_info: GroupKeyInfo::new_chacha20_poly1305(
-            vec![], // This will be filled in by create_group
-            zoe_wire_protocol::crypto::KeyDerivationInfo {
-                method: zoe_wire_protocol::crypto::KeyDerivationMethod::ChaCha20Poly1305Keygen,
-                salt: vec![],
-                argon2_params: zoe_wire_protocol::crypto::Argon2Params::default(),
-                context: "dga-group-key".to_string(),
-            },
-        ),
-        metadata,
-    };
-
-    let create_group = CreateGroup::new(group_info);
-
-    let create_result = dga
-        .create_group(
-            create_group,
-            None, // Generate a new key
-            &alice_keypair,
-            chrono::Utc::now().timestamp() as u64,
-        )
-        .await?;
+    let create_result = dga.create_group(create_group, &alice_keypair).await?;
 
     println!("Created group: {:?}", create_result.group_id);
     println!(

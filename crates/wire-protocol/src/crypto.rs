@@ -186,10 +186,8 @@ impl Default for Argon2Params {
 pub struct EncryptionKey {
     /// The actual key bytes (32 bytes for ChaCha20)
     pub key: [u8; 32],
-    /// Key identifier
-    pub key_id: Vec<u8>,
-    /// When this key was created
-    pub created_at: u64,
+    /// blake3 of the key
+    pub key_id: crate::Hash,
     /// Optional derivation info (for mnemonic-derived keys)
     pub derivation_info: Option<KeyDerivationInfo>,
 }
@@ -542,16 +540,14 @@ pub fn ed25519_to_x25519_public_from_verifying_key(
 
 impl EncryptionKey {
     /// Generate a random encryption key
-    pub fn generate(timestamp: u64) -> Self {
+    pub fn generate() -> Self {
         let mut key = [0u8; 32];
-        let mut key_id = vec![0u8; 16];
         thread_rng().fill_bytes(&mut key);
-        thread_rng().fill_bytes(&mut key_id);
+        let key_id = blake3::hash(&key);
 
         Self {
             key,
             key_id,
-            created_at: timestamp,
             derivation_info: None,
         }
     }
@@ -561,13 +557,12 @@ impl EncryptionKey {
         mnemonic: &MnemonicPhrase,
         passphrase: &str,
         context: &str, // e.g., "dga-group-key"
-        timestamp: u64,
     ) -> std::result::Result<Self, CryptoError> {
         // Generate a random salt
         let mut salt = [0u8; 32];
         thread_rng().fill_bytes(&mut salt);
 
-        Self::from_mnemonic_with_salt(mnemonic, passphrase, context, &salt, timestamp)
+        Self::from_mnemonic_with_salt(mnemonic, passphrase, context, &salt)
     }
 
     /// Derive an encryption key from a mnemonic phrase with specific salt (for key recovery)
@@ -576,7 +571,6 @@ impl EncryptionKey {
         passphrase: &str,
         context: &str,
         salt: &[u8; 32],
-        timestamp: u64,
     ) -> std::result::Result<Self, CryptoError> {
         // First get the BIP39 seed
         let seed = mnemonic.to_seed(passphrase)?;
@@ -621,12 +615,11 @@ impl EncryptionKey {
         let mut key_id_input = Vec::new();
         key_id_input.extend_from_slice(salt);
         key_id_input.extend_from_slice(context.as_bytes());
-        let key_id = blake3::hash(&key_id_input).as_bytes()[..16].to_vec();
+        let key_id = blake3::hash(&key_id_input);
 
         Ok(Self {
             key,
             key_id,
-            created_at: timestamp,
             derivation_info: Some(KeyDerivationInfo {
                 method: KeyDerivationMethod::Bip39Argon2,
                 salt: salt.to_vec(),
@@ -802,7 +795,7 @@ mod tests {
 
     #[test]
     fn test_chacha20_content_encryption_roundtrip() {
-        let key = EncryptionKey::generate(1640995200);
+        let key = EncryptionKey::generate();
         let plaintext = b"Hello, encrypted world!";
 
         let encrypted = key.encrypt_content(plaintext).unwrap();
@@ -820,8 +813,7 @@ mod tests {
         ).unwrap();
 
         let key =
-            EncryptionKey::from_mnemonic(&mnemonic, "test passphrase", "test-context", 1640995200)
-                .unwrap();
+            EncryptionKey::from_mnemonic(&mnemonic, "test passphrase", "test-context").unwrap();
 
         assert!(key.derivation_info.is_some());
         assert_eq!(

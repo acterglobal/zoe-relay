@@ -95,13 +95,13 @@ use flutter_rust_bridge::frb;
 /// ## 🔧 Core Operations
 ///
 /// ### Identity Discovery
-/// - [`GroupMembership::get_available_identities`]: Find all identities a key can use
-/// - [`GroupMembership::get_display_name`]: Get human-readable name for an identity
+/// - [`GroupMembership::available_identities`]: Find all identities a key can use
+/// - [`GroupMembership::display_name`]: Get human-readable name for an identity
 /// - [`GroupMembership::has_identity_info`]: Check if identity has been declared
 ///
 /// ### Role Management
-/// - [`GroupMembership::get_role`]: Get the role assigned to a specific identity
-/// - [`GroupMembership::get_effective_role`]: Get role when key acts as an alias
+/// - [`GroupMembership::role`]: Get the role assigned to a specific identity
+/// - [`GroupMembership::effective_role`]: Get role when key acts as an alias
 /// - Roles default to [`super::events::roles::GroupRole::Member`] if not explicitly set
 ///
 /// ## 💡 Usage Examples
@@ -187,11 +187,11 @@ use flutter_rust_bridge::frb;
 ///
 /// // Check effective roles
 /// assert_eq!(
-///     membership.get_role(&main_ref),
+///     membership.role(&main_ref),
 ///     Some(GroupRole::Admin)
 /// );
 /// assert_eq!(
-///     membership.get_role(&alias_ref),
+///     membership.role(&alias_ref),
 ///     Some(GroupRole::Member)
 /// );
 /// ```
@@ -236,7 +236,7 @@ impl GroupMembership {
     }
 
     /// Get all identities that a verifying key can act as
-    pub fn get_available_identities(&self, _key: &VerifyingKey) -> HashSet<IdentityRef> {
+    pub fn available_identities(&self, _key: &VerifyingKey) -> HashSet<IdentityRef> {
         // For now, ML-DSA keys cannot act as Ed25519-based identities
         // This will need to be updated when we fully transition to ML-DSA
         // Return empty set as a temporary compatibility measure
@@ -244,7 +244,7 @@ impl GroupMembership {
     }
 
     /// Get the role for a specific identity
-    pub fn get_role(&self, identity_ref: &IdentityRef) -> Option<GroupRole> {
+    pub fn role(&self, identity_ref: &IdentityRef) -> Option<GroupRole> {
         // Check for explicit role assignment first
         if let Some(role) = self.identity_roles.get(identity_ref) {
             return Some(role.clone());
@@ -255,7 +255,7 @@ impl GroupMembership {
     }
 
     /// Get effective role when a key acts as a specific identity
-    pub fn get_effective_role(
+    pub fn effective_role(
         &self,
         _key: &VerifyingKey,
         _acting_as_alias: &Option<String>,
@@ -267,7 +267,7 @@ impl GroupMembership {
     }
 
     /// Get display name for an identity
-    pub fn get_display_name(&self, key: &VerifyingKey, identity_type: &IdentityType) -> String {
+    pub fn display_name(&self, key: &VerifyingKey, identity_type: &IdentityType) -> String {
         // For now, ML-DSA keys don't have identity info in the Ed25519-based system
         // This will need to be updated when we fully transition to ML-DSA
         // Fall back to default display
@@ -275,13 +275,6 @@ impl GroupMembership {
             IdentityType::Main => format!("ML-DSA Key:{key:?}"),
             IdentityType::Alias { alias_id } => alias_id.clone(),
         }
-    }
-
-    /// Check if an identity has been declared by a key
-    pub fn has_identity_info(&self, _key: &VerifyingKey, _identity_type: &IdentityType) -> bool {
-        // For now, ML-DSA keys don't have identity info in the Ed25519-based system
-        // This will need to be updated when we fully transition to ML-DSA
-        false
     }
 }
 
@@ -580,7 +573,7 @@ pub struct GroupMember {
 /// let generic_meta = group_state.generic_metadata();
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg_attr(feature = "frb-api", frb(opaque, ignore_all))]
+#[cfg_attr(feature = "frb-api", frb(non_opaque))]
 pub struct GroupState {
     /// The group identifier - this is the Blake3 hash of the CreateGroup message
     /// Also serves as the root event ID (used as channel tag)
@@ -589,7 +582,7 @@ pub struct GroupState {
     /// Current group name
     pub name: String,
 
-    /// Current group settings  
+    /// Current group settings
     pub settings: GroupSettings,
 
     /// Group metadata as structured types
@@ -827,15 +820,23 @@ impl GroupState {
 
         // Apply the specific event
         match event {
+            GroupActivityEvent::CreateGroup(_group_info) => {} // we already know
+
             GroupActivityEvent::LeaveGroup { message } => {
                 self.handle_leave_group(sender, message.clone(), timestamp)?;
             }
 
             GroupActivityEvent::UpdateGroup(group_info) => {
                 // Handle group updates
-                self.name = group_info.name.clone();
-                self.settings = group_info.settings.clone();
-                self.metadata = group_info.metadata.clone();
+                if let Some(name) = &group_info.name {
+                    self.name = name.clone();
+                }
+                if let Some(settings) = &group_info.settings {
+                    self.settings = settings.clone();
+                }
+                if let Some(metadata) = &group_info.metadata {
+                    self.metadata = metadata.clone();
+                }
             }
 
             GroupActivityEvent::AssignRole { target, role } => {
@@ -1182,15 +1183,7 @@ mod tests {
     }
 
     fn create_test_group_key_info() -> GroupKeyInfo {
-        GroupKeyInfo::new_chacha20_poly1305(
-            vec![1, 2, 3, 4],
-            zoe_wire_protocol::crypto::KeyDerivationInfo {
-                method: zoe_wire_protocol::crypto::KeyDerivationMethod::Bip39Argon2,
-                salt: vec![1, 2, 3, 4, 5, 6, 7, 8],
-                argon2_params: zoe_wire_protocol::crypto::Argon2Params::default(),
-                context: "test-group-key".to_string(),
-            },
-        )
+        GroupKeyInfo::new_chacha20_poly1305(blake3::Hash::from([1u8; 32]))
     }
 
     fn create_test_group_info() -> GroupInfo {
@@ -1246,72 +1239,61 @@ mod tests {
     }
 
     #[test]
-    fn test_group_membership_get_role() {
+    fn test_group_membership_role() {
         let mut membership = GroupMembership::new();
         let key = create_test_verifying_key();
         let identity = IdentityRef::Key(key);
 
         // Test default role
-        assert_eq!(membership.get_role(&identity), Some(GroupRole::Member));
+        assert_eq!(membership.role(&identity), Some(GroupRole::Member));
 
         // Test explicit role assignment
         membership
             .identity_roles
             .insert(identity.clone(), GroupRole::Admin);
-        assert_eq!(membership.get_role(&identity), Some(GroupRole::Admin));
+        assert_eq!(membership.role(&identity), Some(GroupRole::Admin));
     }
 
     #[test]
-    fn test_group_membership_get_available_identities() {
+    fn test_group_membership_available_identities() {
         let membership = GroupMembership::new();
         let key = create_test_verifying_key();
 
         // Currently returns empty set due to ML-DSA transition
-        let identities = membership.get_available_identities(&key);
+        let identities = membership.available_identities(&key);
         assert!(identities.is_empty());
     }
 
     #[test]
-    fn test_group_membership_get_effective_role() {
+    fn test_group_membership_effective_role() {
         let membership = GroupMembership::new();
         let key = create_test_verifying_key();
 
         // Currently returns default member role due to ML-DSA transition
-        let role = membership.get_effective_role(&key, &None);
+        let role = membership.effective_role(&key, &None);
         assert_eq!(role, Some(GroupRole::Member));
 
-        let role_with_alias = membership.get_effective_role(&key, &Some("alias".to_string()));
+        let role_with_alias = membership.effective_role(&key, &Some("alias".to_string()));
         assert_eq!(role_with_alias, Some(GroupRole::Member));
     }
 
     #[test]
-    fn test_group_membership_get_display_name() {
+    fn test_group_membership_display_name() {
         let membership = GroupMembership::new();
         let key = create_test_verifying_key();
 
         // Test main identity display name
         let main_type = IdentityType::Main;
-        let display_name = membership.get_display_name(&key, &main_type);
+        let display_name = membership.display_name(&key, &main_type);
         assert!(display_name.starts_with("ML-DSA Key:"));
 
         // Test alias identity display name
         let alias_type = IdentityType::Alias {
             alias_id: "test_alias".to_string(),
         };
-        let alias_display_name = membership.get_display_name(&key, &alias_type);
+        let alias_display_name = membership.display_name(&key, &alias_type);
         assert_eq!(alias_display_name, "test_alias");
     }
-
-    #[test]
-    fn test_group_membership_has_identity_info() {
-        let membership = GroupMembership::new();
-        let key = create_test_verifying_key();
-        let identity_type = IdentityType::Main;
-
-        // Currently returns false due to ML-DSA transition
-        assert!(!membership.has_identity_info(&key, &identity_type));
-    }
-
     // GroupMember Tests
     #[test]
     fn test_group_member_creation() {
@@ -1621,23 +1603,32 @@ mod tests {
             1000,
         );
 
-        let new_group_info = GroupInfo {
-            name: "Updated Name".to_string(),
-            settings: GroupSettings::default(),
-            key_info: create_test_group_key_info(),
-            metadata: vec![Metadata::Description("Updated description".to_string())],
+        use crate::group::events::GroupInfoUpdate;
+        let new_group_info_update = GroupInfoUpdate {
+            name: Some("Updated Name".to_string()),
+            settings: Some(GroupSettings::default()),
+            key_info: Some(create_test_group_key_info()),
+            metadata: Some(vec![Metadata::Description(
+                "Updated description".to_string(),
+            )]),
         };
 
         let update_event: GroupActivityEvent<()> =
-            GroupActivityEvent::UpdateGroup(new_group_info.clone());
+            GroupActivityEvent::UpdateGroup(new_group_info_update.clone());
         let event_id = create_test_message_id(13);
 
         let result = group_state.apply_event(&update_event, event_id, creator_key.clone(), 1001);
 
         assert!(result.is_ok());
         assert_eq!(group_state.name, "Updated Name");
-        assert_eq!(group_state.settings, new_group_info.settings);
-        assert_eq!(group_state.metadata, new_group_info.metadata);
+        assert_eq!(
+            group_state.settings,
+            new_group_info_update.settings.unwrap()
+        );
+        assert_eq!(
+            group_state.metadata,
+            new_group_info_update.metadata.unwrap()
+        );
         assert_eq!(group_state.version, 2);
     }
 
@@ -2174,21 +2165,22 @@ mod tests {
         assert_eq!(group_state.version, 5);
 
         // Update group info
-        let new_group_info = GroupInfo {
-            name: "Updated Lifecycle Test Group".to_string(),
-            settings: GroupSettings::default(),
-            key_info: create_test_group_key_info(),
-            metadata: vec![
+        use crate::group::events::GroupInfoUpdate;
+        let new_group_info_update = GroupInfoUpdate {
+            name: Some("Updated Lifecycle Test Group".to_string()),
+            settings: Some(GroupSettings::default()),
+            key_info: Some(create_test_group_key_info()),
+            metadata: Some(vec![
                 Metadata::Description("Updated description".to_string()),
                 Metadata::Generic {
                     key: "status".to_string(),
                     value: "active".to_string(),
                 },
-            ],
+            ]),
         };
 
         let update_event: GroupActivityEvent<()> =
-            GroupActivityEvent::UpdateGroup(new_group_info.clone());
+            GroupActivityEvent::UpdateGroup(new_group_info_update.clone());
         group_state
             .apply_event(
                 &update_event,
@@ -2199,7 +2191,10 @@ mod tests {
             .unwrap();
 
         assert_eq!(group_state.name, "Updated Lifecycle Test Group");
-        assert_eq!(group_state.metadata, new_group_info.metadata);
+        assert_eq!(
+            group_state.metadata,
+            new_group_info_update.metadata.unwrap()
+        );
         assert_eq!(group_state.version, 6);
 
         // Member2 leaves

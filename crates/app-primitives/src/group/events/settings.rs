@@ -2,10 +2,13 @@ use serde::{Deserialize, Serialize};
 
 use super::permissions::GroupPermissions;
 
+#[cfg(feature = "frb-api")]
+use flutter_rust_bridge::frb;
 /// Group settings and configuration for encrypted groups
 ///
 /// These settings control various aspects of group behavior and permissions.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[cfg_attr(feature = "frb-api", frb(non_opaque))]
 pub struct GroupSettings {
     /// Required permissions for various actions
     pub permissions: GroupPermissions,
@@ -17,6 +20,7 @@ pub struct GroupSettings {
 ///
 /// Controls various encryption and security features for the group.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[cfg_attr(feature = "frb-api", frb(non_opaque))]
 pub struct EncryptionSettings {
     /// Whether to rotate keys periodically (future feature)
     ///

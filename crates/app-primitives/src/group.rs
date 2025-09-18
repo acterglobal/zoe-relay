@@ -117,7 +117,7 @@
 //! let user_key = KeyPair::generate(&mut rand::rngs::OsRng).public_key();
 //!
 //! // Check what identities a user can act as
-//! let available_identities = membership.get_available_identities(&user_key);
+//! let available_identities = membership.available_identities(&user_key);
 //!
 //! // Note: Currently returns empty set during ML-DSA transition
 //! assert!(available_identities.is_empty());
@@ -201,17 +201,8 @@ mod tests {
         SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 8080)
     }
 
-    fn create_test_key_derivation_info() -> zoe_wire_protocol::crypto::KeyDerivationInfo {
-        zoe_wire_protocol::crypto::KeyDerivationInfo {
-            method: zoe_wire_protocol::crypto::KeyDerivationMethod::Bip39Argon2,
-            salt: vec![1, 2, 3, 4, 5, 6, 7, 8],
-            argon2_params: zoe_wire_protocol::crypto::Argon2Params::default(),
-            context: "dga-group-key".to_string(),
-        }
-    }
-
-    fn create_test_group_key_info(key_id: Vec<u8>) -> GroupKeyInfo {
-        GroupKeyInfo::new_chacha20_poly1305(key_id, create_test_key_derivation_info())
+    fn create_test_group_key_info(key_id: blake3::Hash) -> GroupKeyInfo {
+        GroupKeyInfo::new_chacha20_poly1305(key_id)
     }
 
     #[test]
@@ -311,34 +302,22 @@ mod tests {
 
     #[test]
     fn test_group_key_info() {
-        let key_id = vec![1, 2, 3, 4];
-        let derivation_info = zoe_wire_protocol::crypto::KeyDerivationInfo {
-            method: zoe_wire_protocol::crypto::KeyDerivationMethod::Bip39Argon2,
-            salt: vec![1, 2, 3, 4, 5, 6, 7, 8],
-            argon2_params: zoe_wire_protocol::crypto::Argon2Params::default(),
-            context: "dga-group-key".to_string(),
-        };
+        let key_id = blake3::Hash::from([1u8; 32]);
 
-        let key_info = GroupKeyInfo::new_chacha20_poly1305(key_id.clone(), derivation_info.clone());
+        let key_info = GroupKeyInfo::new_chacha20_poly1305(key_id);
 
         assert_eq!(key_info.key_id(), &key_id);
         assert_eq!(key_info.algorithm(), "ChaCha20-Poly1305");
-        assert_eq!(key_info.derivation_info(), Some(&derivation_info).cloned());
     }
 
     #[test]
     fn test_group_key_info_matches_key_id() {
-        let key_id = vec![1, 2, 3, 4];
-        let derivation_info = zoe_wire_protocol::crypto::KeyDerivationInfo {
-            method: zoe_wire_protocol::crypto::KeyDerivationMethod::Bip39Argon2,
-            salt: vec![1, 2, 3, 4, 5, 6, 7, 8],
-            argon2_params: zoe_wire_protocol::crypto::Argon2Params::default(),
-            context: "dga-group-key".to_string(),
-        };
-        let key_info = GroupKeyInfo::new_chacha20_poly1305(key_id.clone(), derivation_info);
+        let key_id = blake3::Hash::from([1u8; 32]);
+        let other_key_id = blake3::Hash::from([2u8; 32]);
+        let key_info = GroupKeyInfo::new_chacha20_poly1305(key_id);
 
         assert!(key_info.matches_key_id(&key_id));
-        assert!(!key_info.matches_key_id(&[5, 6, 7, 8]));
+        assert!(!key_info.matches_key_id(&other_key_id));
     }
 
     #[test]
@@ -406,11 +385,11 @@ mod tests {
         let group_info = GroupInfo {
             name: "Test Group".to_string(),
             settings: GroupSettings::default(),
-            key_info: create_test_group_key_info(vec![1, 2, 3]),
+            key_info: create_test_group_key_info(blake3::Hash::from([1u8; 32])),
             metadata: Vec::new(),
         };
         let encryption_key = [42u8; 32];
-        let key_info = create_test_group_key_info(vec![1, 2, 3]);
+        let key_info = create_test_group_key_info(blake3::Hash::from([1u8; 32]));
         let relay_endpoint = RelayEndpoint::new(
             create_test_socket_addr(),
             create_test_ed25519_verifying_key(),
@@ -460,11 +439,11 @@ mod tests {
             GroupInfo {
                 name: "Test".to_string(),
                 settings: GroupSettings::default(),
-                key_info: create_test_group_key_info(vec![1]),
+                key_info: create_test_group_key_info(blake3::Hash::from([1u8; 32])),
                 metadata: Vec::new(),
             },
             [0u8; 32],
-            create_test_group_key_info(vec![1]),
+            create_test_group_key_info(blake3::Hash::from([1u8; 32])),
             vec![relay1.clone()],
         );
 
@@ -484,11 +463,11 @@ mod tests {
             GroupInfo {
                 name: "Test".to_string(),
                 settings: GroupSettings::default(),
-                key_info: create_test_group_key_info(vec![1]),
+                key_info: create_test_group_key_info(blake3::Hash::from([1u8; 32])),
                 metadata: Vec::new(),
             },
             [0u8; 32],
-            create_test_group_key_info(vec![1]),
+            create_test_group_key_info(blake3::Hash::from([1u8; 32])),
             vec![],
         );
 
@@ -503,7 +482,7 @@ mod tests {
         let group_info = GroupInfo {
             name: "Test Group".to_string(),
             settings: GroupSettings::default(),
-            key_info: create_test_group_key_info(vec![1, 2, 3]),
+            key_info: create_test_group_key_info(blake3::Hash::from([1u8; 32])),
             metadata: Vec::new(),
         };
 
@@ -539,11 +518,12 @@ mod tests {
 
     #[test]
     fn test_postcard_serialization_group_activity_event() {
-        let event = GroupActivityEvent::UpdateGroup(GroupInfo {
-            name: "Test Group".to_string(),
-            settings: GroupSettings::default(),
-            key_info: create_test_group_key_info(vec![1, 2, 3]),
-            metadata: Vec::new(),
+        use super::events::GroupInfoUpdate;
+        let event = GroupActivityEvent::UpdateGroup(GroupInfoUpdate {
+            name: Some("Test Group".to_string()),
+            settings: Some(GroupSettings::default()),
+            key_info: Some(create_test_group_key_info(blake3::Hash::from([1u8; 32]))),
+            metadata: Some(Vec::new()),
         });
 
         let serialized = postcard::to_stdvec(&event).expect("Failed to serialize");
@@ -590,11 +570,11 @@ mod tests {
             GroupInfo {
                 name: "Test".to_string(),
                 settings: GroupSettings::default(),
-                key_info: create_test_group_key_info(vec![1, 2, 3]),
+                key_info: create_test_group_key_info(blake3::Hash::from([1u8; 32])),
                 metadata: Vec::new(),
             },
             [42u8; 32],
-            create_test_group_key_info(vec![1, 2, 3]),
+            create_test_group_key_info(blake3::Hash::from([1u8; 32])),
             vec![RelayEndpoint::new(
                 create_test_socket_addr(),
                 create_test_ed25519_verifying_key(),

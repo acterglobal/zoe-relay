@@ -121,7 +121,7 @@
 //! let user_key = KeyPair::generate(&mut rand::rngs::OsRng).public_key();
 //!
 //! // Check available identities (currently returns empty set for compatibility)
-//! let identities = membership.get_available_identities(&user_key);
+//! let identities = membership.available_identities(&user_key);
 //! // Note: Currently returns empty set during ML-DSA transition
 //! assert!(identities.is_empty());
 //!

@@ -26,7 +26,7 @@ pub enum GroupSessionError {
 /// Complete group session state including both group state and encryption keys
 /// Since both are stored in the same encrypted database and always used together,
 /// combining them reduces complexity and eliminates synchronization issues.
-#[cfg_attr(feature = "frb-api", frb(opaque, ignore_all))]
+#[cfg_attr(feature = "frb-api", frb(non_opaque))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GroupSession {
     /// The group's business logic state (members, roles, metadata, etc.)

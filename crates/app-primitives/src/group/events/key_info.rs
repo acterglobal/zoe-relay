@@ -1,3 +1,4 @@
+use blake3::Hash;
 use serde::{Deserialize, Serialize};
 
 /// Information about the group's encryption key (not the key itself)
@@ -6,32 +7,24 @@ use serde::{Deserialize, Serialize};
 /// and their key derivation methods, without exposing the key material itself.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum GroupKeyInfo {
-    /// ChaCha20-Poly1305 encryption with BIP39+Argon2 key derivation
+    /// ChaCha20-Poly1305 encryption
     ///
     /// This is the standard encryption method for groups, using ChaCha20-Poly1305
-    /// for encryption and BIP39 mnemonics with Argon2 for key derivation.
+    /// for encryption
     ChaCha20Poly1305 {
         /// Key identifier (typically a hash of the derived key)
-        key_id: Vec<u8>,
-        /// Key derivation information for recreating the key from a mnemonic
-        derivation_info: zoe_wire_protocol::crypto::KeyDerivationInfo,
+        key_id: Hash,
     },
 }
 
 impl GroupKeyInfo {
     /// Create a new ChaCha20-Poly1305 GroupKeyInfo
-    pub fn new_chacha20_poly1305(
-        key_id: Vec<u8>,
-        derivation_info: zoe_wire_protocol::crypto::KeyDerivationInfo,
-    ) -> Self {
-        Self::ChaCha20Poly1305 {
-            key_id,
-            derivation_info,
-        }
+    pub fn new_chacha20_poly1305(key_id: Hash) -> Self {
+        Self::ChaCha20Poly1305 { key_id }
     }
 
     /// Get the key ID for this key info
-    pub fn key_id(&self) -> &[u8] {
+    pub fn key_id(&self) -> &Hash {
         match self {
             Self::ChaCha20Poly1305 { key_id, .. } => key_id,
         }
@@ -44,17 +37,8 @@ impl GroupKeyInfo {
         }
     }
 
-    /// Get the derivation info if available
-    pub fn derivation_info(&self) -> Option<zoe_wire_protocol::crypto::KeyDerivationInfo> {
-        match self {
-            Self::ChaCha20Poly1305 {
-                derivation_info, ..
-            } => Some(derivation_info.clone()),
-        }
-    }
-
     /// Check if this key info matches a given key ID
-    pub fn matches_key_id(&self, other_key_id: &[u8]) -> bool {
+    pub fn matches_key_id(&self, other_key_id: &Hash) -> bool {
         self.key_id() == other_key_id
     }
 }

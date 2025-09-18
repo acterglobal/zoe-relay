@@ -67,11 +67,11 @@ impl GroupRole {
     /// Check if this role can assign the target role to another member
     ///
     /// Generally, you can only assign roles that are lower than your own.
-    pub fn can_assign_role(&self, target_role: &GroupRole) -> bool {
+    pub fn can_assign_role(&self, tarrole: &GroupRole) -> bool {
         match self {
             GroupRole::Owner => true, // Owners can assign any role
-            GroupRole::Admin => !matches!(target_role, GroupRole::Owner),
-            GroupRole::Moderator => matches!(target_role, GroupRole::Member),
+            GroupRole::Admin => !matches!(tarrole, GroupRole::Owner),
+            GroupRole::Moderator => matches!(tarrole, GroupRole::Member),
             GroupRole::Member => false, // Members can't assign roles
         }
     }
