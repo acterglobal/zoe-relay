@@ -45,6 +45,19 @@ pub enum RelayClientDefaultCommands {
         #[arg(long, env = "ZOE_HEALTH_CHECK_PORT", default_value = "8080")]
         port: u16,
     },
+    #[cfg(feature = "health-bridge")]
+    /// Run HTTP health bridge server
+    HealthBridge {
+        /// HTTP port to bind the health bridge to
+        #[arg(long, env = "ZOE_HEALTH_HTTP_PORT", default_value = "8083")]
+        http_port: u16,
+        /// Health check port for bots (ignored for relay)
+        #[arg(long, env = "ZOE_HEALTH_CHECK_PORT", default_value = "8080")]
+        health_check_port: u16,
+        /// Relay address for relay health checks
+        #[arg(long, env = "ZOE_TARGET_ADDRESS", default_value = "127.0.0.1")]
+        target_address: String,
+    },
 }
 
 /// Helper function to parse hex string to VerifyingKey (simplified for demo)
@@ -77,6 +90,12 @@ pub async fn run_default_command(
 ) -> Result<(), Box<dyn std::error::Error>> {
     match cmd {
         RelayClientDefaultCommands::HealthCheck { port } => run_health_check_command(*port).await,
+        #[cfg(feature = "health-bridge")]
+        RelayClientDefaultCommands::HealthBridge {
+            http_port,
+            target_address,
+            health_check_port,
+        } => run_health_bridge(*http_port, target_address.clone(), *health_check_port).await,
     }
 }
 
@@ -278,9 +297,7 @@ where
     }
 }
 
-/// Simple health check client for testing
-pub async fn health_check_ping(port: u16) -> Result<String, std::io::Error> {
-    let addr = SocketAddr::from(([127, 0, 0, 1], port));
+async fn health_check_ping(addr: SocketAddr) -> Result<(), std::io::Error> {
     let mut stream = TcpStream::connect(addr).await?;
 
     // Send ping
@@ -291,27 +308,171 @@ pub async fn health_check_ping(port: u16) -> Result<String, std::io::Error> {
     let mut buffer = [0; 1024];
     let bytes_read = stream.read(&mut buffer).await?;
 
-    Ok(String::from_utf8_lossy(&buffer[..bytes_read])
+    let response = String::from_utf8_lossy(&buffer[..bytes_read])
         .trim()
-        .to_string())
+        .to_string();
+
+    if response == "pong" {
+        Ok(())
+    } else {
+        Err(std::io::Error::other(
+            "Health check failed. Unexpected response: {response}",
+        ))
+    }
 }
 
 /// Perform a health check and exit with appropriate code
 /// This is designed to be used as a Docker health check command
 pub async fn run_health_check_command(port: u16) -> Result<(), Box<dyn std::error::Error>> {
-    match health_check_ping(port).await {
-        Ok(response) => {
-            if response == "pong" {
-                println!("healthy");
-                std::process::exit(0);
-            } else {
-                eprintln!("unexpected response: {response}");
-                std::process::exit(1);
+    let addr = SocketAddr::from(([127, 0, 0, 1], port));
+    health_check_ping(addr).await?;
+    Ok(())
+}
+
+// Health bridge implementation (
+#[cfg(feature = "health-bridge")]
+mod health_bridge {
+    use super::*;
+    use serde_json::json;
+    use std::sync::Arc;
+    use tokio::sync::RwLock;
+    use tokio::time::{Duration, interval};
+    use warp::Filter;
+
+    /// Health status for the bridge
+    #[derive(Clone, Debug)]
+    pub struct HealthStatus {
+        pub is_healthy: bool,
+        pub last_check: std::time::SystemTime,
+        pub error_message: Option<String>,
+    }
+
+    impl HealthStatus {
+        pub fn new() -> Self {
+            Self {
+                is_healthy: false,
+                last_check: std::time::SystemTime::now(),
+                error_message: None,
             }
         }
-        Err(e) => {
-            eprintln!("health check failed: {e}");
-            std::process::exit(1);
+    }
+
+    /// Run HTTP health bridge server
+    pub async fn run_health_bridge(
+        http_port: u16,
+        target_address: String,
+        health_check_port: u16,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        info!("🌉 Starting HTTP Health Bridge on port {}", http_port);
+        let target_addr: std::net::IpAddr = target_address.parse()?;
+        let target_address = SocketAddr::from((target_addr, health_check_port));
+
+        // Shared health status
+        let health_status = Arc::new(RwLock::new(HealthStatus::new()));
+
+        // Start background health checker
+        let health_checker = {
+            let health_status = health_status.clone();
+
+            tokio::spawn(async move {
+                let mut interval = interval(Duration::from_secs(30));
+                loop {
+                    interval.tick().await;
+                    let ping = health_check_ping(target_address).await;
+                    let mut status = health_status.write().await;
+                    let is_healthy = ping.is_ok();
+                    status.is_healthy = is_healthy;
+                    status.last_check = std::time::SystemTime::now();
+                    status.error_message = ping.err().map(|e| e.to_string());
+
+                    if is_healthy {
+                        info!("✅ health check passed");
+                    } else {
+                        warn!("❌ health check failed: {:?}", status.error_message);
+                    }
+                }
+            })
+        };
+
+        // HTTP routes
+        let health_status_filter = warp::any().map(move || health_status.clone());
+
+        let health = warp::path("health")
+            .and(warp::get())
+            .and(health_status_filter.clone())
+            .and_then(handle_health_endpoint);
+
+        let status = warp::path("status")
+            .and(warp::get())
+            .and(health_status_filter.clone())
+            .and_then(handle_status_endpoint);
+
+        let routes = health.or(status);
+
+        // Start HTTP server
+        let server = warp::serve(routes).run(([0, 0, 0, 0], http_port));
+
+        info!("🚀 Health bridge ready on port {}", http_port);
+
+        // Run both the server and health checker
+        tokio::select! {
+            _ = server => {
+                error!("HTTP server stopped unexpectedly");
+            }
+            _ = health_checker => {
+                error!("Health checker stopped unexpectedly");
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Handle /health endpoint
+    async fn handle_health_endpoint(
+        health_status: Arc<RwLock<HealthStatus>>,
+    ) -> Result<impl warp::Reply, warp::Rejection> {
+        let status = health_status.read().await;
+
+        if status.is_healthy {
+            Ok(warp::reply::with_status("OK", warp::http::StatusCode::OK))
+        } else {
+            Ok(warp::reply::with_status(
+                "ERROR",
+                warp::http::StatusCode::SERVICE_UNAVAILABLE,
+            ))
         }
     }
+
+    /// Handle /status endpoint (detailed JSON)
+    async fn handle_status_endpoint(
+        health_status: Arc<RwLock<HealthStatus>>,
+    ) -> Result<impl warp::Reply, warp::Rejection> {
+        let status = health_status.read().await;
+        let last_check_ago = status
+            .last_check
+            .elapsed()
+            .unwrap_or(Duration::from_secs(0))
+            .as_secs();
+
+        let response = json!({
+            "status": if status.is_healthy { "healthy" } else { "unhealthy" },
+            "last_check_seconds_ago": last_check_ago,
+            "timestamp": chrono::Utc::now().to_rfc3339(),
+            "error": status.error_message
+        });
+
+        let status_code = if status.is_healthy {
+            warp::http::StatusCode::OK
+        } else {
+            warp::http::StatusCode::SERVICE_UNAVAILABLE
+        };
+
+        Ok(warp::reply::with_status(
+            warp::reply::json(&response),
+            status_code,
+        ))
+    }
 }
+
+#[cfg(feature = "health-bridge")]
+pub use health_bridge::run_health_bridge;

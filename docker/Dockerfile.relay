@@ -22,6 +22,8 @@ COPY test/ ./test/
 
 # Build the relay binary in release mode
 RUN cargo build --release --bin zoe-relay
+# Also build system check binary with health bridge feature for optional health monitoring
+RUN cargo build --release --bin zoe-system-check --features health-bridge
 
 # Runtime stage - minimal image
 FROM debian:bookworm-slim
@@ -39,8 +41,9 @@ RUN useradd -r -s /bin/false -m -d /app zoe
 # Set working directory
 WORKDIR /app
 
-# Copy binary from builder stage
+# Copy binaries from builder stage
 COPY --from=builder /app/target/release/zoe-relay ./zoe-relay
+COPY --from=builder /app/target/release/zoe-system-check ./zoe-system-check
 
 # Create data directory structure
 RUN mkdir -p /app/data /shared/keys && chown -R zoe:zoe /app /shared/keys

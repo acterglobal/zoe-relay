@@ -39,8 +39,8 @@ COPY test/ ./test/
 COPY --from=go-builder /go-build/libwhatsmeow.a ./crates/whatsmeow/
 COPY --from=go-builder /go-build/libwhatsmeow.h ./crates/whatsmeow/
 
-# Build the WhatsApp bot binary in release mode
-RUN cargo build --release --bin zoe-wa-bot
+# Build the WhatsApp bot binary in release mode with health bridge feature
+RUN cargo build --release --bin zoe-wa-bot --features health-bridge
 
 # Runtime stage - minimal image
 FROM debian:bookworm-slim

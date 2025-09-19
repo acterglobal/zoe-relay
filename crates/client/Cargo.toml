@@ -21,6 +21,7 @@ frb-api = [
 test-utils = []
 mock = ["zoe-client-storage/mock", "dep:mockall"]
 cli = ["clap"]
+health-bridge = ["cli", "dep:warp", "dep:serde_json", "dep:chrono"]
 
 [dependencies]
 # Wire protocol for crypto utilities
@@ -94,6 +95,11 @@ extend = { workspace = true, optional = true }
 
 # CLI support
 clap = { workspace = true, optional = true }
+
+# Health bridge dependencies (optional)
+warp = { version = "0.3", optional = true }
+serde_json = { version = "1.0", optional = true }
+chrono = { version = "0.4", features = ["serde"], optional = true }
 
 # System check dependencies
 crc32fast = { workspace = true }

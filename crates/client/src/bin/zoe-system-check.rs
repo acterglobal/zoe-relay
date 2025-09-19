@@ -48,7 +48,7 @@ use std::sync::{Arc, Mutex};
 use tracing::{error, info, warn};
 use tracing_subscriber::Layer;
 use tracing_subscriber::prelude::*;
-use zoe_client::cli::RelayClientArgs;
+use zoe_client::cli::{RelayClientArgs, RelayClientDefaultCommands};
 use zoe_client::system_check::DiagnosticLayer;
 use zoe_client::util::resolve_to_socket_addr;
 use zoe_client::{
@@ -101,7 +101,18 @@ struct SystemCheckArgs {
 
     /// Test command to run
     #[command(subcommand)]
-    command: Option<TestCommand>,
+    command: Option<Commands>,
+}
+
+#[derive(Subcommand, Debug)]
+enum Commands {
+    /// System check commands
+    #[command(subcommand)]
+    Test(TestCommand),
+
+    /// Client utility commands
+    #[command(flatten)]
+    Client(RelayClientDefaultCommands),
 }
 
 #[derive(Subcommand, Debug)]
@@ -177,21 +188,40 @@ async fn main() {
 
     // Determine what tests to run and configure accordingly
     let (run_specific_test, specific_category) = match &args.command {
-        Some(TestCommand::OfflineStorage { count }) => {
+        Some(Commands::Client(client_cmd)) => {
+            // Initialize basic logging for client commands
+            tracing_subscriber::fmt()
+                .with_env_filter(
+                    tracing_subscriber::EnvFilter::try_from_default_env()
+                        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
+                )
+                .init();
+
+            // Set up crypto provider
+            let _ = rustls::crypto::ring::default_provider().install_default();
+
+            // Run client command
+            if let Err(e) = zoe_client::cli::run_default_command(client_cmd).await {
+                error!("❌ Client command failed: {}", e);
+                std::process::exit(1);
+            }
+            return;
+        }
+        Some(Commands::Test(TestCommand::OfflineStorage { count })) => {
             config = config
                 .with_offline_message_count(*count)
                 .skip_blob_tests()
                 .skip_connectivity_tests();
             (true, Some(TestCategory::OfflineStorage))
         }
-        Some(TestCommand::OfflineBlob { size }) => {
+        Some(Commands::Test(TestCommand::OfflineBlob { size })) => {
             config = config
                 .with_offline_blob_size(*size)
                 .skip_storage_tests()
                 .skip_connectivity_tests();
             (true, Some(TestCategory::OfflineBlob))
         }
-        Some(TestCommand::Connectivity) => {
+        Some(Commands::Test(TestCommand::Connectivity)) => {
             config = config
                 .with_offline_tests(false)
                 .with_sync_verification(false)
@@ -199,7 +229,7 @@ async fn main() {
                 .skip_blob_tests();
             (true, Some(TestCategory::Connectivity))
         }
-        Some(TestCommand::Storage { count }) => {
+        Some(Commands::Test(TestCommand::Storage { count })) => {
             config = config
                 .with_storage_test_count(*count)
                 .with_offline_tests(false)
@@ -207,7 +237,7 @@ async fn main() {
                 .skip_blob_tests();
             (true, Some(TestCategory::Storage))
         }
-        Some(TestCommand::BlobService { size }) => {
+        Some(Commands::Test(TestCommand::BlobService { size })) => {
             config = config
                 .with_blob_test_size(*size)
                 .with_offline_tests(false)
@@ -215,14 +245,14 @@ async fn main() {
                 .skip_storage_tests();
             (true, Some(TestCategory::BlobService))
         }
-        Some(TestCommand::Synchronization) => {
+        Some(Commands::Test(TestCommand::Synchronization)) => {
             config = config
                 .skip_storage_tests()
                 .skip_blob_tests()
                 .skip_connectivity_tests();
             (true, Some(TestCategory::Synchronization))
         }
-        Some(TestCommand::All) | None => {
+        Some(Commands::Test(TestCommand::All)) | None => {
             // Run comprehensive test flow
             (false, None)
         }

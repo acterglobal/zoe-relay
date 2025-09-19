@@ -85,6 +85,44 @@ services:
 #::::::::::::::::::........::..:::::..:::::..:::::..:::::..::..:::::..:::::::::::::::::::::::3
 
 
+
+#                                                                                    
+#     #    # ######   ##   #      ##### #    #     ####  #    # ######  ####  #    # 
+#     #    # #       #  #  #        #   #    #    #    # #    # #      #    # #   #  
+#     ###### #####  #    # #        #   ######    #      ###### #####  #      ####   
+#     #    # #      ###### #        #   #    #    #      #    # #      #      #  #   
+#     #    # #      #    # #        #   #    #    #    # #    # #      #    # #   #  
+#     #    # ###### #    # ######   #   #    #     ####  #    # ######  ####  #    # 
+#                                                                                    
+
+  # Health bridge for relay server (optional)
+  zoe-relay-health-bridge:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.relay
+    restart: unless-stopped
+    depends_on:
+      zoe-relay:
+        condition: service_started
+    ports:
+      - "${RELAY_HEALTH_BRIDGE_PORT:-13980}:8080
+    environment:
+      - RUST_LOG=${RUST_LOG:-info}
+    networks:
+      - zoe-network
+    command: ["./zoe-system-check", "health-bridge", 
+              "--http-port", "8080, 
+              "--health-check-port", "13908",
+              "--target-address", "zoe-relay"]
+    healthcheck:
+      test: ["CMD-SHELL", "timeout 5 bash -c '</dev/tcp/localhost/8083' || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+    profiles:
+      - relay-health-bridge
+
 #   #     #                               #                     ######               
 #   #  #  # #    #   ##   #####  ####    # #   #####  #####     #     #  ####  ##### 
 #   #  #  # #    #  #  #    #   #       #   #  #    # #    #    #     # #    #   #   
@@ -108,7 +146,7 @@ services:
       - ZOE_SERVER_KEY_FILE=/shared/keys/zoe_relay_server_public_key.pem
       - ZOE_EPHEMERAL=true
       # Health check
-      - ZOE_HEALTH_CHECK_PORT=8081
+      - ZOE_HEALTH_CHECK_PORT=8080
       # WhatsApp configuration
       - WHATSAPP_DB_PATH=/app/data/whatsapp.db
       - MAX_CONNECTION_ATTEMPTS=${MAX_CONNECTION_ATTEMPTS:-10}
@@ -131,6 +169,37 @@ services:
     command: ["./zoe-wa-bot"]
     profiles:
       - whatsapp-bot
+
+  # Health bridge for WhatsApp bot (optional - requires whatsapp-bot profile)
+  zoe-wa-health-bridge:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.wa-bot
+    restart: unless-stopped
+    depends_on:
+      zoe-wa-bot:
+        condition: service_started
+    ports:
+      - "${WA_HEALTH_BRIDGE_PORT:-13981}:8080"
+    environment:
+      - RUST_LOG=${RUST_LOG:-info}
+    networks:
+      - zoe-network
+    command: ["./zoe-wa-bot", "health-bridge",
+              "--http-port", "8080",
+              "--health-check-port", "8080",
+              "--target-address", "zoe-wa-bot"]
+    healthcheck:
+      test: ["CMD-SHELL", "timeout 5 bash -c '</dev/tcp/localhost/8080' || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+    profiles:
+      - whatsapp-bot-health
+
+
+
 #    #####                                   ######               
 #   #     # #  ####  #    #   ##   #         #     #  ####  ##### 
 #   #       # #    # ##   #  #  #  #         #     # #    #   #   
@@ -179,9 +248,34 @@ services:
     command: ["./signal-bot"]
     profiles:
       - signal-bot
-
-                                  
-                                  
+  # Health bridge for signal bot (optional - requires signal-bot profile)
+  zoe-signal-health-bridge:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.signal-bot
+    restart: unless-stopped
+    depends_on:
+      zoe-signal-bot:
+        condition: service_started
+    ports:
+      - "${SIGNAL_HEALTH_BRIDGE_PORT:-13982}:8080"
+    environment:
+      - RUST_LOG=${RUST_LOG:-info}
+    networks:
+      - zoe-network
+    command: ["./signal-bot", "health-bridge",
+              "--http-port", "8080",
+              "--health-check-port", "8080",
+              "--target-address", "zoe-signal-bot"]
+    healthcheck:
+      test: ["CMD-SHELL", "timeout 5 bash -c '</dev/tcp/localhost/8080' || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+    profiles:
+      - signal-bot-health-bridge
+                   
                                   
  #####    #####    #####    ##### 
                                   
