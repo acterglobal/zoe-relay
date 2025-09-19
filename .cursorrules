@@ -21,6 +21,7 @@
 ### Imports
 - ✅ Top-level imports with alias renaming for conflicts (`use foo::Bar as FooBar`)
 - ❌ No full-path type definitions (`foo::bar::Baz`) in function bodies
+- ❌ **NEVER** add re-exports for convenience (`pub use foo::Bar`) - breaks Flutter Rust Bridge
 
 ### Serialization
 - ✅ **ALWAYS** use `postcard` for serialization (`postcard::to_stdvec()`, `postcard::from_bytes()`)
