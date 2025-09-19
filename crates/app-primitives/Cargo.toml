@@ -18,6 +18,7 @@ zoe-wire-protocol = { path = "../wire-protocol" }
 
 # Serialization
 serde = { workspace = true }
+serde_repr = "0.1"
 postcard = { workspace = true }
 
 # Error handling
