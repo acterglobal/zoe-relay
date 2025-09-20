@@ -41,6 +41,9 @@ tarpc = { workspace = true, features = ["serde-transport"], optional = true }
 # Flutter Rust Bridge
 flutter_rust_bridge = { workspace = true, optional = true }
 
+# Random number generation for app tags
+rand = { workspace = true }
+
 [dev-dependencies]
 # Testing utilities
 rand = { workspace = true }

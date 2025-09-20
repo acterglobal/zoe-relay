@@ -1,5 +1,5 @@
 use zoe_app_primitives::group::events::settings::GroupSettings;
-use zoe_state_machine::group::{CreateGroupBuilder, GroupManager, create_group_activity_event};
+use zoe_state_machine::group::{CreateGroupBuilder, GroupManager};
 use zoe_wire_protocol::KeyPair;
 
 #[tokio::main]
@@ -37,7 +37,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // but Alice can post activities to the group
 
     // Alice posts a welcome message to the group
-    let activity_event = create_group_activity_event(());
+    let activity_event = zoe_app_primitives::group::events::GroupActivityEvent::SetIdentity(
+        zoe_app_primitives::identity::IdentityInfo {
+            display_name: "alice_user".to_string(),
+            metadata: vec![],
+        },
+    );
 
     let activity_message = dga
         .create_group_event_message(

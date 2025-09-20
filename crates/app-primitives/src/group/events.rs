@@ -1,5 +1,6 @@
+use crate::protocol::InstalledApp;
 use forward_compatible_enum::ForwardCompatibleEnum;
-use serde::{Deserialize, Serialize, de::DeserializeOwned};
+use serde::{Deserialize, Serialize};
 
 use super::events::{roles::GroupRole, settings::GroupSettings};
 use crate::{
@@ -29,46 +30,66 @@ pub struct GroupInfo {
     pub key_info: GroupKeyInfo,
     /// Optional group avatar image
     pub metadata: Vec<Metadata>,
+    /// Installed applications in this group with channel-per-app support
+    /// Each app gets its own communication channel for isolated messaging
+    pub installed_apps: Vec<InstalledApp>,
 }
 
-#[cfg_attr(feature = "frb-api", frb(non_opaque))]
+/// Individual group info update operations using the efficient Vec<UpdateEnum> pattern
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct GroupInfoUpdate {
-    /// Human-readable group name
-    pub name: Option<String>,
-    // initial group settings
-    pub settings: Option<GroupSettings>,
-    /// Key derivation info or key identifier (not the actual key)
-    /// Used to help participants derive or identify the correct AES key
-    pub key_info: Option<GroupKeyInfo>,
-    /// Optional group avatar image
-    pub metadata: Option<Vec<Metadata>>,
+pub enum GroupInfoUpdate {
+    /// Update the group name
+    Name(String),
+    /// Update the group settings
+    Settings(GroupSettings),
+    /// Update the key derivation info
+    KeyInfo(GroupKeyInfo),
+    /// Replace all metadata with a new list
+    SetMetadata(Vec<Metadata>),
+    /// Add metadata to the list
+    AddMetadata(Metadata),
+    /// Clear all metadata
+    ClearMetadata,
+    /// Add an application to the installed apps list
+    /// Each app gets its own communication channel for isolated messaging
+    AddApp(InstalledApp),
 }
+
+/// Content for updating group info - vector of specific updates
+///
+/// This follows the same efficient pattern used in DGO events, allowing
+/// for compact, targeted updates to specific group properties without
+/// requiring the entire group info structure to be passed.
+///
+/// # Example
+/// ```rust
+/// let updates = vec![
+///     GroupInfoUpdate::Name("New Group Name".to_string()),
+///     GroupInfoUpdate::AddApp(InstalledApp::new_simple(
+///         "calendar".to_string(),
+///         1, 0
+///     )),
+/// ];
+/// ```
+#[cfg_attr(feature = "frb-api", frb(non_opaque))]
+pub type GroupInfoUpdateContent = Vec<GroupInfoUpdate>;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(bound(deserialize = "T: DeserializeOwned", serialize = "T : Serialize"))]
-pub struct GroupEvent<T> {
+pub struct GroupEvent {
     /// which identity are we sending this event as
     idenitity: IdentityRef,
     /// the event we are sending
-    event: Box<GroupActivityEvent<T>>,
+    event: Box<GroupActivityEvent>,
 }
 
 #[derive(Debug, Clone, PartialEq, ForwardCompatibleEnum)]
-#[forward_compatible(
-    serde_serialize = "T: Serialize",
-    serde_deserialize = "T: DeserializeOwned"
-)]
-pub enum GroupActivityEvent<T> {
-    #[discriminant(0)]
-    Activity(T),
-
+pub enum GroupActivityEvent {
     #[discriminant(11)]
     CreateGroup(GroupInfo),
 
     /// Update group metadata (name, description, settings)
     #[discriminant(12)]
-    UpdateGroup(GroupInfoUpdate),
+    UpdateGroup(GroupInfoUpdateContent),
 
     /// Set identity information for the sending identity
     #[discriminant(20)]

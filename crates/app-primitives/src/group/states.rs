@@ -541,7 +541,7 @@ pub struct GroupMember {
 /// # );
 ///
 /// let new_member = KeyPair::generate(&mut rand::rngs::OsRng);
-/// let activity_event = GroupActivityEvent::Activity(());
+/// let activity_event = GroupActivityEvent::SetIdentity(identity_info);
 ///
 /// // New member announces participation
 /// group_state.apply_event(
@@ -720,6 +720,7 @@ impl GroupState {
             settings: self.settings.clone(),
             key_info,
             metadata: self.metadata.clone(),
+            installed_apps: vec![], // TODO: Add proper installed apps support to GroupState
         }
     }
 
@@ -779,7 +780,7 @@ impl GroupState {
     /// );
     ///
     /// // New member announces participation via activity
-    /// let activity_event = GroupActivityEvent::Activity(());
+    /// let activity_event = GroupActivityEvent::SetIdentity(identity_info);
     /// let event_id = Hash::from([2u8; 32]);
     ///
     /// group_state.apply_event(
@@ -803,9 +804,9 @@ impl GroupState {
     /// - [`GroupState::last_event_timestamp`] is updated
     /// - [`GroupState::event_history`] includes the new event ID
     /// - Specific state changes depend on the event type
-    pub fn apply_event<T>(
+    pub fn apply_event(
         &mut self,
-        event: &GroupActivityEvent<T>,
+        event: &GroupActivityEvent,
         event_id: MessageId,
         sender: VerifyingKey,
         timestamp: u64,
@@ -826,16 +827,32 @@ impl GroupState {
                 self.handle_leave_group(sender, message.clone(), timestamp)?;
             }
 
-            GroupActivityEvent::UpdateGroup(group_info) => {
-                // Handle group updates
-                if let Some(name) = &group_info.name {
-                    self.name = name.clone();
-                }
-                if let Some(settings) = &group_info.settings {
-                    self.settings = settings.clone();
-                }
-                if let Some(metadata) = &group_info.metadata {
-                    self.metadata = metadata.clone();
+            GroupActivityEvent::UpdateGroup(group_updates) => {
+                // Handle group updates using the Vec<GroupInfoUpdate> pattern
+                for update in group_updates {
+                    match update {
+                        crate::group::events::GroupInfoUpdate::Name(name) => {
+                            self.name = name.clone();
+                        }
+                        crate::group::events::GroupInfoUpdate::Settings(settings) => {
+                            self.settings = settings.clone();
+                        }
+                        crate::group::events::GroupInfoUpdate::KeyInfo(_key_info) => {
+                            // TODO: Handle key info updates when GroupState supports protocols
+                        }
+                        crate::group::events::GroupInfoUpdate::SetMetadata(metadata) => {
+                            self.metadata = metadata.clone();
+                        }
+                        crate::group::events::GroupInfoUpdate::AddMetadata(metadata) => {
+                            self.metadata.push(metadata.clone());
+                        }
+                        crate::group::events::GroupInfoUpdate::ClearMetadata => {
+                            self.metadata.clear();
+                        }
+                        crate::group::events::GroupInfoUpdate::AddApp(_app) => {
+                            // TODO: Handle app installation when GroupState supports installed apps
+                        }
+                    }
                 }
             }
 
@@ -859,11 +876,6 @@ impl GroupState {
                 // Unknown management event - ignore for forward compatibility
                 // Future implementations could log this with: discriminant value {discriminant}
                 let _ = discriminant; // Acknowledge the discriminant without warning
-            }
-
-            GroupActivityEvent::Activity(_activity_data) => {
-                // Handle custom activity
-                self.handle_member_announcement(sender, timestamp)?;
             }
         }
 
@@ -1198,6 +1210,7 @@ mod tests {
                     value: "test".to_string(),
                 },
             ],
+            installed_apps: vec![], // Test data
         }
     }
 
@@ -1569,7 +1582,10 @@ mod tests {
             1000,
         );
 
-        let activity_event = GroupActivityEvent::Activity(());
+        let activity_event = GroupActivityEvent::SetIdentity(crate::identity::IdentityInfo {
+            display_name: "test_user".to_string(),
+            metadata: vec![],
+        });
         let event_id = create_test_message_id(11);
 
         // New member announces participation
@@ -1603,17 +1619,17 @@ mod tests {
             1000,
         );
 
-        use crate::group::events::GroupInfoUpdate;
-        let new_group_info_update = GroupInfoUpdate {
-            name: Some("Updated Name".to_string()),
-            settings: Some(GroupSettings::default()),
-            key_info: Some(create_test_group_key_info()),
-            metadata: Some(vec![Metadata::Description(
+        use crate::group::events::{GroupInfoUpdate, GroupInfoUpdateContent};
+        let new_group_info_update: GroupInfoUpdateContent = vec![
+            GroupInfoUpdate::Name("Updated Name".to_string()),
+            GroupInfoUpdate::Settings(GroupSettings::default()),
+            GroupInfoUpdate::KeyInfo(create_test_group_key_info()),
+            GroupInfoUpdate::SetMetadata(vec![Metadata::Description(
                 "Updated description".to_string(),
             )]),
-        };
+        ];
 
-        let update_event: GroupActivityEvent<()> =
+        let update_event: GroupActivityEvent =
             GroupActivityEvent::UpdateGroup(new_group_info_update.clone());
         let event_id = create_test_message_id(13);
 
@@ -1621,13 +1637,10 @@ mod tests {
 
         assert!(result.is_ok());
         assert_eq!(group_state.name, "Updated Name");
-        assert_eq!(
-            group_state.settings,
-            new_group_info_update.settings.unwrap()
-        );
+        assert_eq!(group_state.settings, GroupSettings::default());
         assert_eq!(
             group_state.metadata,
-            new_group_info_update.metadata.unwrap()
+            vec![Metadata::Description("Updated description".to_string())]
         );
         assert_eq!(group_state.version, 2);
     }
@@ -1646,7 +1659,10 @@ mod tests {
         );
 
         // Add member first
-        let activity_event = GroupActivityEvent::Activity(());
+        let activity_event = GroupActivityEvent::SetIdentity(crate::identity::IdentityInfo {
+            display_name: "test_user".to_string(),
+            metadata: vec![],
+        });
         group_state
             .apply_event(
                 &activity_event,
@@ -1660,7 +1676,7 @@ mod tests {
         assert_eq!(group_state.members.len(), 2);
 
         // Member leaves
-        let leave_event: GroupActivityEvent<()> = GroupActivityEvent::LeaveGroup {
+        let leave_event: GroupActivityEvent = GroupActivityEvent::LeaveGroup {
             message: Some("Goodbye".to_string()),
         };
         let result = group_state.apply_event(
@@ -1690,7 +1706,10 @@ mod tests {
         );
 
         // Add member first
-        let activity_event = GroupActivityEvent::Activity(());
+        let activity_event = GroupActivityEvent::SetIdentity(crate::identity::IdentityInfo {
+            display_name: "test_user".to_string(),
+            metadata: vec![],
+        });
         group_state
             .apply_event(
                 &activity_event,
@@ -1702,7 +1721,7 @@ mod tests {
 
         // Assign admin role
         let target_identity = IdentityRef::Key(member_key.clone());
-        let assign_role_event: GroupActivityEvent<()> = GroupActivityEvent::AssignRole {
+        let assign_role_event: GroupActivityEvent = GroupActivityEvent::AssignRole {
             target: target_identity,
             role: GroupRole::Admin,
         };
@@ -1734,7 +1753,10 @@ mod tests {
             1000,
         );
 
-        let activity_event = GroupActivityEvent::Activity(());
+        let activity_event = GroupActivityEvent::SetIdentity(crate::identity::IdentityInfo {
+            display_name: "test_user".to_string(),
+            metadata: vec![],
+        });
 
         // Try to apply event with older timestamp
         let result = group_state.apply_event(
@@ -1791,7 +1813,10 @@ mod tests {
         );
 
         // Add member
-        let activity_event = GroupActivityEvent::Activity(());
+        let activity_event = GroupActivityEvent::SetIdentity(crate::identity::IdentityInfo {
+            display_name: "test_user".to_string(),
+            metadata: vec![],
+        });
         group_state
             .apply_event(
                 &activity_event,
@@ -1881,7 +1906,7 @@ mod tests {
             1000,
         );
 
-        let leave_event: GroupActivityEvent<()> = GroupActivityEvent::LeaveGroup { message: None };
+        let leave_event: GroupActivityEvent = GroupActivityEvent::LeaveGroup { message: None };
         let result = group_state.apply_event(
             &leave_event,
             create_test_message_id(27),
@@ -1910,7 +1935,7 @@ mod tests {
         );
 
         let target_identity = IdentityRef::Key(non_member_key);
-        let assign_role_event: GroupActivityEvent<()> = GroupActivityEvent::AssignRole {
+        let assign_role_event: GroupActivityEvent = GroupActivityEvent::AssignRole {
             target: target_identity,
             role: GroupRole::Admin,
         };
@@ -1944,7 +1969,10 @@ mod tests {
         );
 
         // Add both members
-        let activity_event = GroupActivityEvent::Activity(());
+        let activity_event = GroupActivityEvent::SetIdentity(crate::identity::IdentityInfo {
+            display_name: "test_user".to_string(),
+            metadata: vec![],
+        });
         group_state
             .apply_event(
                 &activity_event,
@@ -1964,7 +1992,7 @@ mod tests {
 
         // Regular member tries to assign role (should fail)
         let target_identity = IdentityRef::Key(target_key);
-        let assign_role_event: GroupActivityEvent<()> = GroupActivityEvent::AssignRole {
+        let assign_role_event: GroupActivityEvent = GroupActivityEvent::AssignRole {
             target: target_identity,
             role: GroupRole::Admin,
         };
@@ -2097,7 +2125,10 @@ mod tests {
         assert_eq!(group_state.version, 1);
 
         // Member 1 joins
-        let activity_event = GroupActivityEvent::Activity(());
+        let activity_event = GroupActivityEvent::SetIdentity(crate::identity::IdentityInfo {
+            display_name: "test_user".to_string(),
+            metadata: vec![],
+        });
         group_state
             .apply_event(
                 &activity_event,
@@ -2125,7 +2156,7 @@ mod tests {
         assert_eq!(group_state.version, 3);
 
         // Creator promotes member1 to admin
-        let promote_event: GroupActivityEvent<()> = GroupActivityEvent::AssignRole {
+        let promote_event: GroupActivityEvent = GroupActivityEvent::AssignRole {
             target: IdentityRef::Key(member1_key.clone()),
             role: GroupRole::Admin,
         };
@@ -2145,7 +2176,7 @@ mod tests {
         assert_eq!(group_state.version, 4);
 
         // Creator (owner) promotes member2 to moderator (only owners can assign roles by default)
-        let promote_event2: GroupActivityEvent<()> = GroupActivityEvent::AssignRole {
+        let promote_event2: GroupActivityEvent = GroupActivityEvent::AssignRole {
             target: IdentityRef::Key(member2_key.clone()),
             role: GroupRole::Moderator,
         };
@@ -2165,21 +2196,21 @@ mod tests {
         assert_eq!(group_state.version, 5);
 
         // Update group info
-        use crate::group::events::GroupInfoUpdate;
-        let new_group_info_update = GroupInfoUpdate {
-            name: Some("Updated Lifecycle Test Group".to_string()),
-            settings: Some(GroupSettings::default()),
-            key_info: Some(create_test_group_key_info()),
-            metadata: Some(vec![
+        use crate::group::events::{GroupInfoUpdate, GroupInfoUpdateContent};
+        let new_group_info_update: GroupInfoUpdateContent = vec![
+            GroupInfoUpdate::Name("Updated Lifecycle Test Group".to_string()),
+            GroupInfoUpdate::Settings(GroupSettings::default()),
+            GroupInfoUpdate::KeyInfo(create_test_group_key_info()),
+            GroupInfoUpdate::SetMetadata(vec![
                 Metadata::Description("Updated description".to_string()),
                 Metadata::Generic {
                     key: "status".to_string(),
                     value: "active".to_string(),
                 },
             ]),
-        };
+        ];
 
-        let update_event: GroupActivityEvent<()> =
+        let update_event: GroupActivityEvent =
             GroupActivityEvent::UpdateGroup(new_group_info_update.clone());
         group_state
             .apply_event(
@@ -2193,12 +2224,18 @@ mod tests {
         assert_eq!(group_state.name, "Updated Lifecycle Test Group");
         assert_eq!(
             group_state.metadata,
-            new_group_info_update.metadata.unwrap()
+            vec![
+                Metadata::Description("Updated description".to_string()),
+                Metadata::Generic {
+                    key: "status".to_string(),
+                    value: "active".to_string(),
+                },
+            ]
         );
         assert_eq!(group_state.version, 6);
 
         // Member2 leaves
-        let leave_event: GroupActivityEvent<()> = GroupActivityEvent::LeaveGroup {
+        let leave_event: GroupActivityEvent = GroupActivityEvent::LeaveGroup {
             message: Some("Goodbye!".to_string()),
         };
         group_state
@@ -2236,7 +2273,10 @@ mod tests {
         );
 
         // Member joins
-        let activity_event = GroupActivityEvent::Activity(());
+        let activity_event = GroupActivityEvent::SetIdentity(crate::identity::IdentityInfo {
+            display_name: "test_user".to_string(),
+            metadata: vec![],
+        });
         group_state
             .apply_event(
                 &activity_event,

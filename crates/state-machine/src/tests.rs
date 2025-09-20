@@ -1,7 +1,5 @@
 use crate::group::{CreateGroupBuilder, GroupDataUpdate, GroupManager};
-use crate::group::{
-    create_group_activity_event, create_leave_group_event, create_role_update_event,
-};
+use crate::group::{create_leave_group_event, create_role_update_event};
 use rand::thread_rng;
 use zoe_app_primitives::group::events::GroupActivityEvent;
 use zoe_app_primitives::group::events::roles::GroupRole;
@@ -103,7 +101,11 @@ async fn test_encrypted_group_activity() {
     let result = dga.create_group(create_group, &alice_key).await.unwrap();
 
     // Create and send an activity event
-    let activity_event = create_group_activity_event(());
+    let activity_event =
+        GroupActivityEvent::SetIdentity(zoe_app_primitives::identity::IdentityInfo {
+            display_name: "test_user".to_string(),
+            metadata: vec![],
+        });
 
     let activity_message = dga
         .create_group_event_message(result.group_id, activity_event, &alice_key, timestamp + 1)
@@ -142,7 +144,11 @@ async fn test_new_member_via_activity() {
     // Bob now has the complete group session, no need for separate state management
 
     // Bob sends an activity
-    let bob_activity = create_group_activity_event(());
+    let bob_activity =
+        GroupActivityEvent::SetIdentity(zoe_app_primitives::identity::IdentityInfo {
+            display_name: "bob_user".to_string(),
+            metadata: vec![],
+        });
 
     let bob_message = bob_dga
         .create_group_event_message(result.group_id, bob_activity, &bob_key, timestamp + 10)
@@ -180,7 +186,11 @@ async fn test_role_update() {
         .add_group_session(result.group_id, group_session)
         .await;
 
-    let bob_activity = create_group_activity_event(());
+    let bob_activity =
+        GroupActivityEvent::SetIdentity(zoe_app_primitives::identity::IdentityInfo {
+            display_name: "bob_user".to_string(),
+            metadata: vec![],
+        });
     let bob_message = bob_dga
         .create_group_event_message(result.group_id, bob_activity, &bob_key, timestamp + 5)
         .await
@@ -188,7 +198,7 @@ async fn test_role_update() {
     dga.process_group_event(&bob_message).await.unwrap();
 
     // Alice promotes Bob to Admin
-    let role_update: GroupActivityEvent<()> =
+    let role_update: GroupActivityEvent =
         create_role_update_event(bob_key.public_key(), GroupRole::Admin);
 
     let role_message = dga
@@ -222,7 +232,11 @@ async fn test_leave_group_event() {
     bob_dga
         .add_group_session(result.group_id, group_session)
         .await;
-    let bob_activity = create_group_activity_event(());
+    let bob_activity =
+        GroupActivityEvent::SetIdentity(zoe_app_primitives::identity::IdentityInfo {
+            display_name: "bob_user".to_string(),
+            metadata: vec![],
+        });
     let bob_message = bob_dga
         .create_group_event_message(result.group_id, bob_activity, &bob_key, timestamp + 5)
         .await
@@ -240,7 +254,7 @@ async fn test_leave_group_event() {
     );
 
     // Bob leaves the group
-    let leave_event: GroupActivityEvent<()> =
+    let leave_event: GroupActivityEvent =
         create_leave_group_event(Some("Thanks for having me!".to_string()));
 
     let leave_message = bob_dga
@@ -271,7 +285,11 @@ async fn test_missing_group_session_error() {
     dga.remove_group_session(&result.group_id).await;
 
     // Try to create an event without the group session
-    let activity_event = create_group_activity_event(());
+    let activity_event =
+        GroupActivityEvent::SetIdentity(zoe_app_primitives::identity::IdentityInfo {
+            display_name: "test_user".to_string(),
+            metadata: vec![],
+        });
 
     let result = dga
         .create_group_event_message(result.group_id, activity_event, &alice_key, timestamp + 1)
@@ -305,7 +323,11 @@ async fn test_permission_denied_for_role_update() {
     bob_dga
         .add_group_session(result.group_id, group_session)
         .await;
-    let bob_activity = create_group_activity_event(());
+    let bob_activity =
+        GroupActivityEvent::SetIdentity(zoe_app_primitives::identity::IdentityInfo {
+            display_name: "bob_user".to_string(),
+            metadata: vec![],
+        });
     let bob_message = bob_dga
         .create_group_event_message(result.group_id, bob_activity, &bob_key, timestamp + 5)
         .await
@@ -313,7 +335,7 @@ async fn test_permission_denied_for_role_update() {
     dga.process_group_event(&bob_message).await.unwrap();
 
     // Bob (regular member) tries to update Alice's role (should fail)
-    let role_update: GroupActivityEvent<()> = create_role_update_event(
+    let role_update: GroupActivityEvent = create_role_update_event(
         alice_key.public_key(),
         GroupRole::Member, // Trying to demote the owner
     );

@@ -1,5 +1,4 @@
 // ChaCha20-Poly1305 and AES-GCM functionality moved to crypto module
-use serde::Serialize;
 use zoe_wire_protocol::{ChaCha20Poly1305Content, KeyPair, MessageId, VerifyingKey};
 // Random number generation imports removed - no longer needed
 // Temporary import for Ed25519 workaround in create_role_update_event
@@ -245,16 +244,13 @@ impl GroupManager {
 
     /// Create an encrypted message for a group activity event
     /// The group_id parameter should be the Blake3 hash of the CreateGroup message
-    pub async fn create_group_event_message<T>(
+    pub async fn create_group_event_message(
         &self,
         group_id: MessageId,
-        event: GroupActivityEvent<T>,
+        event: GroupActivityEvent,
         sender: &KeyPair,
         timestamp: u64,
-    ) -> GroupResult<MessageFull>
-    where
-        T: Serialize,
-    {
+    ) -> GroupResult<MessageFull> {
         // Find the group session to verify it exists and get encryption key
         let groups = self.groups.read().await;
         let group_session = groups
@@ -308,7 +304,7 @@ impl GroupManager {
                 ))
             })?;
 
-            let event = group_session.decrypt_group_event::<()>(encrypted_payload)?;
+            let event = group_session.decrypt_group_event(encrypted_payload)?;
             (*group_id, event)
         } else {
             // This is a subsequent event - find the group by channel tag
@@ -511,9 +507,10 @@ impl CreateGroupBuilder {
             settings: self.group_settings,
             key_info,
             metadata,
+            installed_apps: vec![], // TODO: Add proper installed apps support
         };
         // Encrypt the event before creating the wire protocol message
-        let encrypted_payload = encrypt_group_event_content::<()>(
+        let encrypted_payload = encrypt_group_event_content(
             &enc_key,
             &GroupActivityEvent::CreateGroup(group_info.clone()),
         )?;
@@ -530,7 +527,7 @@ impl Default for GroupManager {
 // Helper functions for common encrypted group operations
 
 /// Create a leave group event
-pub fn create_leave_group_event<T>(message: Option<String>) -> GroupActivityEvent<T> {
+pub fn create_leave_group_event(message: Option<String>) -> GroupActivityEvent {
     GroupActivityEvent::LeaveGroup { message }
 }
 
@@ -538,15 +535,10 @@ pub fn create_leave_group_event<T>(message: Option<String>) -> GroupActivityEven
 /// TODO: This function is temporarily disabled due to IdentityRef expecting Ed25519 keys
 /// while the message system now uses ML-DSA keys. This needs to be updated when
 /// IdentityRef is migrated to ML-DSA.
-pub fn create_role_update_event<T>(member: VerifyingKey, role: GroupRole) -> GroupActivityEvent<T> {
+pub fn create_role_update_event(member: VerifyingKey, role: GroupRole) -> GroupActivityEvent {
     // Use the provided ML-DSA member key directly
     GroupActivityEvent::AssignRole {
         target: IdentityRef::Key(member),
         role,
     }
-}
-
-/// Create a custom group activity event
-pub fn create_group_activity_event<T>(activity_data: T) -> GroupActivityEvent<T> {
-    GroupActivityEvent::Activity(activity_data)
 }

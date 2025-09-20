@@ -387,6 +387,7 @@ mod tests {
             settings: GroupSettings::default(),
             key_info: create_test_group_key_info(blake3::Hash::from([1u8; 32])),
             metadata: Vec::new(),
+            installed_apps: vec![], // Test data
         };
         let encryption_key = [42u8; 32];
         let key_info = create_test_group_key_info(blake3::Hash::from([1u8; 32]));
@@ -441,6 +442,7 @@ mod tests {
                 settings: GroupSettings::default(),
                 key_info: create_test_group_key_info(blake3::Hash::from([1u8; 32])),
                 metadata: Vec::new(),
+                installed_apps: vec![], // Test data
             },
             [0u8; 32],
             create_test_group_key_info(blake3::Hash::from([1u8; 32])),
@@ -465,6 +467,7 @@ mod tests {
                 settings: GroupSettings::default(),
                 key_info: create_test_group_key_info(blake3::Hash::from([1u8; 32])),
                 metadata: Vec::new(),
+                installed_apps: vec![], // Test data
             },
             [0u8; 32],
             create_test_group_key_info(blake3::Hash::from([1u8; 32])),
@@ -484,6 +487,7 @@ mod tests {
             settings: GroupSettings::default(),
             key_info: create_test_group_key_info(blake3::Hash::from([1u8; 32])),
             metadata: Vec::new(),
+            installed_apps: vec![], // Test data
         };
 
         // Just test that we can create and clone the struct
@@ -519,15 +523,15 @@ mod tests {
     #[test]
     fn test_postcard_serialization_group_activity_event() {
         use super::events::GroupInfoUpdate;
-        let event = GroupActivityEvent::UpdateGroup(GroupInfoUpdate {
-            name: Some("Test Group".to_string()),
-            settings: Some(GroupSettings::default()),
-            key_info: Some(create_test_group_key_info(blake3::Hash::from([1u8; 32]))),
-            metadata: Some(Vec::new()),
-        });
+        let event = GroupActivityEvent::UpdateGroup(vec![
+            GroupInfoUpdate::Name("Test Group".to_string()),
+            GroupInfoUpdate::Settings(GroupSettings::default()),
+            GroupInfoUpdate::KeyInfo(create_test_group_key_info(blake3::Hash::from([1u8; 32]))),
+            GroupInfoUpdate::SetMetadata(Vec::new()),
+        ]);
 
         let serialized = postcard::to_stdvec(&event).expect("Failed to serialize");
-        let deserialized: GroupActivityEvent<()> =
+        let deserialized: GroupActivityEvent =
             postcard::from_bytes(&serialized).expect("Failed to deserialize");
 
         assert_eq!(event, deserialized);
@@ -572,6 +576,7 @@ mod tests {
                 settings: GroupSettings::default(),
                 key_info: create_test_group_key_info(blake3::Hash::from([1u8; 32])),
                 metadata: Vec::new(),
+                installed_apps: vec![], // Test data
             },
             [42u8; 32],
             create_test_group_key_info(blake3::Hash::from([1u8; 32])),

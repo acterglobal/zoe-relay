@@ -37,13 +37,10 @@ pub struct GroupSession {
     pub previous_keys: Vec<EncryptionKey>,
 }
 
-pub fn encrypt_group_event_content<T>(
+pub fn encrypt_group_event_content(
     encryption_key: &EncryptionKey,
-    event: &GroupActivityEvent<T>,
-) -> Result<ChaCha20Poly1305Content, GroupSessionError>
-where
-    T: Serialize,
-{
+    event: &GroupActivityEvent,
+) -> Result<ChaCha20Poly1305Content, GroupSessionError> {
     // Serialize the event
     let plaintext = postcard::to_stdvec(event)
         .map_err(|e| GroupSessionError::Crypto(format!("Group event serialization failed: {e}")))?;
@@ -77,24 +74,18 @@ impl GroupSession {
     }
 
     /// Encrypt a group event using ChaCha20-Poly1305
-    pub fn encrypt_group_event_content<T>(
+    pub fn encrypt_group_event_content(
         &self,
-        event: &GroupActivityEvent<T>,
-    ) -> Result<ChaCha20Poly1305Content, GroupSessionError>
-    where
-        T: Serialize,
-    {
+        event: &GroupActivityEvent,
+    ) -> Result<ChaCha20Poly1305Content, GroupSessionError> {
         encrypt_group_event_content(&self.current_key, event)
     }
 
     /// Decrypt a group event using ChaCha20-Poly1305
-    pub fn decrypt_group_event<T>(
+    pub fn decrypt_group_event(
         &self,
         payload: &ChaCha20Poly1305Content,
-    ) -> Result<GroupActivityEvent<T>, GroupSessionError>
-    where
-        T: for<'de> Deserialize<'de>,
-    {
+    ) -> Result<GroupActivityEvent, GroupSessionError> {
         // Note: No key ID verification needed since key is determined by channel context
 
         // Decrypt using ChaCha20-Poly1305
@@ -104,7 +95,7 @@ impl GroupSession {
         // FIXME: cycle through older keys trying to decrypt until one succeeds
 
         // Deserialize the event
-        let event: GroupActivityEvent<T> = postcard::from_bytes(&plaintext).map_err(|e| {
+        let event: GroupActivityEvent = postcard::from_bytes(&plaintext).map_err(|e| {
             GroupSessionError::Crypto(format!("Group event deserialization failed: {e}"))
         })?;
         Ok(event)

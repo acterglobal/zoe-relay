@@ -198,5 +198,6 @@ pub mod group;
 pub mod identity;
 pub mod invitation;
 pub mod metadata;
+pub mod protocol;
 pub mod qr;
 pub mod relay;

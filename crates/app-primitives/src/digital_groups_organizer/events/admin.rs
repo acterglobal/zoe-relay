@@ -12,8 +12,7 @@ use serde::{Deserialize, Serialize};
 /// Controls granular permissions for each DGO feature, allowing different
 /// permission levels for different operations within each feature type.
 /// Modeled after Acter's space settings system.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct DgoFeatureSettings {
     /// Text blocks feature permissions
     pub text_blocks: TextBlocksSettings,
@@ -142,7 +141,6 @@ impl Default for TasksSettings {
         }
     }
 }
-
 
 impl FeaturePermission {
     /// Check if a user role meets this permission requirement
@@ -658,8 +656,12 @@ mod tests {
         ];
 
         for feature_type in feature_types {
-            test_postcard_roundtrip(&feature_type).unwrap_or_else(|_| panic!("DgoFeatureType::{:?} should serialize/deserialize",
-                feature_type));
+            test_postcard_roundtrip(&feature_type).unwrap_or_else(|_| {
+                panic!(
+                    "DgoFeatureType::{:?} should serialize/deserialize",
+                    feature_type
+                )
+            });
         }
     }
 
@@ -678,8 +680,12 @@ mod tests {
         ];
 
         for operation_type in operation_types {
-            test_postcard_roundtrip(&operation_type).unwrap_or_else(|_| panic!("DgoOperationType::{:?} should serialize/deserialize",
-                operation_type));
+            test_postcard_roundtrip(&operation_type).unwrap_or_else(|_| {
+                panic!(
+                    "DgoOperationType::{:?} should serialize/deserialize",
+                    operation_type
+                )
+            });
         }
     }
 
