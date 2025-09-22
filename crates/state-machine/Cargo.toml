@@ -23,6 +23,7 @@ postcard = "1.0"
 rand = "0.8"
 thiserror = "1.0"
 async-broadcast = { workspace = true }
+async-trait = "0.1"
 
 
 flutter_rust_bridge = { workspace = true, optional = true }

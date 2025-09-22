@@ -12,6 +12,7 @@ mock = ["mockall"]
 
 [dependencies]
 zoe-wire-protocol = { path = "../wire-protocol", features = ["rusqlite"] }
+zoe-state-machine = { path = "../state-machine" }
 
 # Async runtime
 tokio = { workspace = true }

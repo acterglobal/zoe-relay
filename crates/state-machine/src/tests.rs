@@ -1,5 +1,5 @@
 use crate::group::{CreateGroupBuilder, GroupDataUpdate, GroupManager};
-use crate::group::{create_leave_group_event, create_role_update_event};
+use crate::group::{create_leave_group_event, create_role_update_event_for_testing};
 use rand::thread_rng;
 use zoe_app_primitives::group::events::GroupActivityEvent;
 use zoe_app_primitives::group::events::roles::GroupRole;
@@ -199,7 +199,7 @@ async fn test_role_update() {
 
     // Alice promotes Bob to Admin
     let role_update: GroupActivityEvent =
-        create_role_update_event(bob_key.public_key(), GroupRole::Admin);
+        create_role_update_event_for_testing(bob_key.public_key(), GroupRole::Admin);
 
     let role_message = dga
         .create_group_event_message(result.group_id, role_update, &alice_key, timestamp + 10)
@@ -335,7 +335,7 @@ async fn test_permission_denied_for_role_update() {
     dga.process_group_event(&bob_message).await.unwrap();
 
     // Bob (regular member) tries to update Alice's role (should fail)
-    let role_update: GroupActivityEvent = create_role_update_event(
+    let role_update: GroupActivityEvent = create_role_update_event_for_testing(
         alice_key.public_key(),
         GroupRole::Member, // Trying to demote the owner
     );

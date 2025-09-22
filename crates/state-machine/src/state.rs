@@ -1,10 +1,7 @@
 use serde::{Deserialize, Serialize};
-
-use zoe_app_primitives::group::events::GroupActivityEvent;
 use zoe_wire_protocol::{ChaCha20Poly1305Content, EncryptionKey, MessageId};
 
 // GroupState and GroupMember are now unified in app-primitives
-// Re-export them here for backwards compatibility
 pub use zoe_app_primitives::{group::states::GroupMember, group::states::GroupState};
 
 #[cfg(feature = "frb-api")]
@@ -37,9 +34,9 @@ pub struct GroupSession {
     pub previous_keys: Vec<EncryptionKey>,
 }
 
-pub fn encrypt_group_event_content(
+pub fn encrypt_group_event_content<T: Serialize>(
     encryption_key: &EncryptionKey,
-    event: &GroupActivityEvent,
+    event: &T,
 ) -> Result<ChaCha20Poly1305Content, GroupSessionError> {
     // Serialize the event
     let plaintext = postcard::to_stdvec(event)
@@ -74,18 +71,18 @@ impl GroupSession {
     }
 
     /// Encrypt a group event using ChaCha20-Poly1305
-    pub fn encrypt_group_event_content(
+    pub fn encrypt_group_event_content<T: Serialize>(
         &self,
-        event: &GroupActivityEvent,
+        event: &T,
     ) -> Result<ChaCha20Poly1305Content, GroupSessionError> {
         encrypt_group_event_content(&self.current_key, event)
     }
 
     /// Decrypt a group event using ChaCha20-Poly1305
-    pub fn decrypt_group_event(
+    pub fn decrypt_group_event<T: for<'de> Deserialize<'de>>(
         &self,
         payload: &ChaCha20Poly1305Content,
-    ) -> Result<GroupActivityEvent, GroupSessionError> {
+    ) -> Result<T, GroupSessionError> {
         // Note: No key ID verification needed since key is determined by channel context
 
         // Decrypt using ChaCha20-Poly1305
@@ -95,7 +92,7 @@ impl GroupSession {
         // FIXME: cycle through older keys trying to decrypt until one succeeds
 
         // Deserialize the event
-        let event: GroupActivityEvent = postcard::from_bytes(&plaintext).map_err(|e| {
+        let event: T = postcard::from_bytes(&plaintext).map_err(|e| {
             GroupSessionError::Crypto(format!("Group event deserialization failed: {e}"))
         })?;
         Ok(event)

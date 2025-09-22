@@ -1,6 +1,7 @@
 use async_trait::async_trait;
 use rusqlite::{Connection, OptionalExtension, params};
 use std::sync::{Arc, Mutex};
+use zoe_state_machine::generic_executor::{ExecutorError, ExecutorStore};
 use zoe_wire_protocol::{Hash, KeyId, MessageFull, MessageId, Tag};
 
 use super::migrations;
@@ -11,6 +12,7 @@ use crate::storage::{
 };
 
 /// SQLite-based message storage with SQLCipher encryption
+#[derive(Clone)]
 pub struct SqliteMessageStorage {
     conn: Arc<Mutex<Connection>>,
     config: StorageConfig,
@@ -1201,5 +1203,132 @@ impl BlobStorage for SqliteMessageStorage {
         )?;
 
         Ok(total_size.unwrap_or(0) as u64)
+    }
+}
+
+// ============================================================================
+// ExecutorStore Implementation
+// ============================================================================
+
+#[async_trait]
+impl ExecutorStore for SqliteMessageStorage {
+    type Error = crate::error::StorageError;
+
+    /// Save any serializable data to storage using postcard serialization
+    async fn save<K, T>(&self, id: K, data: &T) -> std::result::Result<(), Self::Error>
+    where
+        K: serde::Serialize + Send + Sync,
+        T: serde::Serialize + Send + Sync,
+    {
+        let id_bytes = postcard::to_stdvec(&id)?;
+        let data_bytes = postcard::to_stdvec(data)?;
+
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT OR REPLACE INTO executor_models (model_id, model_data, updated_at) 
+             VALUES (?1, ?2, strftime('%s', 'now'))",
+            params![&id_bytes[..], &data_bytes[..]],
+        )?;
+
+        Ok(())
+    }
+
+    /// Load any deserializable data by ID using postcard deserialization
+    async fn load<K, T>(&self, id: K) -> std::result::Result<Option<T>, Self::Error>
+    where
+        K: serde::Serialize + Send + Sync,
+        T: serde::de::DeserializeOwned + Send + Sync,
+    {
+        let id_bytes = postcard::to_stdvec(&id)?;
+
+        let conn = self.conn.lock().unwrap();
+        let data_bytes: Option<Vec<u8>> = conn
+            .query_row(
+                "SELECT model_data FROM executor_models WHERE model_id = ?1",
+                params![&id_bytes[..]],
+                |row| row.get(0),
+            )
+            .optional()?;
+
+        match data_bytes {
+            Some(bytes) => {
+                let data = postcard::from_bytes(&bytes)?;
+                Ok(Some(data))
+            }
+            None => Ok(None),
+        }
+    }
+
+    /// Load multiple items by their IDs
+    async fn load_many<K, T>(&self, ids: &[K]) -> std::result::Result<Vec<Option<T>>, Self::Error>
+    where
+        K: serde::Serialize + Send + Sync,
+        T: serde::de::DeserializeOwned + Send + Sync,
+    {
+        let mut results = Vec::with_capacity(ids.len());
+
+        // Load each ID individually (could be optimized with a single query later)
+        for id in ids {
+            let result = self.load(id).await?;
+            results.push(result);
+        }
+
+        Ok(results)
+    }
+
+    /// Load index data by list ID using postcard deserialization
+    async fn load_index<K, D>(&self, list_id: K) -> std::result::Result<Option<D>, Self::Error>
+    where
+        K: serde::Serialize + Send + Sync,
+        D: serde::de::DeserializeOwned + Send + Sync,
+    {
+        let id_bytes = postcard::to_stdvec(&list_id)?;
+
+        let conn = self.conn.lock().unwrap();
+        let data_bytes: Option<Vec<u8>> = conn
+            .query_row(
+                "SELECT index_data FROM executor_indexes WHERE index_id = ?1",
+                params![&id_bytes[..]],
+                |row| row.get(0),
+            )
+            .optional()?;
+
+        match data_bytes {
+            Some(bytes) => {
+                let data = postcard::from_bytes(&bytes)?;
+                Ok(Some(data))
+            }
+            None => Ok(None),
+        }
+    }
+
+    /// Store index data by list ID using postcard serialization
+    async fn store_index<K, D>(
+        &self,
+        list_id: K,
+        index_data: &D,
+    ) -> std::result::Result<(), Self::Error>
+    where
+        K: serde::Serialize + Send + Sync,
+        D: serde::Serialize + Send + Sync,
+    {
+        let id_bytes = postcard::to_stdvec(&list_id)?;
+        let data_bytes = postcard::to_stdvec(index_data)?;
+
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT OR REPLACE INTO executor_indexes (index_id, index_data, updated_at) 
+             VALUES (?1, ?2, strftime('%s', 'now'))",
+            params![&id_bytes[..], &data_bytes[..]],
+        )?;
+
+        Ok(())
+    }
+}
+
+// Implement Into<ExecutorError> for StorageError to enable seamless error conversion
+impl From<crate::error::StorageError> for ExecutorError {
+    fn from(val: crate::error::StorageError) -> Self {
+        ExecutorError::StorageError(val.to_string())
     }
 }

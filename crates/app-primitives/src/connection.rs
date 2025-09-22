@@ -134,8 +134,8 @@ impl NetworkAddress {
             )),
             NetworkAddress::Dns { hostname, port } => {
                 let connection_string = match port {
-                    Some(p) => format!("{}:{}", hostname, p),
-                    None => format!("{}:{}", hostname, default_port),
+                    Some(p) => format!("{hostname}:{p}"),
+                    None => format!("{hostname}:{default_port}"),
                 };
 
                 // Use tokio's lookup_host for DNS resolution
@@ -146,7 +146,7 @@ impl NetworkAddress {
                 if let Some(addr) = addrs.into_iter().next() {
                     Ok(addr)
                 } else {
-                    Err(format!("No addresses found for {}", connection_string))
+                    Err(format!("No addresses found for {connection_string}"))
                 }
             }
         }

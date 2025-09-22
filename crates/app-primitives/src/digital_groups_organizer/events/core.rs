@@ -3,6 +3,7 @@
 //! This module contains the main `DgoActivityEvent` enum and shared data structures
 //! used across all event types.
 
+use crate::group::app::GroupEvent;
 use forward_compatible_enum::ForwardCompatibleEnum;
 use serde::{Deserialize, Serialize};
 use zoe_wire_protocol::MessageId;
@@ -207,6 +208,70 @@ pub struct ObjectCore {
     pub icon: Option<String>,
     /// Optional parent object (for threading/nesting)
     pub parent_id: Option<MessageId>,
+}
+
+impl GroupEvent for DgoActivityEvent {
+    fn applies_to(&self) -> Option<Vec<MessageId>> {
+        match self {
+            // Text block events
+            DgoActivityEvent::CreateTextBlock { .. } => {
+                // For create events, we return None to indicate this creates a new model
+                None
+            }
+            DgoActivityEvent::UpdateTextBlock { target_id, .. } => Some(vec![*target_id]),
+
+            // Calendar events
+            DgoActivityEvent::CreateCalendarEvent { .. } => None,
+            DgoActivityEvent::UpdateCalendarEvent { target_id, .. } => Some(vec![*target_id]),
+
+            // Task events
+            DgoActivityEvent::CreateTaskList { .. } => None,
+            DgoActivityEvent::UpdateTaskList { target_id, .. } => Some(vec![*target_id]),
+            DgoActivityEvent::CreateTask { .. } => None,
+            DgoActivityEvent::UpdateTask { target_id, .. } => Some(vec![*target_id]),
+
+            // Comment events (would affect parent + create comment)
+            DgoActivityEvent::AddComment { target_id, .. } => Some(vec![*target_id]),
+            DgoActivityEvent::UpdateComment { target_id, .. } => Some(vec![*target_id]),
+
+            // Reaction events (would affect parent)
+            DgoActivityEvent::AddReaction { target_id, .. } => Some(vec![*target_id]),
+
+            // RSVP events (would affect parent) - TODO: Add when RSVP events exist
+            // DgoActivityEvent::AddRsvp { target_id, .. } => Some(vec![*target_id]),
+
+            // Admin events
+            DgoActivityEvent::CreateDgoSettings { .. } => None,
+            DgoActivityEvent::UpdateDgoSettings { target_id, .. } => Some(vec![*target_id]),
+            DgoActivityEvent::Redact { target_id, .. } => Some(vec![*target_id]),
+
+            // Calendar RSVP events
+            DgoActivityEvent::RsvpCalendarEvent { target_id, .. } => Some(vec![*target_id]),
+
+            // Task assignment events
+            DgoActivityEvent::SelfAssignTask { target_id, .. } => Some(vec![*target_id]),
+            DgoActivityEvent::UnassignTask { target_id, .. } => Some(vec![*target_id]),
+
+            // Reaction removal events
+            DgoActivityEvent::RemoveReaction { target_id, .. } => Some(vec![*target_id]),
+
+            // Attachment events
+            DgoActivityEvent::AddAttachment { target_id, .. } => Some(vec![*target_id]),
+            DgoActivityEvent::RemoveAttachment { target_id, .. } => Some(vec![*target_id]),
+
+            // Read status events
+            DgoActivityEvent::MarkRead { target_id, .. } => Some(vec![*target_id]),
+
+            // Unknown events
+            DgoActivityEvent::Unknown { .. } => None,
+        }
+    }
+
+    fn acknowledgment(&self) -> Option<crate::group::app::Acknowledgment> {
+        // For now, DGO events don't use acknowledgments
+        // This can be extended in the future for permission-changing DGO operations
+        None
+    }
 }
 
 #[cfg(test)]

@@ -9,6 +9,7 @@
 //! - [`permission_settings`] - DgoPermissionSettings model implementation
 //! - [`text_block`] - TextBlock model implementation
 
+pub mod any;
 pub mod core;
 pub mod permission_settings;
 pub mod text_block;

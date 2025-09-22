@@ -165,11 +165,13 @@
 //!
 //! For more details on specific components, see the documentation for individual types.
 
-// Re-export all types from submodules for backwards compatibility
+// Re-export all types from submodules
+pub mod app;
 pub mod events;
 pub mod states;
 #[cfg(test)]
 mod tests {
+    use super::app::Acknowledgment;
     use super::events::join_info::GroupJoinInfo;
     use super::events::key_info::GroupKeyInfo;
     use super::events::permissions::{GroupAction, GroupPermissions, Permission};
@@ -179,6 +181,7 @@ mod tests {
     use crate::metadata::Metadata;
     use crate::relay::RelayEndpoint;
     use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+    use zoe_wire_protocol::MessageId;
     use zoe_wire_protocol::{Ed25519VerifyingKey, KeyPair, VerifyingKey};
 
     fn create_test_verifying_key() -> VerifyingKey {
@@ -523,12 +526,18 @@ mod tests {
     #[test]
     fn test_postcard_serialization_group_activity_event() {
         use super::events::GroupInfoUpdate;
-        let event = GroupActivityEvent::UpdateGroup(vec![
-            GroupInfoUpdate::Name("Test Group".to_string()),
-            GroupInfoUpdate::Settings(GroupSettings::default()),
-            GroupInfoUpdate::KeyInfo(create_test_group_key_info(blake3::Hash::from([1u8; 32]))),
-            GroupInfoUpdate::SetMetadata(Vec::new()),
-        ]);
+        let event = GroupActivityEvent::UpdateGroup {
+            updates: vec![
+                GroupInfoUpdate::Name("Test Group".to_string()),
+                GroupInfoUpdate::Settings(GroupSettings::default()),
+                GroupInfoUpdate::KeyInfo(create_test_group_key_info(blake3::Hash::from([1u8; 32]))),
+                GroupInfoUpdate::SetMetadata(Vec::new()),
+            ],
+            acknowledgment: Some(Acknowledgment::new(
+                MessageId::from_bytes([1; 32]),
+                MessageId::from_bytes([1; 32]),
+            )),
+        };
 
         let serialized = postcard::to_stdvec(&event).expect("Failed to serialize");
         let deserialized: GroupActivityEvent =

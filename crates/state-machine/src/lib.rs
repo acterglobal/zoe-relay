@@ -3,7 +3,9 @@
 //! A PDA-like application framework using the wire-protocol to send activity-events
 //! as messages between participants to organize state machines of organizational objects.
 
+pub mod dgo_executor;
 pub mod error;
+pub mod generic_executor;
 pub mod group;
 pub mod state;
 

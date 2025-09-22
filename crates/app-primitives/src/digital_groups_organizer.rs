@@ -15,7 +15,7 @@
 //!
 //! ### Event-Sourced Models
 //! All application objects (calendar events, tasks, text blocks, etc.) are represented
-//! as event-sourced models that implement the [`DgoModel`] trait. State changes happen
+//! as event-sourced models that implement the [`GroupStateModel`] trait. State changes happen
 //! through immutable events that are cryptographically signed and encrypted.
 //!
 //! ### Capability System  
@@ -28,7 +28,7 @@
 //!
 //! ## Core Types
 //!
-//! - [`models::core::DgoModel`]: Core trait for all application objects
+//! - [`models::core::GroupStateModel`]: Core trait for all application objects
 //! - [`events::core::DgoActivityEvent`]: Forward-compatible enum for all activity events  
 //! - [`capabilities::DgoCapability`]: Capabilities that models can declare
 //! - [`models::core::ActivityMeta`]: Metadata for all activities (group_id, timestamp, actor, etc.)
@@ -38,11 +38,3 @@ pub mod events;
 pub mod indexing;
 pub mod managers;
 pub mod models;
-
-// Re-export key types for convenience
-pub use events::core::{DgoActivityEvent, ObjectCore};
-pub use models::core::{
-    ActivityMeta, DgoModel, DgoModelError, DgoOperation, DgoResult, PermissionContext,
-};
-pub use models::permission_settings::DgoPermissionSettings;
-pub use models::text_block::TextBlock;

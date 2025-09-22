@@ -56,23 +56,23 @@ impl ExecuteReference {
     /// Convert this reference to a storage key for persistence
     pub fn as_storage_key(&self) -> String {
         match self {
-            ExecuteReference::Model(message_id) => format!("dgo::{}", message_id),
+            ExecuteReference::Model(message_id) => format!("dgo::{message_id}"),
             ExecuteReference::ModelParam(message_id, param) => {
-                format!("{}::{:?}", message_id, param)
+                format!("{message_id}::{param:?}")
             }
             ExecuteReference::GroupParam(group_id, param) => {
-                format!("{}::{:?}", group_id, param)
+                format!("{group_id}::{param:?}")
             }
             ExecuteReference::ModelType(model_type) => model_type.clone(),
             ExecuteReference::Index(IndexKey::Special(SpecialListsIndex::InvitedTo)) => {
                 "global_invited".to_owned() // Special case for global invitations
             }
-            ExecuteReference::Index(index_key) => format!("index::{:?}", index_key),
-            ExecuteReference::Group(group_id) => format!("group::{}", group_id),
+            ExecuteReference::Index(index_key) => format!("index::{index_key:?}"),
+            ExecuteReference::Group(group_id) => format!("group::{group_id}"),
             ExecuteReference::GroupAccountData(group_id, key) => {
-                format!("group_data::{}::{}", group_id, key)
+                format!("group_data::{group_id}::{key}")
             }
-            ExecuteReference::AccountData(key) => format!("account_data::{}", key),
+            ExecuteReference::AccountData(key) => format!("account_data::{key}"),
         }
     }
 }

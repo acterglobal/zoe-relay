@@ -5,6 +5,7 @@
 
 use crate::identity::IdentityRef;
 use serde::{Deserialize, Serialize};
+use zoe_wire_protocol::MessageId;
 
 use crate::digital_groups_organizer::{
     capabilities::{CapabilitySet, DgoCapability},
@@ -13,7 +14,7 @@ use crate::digital_groups_organizer::{
 };
 
 use super::core::{
-    ActivityMeta, DgoModel, DgoModelError, DgoOperation, DgoResult, PermissionContext,
+    ActivityMeta, DgoAppModel, DgoModelError, DgoOperation, DgoPermissionContext, DgoResult,
 };
 
 /// A text block model - simple rich text content within a group
@@ -65,9 +66,27 @@ impl TextBlock {
     pub fn version(&self) -> u32 {
         self.version
     }
+
+    /// Get the unique identifier for this model
+    pub fn model_id(&self) -> MessageId {
+        self.meta.activity_id
+    }
+
+    /// Get the group this model belongs to
+    pub fn group_id(&self) -> MessageId {
+        self.meta.group_id
+    }
+
+    /// Get the actor who created this model
+    pub fn creator(&self) -> &IdentityRef {
+        &self.meta.actor
+    }
 }
 
-impl DgoModel for TextBlock {
+// Note: TextBlock doesn't implement GroupStateModel directly.
+// Only AnyDgoModel implements GroupStateModel to work with the unified executor.
+
+impl DgoAppModel for TextBlock {
     fn activity_meta(&self) -> &ActivityMeta {
         &self.meta
     }
@@ -94,10 +113,10 @@ impl DgoModel for TextBlock {
         ])
     }
 
-    fn apply_transition(
+    fn apply_dgo_transition(
         &mut self,
         event: &DgoActivityEvent,
-        context: &PermissionContext,
+        context: &DgoPermissionContext,
     ) -> DgoResult<bool> {
         match event {
             DgoActivityEvent::UpdateTextBlock {
@@ -149,7 +168,7 @@ impl DgoModel for TextBlock {
 
     fn check_permission(
         &self,
-        context: &PermissionContext,
+        context: &DgoPermissionContext,
         operation: DgoOperation,
     ) -> DgoResult<()> {
         // Use the new granular permission system with creator override

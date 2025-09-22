@@ -114,7 +114,7 @@ pub type DgoResult<T> = Result<T, DgoModelError>;
 /// This context contains the information needed to make permission decisions
 /// using the existing group role system and the current DGO permission settings model.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct PermissionContext {
+pub struct DgoPermissionContext {
     /// The actor attempting the operation
     pub actor: IdentityRef,
     /// The group context
@@ -127,7 +127,22 @@ pub struct PermissionContext {
     pub dgo_settings: crate::digital_groups_organizer::events::admin::DgoFeatureSettings,
 }
 
-impl PermissionContext {
+// Implement the generic PermissionContext trait for DgoPermissionContext
+impl crate::group::app::PermissionContext for DgoPermissionContext {
+    fn actor(&self) -> &IdentityRef {
+        &self.actor
+    }
+
+    fn group_id(&self) -> MessageId {
+        self.group_id
+    }
+
+    fn is_group_member(&self) -> bool {
+        self.is_group_member
+    }
+}
+
+impl DgoPermissionContext {
     /// Create a new permission context
     pub fn new(
         actor: IdentityRef,
@@ -205,34 +220,15 @@ impl PermissionContext {
     }
 }
 
-/// Core trait that all DGO models must implement
+/// DGO-specific trait for individual DGO models
 ///
-/// This trait defines the interface for event-sourced models in the
-/// Digital Groups Organizer system. It's inspired by Acter's ActerModel
-/// but enhanced with permission checking and activity tracking.
-pub trait DgoModel: Clone + Send + Sync + std::fmt::Debug {
+/// This trait provides DGO-specific functionality like permission checking and capability management.
+/// Individual DGO models implement this trait, while only AnyDgoModel implements GroupStateModel.
+pub trait DgoAppModel:
+    std::fmt::Debug + Clone + Send + Sync + Serialize + for<'de> Deserialize<'de>
+{
     /// Get the metadata for this model's creation activity
     fn activity_meta(&self) -> &ActivityMeta;
-
-    /// Get the unique identifier for this model
-    fn model_id(&self) -> MessageId {
-        self.activity_meta().activity_id
-    }
-
-    /// Get the group this model belongs to
-    fn group_id(&self) -> MessageId {
-        self.activity_meta().group_id
-    }
-
-    /// Get the actor who created this model
-    fn creator(&self) -> &IdentityRef {
-        &self.activity_meta().actor
-    }
-
-    /// Get the creation timestamp
-    fn created_at(&self) -> u64 {
-        self.activity_meta().timestamp
-    }
 
     /// Get the indexes this model should be stored under for the given user
     fn indexes(&self, user_id: &IdentityRef) -> Vec<IndexKey>;
@@ -251,7 +247,7 @@ pub trait DgoModel: Clone + Send + Sync + std::fmt::Debug {
     /// domain-specific permission logic using the granular permission system.
     fn check_permission(
         &self,
-        context: &PermissionContext,
+        context: &DgoPermissionContext,
         operation: DgoOperation,
     ) -> DgoResult<()> {
         // Default implementation uses the granular permission system
@@ -261,7 +257,7 @@ pub trait DgoModel: Clone + Send + Sync + std::fmt::Debug {
         if context.can_perform_dgo_operation_with_creator_override(
             feature_type,
             &operation,
-            self.creator(),
+            &self.activity_meta().actor,
         ) {
             Ok(())
         } else {
@@ -282,24 +278,26 @@ pub trait DgoModel: Clone + Send + Sync + std::fmt::Debug {
     /// which feature type it belongs to for permission checking.
     fn get_feature_type(&self) -> crate::digital_groups_organizer::events::admin::DgoFeatureType;
 
-    /// Apply a state transition from an activity event
+    /// Apply a DGO-specific state transition with permission checking
     ///
-    /// This method is called when an event that affects this model is processed.
-    /// It should validate the transition and update the model's state accordingly.
-    fn apply_transition(
+    /// This method wraps the base apply_transition with DGO permission checking.
+    fn apply_dgo_transition(
         &mut self,
         event: &DgoActivityEvent,
-        context: &PermissionContext,
+        context: &DgoPermissionContext,
     ) -> DgoResult<bool>;
 
-    /// Handle redaction of this model
+    /// Handle DGO-specific redaction with permission checking
     ///
-    /// This method is called when the model needs to be redacted (deleted/hidden).
-    /// It should clean up any associated data and return appropriate references.
-    fn redact(&self, context: &PermissionContext) -> DgoResult<Vec<ExecuteReference>> {
-        // Default implementation just returns a reference to this model
+    /// This method provides DGO-specific redaction logic.
+    fn redact_dgo(&self, context: &DgoPermissionContext) -> DgoResult<Vec<ExecuteReference>> {
+        // Check permissions first
         self.check_permission(context, DgoOperation::Delete)?;
-        Ok(vec![ExecuteReference::Model(self.model_id())])
+
+        // For DGO models, redaction means returning the model's execute reference
+        Ok(vec![ExecuteReference::Model(
+            self.activity_meta().activity_id,
+        )])
     }
 }
 
@@ -376,7 +374,7 @@ mod tests {
         // Test with default settings
         let default_settings = DgoFeatureSettings::default();
 
-        let member_context = PermissionContext::new(
+        let member_context = DgoPermissionContext::new(
             IdentityRef::Key(member_key),
             group_id,
             GroupRole::Member,
@@ -384,7 +382,7 @@ mod tests {
             default_settings.clone(),
         );
 
-        let moderator_context = PermissionContext::new(
+        let moderator_context = DgoPermissionContext::new(
             IdentityRef::Key(moderator_key),
             group_id,
             GroupRole::Moderator,
@@ -392,7 +390,7 @@ mod tests {
             default_settings.clone(),
         );
 
-        let admin_context = PermissionContext::new(
+        let admin_context = DgoPermissionContext::new(
             IdentityRef::Key(admin_key),
             group_id,
             GroupRole::Admin,
@@ -400,7 +398,7 @@ mod tests {
             default_settings.clone(),
         );
 
-        let owner_context = PermissionContext::new(
+        let owner_context = DgoPermissionContext::new(
             IdentityRef::Key(owner_key),
             group_id,
             GroupRole::Owner,
@@ -489,7 +487,7 @@ mod tests {
         let settings = DgoFeatureSettings::default();
 
         // Creator context (member role)
-        let creator_context = PermissionContext::new(
+        let creator_context = DgoPermissionContext::new(
             IdentityRef::Key(creator_key.clone()),
             group_id,
             GroupRole::Member,
@@ -498,7 +496,7 @@ mod tests {
         );
 
         // Other user context (member role)
-        let other_context = PermissionContext::new(
+        let other_context = DgoPermissionContext::new(
             IdentityRef::Key(other_key),
             group_id,
             GroupRole::Member,
@@ -576,7 +574,7 @@ mod tests {
         let settings = DgoFeatureSettings::default();
 
         // Non-member context (even with admin role, not a group member)
-        let non_member_context = PermissionContext::new(
+        let non_member_context = DgoPermissionContext::new(
             IdentityRef::Key(non_member_key.clone()),
             group_id,
             GroupRole::Admin, // High role but not a member

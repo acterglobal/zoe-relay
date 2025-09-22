@@ -4,13 +4,21 @@ use zoe_wire_protocol::{MessageId, VerifyingKey};
 
 use super::events::{GroupActivityEvent, roles::GroupRole, settings::GroupSettings};
 use crate::{
-    group::events::{key_info::GroupKeyInfo, permissions::Permission},
+    digital_groups_organizer::models::core::ActivityMeta,
+    group::{
+        app::{ExecuteError, GroupPermissionContext, GroupStateModel, PermissionContext},
+        events::{key_info::GroupKeyInfo, permissions::Permission},
+    },
     identity::{IdentityInfo, IdentityRef, IdentityType},
     metadata::Metadata,
 };
 
 #[cfg(feature = "frb-api")]
 use flutter_rust_bridge::frb;
+
+// Test modules
+#[cfg(test)]
+mod dual_ack_tests;
 
 /// Advanced identity and membership management for distributed groups.
 ///
@@ -298,6 +306,18 @@ pub enum GroupStateError {
 
     #[error("Invalid operation: {0}")]
     InvalidOperation(String),
+
+    /// Invalid acknowledgment in dual-acknowledgment system
+    #[error("Invalid acknowledgment: {0}")]
+    InvalidAcknowledgment(String),
+
+    /// History rewrite attempt detected by dual-acknowledgment system
+    #[error("History rewrite attempt detected: {0}")]
+    HistoryRewriteAttempt(String),
+
+    /// Invalid sender for operation
+    #[error("Invalid sender: {0}")]
+    InvalidSender(String),
 }
 
 /// Result type for group state operations
@@ -572,9 +592,64 @@ pub struct GroupMember {
 /// // Get all generic metadata as a map
 /// let generic_meta = group_state.generic_metadata();
 /// ```
+/// Message metadata for dual-acknowledgment validation
+///
+/// Stores essential information about each message to enable historical
+/// state reconstruction and timestamp-based permission validation.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct MessageMetadata {
+    /// When the message was sent (Unix timestamp)
+    pub timestamp: u64,
+    /// Who sent the message
+    pub sender: IdentityRef,
+    /// Whether this message changes group permissions or security settings
+    pub is_permission_event: bool,
+}
+
+/// Per-sender acknowledgment tracking for the dual-acknowledgment ratchet system
+///
+/// Tracks what state changes each sender has acknowledged to prevent
+/// history rewriting attacks. Each sender must acknowledge both their own
+/// latest state change and the latest state change from other participants.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SenderAcknowledgments {
+    /// Latest own state change this sender has acknowledged
+    ///
+    /// This prevents the sender from backdating events before their own
+    /// previously acknowledged state changes. Creates a "floor" based on
+    /// the sender's own message history.
+    pub own_last_ack: MessageId,
+    /// Latest other's state change this sender has acknowledged
+    ///
+    /// This prevents the sender from ignoring third-party state changes
+    /// when attempting to rewrite history. The sender must acknowledge
+    /// the latest state change from other participants.
+    pub others_last_ack: MessageId,
+}
+
+/// Historical group state snapshot for efficient reconstruction
+///
+/// Periodic snapshots of group state to avoid O(n) reconstruction
+/// on every permission check. Snapshots are taken at regular intervals
+/// and used as starting points for historical state reconstruction.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct GroupStateSnapshot {
+    /// Snapshot timestamp
+    pub timestamp: u64,
+    /// Member roles at this point in time
+    pub member_roles: BTreeMap<IdentityRef, GroupRole>,
+    /// Group settings at this point in time
+    pub settings: GroupSettings,
+    /// Event ID this snapshot was taken after
+    pub after_event_id: MessageId,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "frb-api", frb(non_opaque))]
 pub struct GroupState {
+    /// Activity metadata for this group's creation
+    pub meta: ActivityMeta,
+
     /// The group identifier - this is the Blake3 hash of the CreateGroup message
     /// Also serves as the root event ID (used as channel tag)
     pub group_id: MessageId,
@@ -587,6 +662,10 @@ pub struct GroupState {
 
     /// Group metadata as structured types
     pub metadata: Vec<Metadata>,
+
+    /// Installed applications in this group with channel-per-app support
+    /// Each app gets its own communication channel for isolated messaging
+    pub installed_apps: Vec<crate::protocol::InstalledApp>,
 
     /// Runtime member state with roles and activity tracking
     /// Keys are ML-DSA verifying keys encoded as bytes for serialization compatibility
@@ -603,6 +682,26 @@ pub struct GroupState {
 
     /// State version (incremented on each event)
     pub version: u64,
+
+    // === Dual-Acknowledgment Security System ===
+    /// Per-sender acknowledgment tracking for permission events
+    ///
+    /// Maps each sender to their latest acknowledged state changes.
+    /// Used to prevent timestamp manipulation attacks by creating
+    /// "floors" that prevent backdating events.
+    pub sender_acknowledgments: BTreeMap<IdentityRef, SenderAcknowledgments>,
+
+    /// Message metadata for all events in this group
+    ///
+    /// Stores timestamp, sender, and permission-event flag for each message.
+    /// Required for historical state reconstruction and acknowledgment validation.
+    pub message_metadata: BTreeMap<MessageId, MessageMetadata>,
+
+    /// Periodic snapshots for efficient historical reconstruction
+    ///
+    /// Snapshots are taken every N events to avoid O(n) reconstruction
+    /// when validating permissions at historical timestamps.
+    pub group_state_snapshots: BTreeMap<u64, GroupStateSnapshot>,
 }
 
 #[cfg_attr(feature = "frb-api", frb(ignore))]
@@ -669,6 +768,30 @@ impl GroupState {
         metadata: Vec<Metadata>,
         creator: VerifyingKey,
         timestamp: u64,
+        meta: ActivityMeta,
+    ) -> Self {
+        Self::new_with_apps(
+            group_id,
+            name,
+            settings,
+            metadata,
+            vec![], // No apps by default
+            creator,
+            timestamp,
+            meta,
+        )
+    }
+
+    /// Create a new GroupState with installed applications
+    pub fn new_with_apps(
+        group_id: MessageId,
+        name: String,
+        settings: GroupSettings,
+        metadata: Vec<Metadata>,
+        installed_apps: Vec<crate::protocol::InstalledApp>,
+        creator: VerifyingKey,
+        timestamp: u64,
+        meta: ActivityMeta,
     ) -> Self {
         let creator_ref = IdentityRef::Key(creator.clone());
         let mut members = BTreeMap::new();
@@ -684,15 +807,21 @@ impl GroupState {
         );
 
         Self {
+            meta,
             group_id,
             name,
             settings,
             metadata,
+            installed_apps,
             members,
             membership: GroupMembership::new(),
             event_history: vec![group_id], // First event is the group creation
             last_event_timestamp: timestamp,
             version: 1,
+            // Initialize dual-acknowledgment security system
+            sender_acknowledgments: BTreeMap::new(),
+            message_metadata: BTreeMap::new(),
+            group_state_snapshots: BTreeMap::new(),
         }
     }
 
@@ -702,14 +831,17 @@ impl GroupState {
         group_info: &super::events::GroupInfo,
         creator: VerifyingKey,
         timestamp: u64,
+        meta: ActivityMeta,
     ) -> Self {
-        Self::new(
+        Self::new_with_apps(
             group_id,
             group_info.name.clone(),
             group_info.settings.clone(),
             group_info.metadata.clone(),
+            group_info.installed_apps.clone(),
             creator,
             timestamp,
+            meta,
         )
     }
 
@@ -720,7 +852,7 @@ impl GroupState {
             settings: self.settings.clone(),
             key_info,
             metadata: self.metadata.clone(),
-            installed_apps: vec![], // TODO: Add proper installed apps support to GroupState
+            installed_apps: self.installed_apps.clone(),
         }
     }
 
@@ -811,25 +943,138 @@ impl GroupState {
         sender: VerifyingKey,
         timestamp: u64,
     ) -> GroupStateResult<()> {
-        // Verify timestamp ordering (events should be processed in order)
-        if timestamp < self.last_event_timestamp {
-            return Err(GroupStateError::StateTransition(format!(
-                "Event timestamp {} is older than last processed timestamp {}",
-                timestamp, self.last_event_timestamp
-            )));
+        let sender_ref = IdentityRef::Key(sender.clone());
+
+        // Store message metadata for all events
+        self.message_metadata.insert(
+            event_id,
+            MessageMetadata {
+                timestamp,
+                sender: sender_ref.clone(),
+                is_permission_event: event.is_permission_changing(),
+            },
+        );
+
+        // Apply dual-acknowledgment validation for permission-changing events
+        if event.is_permission_changing() {
+            self.apply_permission_event_with_dual_acknowledgment(
+                event, event_id, sender, timestamp,
+            )?;
+        } else {
+            // Regular (non-permission) events can be processed out of order
+            // This allows legitimate multi-device scenarios where devices sync changes
+            // made while offline. Only permission-changing events require strict ordering.
         }
 
-        // Apply the specific event
-        match event {
-            GroupActivityEvent::CreateGroup(_group_info) => {} // we already know
+        // Apply the event to the actual state
+        self.apply_event_to_state(event, event_id, sender_ref, timestamp)?;
 
-            GroupActivityEvent::LeaveGroup { message } => {
-                self.handle_leave_group(sender, message.clone(), timestamp)?;
+        // Update state metadata
+        self.event_history.push(event_id);
+        self.last_event_timestamp = timestamp;
+        self.version += 1;
+
+        // Take periodic snapshots for efficient historical reconstruction
+        if self.version.is_multiple_of(100) {
+            self.take_state_snapshot(timestamp, event_id);
+        }
+
+        Ok(())
+    }
+
+    /// Apply a permission-changing event with dual-acknowledgment validation
+    ///
+    /// This method implements the core security mechanism that prevents timestamp
+    /// manipulation attacks and history rewriting for permission-changing events.
+    ///
+    /// # Security Model
+    ///
+    /// Each permission-changing event must acknowledge both:
+    /// 1. **Own Last State Change**: Latest state-changing message from the same sender
+    /// 2. **Others' Last State Change**: Latest state-changing message from other participants
+    ///
+    /// This creates a "ratchet effect" where each acknowledgment establishes a floor
+    /// that prevents backdating attacks.
+    ///
+    /// # Attack Prevention
+    ///
+    /// - **Cannot backdate before acknowledged state**: Event timestamp must be >= acknowledged timestamps
+    /// - **Must acknowledge third-party changes**: Cannot ignore other participants when rewriting
+    /// - **Cryptographically hard conflicts**: Message ID tiebreaker uses Blake3 hashes
+    ///
+    /// # Parameters
+    ///
+    /// - `event` - The permission-changing event to apply
+    /// - `event_id` - Unique identifier for this event
+    /// - `sender` - The sender's verifying key
+    /// - `timestamp` - When the event was sent
+    fn apply_permission_event_with_dual_acknowledgment(
+        &mut self,
+        event: &GroupActivityEvent,
+        event_id: MessageId,
+        sender: VerifyingKey,
+        timestamp: u64,
+    ) -> GroupStateResult<()> {
+        let sender_ref = IdentityRef::Key(sender.clone());
+
+        // Extract dual acknowledgments from the event
+        let (ack_own, ack_others) = event
+            .extract_acknowledgments()
+            .map_err(|e| GroupStateError::InvalidAcknowledgment(e))?;
+
+        // Validate acknowledgments prevent history rewriting
+        self.validate_dual_acknowledgments(&sender_ref, ack_own, ack_others, timestamp, event_id)?;
+
+        // Resolve conflicts if multiple events have same acknowledgment level
+        self.resolve_acknowledgment_conflicts(
+            &sender_ref,
+            ack_own,
+            ack_others,
+            timestamp,
+            event_id,
+        )?;
+
+        // Apply the event to state
+        self.apply_event_to_state(event, event_id, sender_ref.clone(), timestamp)?;
+
+        // Update sender's acknowledgment tracking
+        self.update_sender_acknowledgments(sender_ref, ack_own, ack_others);
+
+        Ok(())
+    }
+
+    /// Apply an event to the group state (the actual state changes)
+    ///
+    /// This method contains the core logic for updating group state based on
+    /// different event types. It's called by both regular and permission events
+    /// after their respective validation passes.
+    fn apply_event_to_state(
+        &mut self,
+        event: &GroupActivityEvent,
+        _event_id: MessageId,
+        sender_ref: IdentityRef,
+        timestamp: u64,
+    ) -> GroupStateResult<()> {
+        match event {
+            GroupActivityEvent::CreateGroup(_group_info) => {
+                // Group already created, nothing to do
             }
 
-            GroupActivityEvent::UpdateGroup(group_updates) => {
+            GroupActivityEvent::LeaveGroup { message } => {
+                let sender_key = match &sender_ref {
+                    IdentityRef::Key(key) => key.clone(),
+                    _ => {
+                        return Err(GroupStateError::InvalidSender(
+                            "Only keys can leave groups".to_string(),
+                        ));
+                    }
+                };
+                self.handle_leave_group(sender_key, message.clone(), timestamp)?;
+            }
+
+            GroupActivityEvent::UpdateGroup { updates, .. } => {
                 // Handle group updates using the Vec<GroupInfoUpdate> pattern
-                for update in group_updates {
+                for update in updates {
                     match update {
                         crate::group::events::GroupInfoUpdate::Name(name) => {
                             self.name = name.clone();
@@ -849,23 +1094,40 @@ impl GroupState {
                         crate::group::events::GroupInfoUpdate::ClearMetadata => {
                             self.metadata.clear();
                         }
-                        crate::group::events::GroupInfoUpdate::AddApp(_app) => {
-                            // TODO: Handle app installation when GroupState supports installed apps
+                        crate::group::events::GroupInfoUpdate::AddApp(app) => {
+                            // Add the app to the installed apps list
+                            self.installed_apps.push(app.clone());
                         }
                     }
                 }
             }
 
-            GroupActivityEvent::AssignRole { target, role } => {
-                self.handle_role_assignment(sender, target, role, timestamp)?;
+            GroupActivityEvent::AssignRole { target, role, .. } => {
+                let sender_key = match &sender_ref {
+                    IdentityRef::Key(key) => key.clone(),
+                    _ => {
+                        return Err(GroupStateError::InvalidSender(
+                            "Only keys can assign roles".to_string(),
+                        ));
+                    }
+                };
+                self.handle_role_assignment(sender_key, target, role, timestamp)?;
             }
 
             GroupActivityEvent::SetIdentity(_) => {
+                let sender_key = match &sender_ref {
+                    IdentityRef::Key(key) => key.clone(),
+                    _ => {
+                        return Err(GroupStateError::InvalidSender(
+                            "Only keys can set identity".to_string(),
+                        ));
+                    }
+                };
                 // Handle identity setting - for now just ensure sender is a member
-                self.handle_member_announcement(sender, timestamp)?;
+                self.handle_member_announcement(sender_key, timestamp)?;
             }
 
-            GroupActivityEvent::RemoveFromGroup { target: _ } => {
+            GroupActivityEvent::RemoveFromGroup { target: _, .. } => {
                 // For now, skip member removal for Ed25519-based identities when sender is ML-DSA
                 // This is a temporary compatibility limitation during the transition
                 // TODO: Implement proper key type conversion or dual-key support
@@ -879,12 +1141,177 @@ impl GroupState {
             }
         }
 
-        // Update state metadata
-        self.event_history.push(event_id);
-        self.last_event_timestamp = timestamp;
-        self.version += 1;
+        Ok(())
+    }
+
+    /// Validate dual acknowledgments to prevent history rewriting attacks
+    ///
+    /// # Security Validation Rules
+    ///
+    /// 1. **Event timestamp cannot be before acknowledged timestamps**
+    /// 2. **Sender must have actually seen the acknowledged messages**
+    /// 3. **Acknowledged messages must exist in our history**
+    ///
+    /// # Attack Prevention
+    ///
+    /// This validation prevents the core attack scenario where a malicious actor
+    /// tries to backdate a permission-changing event after acknowledging later state.
+    fn validate_dual_acknowledgments(
+        &self,
+        sender: &IdentityRef,
+        ack_own: MessageId,
+        ack_others: MessageId,
+        event_timestamp: u64,
+        event_id: MessageId,
+    ) -> GroupStateResult<()> {
+        // Prevent self-referential acknowledgments
+        if ack_own == event_id || ack_others == event_id {
+            return Err(GroupStateError::InvalidAcknowledgment(
+                "Event cannot acknowledge itself".to_string(),
+            ));
+        }
+
+        // Get timestamps of acknowledged messages
+        let ack_own_timestamp = self
+            .message_metadata
+            .get(&ack_own)
+            .map(|m| m.timestamp)
+            .ok_or_else(|| {
+                GroupStateError::InvalidAcknowledgment(format!(
+                    "Own acknowledgment references unknown message: {}",
+                    ack_own
+                ))
+            })?;
+
+        let ack_others_timestamp = self
+            .message_metadata
+            .get(&ack_others)
+            .map(|m| m.timestamp)
+            .ok_or_else(|| {
+                GroupStateError::InvalidAcknowledgment(format!(
+                    "Others acknowledgment references unknown message: {}",
+                    ack_others
+                ))
+            })?;
+
+        // CRITICAL: Event timestamp cannot be before what sender has already acknowledged
+        if event_timestamp < ack_own_timestamp {
+            return Err(GroupStateError::HistoryRewriteAttempt(format!(
+                "Event timestamp {} is before sender's own acknowledged state at {}",
+                event_timestamp, ack_own_timestamp
+            )));
+        }
+
+        if event_timestamp < ack_others_timestamp {
+            return Err(GroupStateError::HistoryRewriteAttempt(format!(
+                "Event timestamp {} is before sender's acknowledged others' state at {}",
+                event_timestamp, ack_others_timestamp
+            )));
+        }
+
+        // Check sender's previous acknowledgments to prevent backdating attacks
+        // This prevents the attack where Alice acknowledges state at t=1000 in an event at t=1100,
+        // then tries to create a new event at t=1050 (between her acknowledgment and her previous event)
+        if let Some(_prev_acks) = self.sender_acknowledgments.get(sender) {
+            // Find the sender's most recent permission event timestamp
+            // and ensure new events don't backdate before it
+            let sender_recent_timestamp = self
+                .message_metadata
+                .iter()
+                .filter(|(_, metadata)| metadata.sender == *sender && metadata.is_permission_event)
+                .map(|(_, metadata)| metadata.timestamp)
+                .max()
+                .unwrap_or(0);
+
+            if event_timestamp < sender_recent_timestamp {
+                return Err(GroupStateError::HistoryRewriteAttempt(format!(
+                    "Event timestamp {} is before sender's most recent permission event at {}",
+                    event_timestamp, sender_recent_timestamp
+                )));
+            }
+        }
 
         Ok(())
+    }
+
+    /// Resolve conflicts when multiple events have identical acknowledgment levels
+    ///
+    /// # Conflict Resolution Strategy
+    ///
+    /// When multiple events reference the same acknowledgment state, we use
+    /// **Message ID tiebreaker** for deterministic resolution:
+    /// - Higher Message ID wins (Blake3 hash comparison)
+    /// - Cryptographically hard to manipulate
+    /// - Deterministic across all clients
+    ///
+    /// # Parameters
+    ///
+    /// - `sender` - The sender of the current event
+    /// - `ack_own` - Own acknowledgment message ID
+    /// - `ack_others` - Others acknowledgment message ID  
+    /// - `timestamp` - Event timestamp
+    /// - `event_id` - Current event's message ID
+    fn resolve_acknowledgment_conflicts(
+        &self,
+        _sender: &IdentityRef,
+        _ack_own: MessageId,
+        _ack_others: MessageId,
+        _timestamp: u64,
+        _event_id: MessageId,
+    ) -> GroupStateResult<()> {
+        // TODO: Implement sophisticated conflict resolution
+        // For now, we accept all events that pass acknowledgment validation
+        // In production, we would:
+        // 1. Check for existing events with same acknowledgment level
+        // 2. Use Message ID tiebreaker to determine winner
+        // 3. Potentially reject or reorder events based on resolution
+
+        Ok(())
+    }
+
+    /// Update sender's acknowledgment tracking after successful event application
+    ///
+    /// Records what state changes this sender has now acknowledged, which will
+    /// be used to validate their future permission-changing events.
+    fn update_sender_acknowledgments(
+        &mut self,
+        sender: IdentityRef,
+        ack_own: MessageId,
+        ack_others: MessageId,
+    ) {
+        self.sender_acknowledgments.insert(
+            sender,
+            SenderAcknowledgments {
+                own_last_ack: ack_own,
+                others_last_ack: ack_others,
+            },
+        );
+    }
+
+    /// Take a periodic snapshot of group state for efficient historical reconstruction
+    ///
+    /// Snapshots are used to avoid O(n) reconstruction when validating permissions
+    /// at historical timestamps. Instead of replaying all events from the beginning,
+    /// we can start from the nearest snapshot.
+    fn take_state_snapshot(&mut self, timestamp: u64, after_event_id: MessageId) {
+        let snapshot = GroupStateSnapshot {
+            timestamp,
+            member_roles: self
+                .members
+                .iter()
+                .map(|(id, member)| (id.clone(), member.role.clone()))
+                .collect(),
+            settings: self.settings.clone(),
+            after_event_id,
+        };
+
+        self.group_state_snapshots.insert(timestamp, snapshot);
+
+        // Keep only the last 10 snapshots to avoid unbounded growth
+        if self.group_state_snapshots.len() > 10 {
+            let oldest_timestamp = *self.group_state_snapshots.keys().next().unwrap();
+            self.group_state_snapshots.remove(&oldest_timestamp);
+        }
     }
 
     /// Check if a member has permission to perform an action
@@ -1170,6 +1597,75 @@ impl GroupState {
     }
 }
 
+impl GroupStateModel for GroupState {
+    type Event = GroupActivityEvent;
+    type PermissionContext = GroupPermissionContext;
+    type Error = ExecuteError;
+    type ExecutiveKey = MessageId;
+
+    fn activity_meta(&self) -> &ActivityMeta {
+        &self.meta
+    }
+
+    fn execute(
+        &mut self,
+        event: &Self::Event,
+        context: &Self::PermissionContext,
+    ) -> Result<Vec<crate::group::app::ExecutionUpdateInfo<Self, Self::ExecutiveKey>>, Self::Error>
+    {
+        // Check basic permissions
+        if !context.is_group_member() {
+            return Err(ExecuteError::PermissionDenied(
+                "Only group members can modify group state".to_string(),
+            ));
+        }
+
+        // Apply the event using the existing apply_event method
+        // Note: We'll need to extract the VerifyingKey from the IdentityRef
+        let sender_key = match &context.actor {
+            IdentityRef::Key(key) => key.clone(),
+            _ => {
+                return Err(ExecuteError::EventNotApplicable(
+                    "Only key-based identities are supported for group events".to_string(),
+                ));
+            }
+        };
+
+        match self.apply_event(
+            event,
+            self.meta.activity_id,
+            sender_key,
+            self.meta.timestamp,
+        ) {
+            Ok(()) => {
+                use crate::group::app::ExecutionUpdateInfo;
+                let update_info = ExecutionUpdateInfo::new()
+                    .add_model(self.clone())
+                    .add_reference(self.group_id); // Use group_id as the executive key
+                Ok(vec![update_info])
+            }
+            Err(e) => Err(ExecuteError::EventNotApplicable(e.to_string())),
+        }
+    }
+
+    fn redact(&self, context: &Self::PermissionContext) -> Result<Vec<Self>, Self::Error> {
+        // Check if the actor has permission to redact the group
+        // For groups, only the creator or admins should be able to redact
+        if context.actor() != &self.meta.actor {
+            if let Some(GroupRole::Owner | GroupRole::Admin) = &context.role {
+                // Allow owners and admins to redact
+            } else {
+                return Err(ExecuteError::PermissionDenied(
+                    "Only the creator, owners, or admins can redact this group".to_string(),
+                ));
+            }
+        }
+
+        // For groups, redaction means returning an empty vec (group is deleted)
+        Ok(vec![])
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1181,6 +1677,7 @@ mod tests {
     use crate::identity::{IdentityInfo, IdentityType};
     use crate::metadata::Metadata;
 
+    use crate::group::app::Acknowledgment;
     use rand::rngs::OsRng;
     use zoe_wire_protocol::{KeyPair, VerifyingKey};
 
@@ -1188,6 +1685,20 @@ mod tests {
     fn create_test_verifying_key() -> VerifyingKey {
         let keypair = KeyPair::generate(&mut OsRng);
         keypair.public_key()
+    }
+
+    pub fn create_test_activity_meta(
+        activity_id: MessageId,
+        group_id: MessageId,
+        actor: VerifyingKey,
+        timestamp: u64,
+    ) -> ActivityMeta {
+        ActivityMeta {
+            activity_id,
+            group_id,
+            actor: IdentityRef::Key(actor),
+            timestamp,
+        }
     }
 
     fn create_test_message_id(seed: u8) -> MessageId {
@@ -1376,6 +1887,7 @@ mod tests {
             metadata.clone(),
             creator_key.clone(),
             timestamp,
+            create_test_activity_meta(group_id, group_id, creator_key.clone(), timestamp),
         );
 
         assert_eq!(group_state.group_id, group_id);
@@ -1402,8 +1914,13 @@ mod tests {
         let group_info = create_test_group_info();
         let timestamp = 1234567890;
 
-        let group_state =
-            GroupState::from_group_info(group_id, &group_info, creator_key.clone(), timestamp);
+        let group_state = GroupState::from_group_info(
+            group_id,
+            &group_info,
+            creator_key.clone(),
+            timestamp,
+            create_test_activity_meta(group_id, group_id, creator_key.clone(), timestamp),
+        );
 
         assert_eq!(group_state.group_id, group_id);
         assert_eq!(group_state.name, group_info.name);
@@ -1423,6 +1940,12 @@ mod tests {
             vec![],
             creator_key,
             1000,
+            create_test_activity_meta(
+                create_test_message_id(1),
+                create_test_message_id(1),
+                create_test_verifying_key(),
+                1000,
+            ),
         );
 
         let key_info = create_test_group_key_info();
@@ -1445,6 +1968,12 @@ mod tests {
             vec![],
             creator_key.clone(),
             1000,
+            create_test_activity_meta(
+                create_test_message_id(1),
+                create_test_message_id(1),
+                create_test_verifying_key(),
+                1000,
+            ),
         );
 
         assert!(group_state.is_member(&creator_key));
@@ -1461,6 +1990,12 @@ mod tests {
             vec![],
             creator_key.clone(),
             1000,
+            create_test_activity_meta(
+                create_test_message_id(1),
+                create_test_message_id(1),
+                create_test_verifying_key(),
+                1000,
+            ),
         );
 
         assert_eq!(
@@ -1482,6 +2017,12 @@ mod tests {
             vec![],
             creator_key.clone(),
             1000,
+            create_test_activity_meta(
+                create_test_message_id(1),
+                create_test_message_id(1),
+                create_test_verifying_key(),
+                1000,
+            ),
         );
 
         let members = group_state.get_members();
@@ -1511,6 +2052,12 @@ mod tests {
             metadata_with_desc,
             creator_key.clone(),
             1000,
+            create_test_activity_meta(
+                create_test_message_id(1),
+                create_test_message_id(1),
+                create_test_verifying_key(),
+                1000,
+            ),
         );
 
         assert_eq!(
@@ -1531,6 +2078,12 @@ mod tests {
             metadata_no_desc,
             creator_key,
             1000,
+            create_test_activity_meta(
+                create_test_message_id(1),
+                create_test_message_id(1),
+                create_test_verifying_key(),
+                1000,
+            ),
         );
 
         assert_eq!(group_state_no_desc.description(), None);
@@ -1559,6 +2112,12 @@ mod tests {
             metadata,
             creator_key,
             1000,
+            create_test_activity_meta(
+                create_test_message_id(1),
+                create_test_message_id(1),
+                create_test_verifying_key(),
+                1000,
+            ),
         );
 
         let generic_meta = group_state.generic_metadata();
@@ -1573,13 +2132,17 @@ mod tests {
     fn test_group_state_apply_activity_event() {
         let creator_key = create_test_verifying_key();
         let new_member_key = create_test_verifying_key();
+        let group_id = create_test_message_id(10);
+        let activity_meta =
+            create_test_activity_meta(group_id, group_id, creator_key.clone(), 1000);
         let mut group_state = GroupState::new(
-            create_test_message_id(10),
+            group_id,
             "Test".to_string(),
             GroupSettings::default(),
             vec![],
             creator_key,
             1000,
+            activity_meta,
         );
 
         let activity_event = GroupActivityEvent::SetIdentity(crate::identity::IdentityInfo {
@@ -1610,13 +2173,17 @@ mod tests {
     #[test]
     fn test_group_state_apply_update_group_event() {
         let creator_key = create_test_verifying_key();
+        let group_id = create_test_message_id(12);
+        let activity_meta =
+            create_test_activity_meta(group_id, group_id, creator_key.clone(), 1000);
         let mut group_state = GroupState::new(
-            create_test_message_id(12),
+            group_id,
             "Original Name".to_string(),
             GroupSettings::default(),
             vec![],
             creator_key.clone(),
             1000,
+            activity_meta,
         );
 
         use crate::group::events::{GroupInfoUpdate, GroupInfoUpdateContent};
@@ -1629,8 +2196,13 @@ mod tests {
             )]),
         ];
 
-        let update_event: GroupActivityEvent =
-            GroupActivityEvent::UpdateGroup(new_group_info_update.clone());
+        let update_event: GroupActivityEvent = GroupActivityEvent::UpdateGroup {
+            updates: new_group_info_update.clone(),
+            acknowledgment: Some(Acknowledgment::new(
+                create_test_message_id(1),
+                create_test_message_id(1),
+            )),
+        };
         let event_id = create_test_message_id(13);
 
         let result = group_state.apply_event(&update_event, event_id, creator_key.clone(), 1001);
@@ -1656,6 +2228,12 @@ mod tests {
             vec![],
             creator_key,
             1000,
+            create_test_activity_meta(
+                create_test_message_id(1),
+                create_test_message_id(1),
+                create_test_verifying_key(),
+                1000,
+            ),
         );
 
         // Add member first
@@ -1703,6 +2281,12 @@ mod tests {
             vec![],
             creator_key.clone(),
             1000,
+            create_test_activity_meta(
+                create_test_message_id(1),
+                create_test_message_id(1),
+                create_test_verifying_key(),
+                1000,
+            ),
         );
 
         // Add member first
@@ -1724,6 +2308,10 @@ mod tests {
         let assign_role_event: GroupActivityEvent = GroupActivityEvent::AssignRole {
             target: target_identity,
             role: GroupRole::Admin,
+            acknowledgment: Acknowledgment::new(
+                create_test_message_id(1),
+                create_test_message_id(2),
+            ),
         };
 
         let result = group_state.apply_event(
@@ -1751,6 +2339,12 @@ mod tests {
             vec![],
             creator_key.clone(),
             1000,
+            create_test_activity_meta(
+                create_test_message_id(1),
+                create_test_message_id(1),
+                create_test_verifying_key(),
+                1000,
+            ),
         );
 
         let activity_event = GroupActivityEvent::SetIdentity(crate::identity::IdentityInfo {
@@ -1786,6 +2380,12 @@ mod tests {
             vec![],
             creator_key.clone(),
             1000,
+            create_test_activity_meta(
+                create_test_message_id(1),
+                create_test_message_id(1),
+                create_test_verifying_key(),
+                1000,
+            ),
         );
 
         // Owner should have all permissions
@@ -1810,6 +2410,12 @@ mod tests {
             vec![],
             creator_key,
             1000,
+            create_test_activity_meta(
+                create_test_message_id(1),
+                create_test_message_id(1),
+                create_test_verifying_key(),
+                1000,
+            ),
         );
 
         // Add member
@@ -1852,6 +2458,12 @@ mod tests {
             vec![],
             creator_key,
             1000,
+            create_test_activity_meta(
+                create_test_message_id(1),
+                create_test_message_id(1),
+                create_test_verifying_key(),
+                1000,
+            ),
         );
 
         let result = group_state.check_permission(&non_member_key, &Permission::AllMembers);
@@ -1904,6 +2516,12 @@ mod tests {
             vec![],
             creator_key,
             1000,
+            create_test_activity_meta(
+                create_test_message_id(1),
+                create_test_message_id(1),
+                create_test_verifying_key(),
+                1000,
+            ),
         );
 
         let leave_event: GroupActivityEvent = GroupActivityEvent::LeaveGroup { message: None };
@@ -1932,12 +2550,22 @@ mod tests {
             vec![],
             creator_key.clone(),
             1000,
+            create_test_activity_meta(
+                create_test_message_id(1),
+                create_test_message_id(1),
+                create_test_verifying_key(),
+                1000,
+            ),
         );
 
         let target_identity = IdentityRef::Key(non_member_key);
         let assign_role_event: GroupActivityEvent = GroupActivityEvent::AssignRole {
             target: target_identity,
             role: GroupRole::Admin,
+            acknowledgment: Acknowledgment::new(
+                create_test_message_id(1),
+                create_test_message_id(2),
+            ),
         };
 
         let result = group_state.apply_event(
@@ -1966,6 +2594,12 @@ mod tests {
             vec![],
             creator_key,
             1000,
+            create_test_activity_meta(
+                create_test_message_id(1),
+                create_test_message_id(1),
+                create_test_verifying_key(),
+                1000,
+            ),
         );
 
         // Add both members
@@ -1995,6 +2629,10 @@ mod tests {
         let assign_role_event: GroupActivityEvent = GroupActivityEvent::AssignRole {
             target: target_identity,
             role: GroupRole::Admin,
+            acknowledgment: Acknowledgment::new(
+                create_test_message_id(1),
+                create_test_message_id(2),
+            ),
         };
 
         let result = group_state.apply_event(
@@ -2083,8 +2721,14 @@ mod tests {
                     value: "value".to_string(),
                 },
             ],
-            creator_key,
+            creator_key.clone(),
             1234567890,
+            create_test_activity_meta(
+                create_test_message_id(34),
+                create_test_message_id(34),
+                creator_key,
+                1234567890,
+            ),
         );
 
         let serialized = postcard::to_stdvec(&group_state).expect("Failed to serialize");
@@ -2119,6 +2763,12 @@ mod tests {
             vec![Metadata::Description("Full lifecycle test".to_string())],
             creator_key.clone(),
             1000,
+            create_test_activity_meta(
+                create_test_message_id(1),
+                create_test_message_id(1),
+                create_test_verifying_key(),
+                1000,
+            ),
         );
 
         assert_eq!(group_state.members.len(), 1);
@@ -2159,6 +2809,10 @@ mod tests {
         let promote_event: GroupActivityEvent = GroupActivityEvent::AssignRole {
             target: IdentityRef::Key(member1_key.clone()),
             role: GroupRole::Admin,
+            acknowledgment: Acknowledgment::new(
+                create_test_message_id(1),
+                create_test_message_id(2),
+            ),
         };
         group_state
             .apply_event(
@@ -2179,6 +2833,10 @@ mod tests {
         let promote_event2: GroupActivityEvent = GroupActivityEvent::AssignRole {
             target: IdentityRef::Key(member2_key.clone()),
             role: GroupRole::Moderator,
+            acknowledgment: Acknowledgment::new(
+                create_test_message_id(1),
+                create_test_message_id(2),
+            ),
         };
         group_state
             .apply_event(
@@ -2210,8 +2868,13 @@ mod tests {
             ]),
         ];
 
-        let update_event: GroupActivityEvent =
-            GroupActivityEvent::UpdateGroup(new_group_info_update.clone());
+        let update_event: GroupActivityEvent = GroupActivityEvent::UpdateGroup {
+            updates: new_group_info_update.clone(),
+            acknowledgment: Some(Acknowledgment::new(
+                create_test_message_id(1),
+                create_test_message_id(1),
+            )),
+        };
         group_state
             .apply_event(
                 &update_event,
@@ -2270,6 +2933,12 @@ mod tests {
             vec![],
             creator_key,
             1000,
+            create_test_activity_meta(
+                create_test_message_id(1),
+                create_test_message_id(1),
+                create_test_verifying_key(),
+                1000,
+            ),
         );
 
         // Member joins

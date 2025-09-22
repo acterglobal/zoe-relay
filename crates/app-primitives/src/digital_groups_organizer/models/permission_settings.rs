@@ -5,6 +5,11 @@
 
 use crate::identity::IdentityRef;
 use serde::{Deserialize, Serialize};
+use zoe_wire_protocol::MessageId;
+
+use crate::digital_groups_organizer::models::core::{
+    ActivityMeta, DgoAppModel, DgoModelError, DgoOperation, DgoPermissionContext, DgoResult,
+};
 
 use crate::digital_groups_organizer::{
     capabilities::{CapabilitySet, DgoCapability},
@@ -16,10 +21,6 @@ use crate::digital_groups_organizer::{
         core::DgoActivityEvent,
     },
     indexing::keys::IndexKey,
-};
-
-use super::core::{
-    ActivityMeta, DgoModel, DgoModelError, DgoOperation, DgoResult, PermissionContext,
 };
 
 /// A DGO permission settings model - manages granular permissions for all DGO features
@@ -82,9 +83,27 @@ impl DgoPermissionSettings {
         self.settings.apply_updates(updates);
         self.version += 1;
     }
+
+    /// Get the unique identifier for this model
+    pub fn model_id(&self) -> MessageId {
+        self.meta.activity_id
+    }
+
+    /// Get the group this model belongs to
+    pub fn group_id(&self) -> MessageId {
+        self.meta.group_id
+    }
+
+    /// Get the actor who created this model
+    pub fn creator(&self) -> &IdentityRef {
+        &self.meta.actor
+    }
 }
 
-impl DgoModel for DgoPermissionSettings {
+// Note: DgoPermissionSettings doesn't implement GroupStateModel directly.
+// Only AnyDgoModel implements GroupStateModel to work with the unified executor.
+
+impl DgoAppModel for DgoPermissionSettings {
     fn activity_meta(&self) -> &ActivityMeta {
         &self.meta
     }
@@ -106,7 +125,7 @@ impl DgoModel for DgoPermissionSettings {
 
     fn check_permission(
         &self,
-        context: &PermissionContext,
+        context: &DgoPermissionContext,
         operation: DgoOperation,
     ) -> DgoResult<()> {
         // Permission settings require special handling
@@ -158,18 +177,17 @@ impl DgoModel for DgoPermissionSettings {
                 // Other operations not supported
                 Err(DgoModelError::PermissionDenied {
                     message: format!(
-                        "{:?} operation is not supported for permission settings",
-                        operation
+                        "{operation:?} operation is not supported for permission settings"
                     ),
                 })
             }
         }
     }
 
-    fn apply_transition(
+    fn apply_dgo_transition(
         &mut self,
         event: &DgoActivityEvent,
-        context: &PermissionContext,
+        context: &DgoPermissionContext,
     ) -> DgoResult<bool> {
         match event {
             DgoActivityEvent::UpdateDgoSettings { target_id, content } => {
@@ -241,7 +259,7 @@ mod tests {
         let member_keypair = KeyPair::generate(&mut rng);
         let admin_keypair = KeyPair::generate(&mut rng);
 
-        let member_context = PermissionContext::new(
+        let member_context = DgoPermissionContext::new(
             IdentityRef::Key(member_keypair.public_key()),
             settings.group_id(),
             GroupRole::Member,
@@ -249,7 +267,7 @@ mod tests {
             DgoFeatureSettings::default(),
         );
 
-        let admin_context = PermissionContext::new(
+        let admin_context = DgoPermissionContext::new(
             IdentityRef::Key(admin_keypair.public_key()),
             settings.group_id(),
             GroupRole::Admin,
@@ -280,7 +298,7 @@ mod tests {
         let other_keypair = KeyPair::generate(&mut rng);
         let admin_keypair = KeyPair::generate(&mut rng);
 
-        let creator_context = PermissionContext::new(
+        let creator_context = DgoPermissionContext::new(
             creator_key,
             settings.group_id(),
             GroupRole::Member, // Creator is just a member
@@ -288,7 +306,7 @@ mod tests {
             DgoFeatureSettings::default(),
         );
 
-        let other_context = PermissionContext::new(
+        let other_context = DgoPermissionContext::new(
             IdentityRef::Key(other_keypair.public_key()),
             settings.group_id(),
             GroupRole::Member,
@@ -296,7 +314,7 @@ mod tests {
             DgoFeatureSettings::default(),
         );
 
-        let admin_context = PermissionContext::new(
+        let admin_context = DgoPermissionContext::new(
             IdentityRef::Key(admin_keypair.public_key()),
             settings.group_id(),
             GroupRole::Admin,
