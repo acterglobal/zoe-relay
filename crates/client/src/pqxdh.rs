@@ -151,10 +151,10 @@ mod tests {
     use std::sync::Arc;
 
     use super::*;
-    use crate::services::messages_manager::MockMessagesManagerTrait;
     use eyeball::{AsyncLock, SharedObservable};
     use futures::stream;
     use mockall::predicate::*;
+    use zoe_state_machine::messages::MockMessagesManagerTrait;
 
     use zoe_wire_protocol::{
         Content, KeyId, KeyPair, Kind, Message, MessageFull, PqxdhInboxProtocol, PqxdhSharedSecret,
@@ -723,7 +723,7 @@ mod tests {
         mock_manager
             .expect_publish()
             .times(1)
-            .returning(|_| Err(crate::ClientError::Generic("Network error".to_string())));
+            .returning(|_| Err(crate::ClientError::Generic("Network error".to_string()).into()));
 
         let handler = TestPqxdhHandler::new(
             Arc::new(mock_manager),

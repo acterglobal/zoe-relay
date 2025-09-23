@@ -43,3 +43,17 @@ pub enum ClientError {
 }
 
 pub type Result<T> = std::result::Result<T, ClientError>;
+
+// Conversion from ClientError to MessagesManagerError
+impl From<ClientError> for zoe_state_machine::messages::MessagesManagerError {
+    fn from(err: ClientError) -> Self {
+        zoe_state_machine::messages::MessagesManagerError::Client(err.to_string())
+    }
+}
+
+// Conversion from MessagesManagerError to ClientError
+impl From<zoe_state_machine::messages::MessagesManagerError> for ClientError {
+    fn from(err: zoe_state_machine::messages::MessagesManagerError) -> Self {
+        ClientError::Generic(err.to_string())
+    }
+}

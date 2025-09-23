@@ -45,7 +45,7 @@ use zoe_state_machine::group::{GroupDataUpdate, GroupManager};
 use zoe_wire_protocol::PqxdhInboxProtocol;
 
 use crate::pqxdh::PqxdhProtocolHandler;
-use crate::services::MessagesManagerTrait;
+use zoe_state_machine::messages::MessagesManagerTrait;
 
 /// Errors that can occur during session management operations
 #[derive(Debug, thiserror::Error)]
@@ -73,7 +73,9 @@ pub struct SessionManagerBuilder<S: StateStorage + 'static, M: MessagesManagerTr
     client_keypair: Option<Arc<zoe_wire_protocol::KeyPair>>,
 }
 
-impl<S: StateStorage + 'static, M: MessagesManagerTrait + 'static> SessionManagerBuilder<S, M> {
+impl<S: StateStorage + 'static, M: MessagesManagerTrait + Clone + 'static>
+    SessionManagerBuilder<S, M>
+{
     /// Create a new SessionManager builder
     pub fn new(storage: Arc<S>, messages_manager: Arc<M>) -> Self {
         Self {
@@ -107,9 +109,12 @@ impl<S: StateStorage + 'static, M: MessagesManagerTrait + 'static> SessionManage
         .await?;
 
         // Create group manager instance and initialize listener
-        let (group_manager, group_manager_task) =
-            SessionManager::<S, M>::init_group_manager(storage.clone(), client_keypair.clone())
-                .await?;
+        let (group_manager, group_manager_task) = SessionManager::<S, M>::init_group_manager(
+            storage.clone(),
+            messages_manager.clone(),
+            client_keypair.clone(),
+        )
+        .await?;
 
         let manager = SessionManager {
             storage,
@@ -139,7 +144,7 @@ type PqxdhHandlerStates<M> = BTreeMap<PqxdhInboxProtocol, PqxdhHandlerState<M>>;
 /// The SessionManager is designed to be long-lived and handles the lifecycle
 /// of multiple PQXDH protocol handlers and group encryption sessions, automatically
 /// managing their state persistence and providing reactive access to state changes.
-pub struct SessionManager<S: StateStorage + 'static, M: MessagesManagerTrait + 'static> {
+pub struct SessionManager<S: StateStorage + 'static, M: MessagesManagerTrait + Clone + 'static> {
     /// Underlying state storage
     storage: Arc<S>,
     /// Messages manager for subscription and message handling
@@ -147,13 +152,13 @@ pub struct SessionManager<S: StateStorage + 'static, M: MessagesManagerTrait + '
     /// PQXDH handlers with their background listener tasks  
     pqxdh_handlers: RwLock<PqxdhHandlerStates<M>>,
     /// Group manager instance with background listener task
-    group_manager: GroupManager,
+    group_manager: GroupManager<M>,
     #[allow(dead_code)]
     group_manager_task: JoinHandle<()>,
     client_keypair: Arc<zoe_wire_protocol::KeyPair>,
 }
 
-impl<S: StateStorage + 'static, M: MessagesManagerTrait + 'static> SessionManager<S, M> {
+impl<S: StateStorage + 'static, M: MessagesManagerTrait + Clone + 'static> SessionManager<S, M> {
     /// Create a new SessionManager builder
     ///
     /// # Arguments
@@ -203,21 +208,24 @@ impl<S: StateStorage + 'static, M: MessagesManagerTrait + 'static> SessionManage
 }
 
 /// Group Manager Integration
-impl<S: StateStorage + 'static, M: MessagesManagerTrait + 'static> SessionManager<S, M> {
+impl<S: StateStorage + 'static, M: MessagesManagerTrait + Clone + 'static> SessionManager<S, M> {
     /// Initialize group manager with listener task
     async fn init_group_manager(
         storage: Arc<S>,
+        messages_manager: Arc<M>,
         client_keypair: Arc<zoe_wire_protocol::KeyPair>,
-    ) -> SessionManagerResult<(GroupManager, JoinHandle<()>)> {
+    ) -> SessionManagerResult<(GroupManager<M>, JoinHandle<()>)> {
         let namespace = StateNamespace::GroupSession(KeyId::from(*client_keypair.id()));
         let sessions: Vec<(Vec<u8>, zoe_state_machine::state::GroupSession)> = storage
             .list_namespace_data(&namespace)
             .await
             .map_err(SessionManagerError::Storage)?;
 
-        let group_manager = GroupManager::builder()
+        // Use messages_manager directly since it now implements GroupMessageManager
+        let group_manager = GroupManager::builder(messages_manager)
             .with_sessions(sessions.into_iter().map(|(_, session)| session).collect())
             .build();
+        let group_manager = group_manager.await;
         let mut group_updates = group_manager.subscribe_to_updates();
 
         let task = tokio::spawn(async move {
@@ -229,7 +237,7 @@ impl<S: StateStorage + 'static, M: MessagesManagerTrait + 'static> SessionManage
                         if let Err(e) = storage
                             .store(
                                 &namespace,
-                                group_session.state.group_id.as_bytes(),
+                                group_session.state.group_info.group_id.as_slice(),
                                 &group_session,
                             )
                             .await
@@ -239,7 +247,10 @@ impl<S: StateStorage + 'static, M: MessagesManagerTrait + 'static> SessionManage
                     }
                     GroupDataUpdate::GroupRemoved(group_session) => {
                         if let Err(e) = storage
-                            .delete(&namespace, group_session.state.group_id.as_bytes())
+                            .delete(
+                                &namespace,
+                                group_session.state.group_info.group_id.as_slice(),
+                            )
                             .await
                         {
                             tracing::error!(error=?e, "Failed to delete group session");
@@ -255,13 +266,13 @@ impl<S: StateStorage + 'static, M: MessagesManagerTrait + 'static> SessionManage
     }
 
     /// Get access to the group manager
-    pub fn group_manager(&self) -> GroupManager {
+    pub fn group_manager(&self) -> GroupManager<M> {
         self.group_manager.clone()
     }
 }
 
 /// Live Object Access and State Cloning
-impl<S: StateStorage + 'static, M: MessagesManagerTrait + 'static> SessionManager<S, M> {
+impl<S: StateStorage + 'static, M: MessagesManagerTrait + Clone + 'static> SessionManager<S, M> {
     /// Load PQXDH states from storage
     async fn load_pqxdh_states(
         storage: Arc<S>,
@@ -375,7 +386,7 @@ mod tests {
     use zoe_wire_protocol::{KeyPair, PqxdhInboxProtocol};
 
     use crate::pqxdh::PqxdhProtocolState;
-    use crate::services::messages_manager::MockMessagesManagerTrait;
+    use zoe_state_machine::messages::MockMessagesManagerTrait;
 
     fn create_test_keypair() -> KeyPair {
         let mut rng = thread_rng();

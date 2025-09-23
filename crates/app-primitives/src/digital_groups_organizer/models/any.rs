@@ -9,7 +9,7 @@ use zoe_wire_protocol::MessageId;
 
 use crate::{
     digital_groups_organizer::{
-        events::core::DgoActivityEvent,
+        events::core::{DgoActivityEvent, DgoActivityEventContent},
         models::core::{ActivityMeta, DgoAppModel, DgoPermissionContext},
     },
     group::app::{ExecuteError, GroupStateModel},
@@ -59,9 +59,9 @@ impl GroupStateModel for AnyDgoModel {
         use crate::group::app::ExecutionUpdateInfo;
 
         // For Create events, the model was just created and should return itself
-        match event {
-            DgoActivityEvent::CreateTextBlock { .. }
-            | DgoActivityEvent::CreateDgoSettings { .. } => {
+        match event.content() {
+            DgoActivityEventContent::CreateTextBlock { .. }
+            | DgoActivityEventContent::CreateDgoSettings { .. } => {
                 let update_info = ExecutionUpdateInfo::new()
                     .add_model(self.clone())
                     .add_reference(self.activity_meta().activity_id);

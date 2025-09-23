@@ -1,10 +1,13 @@
+use crate::group::create_role_update_event_for_testing;
 use crate::group::{CreateGroupBuilder, GroupDataUpdate, GroupManager};
-use crate::group::{create_leave_group_event, create_role_update_event_for_testing};
+use crate::messages::MockMessagesManagerTrait;
+use mockall::predicate::function;
 use rand::thread_rng;
+use std::sync::Arc;
 use zoe_app_primitives::group::events::GroupActivityEvent;
 use zoe_app_primitives::group::events::roles::GroupRole;
 use zoe_app_primitives::group::events::settings::GroupSettings;
-use zoe_wire_protocol::{KeyPair, Tag};
+use zoe_wire_protocol::{Content, Filter, KeyPair, PublishResult, Tag};
 
 fn create_test_keys() -> (KeyPair, KeyPair) {
     let mut rng = thread_rng();
@@ -19,9 +22,47 @@ fn create_test_group() -> CreateGroupBuilder {
         .group_settings(GroupSettings::default())
 }
 
+async fn create_test_group_manager() -> GroupManager<MockMessagesManagerTrait> {
+    let mut mock_manager = MockMessagesManagerTrait::new();
+
+    // Set up default expectations for subscription calls
+    mock_manager
+        .expect_ensure_contains_filter()
+        .with(function(|filter: &Filter| {
+            matches!(filter, Filter::Channel(_))
+        }))
+        .returning(|_| Ok(()));
+
+    // Set up default expectations for publish calls
+    mock_manager.expect_publish().returning(|_| {
+        Ok(PublishResult::StoredNew {
+            global_stream_id: "test_stream_id".to_string(),
+        })
+    });
+
+    // Set up default expectations for messages_stream calls
+    mock_manager.expect_messages_stream().returning(|| {
+        let (tx, rx) = async_broadcast::broadcast(1);
+        // Close the sender immediately to create an empty stream
+        drop(tx);
+        rx
+    });
+
+    // Set up default expectations for catch_up_stream calls
+    mock_manager.expect_catch_up_stream().returning(|| {
+        let (tx, rx) = async_broadcast::broadcast(1);
+        // Close the sender immediately to create an empty stream
+        drop(tx);
+        rx
+    });
+
+    let message_manager = Arc::new(mock_manager);
+    GroupManager::builder(message_manager).build().await
+}
+
 #[tokio::test]
 async fn test_create_encrypted_group() {
-    let dga = GroupManager::builder().build();
+    let dga = create_test_group_manager().await;
     let (alice_key, _bob_key) = create_test_keys();
     let create_group = create_test_group();
 
@@ -37,7 +78,7 @@ async fn test_create_encrypted_group() {
 
     // Verify group state
     let group_state = group_state.unwrap();
-    assert_eq!(group_state.name, "Test Group");
+    assert_eq!(group_state.group_info.name, "Test Group");
     assert_eq!(
         group_state.description(),
         Some("A test group for unit tests".to_string())
@@ -59,7 +100,7 @@ async fn test_create_encrypted_group() {
 
 #[tokio::test]
 async fn test_process_encrypted_create_group_event() {
-    let dga = GroupManager::builder().build();
+    let dga = create_test_group_manager().await;
     let (alice_key, _bob_key) = create_test_keys();
     let create_group = create_test_group();
 
@@ -67,21 +108,14 @@ async fn test_process_encrypted_create_group_event() {
     let result = dga.create_group(create_group, &alice_key).await.unwrap();
 
     // Create a fresh DGA instance and add the complete group session
-    let fresh_dga = GroupManager::builder().build();
+    let fresh_dga = create_test_group_manager().await;
     let group_session = dga.group_session(&result.group_id).await.unwrap();
     fresh_dga
-        .add_group_session(result.group_id, group_session)
+        .add_group_session(result.group_id.clone(), group_session)
         .await;
-
-    // Process the create group message
-    fresh_dga
-        .process_group_event(&result.message)
-        .await
-        .unwrap();
-
     // Verify the group was created
     let group_state = fresh_dga.group_state(&result.group_id).await.unwrap();
-    assert_eq!(group_state.name, "Test Group");
+    assert_eq!(group_state.group_info.name, "Test Group");
     assert_eq!(
         group_state.description(),
         Some("A test group for unit tests".to_string())
@@ -92,10 +126,9 @@ async fn test_process_encrypted_create_group_event() {
 
 #[tokio::test]
 async fn test_encrypted_group_activity() {
-    let dga = GroupManager::builder().build();
+    let dga = create_test_group_manager().await;
     let (alice_key, _bob_key) = create_test_keys();
     let create_group = create_test_group();
-    let timestamp = chrono::Utc::now().timestamp() as u64;
 
     // Create group
     let result = dga.create_group(create_group, &alice_key).await.unwrap();
@@ -107,13 +140,15 @@ async fn test_encrypted_group_activity() {
             metadata: vec![],
         });
 
-    let activity_message = dga
-        .create_group_event_message(result.group_id, activity_event, &alice_key, timestamp + 1)
-        .await
-        .unwrap();
-
     // Process the activity
-    dga.process_group_event(&activity_message).await.unwrap();
+    dga.publish_app_event(
+        &result.group_id,
+        result.group_id.clone(),
+        activity_event,
+        &alice_key,
+    )
+    .await
+    .unwrap();
 
     // Verify Alice is still the only member (she was already the creator)
     let group_state = dga.group_state(&result.group_id).await.unwrap();
@@ -123,10 +158,9 @@ async fn test_encrypted_group_activity() {
 
 #[tokio::test]
 async fn test_new_member_via_activity() {
-    let dga = GroupManager::builder().build();
+    let dga = create_test_group_manager().await;
     let (alice_key, bob_key) = create_test_keys();
     let create_group = create_test_group();
-    let timestamp = chrono::Utc::now().timestamp() as u64;
 
     // Alice creates group
     let result = dga.create_group(create_group, &alice_key).await.unwrap();
@@ -135,10 +169,10 @@ async fn test_new_member_via_activity() {
     // (In reality, this would happen through a separate secure channel)
 
     // Create a separate DGA instance for Bob and give him the complete session
-    let bob_dga = GroupManager::builder().build();
+    let bob_dga = create_test_group_manager().await;
     let group_session = dga.group_session(&result.group_id).await.unwrap();
     bob_dga
-        .add_group_session(result.group_id, group_session)
+        .add_group_session(result.group_id.clone(), group_session)
         .await;
 
     // Bob now has the complete group session, no need for separate state management
@@ -149,14 +183,10 @@ async fn test_new_member_via_activity() {
             display_name: "bob_user".to_string(),
             metadata: vec![],
         });
-
-    let bob_message = bob_dga
-        .create_group_event_message(result.group_id, bob_activity, &bob_key, timestamp + 10)
+    // Alice processes Bob's message
+    dga.publish_group_event(&result.group_id, bob_activity, &bob_key)
         .await
         .unwrap();
-
-    // Alice processes Bob's message
-    dga.process_group_event(&bob_message).await.unwrap();
 
     // Verify Bob is now an active member
     let group_state = dga.group_state(&result.group_id).await.unwrap();
@@ -171,19 +201,18 @@ async fn test_new_member_via_activity() {
 
 #[tokio::test]
 async fn test_role_update() {
-    let dga = GroupManager::builder().build();
+    let dga = create_test_group_manager().await;
     let (alice_key, bob_key) = create_test_keys();
     let create_group = create_test_group();
-    let timestamp = chrono::Utc::now().timestamp() as u64;
 
     // Create group and add Bob as member
     let result = dga.create_group(create_group, &alice_key).await.unwrap();
 
     // Simulate Bob joining by sending an activity
-    let bob_dga = GroupManager::builder().build();
+    let bob_dga = create_test_group_manager().await;
     let group_session = dga.group_session(&result.group_id).await.unwrap();
     bob_dga
-        .add_group_session(result.group_id, group_session)
+        .add_group_session(result.group_id.clone(), group_session)
         .await;
 
     let bob_activity =
@@ -191,22 +220,18 @@ async fn test_role_update() {
             display_name: "bob_user".to_string(),
             metadata: vec![],
         });
-    let bob_message = bob_dga
-        .create_group_event_message(result.group_id, bob_activity, &bob_key, timestamp + 5)
+
+    dga.publish_group_event(&result.group_id, bob_activity, &bob_key)
         .await
         .unwrap();
-    dga.process_group_event(&bob_message).await.unwrap();
 
     // Alice promotes Bob to Admin
     let role_update: GroupActivityEvent =
         create_role_update_event_for_testing(bob_key.public_key(), GroupRole::Admin);
 
-    let role_message = dga
-        .create_group_event_message(result.group_id, role_update, &alice_key, timestamp + 10)
+    dga.publish_group_event(&result.group_id, role_update, &alice_key)
         .await
         .unwrap();
-
-    dga.process_group_event(&role_message).await.unwrap();
 
     // Verify Bob's role was updated
     let group_state = dga.group_state(&result.group_id).await.unwrap();
@@ -218,30 +243,28 @@ async fn test_role_update() {
 
 #[tokio::test]
 async fn test_leave_group_event() {
-    let dga = GroupManager::builder().build();
+    let dga = create_test_group_manager().await;
     let (alice_key, bob_key) = create_test_keys();
     let create_group = create_test_group();
-    let timestamp = chrono::Utc::now().timestamp() as u64;
 
     // Create group and add Bob
     let result = dga.create_group(create_group, &alice_key).await.unwrap();
 
     // Add Bob as a member first
-    let bob_dga = GroupManager::builder().build();
+    let bob_dga = create_test_group_manager().await;
     let group_session = dga.group_session(&result.group_id).await.unwrap();
     bob_dga
-        .add_group_session(result.group_id, group_session)
+        .add_group_session(result.group_id.clone(), group_session)
         .await;
     let bob_activity =
         GroupActivityEvent::SetIdentity(zoe_app_primitives::identity::IdentityInfo {
             display_name: "bob_user".to_string(),
             metadata: vec![],
         });
-    let bob_message = bob_dga
-        .create_group_event_message(result.group_id, bob_activity, &bob_key, timestamp + 5)
+    bob_dga
+        .publish_group_event(&result.group_id, bob_activity, &bob_key)
         .await
         .unwrap();
-    dga.process_group_event(&bob_message).await.unwrap();
 
     // Verify Bob is a member
     assert_eq!(
@@ -254,15 +277,13 @@ async fn test_leave_group_event() {
     );
 
     // Bob leaves the group
-    let leave_event: GroupActivityEvent =
-        create_leave_group_event(Some("Thanks for having me!".to_string()));
+    let leave_event: GroupActivityEvent = GroupActivityEvent::LeaveGroup {
+        message: Some("Thanks for having me!".to_string()),
+    };
 
-    let leave_message = bob_dga
-        .create_group_event_message(result.group_id, leave_event, &bob_key, timestamp + 10)
+    dga.publish_group_event(&result.group_id, leave_event, &bob_key)
         .await
         .unwrap();
-
-    dga.process_group_event(&leave_message).await.unwrap();
 
     // Verify Bob is no longer in active members
     let group_state = dga.group_state(&result.group_id).await.unwrap();
@@ -273,10 +294,9 @@ async fn test_leave_group_event() {
 
 #[tokio::test]
 async fn test_missing_group_session_error() {
-    let dga = GroupManager::builder().build();
+    let dga = create_test_group_manager().await;
     let (alice_key, _bob_key) = create_test_keys();
     let create_group = create_test_group();
-    let timestamp = chrono::Utc::now().timestamp() as u64;
 
     // Create group
     let result = dga.create_group(create_group, &alice_key).await.unwrap();
@@ -292,7 +312,7 @@ async fn test_missing_group_session_error() {
         });
 
     let result = dga
-        .create_group_event_message(result.group_id, activity_event, &alice_key, timestamp + 1)
+        .publish_group_event(&result.group_id, activity_event, &alice_key)
         .await;
 
     assert!(result.is_err());
@@ -309,30 +329,28 @@ async fn test_missing_group_session_error() {
 
 #[tokio::test]
 async fn test_permission_denied_for_role_update() {
-    let dga = GroupManager::builder().build();
+    let dga = create_test_group_manager().await;
     let (alice_key, bob_key) = create_test_keys();
     let create_group = create_test_group();
-    let timestamp = chrono::Utc::now().timestamp() as u64;
 
     // Create group
     let result = dga.create_group(create_group, &alice_key).await.unwrap();
 
     // Add Bob as a regular member
-    let bob_dga = GroupManager::builder().build();
+    let bob_dga = create_test_group_manager().await;
     let group_session = dga.group_session(&result.group_id).await.unwrap();
     bob_dga
-        .add_group_session(result.group_id, group_session)
+        .add_group_session(result.group_id.clone(), group_session)
         .await;
     let bob_activity =
         GroupActivityEvent::SetIdentity(zoe_app_primitives::identity::IdentityInfo {
             display_name: "bob_user".to_string(),
             metadata: vec![],
         });
-    let bob_message = bob_dga
-        .create_group_event_message(result.group_id, bob_activity, &bob_key, timestamp + 5)
+    bob_dga
+        .publish_group_event(&result.group_id, bob_activity.clone(), &bob_key)
         .await
         .unwrap();
-    dga.process_group_event(&bob_message).await.unwrap();
 
     // Bob (regular member) tries to update Alice's role (should fail)
     let role_update: GroupActivityEvent = create_role_update_event_for_testing(
@@ -340,13 +358,11 @@ async fn test_permission_denied_for_role_update() {
         GroupRole::Member, // Trying to demote the owner
     );
 
-    let role_message = bob_dga
-        .create_group_event_message(result.group_id, role_update, &bob_key, timestamp + 10)
-        .await
-        .unwrap();
+    let result = bob_dga
+        .publish_group_event(&result.group_id, role_update, &bob_key)
+        .await;
 
-    // This should fail when processed
-    let result = dga.process_group_event(&role_message).await;
+    // This should fail when processed;
     assert!(result.is_err());
     assert!(
         result
@@ -358,7 +374,7 @@ async fn test_permission_denied_for_role_update() {
 
 #[tokio::test]
 async fn test_subscription_filter_creation() {
-    let dga = GroupManager::builder().build();
+    let dga = create_test_group_manager().await;
     let (alice_key, _bob_key) = create_test_keys();
     let create_group = create_test_group();
 
@@ -373,18 +389,19 @@ async fn test_subscription_filter_creation() {
 
     // Verify filter
     match filter {
-        Tag::Event { id, relays } => {
+        Tag::Channel { id, relays } => {
+            // GroupId is ChannelId, so direct comparison
             assert_eq!(id, result.group_id);
             assert!(relays.is_empty());
         }
-        _ => panic!("Expected Event tag"),
+        _ => panic!("Expected Channel tag"),
     }
 }
 
 #[tokio::test]
 async fn test_group_key_generation() {
-    let key1 = GroupManager::generate_group_key();
-    let key2 = GroupManager::generate_group_key();
+    let key1 = GroupManager::<MockMessagesManagerTrait>::generate_group_key();
+    let key2 = GroupManager::<MockMessagesManagerTrait>::generate_group_key();
 
     // Keys should be different (random generation)
     assert_ne!(key1.key, key2.key);
@@ -412,7 +429,10 @@ async fn test_create_key_from_mnemonic() {
     let group_name = "test-group";
     let passphrase = "test-passphrase";
 
-    let key = GroupManager::create_key_from_mnemonic(&mnemonic, passphrase, group_name).unwrap();
+    let key = GroupManager::<MockMessagesManagerTrait>::create_key_from_mnemonic(
+        &mnemonic, passphrase, group_name,
+    )
+    .unwrap();
 
     // Verify key properties
     assert_eq!(key.key.len(), 32);
@@ -438,8 +458,10 @@ async fn test_recover_key_from_mnemonic() {
     let passphrase = "recovery-passphrase";
 
     // Create initial key
-    let original_key =
-        GroupManager::create_key_from_mnemonic(&mnemonic, passphrase, group_name).unwrap();
+    let original_key = GroupManager::<MockMessagesManagerTrait>::create_key_from_mnemonic(
+        &mnemonic, passphrase, group_name,
+    )
+    .unwrap();
 
     // Extract salt for recovery
     let derivation_info = original_key.derivation_info.as_ref().unwrap();
@@ -447,8 +469,10 @@ async fn test_recover_key_from_mnemonic() {
     salt.copy_from_slice(&derivation_info.salt);
 
     // Recover the key using the same parameters
-    let recovered_key =
-        GroupManager::recover_key_from_mnemonic(&mnemonic, passphrase, group_name, &salt).unwrap();
+    let recovered_key = GroupManager::<MockMessagesManagerTrait>::recover_key_from_mnemonic(
+        &mnemonic, passphrase, group_name, &salt,
+    )
+    .unwrap();
 
     // Keys should be identical
     assert_eq!(original_key.key, recovered_key.key);
@@ -462,12 +486,12 @@ async fn test_mnemonic_key_integration_with_group_creation() {
     use zoe_app_primitives::group::events::settings::GroupSettings;
     use zoe_wire_protocol::MnemonicPhrase;
 
-    let dga = GroupManager::builder().build();
+    let dga = create_test_group_manager().await;
     let alice_key = KeyPair::generate_ml_dsa65(&mut rand::thread_rng());
 
     // Generate mnemonic and create encryption key
     let mnemonic = MnemonicPhrase::generate().unwrap();
-    let _encryption_key = GroupManager::create_key_from_mnemonic(
+    let _encryption_key = GroupManager::<MockMessagesManagerTrait>::create_key_from_mnemonic(
         &mnemonic,
         "test-passphrase",
         "integration-test-group",
@@ -514,9 +538,19 @@ async fn test_mnemonic_key_different_contexts_produce_different_keys() {
     let passphrase = "same-passphrase";
 
     // Same mnemonic, different contexts should produce different keys
-    let key1 = GroupManager::create_key_from_mnemonic(&mnemonic, passphrase, "group-one").unwrap();
+    let key1 = GroupManager::<MockMessagesManagerTrait>::create_key_from_mnemonic(
+        &mnemonic,
+        passphrase,
+        "group-one",
+    )
+    .unwrap();
 
-    let key2 = GroupManager::create_key_from_mnemonic(&mnemonic, passphrase, "group-two").unwrap();
+    let key2 = GroupManager::<MockMessagesManagerTrait>::create_key_from_mnemonic(
+        &mnemonic,
+        passphrase,
+        "group-two",
+    )
+    .unwrap();
 
     // Keys should be different
     assert_ne!(key1.key, key2.key);
@@ -537,11 +571,19 @@ async fn test_mnemonic_key_different_passphrases_produce_different_keys() {
     let group_name = "same-group";
 
     // Same mnemonic, different passphrases should produce different keys
-    let key1 =
-        GroupManager::create_key_from_mnemonic(&mnemonic, "passphrase-one", group_name).unwrap();
+    let key1 = GroupManager::<MockMessagesManagerTrait>::create_key_from_mnemonic(
+        &mnemonic,
+        "passphrase-one",
+        group_name,
+    )
+    .unwrap();
 
-    let key2 =
-        GroupManager::create_key_from_mnemonic(&mnemonic, "passphrase-two", group_name).unwrap();
+    let key2 = GroupManager::<MockMessagesManagerTrait>::create_key_from_mnemonic(
+        &mnemonic,
+        "passphrase-two",
+        group_name,
+    )
+    .unwrap();
 
     // Keys should be different
     assert_ne!(key1.key, key2.key);
@@ -555,13 +597,287 @@ async fn test_mnemonic_key_different_passphrases_produce_different_keys() {
 }
 
 #[tokio::test]
+async fn test_join_group_end_to_end() {
+    // Create the original group manager (Alice creates the group)
+    let alice_manager = create_test_group_manager();
+    let (alice_key, _bob_key) = create_test_keys();
+
+    // Create a group with specific settings and installed apps
+    let create_group = CreateGroupBuilder::new("Test Encrypted Group".to_string())
+        .description("A test group for join functionality".to_string())
+        .group_settings(GroupSettings::default())
+        .install_dgo_app_default(); // Install DGO app
+
+    // Alice creates the group
+    let alice_manager = alice_manager.await;
+    let create_result = alice_manager
+        .create_group(create_group, &alice_key)
+        .await
+        .unwrap();
+
+    // Get the encryption key from Alice's session
+    let alice_session = alice_manager
+        .group_session(&create_result.group_id)
+        .await
+        .unwrap();
+    let encryption_key = alice_session.current_key.clone();
+
+    // Create a fresh manager for Bob (simulating a new participant)
+    let bob_manager = create_test_group_manager().await;
+
+    // Bob joins the group using the encrypted message and key
+    let joined_group_id = bob_manager
+        .join_group(create_result.message.clone(), encryption_key)
+        .await
+        .unwrap();
+
+    // Verify the group ID matches
+    assert_eq!(joined_group_id, create_result.group_id);
+
+    // Verify Bob now has the group session
+    let bob_session = bob_manager.group_session(&joined_group_id).await;
+    assert!(bob_session.is_some());
+
+    let bob_session = bob_session.unwrap();
+
+    // Verify the group state matches Alice's original group
+    assert_eq!(bob_session.state.group_info.name, "Test Encrypted Group");
+    assert_eq!(
+        bob_session.state.description(),
+        Some("A test group for join functionality".to_string())
+    );
+    assert_eq!(bob_session.state.members.len(), 1); // Only Alice is a member initially
+    assert!(bob_session.state.is_member(&alice_key.public_key()));
+    assert_eq!(
+        bob_session.state.member_role(&alice_key.public_key()),
+        Some(GroupRole::Owner)
+    );
+
+    // Verify installed apps were preserved
+    assert_eq!(bob_session.state.group_info.installed_apps.len(), 1);
+    let installed_app = &bob_session.state.group_info.installed_apps[0];
+    assert_eq!(
+        installed_app.app_id,
+        zoe_app_primitives::protocol::AppProtocolVariant::DigitalGroupsOrganizer
+    );
+
+    // Verify the encryption key was properly set
+    assert_eq!(
+        bob_session.current_key.key_id,
+        alice_session.current_key.key_id
+    );
+    assert_eq!(bob_session.current_key.key, alice_session.current_key.key);
+}
+
+#[tokio::test]
+async fn test_join_group_with_mock_subscription_verification() {
+    use crate::messages::MockMessagesManagerTrait;
+    use mockall::predicate::*;
+    use std::sync::Arc;
+    use zoe_wire_protocol::Filter;
+
+    // Create a mock message manager with expectations
+    let mut mock_manager = MockMessagesManagerTrait::new();
+
+    // Set up expectations for the subscription call
+    mock_manager
+        .expect_ensure_contains_filter()
+        .with(function(|filter: &Filter| {
+            matches!(filter, Filter::Channel(_))
+        }))
+        .times(1)
+        .returning(|_| Ok(()));
+
+    let mock_manager = Arc::new(mock_manager);
+
+    // Create Alice's manager to generate the group
+    let alice_manager = create_test_group_manager();
+    let (alice_key, _bob_key) = create_test_keys();
+
+    // Create the group
+    let create_group = CreateGroupBuilder::new("Mock Test Group".to_string())
+        .description("Testing mock subscription calls".to_string());
+
+    let alice_manager = alice_manager.await;
+    let create_result = alice_manager
+        .create_group(create_group, &alice_key)
+        .await
+        .unwrap();
+    let alice_session = alice_manager
+        .group_session(&create_result.group_id)
+        .await
+        .unwrap();
+    let encryption_key = alice_session.current_key.clone();
+
+    // Create Bob's manager with the mock
+    let bob_manager = GroupManager::builder(mock_manager).build();
+
+    // Bob joins the group - this should trigger the subscription call
+    let bob_manager = bob_manager.await;
+    let result = bob_manager
+        .join_group(create_result.message, encryption_key)
+        .await;
+
+    assert!(result.is_ok());
+
+    // The mock will automatically verify that ensure_contains_filter was called
+    // with the correct Filter::Event containing the group ID
+}
+
+#[tokio::test]
+async fn test_join_group_invalid_decryption_key() {
+    // Create the original group
+    let alice_manager = create_test_group_manager();
+    let (alice_key, _bob_key) = create_test_keys();
+
+    let create_group = CreateGroupBuilder::new("Test Group".to_string());
+    let alice_manager = alice_manager.await;
+    let create_result = alice_manager
+        .create_group(create_group, &alice_key)
+        .await
+        .unwrap();
+
+    // Create a different encryption key (wrong key)
+    let wrong_key = GroupManager::<MockMessagesManagerTrait>::generate_group_key();
+
+    // Create Bob's manager
+    let bob_manager = create_test_group_manager().await;
+
+    // Try to join with the wrong key - should fail
+    let result = bob_manager
+        .join_group(create_result.message, wrong_key)
+        .await;
+
+    assert!(result.is_err());
+    let error_msg = result.unwrap_err().to_string();
+    assert!(error_msg.contains("Failed to decrypt group creation message"));
+}
+
+#[tokio::test]
+async fn test_join_group_non_encrypted_message() {
+    use zoe_wire_protocol::{Kind, Message, MessageFull};
+
+    // Create a non-encrypted message
+    let (alice_key, _bob_key) = create_test_keys();
+    let timestamp = chrono::Utc::now().timestamp() as u64;
+
+    let plain_message = Message::new_v0(
+        Content::Raw(b"not encrypted".to_vec()),
+        alice_key.public_key(),
+        timestamp,
+        Kind::Regular,
+        vec![],
+    );
+
+    let message_full = MessageFull::new(plain_message, &alice_key).unwrap();
+    let encryption_key = GroupManager::<MockMessagesManagerTrait>::generate_group_key();
+
+    // Try to join with a non-encrypted message
+    let bob_manager = create_test_group_manager().await;
+    let result = bob_manager.join_group(message_full, encryption_key).await;
+
+    assert!(result.is_err());
+    let error_msg = result.unwrap_err().to_string();
+    assert!(error_msg.contains("Message does not contain ChaCha20Poly1305 encrypted content"));
+}
+
+#[tokio::test]
+async fn test_join_group_preserves_all_group_metadata() {
+    use zoe_app_primitives::metadata::Metadata;
+    use zoe_wire_protocol::version::Version;
+
+    // Create a group with rich metadata and multiple apps
+    let alice_manager = create_test_group_manager();
+    let (alice_key, _bob_key) = create_test_keys();
+
+    let create_group = CreateGroupBuilder::new("Rich Metadata Group".to_string())
+        .description("A group with lots of metadata".to_string())
+        .metadata(Metadata::Generic {
+            key: "project".to_string(),
+            value: "zoe-testing".to_string(),
+        })
+        .metadata(Metadata::Generic {
+            key: "team".to_string(),
+            value: "engineering".to_string(),
+        })
+        .install_dgo_app(Version::new(2, 1, 0))
+        .add_installed_app(zoe_app_primitives::protocol::InstalledApp::new_simple(
+            zoe_app_primitives::protocol::AppProtocolVariant::DigitalGroupsOrganizer,
+            1,
+            2,
+            vec![1, 2, 3, 4], // Custom channel tag
+        ));
+
+    let alice_manager = alice_manager.await;
+    let create_result = alice_manager
+        .create_group(create_group, &alice_key)
+        .await
+        .unwrap();
+    let alice_session = alice_manager
+        .group_session(&create_result.group_id)
+        .await
+        .unwrap();
+    let encryption_key = alice_session.current_key.clone();
+
+    // Bob joins the group
+    let bob_manager = create_test_group_manager().await;
+    let joined_group_id = bob_manager
+        .join_group(create_result.message, encryption_key)
+        .await
+        .unwrap();
+
+    let bob_session = bob_manager.group_session(&joined_group_id).await.unwrap();
+
+    // Verify all metadata was preserved
+    assert_eq!(bob_session.state.group_info.name, "Rich Metadata Group");
+    assert_eq!(
+        bob_session.state.description(),
+        Some("A group with lots of metadata".to_string())
+    );
+
+    // Check custom metadata
+    let metadata = &bob_session.state.group_info.metadata;
+    let project_meta = metadata.iter().find(|m| {
+        matches!(m, Metadata::Generic { key, value } if key == "project" && value == "zoe-testing")
+    });
+    assert!(project_meta.is_some());
+
+    let team_meta = metadata.iter().find(|m| {
+        matches!(m, Metadata::Generic { key, value } if key == "team" && value == "engineering")
+    });
+    assert!(team_meta.is_some());
+
+    // Verify installed apps
+    assert_eq!(bob_session.state.group_info.installed_apps.len(), 2);
+
+    // Check the first app (DGO with version 2.1.0)
+    let dgo_app = bob_session
+        .state
+        .group_info
+        .installed_apps
+        .iter()
+        .find(|app| app.version == Version::new(2, 1, 0));
+    assert!(dgo_app.is_some());
+
+    // Check the second app (custom channel tag)
+    let custom_app = bob_session
+        .state
+        .group_info
+        .installed_apps
+        .iter()
+        .find(|app| app.app_tag == vec![1, 2, 3, 4]);
+    assert!(custom_app.is_some());
+}
+
+#[tokio::test]
 async fn test_group_manager_cloning_preserves_broadcast_channel() {
     use tokio::time::{Duration, timeout};
 
     // Create a GroupManager
-    let manager1 = GroupManager::builder().build();
+    let manager1 = create_test_group_manager();
 
     // Clone it multiple times to simulate real-world usage
+    let manager1 = manager1.await;
     let manager2 = manager1.clone();
     let manager3 = manager1.clone();
     let manager4 = manager1.clone();
@@ -613,7 +929,8 @@ async fn test_group_manager_cloning_preserves_broadcast_channel() {
     drop(manager4);
 
     // Create a new manager and verify it can still create its own broadcast channel
-    let new_manager = GroupManager::builder().build();
+    let new_manager = create_test_group_manager();
+    let new_manager = new_manager.await;
     let mut new_receiver = new_manager.subscribe_to_updates();
 
     // Create another group to test the new manager

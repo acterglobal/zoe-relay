@@ -9,7 +9,7 @@ use zoe_wire_protocol::MessageId;
 
 use zoe_app_primitives::{
     digital_groups_organizer::{
-        events::core::DgoActivityEvent,
+        events::core::{DgoActivityEvent, DgoActivityEventContent},
         models::{
             any::AnyDgoModel,
             core::{ActivityMeta, DgoPermissionContext},
@@ -21,16 +21,13 @@ use zoe_app_primitives::{
     identity::IdentityRef,
 };
 
-use crate::generic_executor::{
-    ExecutorError, ExecutorStore, GenericExecutor, InMemoryStore, ModelFactory,
-};
-
+use crate::execution::{ExecutorError, ExecutorStore, GenericExecutor, ModelFactory};
 // ============================================================================
 // Type Aliases for DGO Executor
 // ============================================================================
 
 /// Type alias for the DGO executor using the unified generic executor
-pub type DgoExecutor = GenericExecutor<DgoFactory, InMemoryStore>;
+pub type DgoExecutor<S> = GenericExecutor<DgoFactory, S>;
 
 /// Type alias for DGO events (for consistency)
 pub type DgoEvent = DgoActivityEvent;
@@ -48,7 +45,7 @@ impl ModelFactory for DgoFactory {
     type Error = ExecutorError;
 
     async fn load_state<T: ExecutorStore>(_store: &T) -> Result<Box<Self>, Self::Error> {
-        // For now, just create a new factory
+        // FIXME: For now, just create a new factory
         Ok(Box::new(DgoFactory))
     }
 
@@ -57,8 +54,8 @@ impl ModelFactory for DgoFactory {
         event: &<Self::Model as GroupStateModel>::Event,
         activity_id: MessageId,
     ) -> Result<Option<Self::Model>, Self::Error> {
-        match event {
-            DgoActivityEvent::CreateTextBlock { content } => {
+        match event.content() {
+            DgoActivityEventContent::CreateTextBlock { content } => {
                 // Create a new text block from the event
                 let meta = ActivityMeta {
                     activity_id,
@@ -84,7 +81,7 @@ impl ModelFactory for DgoFactory {
                 Ok(Some(AnyDgoModel::from_text_block(text_block)))
             }
 
-            DgoActivityEvent::CreateDgoSettings { content } => {
+            DgoActivityEventContent::CreateDgoSettings { content } => {
                 // Create new permission settings from the event
                 let meta = ActivityMeta {
                     activity_id,
@@ -214,23 +211,6 @@ impl ModelFactory for DgoFactory {
     }
 }
 
-// ============================================================================
-// Convenience Functions
-// ============================================================================
-
-/// Create a new DGO executor with default store
-pub fn create_dgo_executor() -> DgoExecutor {
-    let factory = DgoFactory;
-    let store = InMemoryStore::new();
-    GenericExecutor::new(factory, store)
-}
-
-/// Create a DGO executor with custom store
-pub fn create_dgo_executor_with_store(store: InMemoryStore) -> DgoExecutor {
-    let factory = DgoFactory;
-    GenericExecutor::new(factory, store)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -238,9 +218,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_dgo_executor_create_text_block() {
-        let executor = create_dgo_executor();
+        let store = crate::execution::InMemoryStore::new();
+        let executor = DgoExecutor::new(DgoFactory, store);
 
-        let event = DgoActivityEvent::CreateTextBlock {
+        let event_content = DgoActivityEventContent::CreateTextBlock {
             content: CreateTextBlockContent {
                 title: "Test Block".to_string(),
                 description: Some("Test description".to_string()),
@@ -248,6 +229,10 @@ mod tests {
                 parent_id: None,
             },
         };
+        let event = DgoActivityEvent::new(
+            zoe_app_primitives::identity::IdentityType::Main,
+            event_content,
+        );
 
         let activity_id = MessageId::from([1u8; 32]);
 
@@ -274,10 +259,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_dgo_executor_update_text_block() {
-        let executor = create_dgo_executor();
+        let store = crate::execution::InMemoryStore::new();
+        let executor = DgoExecutor::new(DgoFactory, store);
 
         // First create a text block
-        let create_event = DgoActivityEvent::CreateTextBlock {
+        let create_event_content = DgoActivityEventContent::CreateTextBlock {
             content: CreateTextBlockContent {
                 title: "Original Title".to_string(),
                 description: None,
@@ -285,6 +271,10 @@ mod tests {
                 parent_id: None,
             },
         };
+        let create_event = DgoActivityEvent::new(
+            zoe_app_primitives::identity::IdentityType::Main,
+            create_event_content,
+        );
 
         let model_id = MessageId::from([1u8; 32]);
         executor
@@ -293,13 +283,17 @@ mod tests {
             .unwrap();
 
         // Now update it
-        let update_event = DgoActivityEvent::UpdateTextBlock {
+        let update_event_content = DgoActivityEventContent::UpdateTextBlock {
             target_id: model_id,
             content: vec![
                 zoe_app_primitives::digital_groups_organizer::events::content::TextBlockUpdate::Title("Updated Title".to_string()),
                 zoe_app_primitives::digital_groups_organizer::events::content::TextBlockUpdate::Description("New description".to_string()),
             ],
         };
+        let update_event = DgoActivityEvent::new(
+            zoe_app_primitives::identity::IdentityType::Main,
+            update_event_content,
+        );
 
         let activity_id = MessageId::from([2u8; 32]);
         let refs = executor

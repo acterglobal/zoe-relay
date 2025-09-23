@@ -1,14 +1,17 @@
 use async_trait::async_trait;
 use rusqlite::{Connection, OptionalExtension, params};
 use std::sync::{Arc, Mutex};
-use zoe_state_machine::generic_executor::{ExecutorError, ExecutorStore};
+use zoe_state_machine::{
+    execution::{ExecutorError, ExecutorStore},
+    messages::SubscriptionState,
+};
 use zoe_wire_protocol::{Hash, KeyId, MessageFull, MessageId, Tag};
 
 use super::migrations;
 use crate::error::{Result, StorageError};
 use crate::storage::{
     BlobStorage, BlobUploadStatus, MessageQuery, MessageStorage, RelaySyncStatus, StateStorage,
-    StorageConfig, StorageStats, SubscriptionState,
+    StorageConfig, StorageStats,
 };
 
 /// SQLite-based message storage with SQLCipher encryption
@@ -172,7 +175,7 @@ impl SqliteMessageStorage {
                 }
                 Tag::Channel { id: channel_id, .. } => {
                     joins.push("INNER JOIN tag_channels tc ON m.id = tc.message_id".to_string());
-                    conditions.push("tc.channel_id = ?".to_string());
+                    conditions.push("tc.group_id = ?".to_string());
                     params.push(Box::new(channel_id.clone()));
                 }
                 Tag::Protected => {
@@ -1215,7 +1218,11 @@ impl ExecutorStore for SqliteMessageStorage {
     type Error = crate::error::StorageError;
 
     /// Save any serializable data to storage using postcard serialization
-    async fn save<K, T>(&self, id: K, data: &T) -> std::result::Result<(), Self::Error>
+    async fn save<K, T>(
+        &self,
+        id: K,
+        data: &T,
+    ) -> std::result::Result<(), <Self as ExecutorStore>::Error>
     where
         K: serde::Serialize + Send + Sync,
         T: serde::Serialize + Send + Sync,
@@ -1234,7 +1241,10 @@ impl ExecutorStore for SqliteMessageStorage {
     }
 
     /// Load any deserializable data by ID using postcard deserialization
-    async fn load<K, T>(&self, id: K) -> std::result::Result<Option<T>, Self::Error>
+    async fn load<K, T>(
+        &self,
+        id: K,
+    ) -> std::result::Result<Option<T>, <Self as ExecutorStore>::Error>
     where
         K: serde::Serialize + Send + Sync,
         T: serde::de::DeserializeOwned + Send + Sync,
@@ -1260,7 +1270,10 @@ impl ExecutorStore for SqliteMessageStorage {
     }
 
     /// Load multiple items by their IDs
-    async fn load_many<K, T>(&self, ids: &[K]) -> std::result::Result<Vec<Option<T>>, Self::Error>
+    async fn load_many<K, T>(
+        &self,
+        ids: &[K],
+    ) -> std::result::Result<Vec<Option<T>>, <Self as ExecutorStore>::Error>
     where
         K: serde::Serialize + Send + Sync,
         T: serde::de::DeserializeOwned + Send + Sync,
@@ -1277,7 +1290,10 @@ impl ExecutorStore for SqliteMessageStorage {
     }
 
     /// Load index data by list ID using postcard deserialization
-    async fn load_index<K, D>(&self, list_id: K) -> std::result::Result<Option<D>, Self::Error>
+    async fn load_index<K, D>(
+        &self,
+        list_id: K,
+    ) -> std::result::Result<Option<D>, <Self as ExecutorStore>::Error>
     where
         K: serde::Serialize + Send + Sync,
         D: serde::de::DeserializeOwned + Send + Sync,
@@ -1307,7 +1323,7 @@ impl ExecutorStore for SqliteMessageStorage {
         &self,
         list_id: K,
         index_data: &D,
-    ) -> std::result::Result<(), Self::Error>
+    ) -> std::result::Result<(), <Self as ExecutorStore>::Error>
     where
         K: serde::Serialize + Send + Sync,
         D: serde::Serialize + Send + Sync,

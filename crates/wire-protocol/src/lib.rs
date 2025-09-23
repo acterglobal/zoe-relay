@@ -178,6 +178,9 @@ pub use ed25519_dalek::VerifyingKey as Ed25519VerifyingKey;
 // Hash type alias
 pub type Hash = blake3::Hash;
 
+// Channel ID type alias
+pub type ChannelId = Vec<u8>;
+
 /// Convinience function to creates from simple byte slices
 pub fn hash(data: &[u8]) -> Hash {
     blake3::hash(data)

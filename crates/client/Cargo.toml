@@ -19,7 +19,7 @@ frb-api = [
     "zoe-app-primitives/frb-api", "zoe-wire-protocol/frb-api"
 ]
 test-utils = []
-mock = ["zoe-client-storage/mock", "dep:mockall"]
+mock = ["zoe-client-storage/mock", "zoe-state-machine/mock", "dep:mockall"]
 cli = ["clap"]
 health-bridge = ["cli", "dep:warp", "dep:serde_json", "dep:chrono"]
 
@@ -110,6 +110,7 @@ crc32fast = { workspace = true }
 tokio-test = { workspace = true }
 tokio = { workspace = true, features = ["test-util", "macros", "rt-multi-thread"] }
 zoe-client-storage = { path = "../client-storage", features = ["mock"] }
+zoe-state-machine = { path = "../state-machine", features = ["mock"] }
 mockall = { workspace = true }
 
 # End-to-end testing dependencies

@@ -6,10 +6,10 @@
 
 use super::{SystemCheckConfig, TestInfo, TestResult};
 use crate::Client;
-use crate::services::MessagesManagerTrait;
 use std::collections::HashMap;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tracing::{debug, info};
+use zoe_state_machine::messages::MessagesManagerTrait;
 use zoe_wire_protocol::{
     Content, KeyPair, Kind, Message, MessageFull, MessageV0, MessageV0Header, Tag,
 };

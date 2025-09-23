@@ -1,171 +1,3 @@
-//! # Group Management Primitives for Zoe Applications
-//!
-//! This module provides a comprehensive system for managing encrypted, distributed groups
-//! using the Digital Group Assistant (DGA) protocol. The system is built around several
-//! key architectural principles:
-//!
-//! ## 🏗️ Core Architecture
-//!
-//! ### Event-Sourced State Management
-//! Groups maintain their state through an event-sourced approach where:
-//! - All changes to group state are represented as events
-//! - Events are encrypted and stored in a distributed message system
-//! - Group state is reconstructed by replaying events in chronological order
-//! - Each group has a unique identifier that is the Blake3 hash of its creation event
-//!
-//! ### Encrypted Communication
-//! All group communication is encrypted using ChaCha20-Poly1305:
-//! - Each group has a shared encryption key derived from mnemonic phrases or generated randomly
-//! - Only participants with the correct key can decrypt and participate in group activities
-//! - Key distribution happens through secure side channels (QR codes, secure messaging, etc.)
-//!
-//! ### Identity and Membership System
-//! The system uses a sophisticated identity model:
-//! - **VerifyingKeys** are the fundamental participants (cryptographic identities)
-//! - **Aliases** allow users to present different identities within the same group
-//! - **Roles** define what actions participants can perform
-//! - **Dynamic membership** where anyone with the encryption key can participate
-//!
-//! ## 📊 Key Components
-//!
-//! ### [`GroupState`] - Unified State Management
-//! The central type that combines:
-//! - Core group information (name, settings, metadata)
-//! - Runtime member tracking with activity timestamps
-//! - Event history for audit trails and conflict resolution
-//! - Advanced identity management through [`GroupMembership`]
-//!
-//! ### [`GroupInfo`] - Event Payload
-//! Used in group creation and update events:
-//! - Immutable group information for wire protocol
-//! - Structured metadata using [`crate::Metadata`] types
-//! - Key derivation information for encryption
-//!
-//! ### [`GroupMembership`] - Identity Management
-//! Handles complex identity scenarios:
-//! - Multiple aliases per VerifyingKey
-//! - Role assignments to specific identities
-//! - Display name management
-//! - Authorization checking
-//!
-//! ## 🔐 Security Model
-//!
-//! ### Threat Model
-//! The system assumes:
-//! - Network communications may be monitored or intercepted
-//! - Relay servers are semi-trusted (honest but curious)
-//! - Participants may have their devices compromised
-//! - Group membership may change over time
-//!
-//! ### Security Properties
-//! - **Confidentiality**: All group content is encrypted end-to-end
-//! - **Authenticity**: All messages are cryptographically signed
-//! - **Forward Secrecy**: Key rotation prevents decryption of past messages
-//! - **Participation Privacy**: Membership is not revealed to non-members
-//!
-//! ## 🚀 Usage Examples
-//!
-//! ### Creating a New Group
-//! ```rust
-//! use zoe_app_primitives::{GroupInfo, GroupSettings, GroupState, Metadata, GroupKeyInfo};
-//! use zoe_wire_protocol::KeyPair;
-//! use blake3::Hash;
-//!
-//! // Define group metadata
-//! let metadata = vec![
-//!     Metadata::Description("My awesome group".to_string()),
-//!     Metadata::Generic { key: "category".to_string(), value: "work".to_string() },
-//! ];
-//!
-//! // Create group info for the creation event
-//! let group_info = GroupInfo {
-//!     name: "Development Team".to_string(),
-//!     settings: GroupSettings::default(),
-//!     key_info: GroupKeyInfo::new_chacha20_poly1305(
-//!         b"key_id_12345678".to_vec(),
-//!         zoe_wire_protocol::crypto::KeyDerivationInfo {
-//!             method: zoe_wire_protocol::crypto::KeyDerivationMethod::ChaCha20Poly1305Keygen,
-//!             salt: vec![],
-//!             argon2_params: zoe_wire_protocol::crypto::Argon2Params::default(),
-//!             context: "dga-group-key".to_string(),
-//!         },
-//!     ),
-//!     metadata,
-//! };
-//!
-//! // Create the actual group state
-//! let creator = KeyPair::generate(&mut rand::rngs::OsRng).public_key();
-//! let group_id = Hash::from([0u8; 32]); // In practice, this would be the message hash
-//! let timestamp = 1234567890;
-//!
-//! let group_state = GroupState::new(
-//!     group_id,
-//!     group_info.name.clone(),
-//!     group_info.settings.clone(),
-//!     group_info.metadata.clone(),
-//!     creator,
-//!     timestamp,
-//! );
-//! ```
-//!
-//! ### Managing Group Membership
-//! ```rust
-//! use zoe_app_primitives::{GroupMembership, IdentityType, IdentityRef, IdentityInfo};
-//! use zoe_wire_protocol::KeyPair;
-//!
-//! let mut membership = GroupMembership::new();
-//! let user_key = KeyPair::generate(&mut rand::rngs::OsRng).public_key();
-//!
-//! // Check what identities a user can act as
-//! let available_identities = membership.available_identities(&user_key);
-//!
-//! // Note: Currently returns empty set during ML-DSA transition
-//! assert!(available_identities.is_empty());
-//! ```
-//!
-//! ### Working with Structured Metadata
-//! ```rust
-//! use zoe_app_primitives::{GroupState, Metadata};
-//! use zoe_wire_protocol::KeyPair;
-//!
-//! # let group_state = GroupState::new(
-//! #     blake3::Hash::from([0u8; 32]),
-//! #     "Test".to_string(),
-//! #     zoe_app_primitives::GroupSettings::default(),
-//! #     vec![],
-//! #     KeyPair::generate(&mut rand::rngs::OsRng).public_key(),
-//! #     1234567890,
-//! # );
-//!
-//! // Extract description from structured metadata
-//! let description = group_state.description();
-//!
-//! // Get key-value metadata for backward compatibility
-//! let generic_metadata = group_state.generic_metadata();
-//! ```
-//!
-//! ## 🔄 State Transitions
-//!
-//! Group state changes through well-defined events:
-//! 1. **Creation**: [`GroupActivityEvent::UpdateGroup`] with initial [`GroupInfo`]
-//! 2. **Member Activity**: Any [`GroupActivityEvent`] announces participation
-//! 3. **Role Changes**: [`GroupActivityEvent::AssignRole`] updates permissions
-//! 4. **Group Updates**: [`GroupActivityEvent::UpdateGroup`] modifies group info
-//! 5. **Member Departure**: [`GroupActivityEvent::LeaveGroup`] removes from active list
-//!
-//! Each event is cryptographically signed and encrypted, ensuring authenticity and confidentiality.
-//!
-//! ## 🌐 Network Integration
-//!
-//! Groups integrate with the relay network through:
-//! - **Channel Tags**: Group ID used as message channel for event routing
-//! - **Subscription Filters**: Clients subscribe to specific group events
-//! - **Message Ordering**: Timestamp-based ordering ensures consistent state
-//! - **Catch-up Mechanism**: New participants can replay event history
-//!
-//! For more details on specific components, see the documentation for individual types.
-
-// Re-export all types from submodules
 pub mod app;
 pub mod events;
 pub mod states;
@@ -387,6 +219,7 @@ mod tests {
         let channel_id = "test_channel_123".to_string();
         let group_info = GroupInfo {
             name: "Test Group".to_string(),
+            group_id: channel_id.as_bytes().to_vec(),
             settings: GroupSettings::default(),
             key_info: create_test_group_key_info(blake3::Hash::from([1u8; 32])),
             metadata: Vec::new(),
@@ -411,7 +244,10 @@ mod tests {
             value: "alice".to_string(),
         });
 
-        assert_eq!(join_info.channel_id, channel_id);
+        assert_eq!(
+            join_info.group_info.group_id,
+            channel_id.as_bytes().to_vec()
+        );
         assert_eq!(join_info.group_info, group_info);
         assert_eq!(join_info.encryption_key, encryption_key);
         assert_eq!(join_info.key_info, key_info);
@@ -442,6 +278,7 @@ mod tests {
             "test".to_string(),
             GroupInfo {
                 name: "Test".to_string(),
+                group_id: "test".as_bytes().to_vec(),
                 settings: GroupSettings::default(),
                 key_info: create_test_group_key_info(blake3::Hash::from([1u8; 32])),
                 metadata: Vec::new(),
@@ -467,6 +304,7 @@ mod tests {
             "test".to_string(),
             GroupInfo {
                 name: "Test".to_string(),
+                group_id: "test".as_bytes().to_vec(),
                 settings: GroupSettings::default(),
                 key_info: create_test_group_key_info(blake3::Hash::from([1u8; 32])),
                 metadata: Vec::new(),
@@ -487,6 +325,7 @@ mod tests {
         // Test creating a GroupInfo struct
         let group_info = GroupInfo {
             name: "Test Group".to_string(),
+            group_id: "test_group".as_bytes().to_vec(),
             settings: GroupSettings::default(),
             key_info: create_test_group_key_info(blake3::Hash::from([1u8; 32])),
             metadata: Vec::new(),
@@ -533,10 +372,10 @@ mod tests {
                 GroupInfoUpdate::KeyInfo(create_test_group_key_info(blake3::Hash::from([1u8; 32]))),
                 GroupInfoUpdate::SetMetadata(Vec::new()),
             ],
-            acknowledgment: Some(Acknowledgment::new(
+            acknowledgment: Acknowledgment::new(
                 MessageId::from_bytes([1; 32]),
                 MessageId::from_bytes([1; 32]),
-            )),
+            ),
         };
 
         let serialized = postcard::to_stdvec(&event).expect("Failed to serialize");
@@ -582,6 +421,7 @@ mod tests {
             "test_channel".to_string(),
             GroupInfo {
                 name: "Test".to_string(),
+                group_id: "test_channel".as_bytes().to_vec(),
                 settings: GroupSettings::default(),
                 key_info: create_test_group_key_info(blake3::Hash::from([1u8; 32])),
                 metadata: Vec::new(),

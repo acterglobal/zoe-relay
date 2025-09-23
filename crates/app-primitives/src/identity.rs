@@ -55,18 +55,36 @@ impl IdentityRef {
     }
 }
 
-/// Type of alias being declared
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash, PartialOrd, Ord)]
+/// Identity type declaration for events
+///
+/// This enum is serialized within encrypted events to indicate how the
+/// VerifyingKey should be interpreted. Combined with the VerifyingKey from
+/// the message envelope, this creates an IdentityRef for permission checking.
+#[cfg_attr(feature = "frb-api", frb(opaque))]
+#[derive(Debug, Clone, Hash, PartialEq, PartialOrd, Eq, Ord, Serialize, Deserialize)]
 pub enum IdentityType {
-    /// This identity is the same as the key itself
+    /// Acting as the main identity (the verifying key itself)
     Main,
-    /// This is about an alias identfied by the alias is
+    /// Acting as a registered alias
     Alias {
-        /// Which external system this alias represents
+        /// The alias identifier
         alias_id: String,
     },
 }
-#[cfg_attr(feature = "frb-api", frb(opaque, ignore_all))]
+
+impl IdentityType {
+    /// Convert this IdentityType + VerifyingKey into an IdentityRef
+    pub fn to_identity_ref(&self, verifying_key: VerifyingKey) -> IdentityRef {
+        match self {
+            IdentityType::Main => IdentityRef::Key(verifying_key),
+            IdentityType::Alias { alias_id } => IdentityRef::Alias {
+                key: verifying_key,
+                alias: alias_id.clone(),
+            },
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct IdentityInfo {
     /// The display name for this identity

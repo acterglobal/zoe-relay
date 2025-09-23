@@ -9,13 +9,16 @@ use tokio::sync::RwLock;
 use tokio::task::JoinHandle;
 
 use eyeball::{AsyncLock, SharedObservable};
-use zoe_client_storage::{MessageStorage, SubscriptionState};
+use zoe_client_storage::MessageStorage;
 use zoe_wire_protocol::{
     CatchUpResponse, Filter, KeyId, MessageFull, PublishResult, StoreKey, StreamMessage,
 };
 
 use crate::error::{ClientError, Result};
-use crate::services::{MessageEvent, MessagesManager, MessagesManagerTrait};
+use crate::services::MessagesManager;
+use zoe_state_machine::messages::{
+    MessageEvent, MessagesManagerTrait, Result as MessagesManagerResult, SubscriptionState,
+};
 
 // Constants for catch-up processing
 const CATCH_UP_BATCH_SIZE: usize = 50;
@@ -403,11 +406,10 @@ impl<S: MessageStorage + 'static> MultiRelayMessageManager<S> {
                     }
                 },
                 Err(e) => {
-                    tracing::error!(
-                        "Failed to send message {} to relay {}: {}",
+                    tracing::error!(error=?e,
+                        "Failed to send message {} to relay {}",
                         hex::encode(message.id().as_bytes()),
                         hex::encode(relay_id.as_bytes()),
-                        e
                     );
                     continue;
                 }
@@ -460,7 +462,7 @@ impl<S: MessageStorage + 'static> MessagesManagerTrait for MultiRelayMessageMana
     }
 
     /// Subscribe to messages on all connected relays
-    async fn subscribe(&self) -> Result<()> {
+    async fn subscribe(&self) -> MessagesManagerResult<()> {
         let connections = self.relay_connections.read().await;
         let mut results = Vec::new();
 
@@ -484,14 +486,14 @@ impl<S: MessageStorage + 'static> MessagesManagerTrait for MultiRelayMessageMana
 
         // Return error if all subscriptions failed
         if !results.is_empty() && results.len() == connections.len() {
-            return Err(results.into_iter().next().unwrap());
+            return Err(results.into_iter().next().unwrap().into());
         }
 
         Ok(())
     }
 
     /// Publish a message to available relays or queue for offline delivery
-    async fn publish(&self, message: MessageFull) -> Result<PublishResult> {
+    async fn publish(&self, message: MessageFull) -> MessagesManagerResult<PublishResult> {
         let connected_relays = {
             let connections = self.relay_connections.read().await;
             connections
@@ -583,13 +585,13 @@ impl<S: MessageStorage + 'static> MessagesManagerTrait for MultiRelayMessageMana
                     hex::encode(message.id().as_bytes())
                 );
 
-                Err(e)
+                Err(e.into())
             }
         }
     }
 
     /// Ensure a filter is included in the subscription on all connected relays
-    async fn ensure_contains_filter(&self, filter: Filter) -> Result<()> {
+    async fn ensure_contains_filter(&self, filter: Filter) -> MessagesManagerResult<()> {
         let connections = self.relay_connections.read().await;
         let mut results = Vec::new();
 
@@ -620,7 +622,7 @@ impl<S: MessageStorage + 'static> MessagesManagerTrait for MultiRelayMessageMana
 
         // Return error if all filter additions failed
         if !results.is_empty() && results.len() == connections.len() {
-            return Err(results.into_iter().next().unwrap());
+            return Err(results.into_iter().next().unwrap().into());
         }
 
         Ok(())
@@ -651,14 +653,18 @@ impl<S: MessageStorage + 'static> MessagesManagerTrait for MultiRelayMessageMana
         &self,
         _filter: Filter,
         _since: Option<String>,
-    ) -> Result<std::pin::Pin<Box<dyn Stream<Item = Box<MessageFull>> + Send>>> {
+    ) -> MessagesManagerResult<std::pin::Pin<Box<dyn Stream<Item = Box<MessageFull>> + Send>>> {
         // TODO: Implement proper catch-up across all relays
         // For now, return an empty stream as a placeholder
         Ok(Box::pin(futures::stream::empty()))
     }
 
     /// Get user data by author and storage key from any available relay
-    async fn user_data(&self, author: KeyId, storage_key: StoreKey) -> Result<Option<MessageFull>> {
+    async fn user_data(
+        &self,
+        author: KeyId,
+        storage_key: StoreKey,
+    ) -> MessagesManagerResult<Option<MessageFull>> {
         let connections = self.relay_connections.read().await;
 
         // Try each connected relay until we find the data
@@ -700,7 +706,7 @@ impl<S: MessageStorage + 'static> MessagesManagerTrait for MultiRelayMessageMana
     async fn check_messages(
         &self,
         message_ids: Vec<zoe_wire_protocol::MessageId>,
-    ) -> Result<Vec<Option<String>>> {
+    ) -> MessagesManagerResult<Vec<Option<String>>> {
         let connections = self.relay_connections.read().await;
 
         // Try each connected relay until we get a successful response
@@ -821,13 +827,22 @@ mod tests {
     async fn test_session_manager_compatibility() {
         use crate::pqxdh::PqxdhProtocolState;
         use crate::session_manager::SessionManager;
-        use zoe_client_storage::storage::MockStateStorage;
+        use tempfile::TempDir;
+        use zoe_client_storage::{SqliteMessageStorage, StorageConfig, storage::MockStateStorage};
         use zoe_wire_protocol::KeyPair;
 
-        let mock_message_storage = MockMessageStorage::new();
-        let multi_relay_manager = Arc::new(MultiRelayMessageManager::new(Arc::new(
-            mock_message_storage,
-        )));
+        // Create a temporary SQLite storage (which implements Clone)
+        let temp_dir = TempDir::new().unwrap();
+        let config = StorageConfig {
+            database_path: temp_dir.path().join("test.db"),
+            ..Default::default()
+        };
+        let encryption_key = [42u8; 32];
+        let sqlite_storage = SqliteMessageStorage::new(config, &encryption_key)
+            .await
+            .expect("Failed to create SQLite storage");
+
+        let multi_relay_manager = Arc::new(MultiRelayMessageManager::new(Arc::new(sqlite_storage)));
 
         let mut mock_state_storage = MockStateStorage::new();
         // Mock the expected calls for loading PQXDH states
@@ -893,7 +908,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_catch_up_processing() {
-        use crate::services::messages_manager::MockMessagesManagerTrait;
+        use zoe_state_machine::messages::MockMessagesManagerTrait;
 
         // Create a message that will be "unsynced" for a relay
         let test_message = create_test_message();
@@ -963,7 +978,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_batched_catch_up_processing() {
-        use crate::services::messages_manager::MockMessagesManagerTrait;
+        use zoe_state_machine::messages::MockMessagesManagerTrait;
 
         // Create multiple test messages
         let test_messages: Vec<MessageFull> = (0u64..5u64)
@@ -1095,7 +1110,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_efficient_catch_up_with_existing_messages() {
-        use crate::services::messages_manager::MockMessagesManagerTrait;
+        use zoe_state_machine::messages::MockMessagesManagerTrait;
 
         // Create 3 test messages
         let test_messages: Vec<MessageFull> = (0u64..3u64)
@@ -1212,7 +1227,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_expired_message_handling() {
-        use crate::services::messages_manager::MockMessagesManagerTrait;
+        use zoe_state_machine::messages::MockMessagesManagerTrait;
         use zoe_wire_protocol::Kind;
 
         // Create test messages - one expired, one valid
@@ -1344,7 +1359,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_all_expired_messages_batch() {
-        use crate::services::messages_manager::MockMessagesManagerTrait;
+        use zoe_state_machine::messages::MockMessagesManagerTrait;
         use zoe_wire_protocol::Kind;
 
         // Create test messages - all expired

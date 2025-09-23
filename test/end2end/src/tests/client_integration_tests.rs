@@ -14,7 +14,7 @@ use std::collections::BTreeMap;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::time::timeout;
 use tracing::{debug, info, warn};
-use zoe_client::services::MessagesManagerTrait;
+use zoe_state_machine::messages::MessagesManagerTrait;
 use zoe_wire_protocol::{
     Algorithm, Content, Filter, KeyPair, Kind, Message, MessageFilters, MessageFull, StoreKey,
     StreamMessage, Tag, VerifyingKey,

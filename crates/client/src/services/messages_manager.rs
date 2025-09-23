@@ -8,7 +8,9 @@ use std::pin::Pin;
 use std::sync::Arc;
 use tokio::{select, task::JoinHandle};
 use tracing::warn;
-use zoe_client_storage::SubscriptionState;
+use zoe_state_machine::messages::{
+    MessageEvent, MessagesManagerTrait, Result as MessagesManagerResult, SubscriptionState,
+};
 use zoe_wire_protocol::{
     CatchUpRequest, CatchUpResponse, Filter, FilterOperation, FilterUpdateRequest, MessageFilters,
     MessageFull, PublishResult, StreamMessage, SubscriptionConfig,
@@ -17,109 +19,6 @@ use zoe_wire_protocol::{
 use super::messages::{CatchUpStream, MessagesService, MessagesStream};
 use async_stream::stream;
 use std::sync::atomic::AtomicU32;
-
-#[cfg(test)]
-use mockall::automock;
-
-/// Trait abstraction for MessagesManager to enable mocking in tests
-#[cfg_attr(test, automock)]
-#[async_trait]
-pub trait MessagesManagerTrait: Send + Sync {
-    /// Get a stream of all message events for persistence and monitoring
-    fn message_events_stream(&self) -> Receiver<MessageEvent>;
-
-    /// Subscribe to subscription state changes for reactive programming
-    ///
-    /// This returns an eyeball::Subscriber that can be used to observe changes to the
-    /// subscription state reactively. The subscriber will be notified whenever:
-    /// - Stream height is updated
-    /// - Filters are added or removed
-    /// - Any other subscription state changes occur
-    ///
-    /// # Example
-    /// ```rust,no_run
-    /// # use zoe_client::services::MessagesManagerTrait;
-    /// # async fn example(manager: &impl MessagesManagerTrait) {
-    /// let subscriber = manager.subscribe_to_subscription_state();
-    /// let current_state = subscriber.get();
-    /// println!("Current stream height: {:?}", current_state.latest_stream_height);
-    /// # }
-    /// ```
-    async fn get_subscription_state_updates(
-        &self,
-    ) -> eyeball::Subscriber<SubscriptionState, AsyncLock>;
-
-    /// Subscribe to messages with current filters
-    async fn subscribe(&self) -> Result<()>;
-
-    /// Publish a message
-    async fn publish(&self, message: MessageFull) -> Result<PublishResult>;
-
-    /// Ensure a filter is included in the subscription
-    async fn ensure_contains_filter(&self, filter: Filter) -> Result<()>;
-
-    /// Get a stream of incoming messages
-    fn messages_stream(&self) -> Receiver<StreamMessage>;
-
-    /// Get a stream of catch-up responses
-    fn catch_up_stream(&self) -> Receiver<CatchUpResponse>;
-
-    /// Get a filtered stream of messages matching the given filter
-    fn filtered_messages_stream(
-        &self,
-        filter: Filter,
-    ) -> Pin<Box<dyn Stream<Item = Box<MessageFull>> + Send>>;
-
-    /// Catch up to historical messages and subscribe to new ones for a filter
-    async fn catch_up_and_subscribe(
-        &self,
-        filter: Filter,
-        since: Option<String>,
-    ) -> Result<Pin<Box<dyn Stream<Item = Box<MessageFull>> + Send>>>;
-
-    /// Get user data by author and storage key (for PQXDH inbox fetching)
-    async fn user_data(
-        &self,
-        author: zoe_wire_protocol::KeyId,
-        storage_key: zoe_wire_protocol::StoreKey,
-    ) -> Result<Option<MessageFull>>;
-
-    /// Check which messages the server already has and return their global stream IDs.
-    /// Returns a vec of `Option<String>` in the same order as the input, where:
-    /// - `Some(stream_id)` means the server has the message with that global stream ID
-    /// - `None` means the server doesn't have this message yet
-    async fn check_messages(
-        &self,
-        message_ids: Vec<zoe_wire_protocol::MessageId>,
-    ) -> Result<Vec<Option<String>>>;
-}
-
-/// Comprehensive message event that covers all message flows for persistence and monitoring.
-///
-/// This enum captures every type of message activity in the MessagesManager,
-/// enabling complete message persistence and audit trails.
-#[derive(Debug, Clone)]
-pub enum MessageEvent {
-    /// Message received from subscription stream
-    MessageReceived {
-        message: MessageFull,
-        stream_height: String,
-    },
-    /// Message sent by this client
-    MessageSent {
-        message: MessageFull,
-        publish_result: PublishResult,
-    },
-    /// Historical message from catch-up
-    CatchUpMessage {
-        message: MessageFull,
-        request_id: u32,
-    },
-    /// Stream height update
-    StreamHeightUpdate { height: String },
-    /// Catch-up completed
-    CatchUpCompleted { request_id: u32 },
-}
 
 /// Configuration for catching up on historical messages
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -657,13 +556,6 @@ impl MessagesManager {
         self.state.read().await.latest_stream_height.clone()
     }
 
-    /// Get the current combined filters.
-    ///
-    /// This shows all the filters that are currently active in the subscription.
-    pub async fn get_current_filters(&self) -> MessageFilters {
-        self.state.read().await.current_filters.clone()
-    }
-
     /// Get a stream of all message events for persistence and monitoring.
     ///
     /// This stream captures every message activity including:
@@ -694,16 +586,20 @@ impl MessagesManagerTrait for MessagesManager {
         self.state.subscribe().await
     }
 
-    async fn subscribe(&self) -> Result<()> {
-        MessagesManager::subscribe(self).await
+    async fn subscribe(&self) -> MessagesManagerResult<()> {
+        MessagesManager::subscribe(self).await.map_err(|e| e.into())
     }
 
-    async fn publish(&self, message: MessageFull) -> Result<PublishResult> {
-        MessagesManager::publish(self, message).await
+    async fn publish(&self, message: MessageFull) -> MessagesManagerResult<PublishResult> {
+        MessagesManager::publish(self, message)
+            .await
+            .map_err(|e| e.into())
     }
 
-    async fn ensure_contains_filter(&self, filter: Filter) -> Result<()> {
-        MessagesManager::ensure_contains_filter(self, filter).await
+    async fn ensure_contains_filter(&self, filter: Filter) -> MessagesManagerResult<()> {
+        MessagesManager::ensure_contains_filter(self, filter)
+            .await
+            .map_err(|e| e.into())
     }
 
     fn messages_stream(&self) -> Receiver<StreamMessage> {
@@ -728,7 +624,7 @@ impl MessagesManagerTrait for MessagesManager {
         &self,
         filter: Filter,
         since: Option<String>,
-    ) -> Result<std::pin::Pin<Box<dyn Stream<Item = Box<MessageFull>> + Send>>> {
+    ) -> MessagesManagerResult<std::pin::Pin<Box<dyn Stream<Item = Box<MessageFull>> + Send>>> {
         let stream = MessagesManager::catch_up_and_subscribe(self.clone(), filter, since).await?;
         Ok(Box::pin(stream))
     }
@@ -737,7 +633,7 @@ impl MessagesManagerTrait for MessagesManager {
         &self,
         author: zoe_wire_protocol::KeyId,
         storage_key: zoe_wire_protocol::StoreKey,
-    ) -> Result<Option<MessageFull>> {
+    ) -> MessagesManagerResult<Option<MessageFull>> {
         use tarpc::context;
         let result = self
             .messages_service
@@ -749,7 +645,7 @@ impl MessagesManagerTrait for MessagesManager {
     async fn check_messages(
         &self,
         message_ids: Vec<zoe_wire_protocol::MessageId>,
-    ) -> Result<Vec<Option<String>>> {
+    ) -> MessagesManagerResult<Vec<Option<String>>> {
         use tarpc::context;
         let result = self
             .messages_service

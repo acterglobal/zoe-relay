@@ -9,7 +9,11 @@ use zoe_wire_protocol::MessageId;
 
 use crate::digital_groups_organizer::{
     capabilities::{CapabilitySet, DgoCapability},
-    events::{content::TextBlockUpdate, core::DgoActivityEvent, core::ObjectCore},
+    events::{
+        content::TextBlockUpdate,
+        core::ObjectCore,
+        core::{DgoActivityEvent, DgoActivityEventContent},
+    },
     indexing::{core::SectionIndex, keys::IndexKey},
 };
 
@@ -118,8 +122,8 @@ impl DgoAppModel for TextBlock {
         event: &DgoActivityEvent,
         context: &DgoPermissionContext,
     ) -> DgoResult<bool> {
-        match event {
-            DgoActivityEvent::UpdateTextBlock {
+        match event.content() {
+            DgoActivityEventContent::UpdateTextBlock {
                 target_id: _,
                 content: updates,
             } => {

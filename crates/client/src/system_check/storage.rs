@@ -5,10 +5,11 @@
 //! synchronization, and data integrity verification.
 
 use super::{SystemCheckConfig, TestInfo, TestResult};
-use crate::{Client, services::MessagesManagerTrait};
+use crate::Client;
 use serde::{Deserialize, Serialize};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tracing::{debug, info};
+use zoe_state_machine::messages::MessagesManagerTrait;
 use zoe_wire_protocol::{
     Content, KeyPair, Kind, Message, MessageFull, MessageV0, MessageV0Header, Tag,
 };

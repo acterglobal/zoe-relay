@@ -17,10 +17,11 @@ use tokio::time::timeout;
 use tracing::{debug, info, warn};
 use zoe_app_primitives::file::CompressionConfig;
 use zoe_blob_store::service::BlobServiceImpl;
-use zoe_client::services::MessagesManagerTrait;
+use zoe_client::Client;
 use zoe_client::{RelayClient, RelayClientBuilder};
 use zoe_message_store::storage::RedisMessageStorage;
 use zoe_relay::{relay::RelayServer, services::RelayServiceRouter};
+use zoe_state_machine::messages::MessagesManagerTrait;
 use zoe_wire_protocol::BlobId;
 use zoe_wire_protocol::{
     Algorithm, KeyPair, Kind, Message, MessageFilters, MessageFull, Tag, VerifyingKey,
@@ -165,6 +166,18 @@ impl TestInfrastructure {
         self.create_client_for_algorithm(Algorithm::MlDsa65).await
     }
 
+    pub async fn create_full_client(&self) -> Result<Client> {
+        let temp_dir = TempDir::new().context("Failed to create temp directory")?;
+        let mut client_builder = Client::builder();
+
+        client_builder.server_info(self.server_public_key.clone(), self.server_addr);
+        client_builder.encryption_key([0u8; 32]);
+        client_builder.db_storage_dir(temp_dir.path().to_path_buf().to_string_lossy().to_string());
+
+        let client = client_builder.build().await?;
+        Ok(client)
+    }
+
     /// Create a new relay client with a specific signature type
     pub async fn create_client_for_algorithm(&self, algorithm: Algorithm) -> Result<RelayClient> {
         info!("👤 Creating relay client with {} signature", algorithm);
@@ -211,7 +224,15 @@ impl TestInfrastructure {
 mod tests {
     use super::*;
     use serial_test::serial;
+    use zoe_app_primitives::{
+        group::{
+            app::GroupEvent,
+            events::{GroupActivityEvent, roles::GroupRole},
+        },
+        identity::IdentityInfo,
+    };
     use zoe_client::services::MessagesManager;
+    use zoe_state_machine::group::{CreateGroupBuilder, GroupDataUpdate};
 
     #[tokio::test]
     #[serial] // Run tests sequentially to avoid port conflicts
@@ -799,18 +820,8 @@ mod tests {
         let infra = TestInfrastructure::setup().await?;
 
         // Create two different clients with different keys
-        let client1 = infra.create_client().await?;
-        let client2 = {
-            timeout(
-                Duration::from_secs(5),
-                create_test_relay_client(
-                    KeyPair::generate(&mut rand::thread_rng()),
-                    infra.server_public_key.clone(),
-                    infra.server_addr,
-                ),
-            )
-            .await??
-        };
+        let client1 = infra.create_full_client().await?;
+        let client2 = infra.create_full_client().await?;
 
         info!("👥 Created two clients for group creation and sharing test");
         info!(
@@ -822,226 +833,88 @@ mod tests {
             hex::encode(client2.public_key().id())
         );
 
-        // Connect both clients to message service
-        let persistence_manager1 = client1.persistence_manager().await;
-        let mut messages_stream1 = persistence_manager1.all_messages_stream();
-        let messages_service1 = persistence_manager1.messages_manager().clone();
+        let group_manager1 = client1.group_manager();
+        let mut group_manager_updates1 = group_manager1.subscribe_to_updates();
 
-        let persistence_manager2 = client2.persistence_manager().await;
-        let mut messages_stream2 = persistence_manager2.all_messages_stream();
-        let messages_service2 = persistence_manager2.messages_manager().clone();
-
-        info!("📡 Both clients connected to message service");
-
-        // Step 1: Client 1 creates a new group using state machine
-        // First, generate a shared encryption key that both clients will use
-        let timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
-        let shared_encryption_key = zoe_state_machine::group::GroupManager::generate_group_key();
-
-        let dga1 = zoe_state_machine::group::GroupManager::builder().build();
-
-        // Create the group using app-primitives structures
-        let create_group =
-            zoe_state_machine::group::CreateGroupBuilder::new("E2E Test Group".to_string())
-                .description("A test group for end-to-end testing".to_string())
-                .group_settings(zoe_app_primitives::group::events::settings::GroupSettings::new())
-                .metadata(zoe_app_primitives::metadata::Metadata::Generic {
-                    key: "test_type".to_string(),
-                    value: "e2e".to_string(),
-                })
-                .metadata(zoe_app_primitives::metadata::Metadata::Generic {
-                    key: "created_by".to_string(),
-                    value: "client1".to_string(),
-                });
-
-        let create_group_result = dga1
-            .create_group(create_group, client1.keypair())
-            .await
-            .map_err(|e| anyhow::anyhow!("Failed to create group: {}", e))?;
-
-        info!(
-            "🎯 Client 1 created group with ID: {}",
-            hex::encode(create_group_result.group_id.as_bytes())
-        );
-        info!(
-            "📝 Group creation message ID: {}",
-            hex::encode(create_group_result.message.id().as_bytes())
-        );
-
-        // Step 2: Client 1 publishes the group creation event to the relay
-        let publish_result = messages_service1
-            .publish(create_group_result.message.clone())
+        let create_group_result = group_manager1
+            .create_group(
+                CreateGroupBuilder::default()
+                    .name("E2E Test Group".to_string())
+                    .description("A test group for end-to-end testing".to_string())
+                    .group_settings(
+                        zoe_app_primitives::group::events::settings::GroupSettings::new(),
+                    ),
+                client1.keypair(),
+            )
             .await?;
 
-        info!(
-            "✅ Client 1 published group creation event: {:?}",
-            publish_result
-        );
-
-        // Wait for the message to be stored on the relay
-        tokio::time::sleep(Duration::from_millis(300)).await;
-
-        // Step 3: Simulate sharing group access info with client 2
-        // In a real scenario, this would be done through secure channels (GroupJoinInfo)
-        // For this test, we simulate the second client receiving the shared encryption key
-
-        let group_session = dga1
+        let encryption_key = group_manager1
             .group_session(&create_group_result.group_id)
             .await
-            .ok_or_else(|| anyhow::anyhow!("Failed to get created group session"))?;
+            .unwrap()
+            .current_key;
 
-        // Client 2 sets up their DGA and receives the complete group session
-        let dga2 = zoe_state_machine::group::GroupManager::builder().build();
-        dga2.add_group_session(create_group_result.group_id, group_session.clone())
-            .await;
-
-        info!("🔑 Client 2 received shared encryption key");
-        info!(
-            "   🆔 Group ID: {}",
-            hex::encode(create_group_result.group_id.as_bytes())
-        );
-        info!("   📛 Group Name: {}", group_session.state.name);
-        info!(
-            "   🔐 Key ID: {}",
-            hex::encode(group_session.current_key.key_id.as_bytes())
-        );
-
-        // Step 4: Client 2 subscribes to messages from client 1 to catch the group creation event
-        // Note: The group creation message (root event) doesn't tag itself with Event tags,
-        // so we need to subscribe to the author instead
-        let author_filter = zoe_wire_protocol::Filter::Author(zoe_wire_protocol::KeyId::from(
-            *client1.public_key().id(),
-        ));
-
-        messages_service2
-            .ensure_contains_filter(author_filter)
+        let group_manager2 = client2.group_manager();
+        let mut group_manager_updates2 = group_manager2.subscribe_to_updates();
+        let joined_group = group_manager2
+            .join_group(create_group_result.message.clone(), encryption_key)
             .await?;
 
-        info!("📬 Client 2 subscribed to client 1's messages");
+        let group_session = timeout(Duration::from_secs(1), async move {
+            let update = group_manager_updates1.recv().await?;
+            let GroupDataUpdate::GroupUpdated(group_session) = update else {
+                return Err(anyhow::anyhow!("Group manager update not received"));
+            };
+            Ok(group_session)
+        })
+        .await??;
 
-        // Give time for subscription processing
-        tokio::time::sleep(Duration::from_millis(300)).await;
+        assert_eq!(
+            group_session.state.group_info.group_id,
+            create_group_result.group_id
+        );
+        assert_eq!(group_session.state.members.len(), 1);
+        assert!(group_session.state.is_member(&client1.public_key()));
+        assert_eq!(
+            group_session.state.member_role(&client1.public_key()),
+            Some(GroupRole::Owner)
+        );
+        assert_eq!(
+            group_session.state.group_info.name,
+            "E2E Test Group".to_string()
+        );
 
-        // Step 5: Client 2 should receive the group creation message and decrypt it
-        let mut received_group_messages = Vec::new();
-        let catch_up_timeout = Duration::from_secs(3);
+        group_manager2
+            .publish_group_event(
+                &joined_group,
+                GroupActivityEvent::SetIdentity(IdentityInfo {
+                    display_name: "Bob".to_string(),
+                    metadata: vec![],
+                }),
+                client2.keypair(),
+            )
+            .await?;
 
-        info!("👂 Waiting for client 2 to receive group creation event...");
+        // should have issued a create group event;
 
-        futures::pin_mut!(messages_stream2);
-        let start_time = std::time::Instant::now();
-        while start_time.elapsed() < catch_up_timeout {
-            match timeout(Duration::from_millis(500), messages_stream2.next()).await {
-                Ok(Some(stream_msg)) => {
-                    match &stream_msg {
-                        zoe_wire_protocol::StreamMessage::MessageReceived { message, .. } => {
-                            info!(
-                                "📥 Client 2 received message: {}",
-                                hex::encode(message.id().as_bytes())
-                            );
+        timeout(Duration::from_secs(5), async move {
+            while let Ok(update) = group_manager_updates2.recv().await {
+                info!("Received group manager update: {:?}", update);
+                if let GroupDataUpdate::GroupUpdated(group_session) = update {
+                    assert_eq!(
+                        group_session.state.group_info.group_id,
+                        create_group_result.group_id
+                    );
+                    assert_eq!(group_session.state.members.len(), 2);
+                    assert!(group_session.state.is_member(&client2.public_key()));
 
-                            // Check if this is the group creation message
-                            if message.id() == create_group_result.message.id() {
-                                info!("🎯 Found the group creation message!");
-
-                                // Try to decrypt and process the group event
-                                match dga2.process_group_event(message).await {
-                                    Ok(_) => {
-                                        info!("🔓 Successfully decrypted group event");
-                                        received_group_messages.push(message.clone());
-                                    }
-                                    Err(_) => {
-                                        warn!("⚠️ Failed to decrypt group event");
-                                    }
-                                }
-                                break;
-                            }
-                        }
-                        zoe_wire_protocol::StreamMessage::StreamHeightUpdate(_) => {
-                            // Height update, continue waiting
-                        }
-                    }
+                    return Ok(());
                 }
-                Ok(None) => break,  // Stream closed
-                Err(_) => continue, // Timeout, keep trying
             }
-        }
+            Err(anyhow::anyhow!("Group manager update not received"))
+        })
+        .await??;
 
-        // Step 6: Verify that client 2 successfully received and decrypted the group information
-        assert!(
-            !received_group_messages.is_empty(),
-            "Client 2 should have received at least one group message from the catch-up"
-        );
-
-        // Get the group state from client 2's DGA
-        let client2_group_state = dga2
-            .group_state(&create_group_result.group_id)
-            .await
-            .ok_or_else(|| {
-                anyhow::anyhow!("Client 2 should have the group state after processing events")
-            })?;
-
-        // Verify the group information matches what client 1 created
-        assert_eq!(
-            client2_group_state.name, "E2E Test Group",
-            "Group name should match on client 2"
-        );
-
-        assert_eq!(
-            client2_group_state.description(),
-            Some("A test group for end-to-end testing".to_string()),
-            "Group description should match on client 2"
-        );
-
-        // Verify the metadata was properly transferred
-        let generic_metadata = client2_group_state.generic_metadata();
-        info!("📋 Group metadata items: {}", generic_metadata.len());
-        for (key, value) in &generic_metadata {
-            info!("   🏷️ {} = {}", key, value);
-        }
-
-        // Verify specific metadata values
-        assert!(
-            generic_metadata.contains_key("test_type"),
-            "Group metadata should contain test_type key"
-        );
-        assert_eq!(
-            generic_metadata.get("test_type"),
-            Some(&"e2e".to_string()),
-            "Group metadata test_type should be 'e2e'"
-        );
-        assert!(
-            generic_metadata.contains_key("created_by"),
-            "Group metadata should contain created_by key"
-        );
-        assert_eq!(
-            generic_metadata.get("created_by"),
-            Some(&"client1".to_string()),
-            "Group metadata created_by should be 'client1'"
-        );
-
-        info!("✅ **GROUP CREATION AND SHARING TEST RESULTS**:");
-        info!("   🎯 Client 1 created group successfully: ✅");
-        info!("   📤 Group creation event published to relay: ✅");
-        info!("   🔑 Encryption key shared between clients: ✅");
-        info!("   📬 Client 2 subscribed to group events: ✅");
-        info!("   📥 Client 2 received and decrypted group creation event: ✅");
-        info!(
-            "   📛 Group name verified: '{}' ✅",
-            client2_group_state.name
-        );
-        info!(
-            "   📝 Group description verified: '{:?}' ✅",
-            client2_group_state.description()
-        );
-        info!(
-            "   📋 Group metadata verified: {} items with correct values ✅",
-            generic_metadata.len()
-        );
-
-        info!("🏆 All group creation and sharing tests passed!");
-
-        // Cleanup
         infra.cleanup().await?;
         Ok(())
     }

@@ -6,13 +6,15 @@ use futures::Stream;
 use std::{ops::Deref, sync::Arc};
 use tokio::{select, task::JoinHandle};
 use tracing::{debug, error, warn};
-use zoe_client_storage::{MessageStorage, SubscriptionState};
+use zoe_client_storage::MessageStorage;
 use zoe_wire_protocol::{
     CatchUpResponse, Filter, KeyId, MessageFull, PublishResult, StreamMessage, VerifyingKey,
 };
 
-use super::messages_manager::{
-    MessageEvent, MessagesManager, MessagesManagerBuilder, MessagesManagerTrait,
+use super::messages_manager::{MessagesManager, MessagesManagerBuilder};
+
+use zoe_state_machine::messages::{
+    MessageEvent, MessagesManagerTrait, Result as MessagesManagerResult, SubscriptionState,
 };
 
 /// Builder for creating MessagePersistenceManager instances.
@@ -393,15 +395,6 @@ impl MessagePersistenceManager {
     pub fn builder() -> MessagePersistenceManagerBuilder {
         MessagePersistenceManagerBuilder::new()
     }
-
-    /// Get a reference to the inner MessagesManager for use with components
-    /// that require the concrete type (like PqxdhProtocolHandler)
-    ///
-    /// This method is only available on the concrete MessagePersistenceManager
-    /// type alias, not the generic version.
-    pub fn inner_messages_manager(&self) -> &MessagesManager {
-        &self.messages_manager
-    }
 }
 
 impl Deref for MessagePersistenceManager {
@@ -428,15 +421,15 @@ impl<T: MessagesManagerTrait + 'static> MessagesManagerTrait
         self.messages_manager.get_subscription_state_updates().await
     }
 
-    async fn subscribe(&self) -> Result<()> {
+    async fn subscribe(&self) -> MessagesManagerResult<()> {
         self.messages_manager.subscribe().await
     }
 
-    async fn publish(&self, message: MessageFull) -> Result<PublishResult> {
+    async fn publish(&self, message: MessageFull) -> MessagesManagerResult<PublishResult> {
         self.messages_manager.publish(message).await
     }
 
-    async fn ensure_contains_filter(&self, filter: Filter) -> Result<()> {
+    async fn ensure_contains_filter(&self, filter: Filter) -> MessagesManagerResult<()> {
         self.messages_manager.ensure_contains_filter(filter).await
     }
 
@@ -459,7 +452,7 @@ impl<T: MessagesManagerTrait + 'static> MessagesManagerTrait
         &self,
         filter: Filter,
         since: Option<String>,
-    ) -> Result<std::pin::Pin<Box<dyn Stream<Item = Box<MessageFull>> + Send>>> {
+    ) -> MessagesManagerResult<std::pin::Pin<Box<dyn Stream<Item = Box<MessageFull>> + Send>>> {
         self.messages_manager
             .catch_up_and_subscribe(filter, since)
             .await
@@ -469,14 +462,14 @@ impl<T: MessagesManagerTrait + 'static> MessagesManagerTrait
         &self,
         author: zoe_wire_protocol::KeyId,
         storage_key: zoe_wire_protocol::StoreKey,
-    ) -> Result<Option<MessageFull>> {
+    ) -> MessagesManagerResult<Option<MessageFull>> {
         self.messages_manager.user_data(author, storage_key).await
     }
 
     async fn check_messages(
         &self,
         message_ids: Vec<zoe_wire_protocol::MessageId>,
-    ) -> Result<Vec<Option<String>>> {
+    ) -> MessagesManagerResult<Vec<Option<String>>> {
         self.messages_manager.check_messages(message_ids).await
     }
 }
@@ -488,8 +481,8 @@ mod tests {
     use rand::rngs::OsRng;
     use std::collections::HashMap;
 
-    use crate::services::messages_manager::MockMessagesManagerTrait;
     use zoe_client_storage::{StorageError, storage::MockMessageStorage};
+    use zoe_state_machine::messages::MockMessagesManagerTrait;
     use zoe_wire_protocol::{Content, KeyPair, Kind, MessageFilters, MessageFull, PublishResult};
 
     fn create_test_message(content: &str) -> MessageFull {

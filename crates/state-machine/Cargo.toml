@@ -6,6 +6,7 @@ edition = "2024"
 [features]
 default = []
 frb-api = ["dep:flutter_rust_bridge","zoe-app-primitives/frb-api"]
+mock = ["dep:mockall"]
 
 [dependencies]
 # App primitives for common types
@@ -24,6 +25,13 @@ rand = "0.8"
 thiserror = "1.0"
 async-broadcast = { workspace = true }
 async-trait = "0.1"
+eyeball = { version = "0.8.8", features = ["async-lock"] }
+futures = { workspace = true }
+tarpc = { workspace = true }
+hex = "0.4" # For encoding app tags in logs
+
+# testing dependencies
+mockall = { workspace = true, optional = true }
 
 
 flutter_rust_bridge = { workspace = true, optional = true }
@@ -34,6 +42,7 @@ rand = "0.8"
 chrono = "0.4"
 hex = "0.4"
 tokio = { version = "1.0", features = ["macros", "rt"] }
+mockall = { workspace = true }
 
 
 

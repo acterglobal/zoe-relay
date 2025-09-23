@@ -104,3 +104,10 @@ pub enum PqxdhError {
 
 /// Result type for PQXDH protocol operations
 pub type Result<T> = std::result::Result<T, PqxdhError>;
+
+// Conversion from MessagesManagerError to PqxdhError
+impl From<zoe_state_machine::messages::MessagesManagerError> for PqxdhError {
+    fn from(err: zoe_state_machine::messages::MessagesManagerError) -> Self {
+        PqxdhError::MessageCreation(err.to_string())
+    }
+}

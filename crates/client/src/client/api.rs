@@ -7,6 +7,9 @@ use zoe_blob_store::client::BlobClient;
 use zoe_state_machine::group::GroupManager;
 use zoe_wire_protocol::{KeyPair, VerifyingKey};
 
+// Type alias for the GroupManager used in the client
+type ClientGroupManager = GroupManager<ZoeClientMessageManager>;
+
 #[cfg(not(feature = "frb-api"))]
 mod file_storage;
 #[cfg(not(feature = "frb-api"))]
@@ -51,7 +54,7 @@ impl Client {
         self.session_manager.clone()
     }
 
-    pub fn group_manager(&self) -> GroupManager {
+    pub fn group_manager(&self) -> ClientGroupManager {
         self.session_manager.group_manager()
     }
 }

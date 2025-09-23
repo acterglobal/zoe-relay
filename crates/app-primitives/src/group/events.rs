@@ -1,13 +1,13 @@
 use crate::protocol::InstalledApp;
 use forward_compatible_enum::ForwardCompatibleEnum;
 use serde::{Deserialize, Serialize};
-use zoe_wire_protocol::MessageId;
+use zoe_wire_protocol::{ChannelId, MessageId};
 
 use crate::group::app::GroupEvent;
 
 use super::events::{roles::GroupRole, settings::GroupSettings};
 use crate::{
-    identity::{IdentityInfo, IdentityRef},
+    identity::{IdentityInfo, IdentityType},
     metadata::Metadata,
 };
 
@@ -19,6 +19,7 @@ pub mod settings;
 
 use key_info::GroupKeyInfo;
 
+pub type GroupId = ChannelId;
 // Re-export Acknowledgment from the common location
 pub use crate::group::app::Acknowledgment;
 
@@ -29,6 +30,8 @@ use flutter_rust_bridge::frb;
 pub struct GroupInfo {
     /// Human-readable group name
     pub name: String,
+    /// The  id we use to identify the group, also the channel tag
+    pub group_id: GroupId,
     // initial group settings
     pub settings: GroupSettings,
     /// Key derivation info or key identifier (not the actual key)
@@ -83,16 +86,24 @@ pub type GroupInfoUpdateContent = Vec<GroupInfoUpdate>;
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct GroupEventWrapper {
     /// which identity are we sending this event as
-    idenitity: IdentityRef,
+    identity: IdentityType,
     /// the event we are sending
     event: Box<GroupActivityEvent>,
 }
 
+/// Special initialization event for creating a new group
+///
+/// This is separate from GroupActivityEvent because it requires special handling
+/// with the initial message and decryption keys. It's not part of the regular
+/// event processing pipeline.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct GroupInitialization {
+    /// The group information for the new group
+    pub group_info: GroupInfo,
+}
+
 #[derive(Debug, Clone, PartialEq, ForwardCompatibleEnum)]
 pub enum GroupActivityEvent {
-    #[discriminant(11)]
-    CreateGroup(GroupInfo),
-
     /// Update group metadata (name, description, settings)
     ///
     /// This event can be either a **permission-changing event** or a regular event,
@@ -135,7 +146,7 @@ pub enum GroupActivityEvent {
     ///     acknowledges_others_last_state_change: Some(last_others_msg),
     /// };
     /// ```
-    #[discriminant(12)]
+    #[discriminant(11)]
     UpdateGroup {
         /// The specific updates to apply to the group (with required acknowledgments)
         ///
@@ -164,15 +175,15 @@ pub enum GroupActivityEvent {
         /// The specific updates to apply to the group
         updates: GroupInfoUpdateContent,
         /// Required acknowledgments for permission-changing updates
-        acknowledgment: Option<Acknowledgment>,
+        acknowledgment: Acknowledgment,
     },
 
     /// Set identity information for the sending identity
-    #[discriminant(20)]
+    #[discriminant(12)]
     SetIdentity(IdentityInfo),
 
     /// Announce departure from group
-    #[discriminant(21)]
+    #[discriminant(13)]
     LeaveGroup {
         /// Optional goodbye message
         message: Option<String>,
@@ -219,10 +230,10 @@ pub enum GroupActivityEvent {
     /// # Permissions Required
     ///
     /// Requires appropriate permissions based on group settings (typically Admin or Owner).
-    #[discriminant(30)]
+    #[discriminant(14)]
     AssignRole {
         /// The identity to assign a role to
-        target: IdentityRef,
+        target: IdentityType,
         /// The new role to assign
         role: GroupRole,
         /// Required acknowledgments for this permission-changing event
@@ -249,10 +260,10 @@ pub enum GroupActivityEvent {
     ///
     /// Requires appropriate permissions based on group settings (typically Admin or Owner).
     /// Members cannot remove themselves - use [`LeaveGroup`] instead.
-    #[discriminant(31)]
+    #[discriminant(15)]
     RemoveFromGroup {
         /// The identity to remove from the group
-        target: IdentityRef,
+        target: IdentityType,
         /// Required acknowledgments for this permission-changing event
         acknowledgment: Acknowledgment,
     },
@@ -309,7 +320,6 @@ impl GroupActivityEvent {
             }
 
             // Never permission-changing
-            GroupActivityEvent::CreateGroup(_) => false,
             GroupActivityEvent::SetIdentity(_) => false,
             GroupActivityEvent::LeaveGroup { .. } => false,
             GroupActivityEvent::Unknown { .. } => false,
@@ -350,20 +360,12 @@ impl GroupActivityEvent {
             )),
 
             GroupActivityEvent::UpdateGroup {
-                acknowledgment: Some(ack),
+                acknowledgment: ack,
                 ..
             } => Ok((
                 ack.acknowledges_own_last_state_change,
                 ack.acknowledges_others_last_state_change,
             )),
-
-            GroupActivityEvent::UpdateGroup {
-                acknowledgment: None,
-                ..
-            } => Err(
-                "UpdateGroup event has no acknowledgments (not a permission-changing update)"
-                    .to_string(),
-            ),
 
             _ => Err(format!(
                 "Event {self:?} is not permission-changing and has no acknowledgments"
@@ -391,7 +393,7 @@ impl GroupActivityEvent {
     /// );
     /// ```
     pub fn new_assign_role(
-        target: IdentityRef,
+        target: IdentityType,
         role: GroupRole,
         own_ack: MessageId,
         others_ack: MessageId,
@@ -421,7 +423,7 @@ impl GroupActivityEvent {
     /// );
     /// ```
     pub fn new_remove_from_group(
-        target: IdentityRef,
+        target: IdentityType,
         own_ack: MessageId,
         others_ack: MessageId,
     ) -> Self {
@@ -472,7 +474,7 @@ impl GroupActivityEvent {
     ) -> Self {
         GroupActivityEvent::UpdateGroup {
             updates,
-            acknowledgment: Some(Acknowledgment::new(own_ack, others_ack)),
+            acknowledgment: Acknowledgment::new(own_ack, others_ack),
         }
     }
 }
@@ -480,10 +482,7 @@ impl GroupActivityEvent {
 impl GroupEvent for GroupActivityEvent {
     fn applies_to(&self) -> Option<Vec<MessageId>> {
         match self {
-            // Create events don't affect existing models
-            GroupActivityEvent::CreateGroup(_) => None,
-
-            // All other events affect the group state
+            // All events affect the group state
             GroupActivityEvent::UpdateGroup { .. }
             | GroupActivityEvent::SetIdentity(_)
             | GroupActivityEvent::LeaveGroup { .. }
@@ -505,7 +504,7 @@ impl GroupEvent for GroupActivityEvent {
             GroupActivityEvent::RemoveFromGroup { acknowledgment, .. } => {
                 Some(acknowledgment.clone())
             }
-            GroupActivityEvent::UpdateGroup { acknowledgment, .. } => acknowledgment.clone(),
+            GroupActivityEvent::UpdateGroup { acknowledgment, .. } => Some(acknowledgment.clone()),
             _ => None,
         }
     }

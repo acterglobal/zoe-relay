@@ -18,7 +18,7 @@ use crate::digital_groups_organizer::{
             DgoFeatureSettings, DgoFeatureType, DgoOperationType, FeaturePermission,
             PermissionUpdate,
         },
-        core::DgoActivityEvent,
+        core::{DgoActivityEvent, DgoActivityEventContent},
     },
     indexing::keys::IndexKey,
 };
@@ -189,8 +189,8 @@ impl DgoAppModel for DgoPermissionSettings {
         event: &DgoActivityEvent,
         context: &DgoPermissionContext,
     ) -> DgoResult<bool> {
-        match event {
-            DgoActivityEvent::UpdateDgoSettings { target_id, content } => {
+        match event.content() {
+            DgoActivityEventContent::UpdateDgoSettings { target_id, content } => {
                 if *target_id == self.model_id() {
                     // Check permissions
                     self.check_permission(context, DgoOperation::Update)?;

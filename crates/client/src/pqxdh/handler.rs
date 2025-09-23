@@ -15,11 +15,11 @@ use zoe_wire_protocol::{
     },
 };
 
-use crate::pqxdh::PqxdhMessageListener;
-
 use super::{
     PqxdhError, PqxdhProtocolState, PqxdhSession, PqxdhSessionId, PqxdhTarpcTransport, Result,
 };
+use crate::pqxdh::PqxdhMessageListener;
+use zoe_state_machine::messages::MessagesManagerTrait;
 
 /// A complete PQXDH protocol handler that encapsulates all session management,
 /// key observation, subscription handling, and message routing logic.
@@ -46,14 +46,14 @@ use super::{
 /// - **Session Management**: Tracks multiple concurrent sessions by user ID
 /// - **Privacy Preserving**: Uses randomized channel IDs and derived tags
 /// - **Type Safety**: Generic over message payload types with compile-time safety
-pub struct PqxdhProtocolHandler<T: crate::services::MessagesManagerTrait> {
+pub struct PqxdhProtocolHandler<T: MessagesManagerTrait> {
     messages_manager: Arc<T>,
     client_keypair: Arc<zoe_wire_protocol::KeyPair>,
     /// Observable state that can be subscribed to for reactive programming
     pub(crate) state: SharedObservable<PqxdhProtocolState, AsyncLock>,
 }
 
-impl<T: crate::services::MessagesManagerTrait> Clone for PqxdhProtocolHandler<T> {
+impl<T: MessagesManagerTrait> Clone for PqxdhProtocolHandler<T> {
     fn clone(&self) -> Self {
         Self {
             messages_manager: self.messages_manager.clone(),
@@ -63,7 +63,7 @@ impl<T: crate::services::MessagesManagerTrait> Clone for PqxdhProtocolHandler<T>
     }
 }
 
-impl<T: crate::services::MessagesManagerTrait + 'static> PqxdhProtocolHandler<T> {
+impl<T: MessagesManagerTrait + 'static> PqxdhProtocolHandler<T> {
     /// Creates a new protocol handler for a specific PQXDH protocol
     ///
     /// This creates a fresh handler with empty state that can be used either as:
@@ -539,7 +539,7 @@ impl<T: crate::services::MessagesManagerTrait + 'static> PqxdhProtocolHandler<T>
 }
 
 #[async_trait::async_trait]
-impl<Resp, T: crate::services::MessagesManagerTrait> super::PqxdhTarpcTransportSender<Resp>
+impl<Resp, T: MessagesManagerTrait> super::PqxdhTarpcTransportSender<Resp>
     for PqxdhProtocolHandler<T>
 where
     Resp: serde::Serialize + Send + Sync,
@@ -552,7 +552,7 @@ where
 
 // Internal functions
 
-impl<T: crate::services::MessagesManagerTrait> PqxdhProtocolHandler<T> {
+impl<T: MessagesManagerTrait> PqxdhProtocolHandler<T> {
     /// Fetch a PQXDH inbox using the trait method
     async fn fetch_pqxdh_inbox<U: for<'de> Deserialize<'de>>(
         &self,

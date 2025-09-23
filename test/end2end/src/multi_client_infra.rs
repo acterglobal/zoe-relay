@@ -70,9 +70,9 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::sync::RwLock;
 use tokio::time::timeout;
 use tracing::{debug, info, warn};
-use zoe_client::services::MessagesManagerTrait;
 use zoe_client::services::messages_manager::MessagesManager;
 use zoe_client::{RelayClient, RelayClientBuilder};
+use zoe_state_machine::messages::MessagesManagerTrait;
 use zoe_wire_protocol::{
     Content, Filter, KeyPair, Kind, Message, MessageFilters, MessageFull, StreamMessage,
     SubscriptionConfig, Tag, VerifyingKey,

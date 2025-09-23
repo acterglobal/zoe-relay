@@ -7,10 +7,10 @@
 
 use super::{SystemCheckConfig, TestInfo, TestResult};
 use crate::Client;
-use crate::services::MessagesManagerTrait;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::time::sleep;
 use tracing::{debug, info, warn};
+use zoe_state_machine::messages::MessagesManagerTrait;
 use zoe_wire_protocol::{
     Content, KeyPair, Kind, Message, MessageFull, MessageV0, MessageV0Header, Tag,
 };

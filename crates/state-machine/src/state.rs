@@ -64,12 +64,6 @@ impl GroupSession {
         let old_key = std::mem::replace(&mut self.current_key, new_key);
         self.previous_keys.push(old_key);
     }
-
-    /// Get all keys (current + previous) for decryption attempts
-    pub fn all_keys(&self) -> impl Iterator<Item = &EncryptionKey> {
-        std::iter::once(&self.current_key).chain(self.previous_keys.iter())
-    }
-
     /// Encrypt a group event using ChaCha20-Poly1305
     pub fn encrypt_group_event_content<T: Serialize>(
         &self,
@@ -109,3 +103,11 @@ pub struct GroupStateSnapshot {
 }
 
 // All GroupState implementation methods are now in app-primitives
+
+/// Encrypt a group initialization event using ChaCha20-Poly1305
+pub fn encrypt_group_initialization_content(
+    key: &EncryptionKey,
+    group_init: &zoe_app_primitives::group::events::GroupInitialization,
+) -> Result<ChaCha20Poly1305Content, GroupSessionError> {
+    encrypt_group_event_content(key, group_init)
+}

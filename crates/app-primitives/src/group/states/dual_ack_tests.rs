@@ -18,7 +18,7 @@ use crate::group::app::Acknowledgment;
 use crate::group::events::{
     GroupActivityEvent, GroupInfoUpdate, roles::GroupRole, settings::GroupSettings,
 };
-use crate::identity::IdentityRef;
+use crate::identity::{IdentityRef, IdentityType};
 use rand::rngs::OsRng;
 use zoe_wire_protocol::{KeyPair, MessageId};
 
@@ -27,33 +27,23 @@ fn test_message_id(seed: u8) -> MessageId {
     MessageId::from_bytes([seed; 32])
 }
 
+/// Helper function to get the creation message ID from a group state
+fn get_creation_message_id(group_state: &GroupState) -> MessageId {
+    group_state.event_history[0]
+}
+
 /// Helper function to create a test group state with multiple members
 fn create_test_group_with_members() -> (GroupState, KeyPair, KeyPair, KeyPair) {
     let alice_key = KeyPair::generate(&mut OsRng);
     let bob_key = KeyPair::generate(&mut OsRng);
-    let _charlie_key = KeyPair::generate(&mut OsRng);
+    let charlie_key = KeyPair::generate(&mut OsRng);
 
-    let group_id = test_message_id(1);
-    let mut group_state = GroupState::new(
-        group_id,
-        "Test Group".to_string(),
-        GroupSettings::default(),
-        vec![],
-        alice_key.public_key(),
-        1000, // t=1000
-        super::tests::create_test_activity_meta(group_id, group_id, alice_key.public_key(), 1000),
-    );
+    let message =
+        super::tests::create_test_message_full(&alice_key, b"test content".to_vec(), 1000).unwrap();
+    let group_info = super::tests::create_test_group_info();
+    let mut group_state = GroupState::initial(&message, group_info);
 
-    // Manually add the group creation event to message metadata
-    // This is needed because GroupState::new doesn't automatically add it
-    group_state.message_metadata.insert(
-        group_id,
-        MessageMetadata {
-            timestamp: 1000,
-            sender: IdentityRef::Key(alice_key.public_key()),
-            is_permission_event: false, // Group creation is not a permission event
-        },
-    );
+    // GroupState::initial automatically adds the creation message to metadata
 
     // Add Bob and Charlie as members
     let bob_join = GroupActivityEvent::SetIdentity(crate::identity::IdentityInfo {
@@ -61,7 +51,12 @@ fn create_test_group_with_members() -> (GroupState, KeyPair, KeyPair, KeyPair) {
         metadata: vec![],
     });
     group_state
-        .apply_event(&bob_join, test_message_id(2), bob_key.public_key(), 1001)
+        .apply_event(
+            bob_join,
+            test_message_id(2),
+            IdentityRef::Key(bob_key.public_key()),
+            1001,
+        )
         .unwrap();
 
     let charlie_join = GroupActivityEvent::SetIdentity(crate::identity::IdentityInfo {
@@ -70,14 +65,14 @@ fn create_test_group_with_members() -> (GroupState, KeyPair, KeyPair, KeyPair) {
     });
     group_state
         .apply_event(
-            &charlie_join,
+            charlie_join,
             test_message_id(3),
-            _charlie_key.public_key(),
+            IdentityRef::Key(charlie_key.public_key()),
             1002,
         )
         .unwrap();
 
-    (group_state, alice_key, bob_key, _charlie_key)
+    (group_state, alice_key, bob_key, charlie_key)
 }
 
 #[cfg(test)]
@@ -90,7 +85,7 @@ mod basic_validation_tests {
 
         // Permission-changing events
         let assign_role = GroupActivityEvent::new_assign_role(
-            IdentityRef::Key(KeyPair::generate(&mut OsRng).public_key()),
+            IdentityType::Main,
             GroupRole::Admin,
             test_message_id(1),
             test_message_id(2),
@@ -98,7 +93,7 @@ mod basic_validation_tests {
         assert!(assign_role.is_permission_changing());
 
         let remove_member = GroupActivityEvent::new_remove_from_group(
-            IdentityRef::Key(KeyPair::generate(&mut OsRng).public_key()),
+            IdentityType::Main,
             test_message_id(1),
             test_message_id(2),
         );
@@ -136,7 +131,7 @@ mod basic_validation_tests {
 
         // Test successful extraction from AssignRole
         let assign_role = GroupActivityEvent::new_assign_role(
-            IdentityRef::Key(KeyPair::generate(&mut OsRng).public_key()),
+            IdentityType::Main,
             GroupRole::Admin,
             own_ack,
             others_ack,
@@ -155,18 +150,24 @@ mod basic_validation_tests {
     fn test_message_metadata_storage() {
         let (mut group_state, alice_key, _, _) = create_test_group_with_members();
 
+        let creation_message_id = get_creation_message_id(&group_state);
         let event = GroupActivityEvent::new_assign_role(
-            IdentityRef::Key(alice_key.public_key()),
+            IdentityType::Main,
             GroupRole::Admin,
-            test_message_id(1), // Group creation
-            test_message_id(3), // Charlie's join (latest third-party event)
+            creation_message_id, // Group creation
+            test_message_id(3),  // Charlie's join (latest third-party event)
         );
 
         let event_id = test_message_id(10);
         let timestamp = 2000;
 
         group_state
-            .apply_event(&event, event_id, alice_key.public_key(), timestamp)
+            .apply_event(
+                event,
+                event_id,
+                IdentityRef::Key(alice_key.public_key()),
+                timestamp,
+            )
             .unwrap();
 
         // Verify metadata was stored
@@ -179,6 +180,8 @@ mod basic_validation_tests {
 
 #[cfg(test)]
 mod attack_prevention_tests {
+    use crate::identity::IdentityType;
+
     use super::*;
 
     #[test]
@@ -195,21 +198,22 @@ mod attack_prevention_tests {
         //
         // **Expected**: System rejects because timestamp=1150 is before Charlie's join at t=1200,
         // but Alice already acknowledged seeing Charlie at t=1300
-        let (mut group_state, alice_key, bob_key, _charlie_key) = create_test_group_with_members();
+        let (mut group_state, alice_key, _bob_key, _charlie_key) = create_test_group_with_members();
 
         // t=1100: Alice assigns Bob as Admin
+        let creation_message_id = get_creation_message_id(&group_state);
         let assign_bob_admin = GroupActivityEvent::new_assign_role(
-            IdentityRef::Key(bob_key.public_key()),
+            IdentityType::Main,
             GroupRole::Admin,
-            test_message_id(1), // Group creation
-            test_message_id(3), // Charlie's join (latest third-party event)
+            creation_message_id, // Group creation
+            test_message_id(3),  // Charlie's join (latest third-party event)
         );
         let assign_event_id = test_message_id(10);
         group_state
             .apply_event(
-                &assign_bob_admin,
+                assign_bob_admin,
                 assign_event_id,
-                alice_key.public_key(),
+                IdentityRef::Key(alice_key.public_key()),
                 1100,
             )
             .unwrap();
@@ -223,16 +227,16 @@ mod attack_prevention_tests {
         let settings_event_id = test_message_id(11);
         group_state
             .apply_event(
-                &settings_update,
+                settings_update,
                 settings_event_id,
-                alice_key.public_key(),
+                IdentityRef::Key(alice_key.public_key()),
                 1300,
             )
             .unwrap();
 
         // t=1400: Alice tries to backdate a role revocation to t=1150
         let backdated_revoke = GroupActivityEvent::new_assign_role(
-            IdentityRef::Key(bob_key.public_key()),
+            IdentityType::Main,
             GroupRole::Member,  // Demoting Bob
             settings_event_id,  // Alice's last state change
             test_message_id(3), // Charlie's join (already acknowledged)
@@ -241,9 +245,9 @@ mod attack_prevention_tests {
         // This should FAIL because timestamp 1150 is before Charlie's join at 1002,
         // but Alice already acknowledged Charlie's join in her settings update
         let result = group_state.apply_event(
-            &backdated_revoke,
+            backdated_revoke,
             test_message_id(12),
-            alice_key.public_key(),
+            IdentityRef::Key(alice_key.public_key()),
             1150, // Backdated timestamp
         );
 
@@ -258,20 +262,20 @@ mod attack_prevention_tests {
     #[test]
     fn test_acknowledgment_consistency_validation() {
         // **Attack Scenario**: Alice tries to acknowledge a message that doesn't exist
-        let (mut group_state, alice_key, bob_key, _) = create_test_group_with_members();
+        let (mut group_state, alice_key, _bob_key, _charlie_key) = create_test_group_with_members();
 
         // Alice tries to create an event acknowledging a non-existent message
         let invalid_event = GroupActivityEvent::new_assign_role(
-            IdentityRef::Key(bob_key.public_key()),
+            IdentityType::Main,
             GroupRole::Admin,
             test_message_id(99), // Non-existent message
             test_message_id(1),  // Valid message (group creation)
         );
 
         let result = group_state.apply_event(
-            &invalid_event,
+            invalid_event,
             test_message_id(20),
-            alice_key.public_key(),
+            IdentityRef::Key(alice_key.public_key()),
             2000,
         );
 
@@ -286,33 +290,39 @@ mod attack_prevention_tests {
     #[test]
     fn test_cannot_backdate_before_own_acknowledgments() {
         // **Attack Scenario**: Alice tries to backdate before her own previous acknowledgments
-        let (mut group_state, alice_key, bob_key, _) = create_test_group_with_members();
+        let (mut group_state, alice_key, _bob_key, _charlie_key) = create_test_group_with_members();
 
         // t=1100: Alice assigns Bob as Admin
+        let creation_message_id = get_creation_message_id(&group_state);
         let assign_bob = GroupActivityEvent::new_assign_role(
-            IdentityRef::Key(bob_key.public_key()),
+            IdentityType::Main,
             GroupRole::Admin,
-            test_message_id(1), // Group creation at t=1000
-            test_message_id(1), // Group creation
+            creation_message_id, // Group creation at t=1000
+            creation_message_id, // Group creation
         );
         let assign_event_id = test_message_id(10);
         group_state
-            .apply_event(&assign_bob, assign_event_id, alice_key.public_key(), 1100)
+            .apply_event(
+                assign_bob,
+                assign_event_id,
+                IdentityRef::Key(alice_key.public_key()),
+                1100,
+            )
             .unwrap();
 
         // t=1200: Alice tries to create another event but backdated to t=1050
         // This should fail because she already acknowledged state at t=1000 in her previous event
         let backdated_event = GroupActivityEvent::new_assign_role(
-            IdentityRef::Key(bob_key.public_key()),
+            IdentityType::Main,
             GroupRole::Member,
-            test_message_id(1), // Same acknowledgment as before
-            test_message_id(1), // Same acknowledgment as before
+            creation_message_id, // Same acknowledgment as before
+            creation_message_id, // Same acknowledgment as before
         );
 
         let result = group_state.apply_event(
-            &backdated_event,
+            backdated_event,
             test_message_id(11),
-            alice_key.public_key(),
+            IdentityRef::Key(alice_key.public_key()),
             1050, // Before her previous acknowledgment timestamp
         );
 
@@ -327,6 +337,7 @@ mod attack_prevention_tests {
 
 #[cfg(test)]
 mod multi_verifier_scenarios {
+
     use super::*;
 
     #[test]
@@ -334,23 +345,29 @@ mod multi_verifier_scenarios {
         // **Scenario**: Multiple admins make legitimate permission changes concurrently
         // This tests that the system allows legitimate concurrent operations while
         // still preventing attacks.
-        let (mut group_state, alice_key, bob_key, _charlie_key) = create_test_group_with_members();
+        let (mut group_state, alice_key, bob_key, charlie_key) = create_test_group_with_members();
 
         // Alice promotes Bob to Admin
+        let creation_message_id = get_creation_message_id(&group_state);
         let promote_bob = GroupActivityEvent::new_assign_role(
-            IdentityRef::Key(bob_key.public_key()),
+            IdentityType::Main,
             GroupRole::Admin,
-            test_message_id(1), // Group creation
-            test_message_id(3), // Charlie's join
+            creation_message_id, // Group creation
+            test_message_id(3),  // Charlie's join
         );
         let promote_bob_id = test_message_id(10);
         group_state
-            .apply_event(&promote_bob, promote_bob_id, alice_key.public_key(), 1100)
+            .apply_event(
+                promote_bob,
+                promote_bob_id,
+                IdentityRef::Key(alice_key.public_key()),
+                1100,
+            )
             .unwrap();
 
         // Alice (owner) promotes Charlie to Admin, acknowledging Bob's join and her previous action
         let promote_charlie = GroupActivityEvent::new_assign_role(
-            IdentityRef::Key(_charlie_key.public_key()),
+            IdentityType::Main,
             GroupRole::Admin,
             promote_bob_id,     // Alice's promotion of Bob (her own last state change)
             test_message_id(3), // Charlie's join (latest third-party event)
@@ -358,9 +375,9 @@ mod multi_verifier_scenarios {
         let promote_charlie_id = test_message_id(11);
         group_state
             .apply_event(
-                &promote_charlie,
+                promote_charlie,
                 promote_charlie_id,
-                alice_key.public_key(),
+                IdentityRef::Key(alice_key.public_key()),
                 1200,
             )
             .unwrap();
@@ -377,7 +394,7 @@ mod multi_verifier_scenarios {
         assert_eq!(
             group_state
                 .members
-                .get(&IdentityRef::Key(_charlie_key.public_key()))
+                .get(&IdentityRef::Key(charlie_key.public_key()))
                 .unwrap()
                 .role,
             GroupRole::Admin
@@ -397,35 +414,36 @@ mod multi_verifier_scenarios {
         // **Scenario**: Three participants make conflicting permission changes
         // Tests the conflict resolution mechanism when multiple events have
         // similar acknowledgment levels.
-        let (mut group_state, alice_key, bob_key, _charlie_key) = create_test_group_with_members();
+        let (mut group_state, alice_key, bob_key, charlie_key) = create_test_group_with_members();
 
         // Promote Bob and Charlie to Admin first
         let promote_bob = GroupActivityEvent::new_assign_role(
-            IdentityRef::Key(bob_key.public_key()),
+            IdentityType::Main,
             GroupRole::Admin,
             test_message_id(1),
             test_message_id(3),
         );
         group_state
             .apply_event(
-                &promote_bob,
+                promote_bob,
                 test_message_id(10),
-                alice_key.public_key(),
+                IdentityRef::Key(alice_key.public_key()),
                 1100,
             )
             .unwrap();
 
+        let creation_message_id = get_creation_message_id(&group_state);
         let promote_charlie = GroupActivityEvent::new_assign_role(
-            IdentityRef::Key(_charlie_key.public_key()),
+            IdentityType::Main,
             GroupRole::Admin,
-            test_message_id(1),
+            creation_message_id,
             test_message_id(10),
         );
         group_state
             .apply_event(
-                &promote_charlie,
+                promote_charlie,
                 test_message_id(11),
-                alice_key.public_key(),
+                IdentityRef::Key(alice_key.public_key()),
                 1200,
             )
             .unwrap();
@@ -441,9 +459,9 @@ mod multi_verifier_scenarios {
         );
         group_state
             .apply_event(
-                &alice_update,
+                alice_update,
                 test_message_id(20),
-                alice_key.public_key(),
+                IdentityRef::Key(alice_key.public_key()),
                 1300,
             )
             .unwrap();
@@ -455,7 +473,12 @@ mod multi_verifier_scenarios {
             test_message_id(1),
         );
         group_state
-            .apply_event(&bob_update, test_message_id(21), bob_key.public_key(), 1301)
+            .apply_event(
+                bob_update,
+                test_message_id(21),
+                IdentityRef::Key(bob_key.public_key()),
+                1301,
+            )
             .unwrap();
 
         // Charlie updates settings
@@ -466,15 +489,15 @@ mod multi_verifier_scenarios {
         );
         group_state
             .apply_event(
-                &charlie_update,
+                charlie_update,
                 test_message_id(22),
-                _charlie_key.public_key(),
+                IdentityRef::Key(charlie_key.public_key()),
                 1302,
             )
             .unwrap();
 
         // The last update should win (Charlie's)
-        assert_eq!(group_state.name, "Charlie's Group");
+        assert_eq!(group_state.group_info.name, "Charlie's Group");
     }
 
     #[test]
@@ -483,23 +506,29 @@ mod multi_verifier_scenarios {
         //
         // Tests that acknowledgments properly create dependencies that prevent
         // reordering attacks in permission cascades.
-        let (mut group_state, alice_key, bob_key, _charlie_key) = create_test_group_with_members();
+        let (mut group_state, alice_key, bob_key, charlie_key) = create_test_group_with_members();
 
         // Step 1: Alice promotes Bob to Admin
+        let creation_message_id = get_creation_message_id(&group_state);
         let promote_bob = GroupActivityEvent::new_assign_role(
-            IdentityRef::Key(bob_key.public_key()),
+            IdentityType::Main,
             GroupRole::Admin,
-            test_message_id(1), // Alice's group creation
-            test_message_id(3), // Charlie's join
+            creation_message_id, // Alice's group creation
+            test_message_id(3),  // Charlie's join
         );
         let promote_bob_id = test_message_id(10);
         group_state
-            .apply_event(&promote_bob, promote_bob_id, alice_key.public_key(), 1100)
+            .apply_event(
+                promote_bob,
+                promote_bob_id,
+                IdentityRef::Key(alice_key.public_key()),
+                1100,
+            )
             .unwrap();
 
         // Step 2: Alice (owner) promotes Charlie to Admin
         let promote_charlie = GroupActivityEvent::new_assign_role(
-            IdentityRef::Key(_charlie_key.public_key()),
+            IdentityType::Main,
             GroupRole::Admin,
             promote_bob_id,     // Alice's promotion of Bob (her own last state change)
             test_message_id(3), // Charlie's join (latest third-party event)
@@ -507,9 +536,9 @@ mod multi_verifier_scenarios {
         let promote_charlie_id = test_message_id(11);
         group_state
             .apply_event(
-                &promote_charlie,
+                promote_charlie,
                 promote_charlie_id,
-                alice_key.public_key(),
+                IdentityRef::Key(alice_key.public_key()),
                 1200,
             )
             .unwrap();
@@ -517,7 +546,7 @@ mod multi_verifier_scenarios {
         // Step 3: Charlie (now admin) tries to demote Alice
         // This should work because Charlie is now admin
         let demote_alice = GroupActivityEvent::new_assign_role(
-            IdentityRef::Key(alice_key.public_key()),
+            IdentityType::Main,
             GroupRole::Member,
             test_message_id(3), // Charlie's join
             promote_charlie_id, // Bob's promotion of Charlie
@@ -525,9 +554,9 @@ mod multi_verifier_scenarios {
         let demote_alice_id = test_message_id(12);
         group_state
             .apply_event(
-                &demote_alice,
+                demote_alice,
                 demote_alice_id,
-                _charlie_key.public_key(),
+                IdentityRef::Key(charlie_key.public_key()),
                 1300,
             )
             .unwrap();
@@ -552,7 +581,7 @@ mod multi_verifier_scenarios {
         assert_eq!(
             group_state
                 .members
-                .get(&IdentityRef::Key(_charlie_key.public_key()))
+                .get(&IdentityRef::Key(charlie_key.public_key()))
                 .unwrap()
                 .role,
             GroupRole::Admin
@@ -561,16 +590,16 @@ mod multi_verifier_scenarios {
         // Now test that Alice cannot backdate a revocation of Bob's admin status
         // to before Charlie was promoted (which would invalidate Charlie's action)
         let backdated_revoke = GroupActivityEvent::new_assign_role(
-            IdentityRef::Key(bob_key.public_key()),
+            IdentityType::Main,
             GroupRole::Member,
             demote_alice_id,    // Alice's demotion (her last state change)
             promote_charlie_id, // Charlie's promotion (already acknowledged)
         );
 
         let result = group_state.apply_event(
-            &backdated_revoke,
+            backdated_revoke,
             test_message_id(13),
-            alice_key.public_key(),
+            IdentityRef::Key(alice_key.public_key()),
             1150, // Before Charlie's promotion
         );
 
@@ -594,21 +623,11 @@ mod multi_device_scenarios {
         let bob_key = KeyPair::generate(&mut OsRng);
 
         // Create initial group state
-        let group_id = test_message_id(1);
-        let mut device1_state = GroupState::new(
-            group_id,
-            "Test Group".to_string(),
-            GroupSettings::default(),
-            vec![],
-            alice_key.public_key(),
-            1000,
-            super::tests::create_test_activity_meta(
-                group_id,
-                group_id,
-                alice_key.public_key(),
-                1000,
-            ),
-        );
+        let message =
+            super::tests::create_test_message_full(&alice_key, b"test content".to_vec(), 1000)
+                .unwrap();
+        let group_info = super::tests::create_test_group_info();
+        let mut device1_state = GroupState::initial(&message, group_info);
 
         // Clone for device 2
         let mut device2_state = device1_state.clone();
@@ -619,10 +638,20 @@ mod multi_device_scenarios {
             metadata: vec![],
         });
         device1_state
-            .apply_event(&bob_join, test_message_id(2), bob_key.public_key(), 1100)
+            .apply_event(
+                bob_join.clone(),
+                test_message_id(2),
+                IdentityRef::Key(bob_key.public_key()),
+                1100,
+            )
             .unwrap();
         device2_state
-            .apply_event(&bob_join, test_message_id(2), bob_key.public_key(), 1100)
+            .apply_event(
+                bob_join,
+                test_message_id(2),
+                IdentityRef::Key(bob_key.public_key()),
+                1100,
+            )
             .unwrap();
 
         // Device 1 goes offline, Device 2 makes a change
@@ -633,9 +662,9 @@ mod multi_device_scenarios {
         );
         device2_state
             .apply_event(
-                &device2_change,
+                device2_change.clone(),
                 test_message_id(3),
-                alice_key.public_key(),
+                IdentityRef::Key(alice_key.public_key()),
                 1200,
             )
             .unwrap();
@@ -648,9 +677,9 @@ mod multi_device_scenarios {
         );
         device1_state
             .apply_event(
-                &device1_change,
+                device1_change.clone(),
                 test_message_id(4),
-                alice_key.public_key(),
+                IdentityRef::Key(alice_key.public_key()),
                 1201,
             )
             .unwrap();
@@ -658,9 +687,9 @@ mod multi_device_scenarios {
         // Now device 1 needs to sync device 2's change
         device1_state
             .apply_event(
-                &device2_change,
+                device2_change,
                 test_message_id(3),
-                alice_key.public_key(),
+                IdentityRef::Key(alice_key.public_key()),
                 1200,
             )
             .unwrap();
@@ -668,9 +697,9 @@ mod multi_device_scenarios {
         // Device 2 needs to sync device 1's change
         device2_state
             .apply_event(
-                &device1_change,
+                device1_change.clone(),
                 test_message_id(4),
-                alice_key.public_key(),
+                IdentityRef::Key(alice_key.public_key()),
                 1201,
             )
             .unwrap();
@@ -678,7 +707,7 @@ mod multi_device_scenarios {
         // Both devices should converge to the same state
         // The final state depends on the order of application, not just timestamps
         // Since both devices process events in the same order after sync, they should converge
-        assert_eq!(device1_state.name, device2_state.name);
+        assert_eq!(device1_state.group_info.name, device2_state.group_info.name);
         assert_eq!(device1_state.version, device2_state.version);
     }
 
@@ -708,13 +737,22 @@ mod multi_device_scenarios {
 
         // Event B arrives first (timestamp 1200)
         group_state
-            .apply_event(&event_b, test_message_id(11), alice_key.public_key(), 1200)
+            .apply_event(
+                event_b,
+                test_message_id(11),
+                IdentityRef::Key(alice_key.public_key()),
+                1200,
+            )
             .unwrap();
 
         // Event A arrives second but has earlier timestamp (1100)
         // This should be rejected due to timestamp ordering
-        let result =
-            group_state.apply_event(&event_a, test_message_id(10), alice_key.public_key(), 1100);
+        let result = group_state.apply_event(
+            event_a,
+            test_message_id(10),
+            IdentityRef::Key(alice_key.public_key()),
+            1100,
+        );
 
         match result {
             Err(GroupStateError::StateTransition(_)) => {
@@ -727,7 +765,7 @@ mod multi_device_scenarios {
         }
 
         // The group should have Event B's changes
-        assert_eq!(group_state.name, "Event B");
+        assert_eq!(group_state.group_info.name, "Event B");
     }
 
     #[test]
@@ -758,23 +796,23 @@ mod multi_device_scenarios {
         // Apply both events with same timestamp
         group_state
             .apply_event(
-                &event_lower_id,
+                event_lower_id,
                 lower_msg_id,
-                alice_key.public_key(),
+                IdentityRef::Key(alice_key.public_key()),
                 timestamp,
             )
             .unwrap();
         group_state
             .apply_event(
-                &event_higher_id,
+                event_higher_id,
                 higher_msg_id,
-                alice_key.public_key(),
+                IdentityRef::Key(alice_key.public_key()),
                 timestamp,
             )
             .unwrap();
 
         // The higher message ID should win (last applied wins in this simple case)
-        assert_eq!(group_state.name, "Higher ID Event");
+        assert_eq!(group_state.group_info.name, "Higher ID Event");
 
         // Both events should be in message metadata
         assert!(group_state.message_metadata.contains_key(&lower_msg_id));
@@ -784,6 +822,8 @@ mod multi_device_scenarios {
 
 #[cfg(test)]
 mod edge_cases_and_error_handling {
+    use crate::identity::IdentityType;
+
     use super::*;
 
     #[test]
@@ -800,27 +840,27 @@ mod edge_cases_and_error_handling {
 
         group_state
             .apply_event(
-                &name_update,
+                name_update,
                 test_message_id(10),
-                alice_key.public_key(),
+                IdentityRef::Key(alice_key.public_key()),
                 1500,
             )
             .unwrap();
-        assert_eq!(group_state.name, "New Name");
+        assert_eq!(group_state.group_info.name, "New Name");
 
         // Permission update should require acknowledgments
         let permission_update = GroupActivityEvent::UpdateGroup {
             updates: vec![GroupInfoUpdate::Settings(GroupSettings::default())],
-            acknowledgment: Some(Acknowledgment::new(
+            acknowledgment: Acknowledgment::new(
                 test_message_id(1), // Group creation
                 test_message_id(1), // Group creation
-            )),
+            ),
         };
 
         let result = group_state.apply_event(
-            &permission_update,
+            permission_update,
             test_message_id(11),
-            alice_key.public_key(),
+            IdentityRef::Key(alice_key.public_key()),
             1600,
         );
 
@@ -836,22 +876,22 @@ mod edge_cases_and_error_handling {
     #[test]
     fn test_self_referential_acknowledgments() {
         // **Scenario**: Event tries to acknowledge itself
-        let (mut group_state, alice_key, bob_key, _) = create_test_group_with_members();
+        let (mut group_state, alice_key, _bob_key, _charlie_key) = create_test_group_with_members();
 
         let self_ref_event_id = test_message_id(10);
 
         // Event tries to acknowledge itself (should be prevented)
         let self_ref_event = GroupActivityEvent::new_assign_role(
-            IdentityRef::Key(bob_key.public_key()),
+            IdentityType::Main,
             GroupRole::Admin,
             self_ref_event_id, // Self-reference
             test_message_id(1),
         );
 
         let result = group_state.apply_event(
-            &self_ref_event,
+            self_ref_event,
             self_ref_event_id,
-            alice_key.public_key(),
+            IdentityRef::Key(alice_key.public_key()),
             1500,
         );
 
@@ -870,20 +910,21 @@ mod edge_cases_and_error_handling {
     #[test]
     fn test_acknowledgment_of_future_events() {
         // **Scenario**: Event tries to acknowledge events that haven't happened yet
-        let (mut group_state, alice_key, bob_key, _) = create_test_group_with_members();
+        let (mut group_state, alice_key, _bob_key, _charlie_keys) =
+            create_test_group_with_members();
 
         // Event tries to acknowledge a future event
         let future_event = GroupActivityEvent::new_assign_role(
-            IdentityRef::Key(bob_key.public_key()),
+            IdentityType::Main,
             GroupRole::Admin,
             test_message_id(1),  // Valid past event
             test_message_id(99), // Future event that doesn't exist
         );
 
         let result = group_state.apply_event(
-            &future_event,
+            future_event,
             test_message_id(10),
-            alice_key.public_key(),
+            IdentityRef::Key(alice_key.public_key()),
             1500,
         );
 
@@ -904,12 +945,12 @@ mod edge_cases_and_error_handling {
         // **Scenario**: Very long chain of acknowledgments to test performance
         let (mut group_state, alice_key, bob_key, _) = create_test_group_with_members();
 
-        let mut last_event_id = test_message_id(1); // Group creation
+        let mut last_event_id = get_creation_message_id(&group_state); // Group creation
 
         // Create a chain of 50 permission events, each acknowledging the previous
         for i in 1..=50u8 {
             let event = GroupActivityEvent::new_assign_role(
-                IdentityRef::Key(bob_key.public_key()),
+                IdentityType::Main,
                 if i % 2 == 0 {
                     GroupRole::Admin
                 } else {
@@ -923,7 +964,12 @@ mod edge_cases_and_error_handling {
             let timestamp = 1000 + (i as u64 * 10);
 
             group_state
-                .apply_event(&event, event_id, alice_key.public_key(), timestamp)
+                .apply_event(
+                    event,
+                    event_id,
+                    IdentityRef::Key(alice_key.public_key()),
+                    timestamp,
+                )
                 .unwrap();
             last_event_id = event_id;
         }
@@ -946,6 +992,8 @@ mod edge_cases_and_error_handling {
 
 #[cfg(test)]
 mod performance_and_snapshots {
+    use crate::identity::IdentityType;
+
     use super::*;
 
     #[test]
@@ -965,7 +1013,12 @@ mod performance_and_snapshots {
             let timestamp = 1000 + (i as u64 * 10);
 
             group_state
-                .apply_event(&event, event_id, alice_key.public_key(), timestamp)
+                .apply_event(
+                    event,
+                    event_id,
+                    IdentityRef::Key(alice_key.public_key()),
+                    timestamp,
+                )
                 .unwrap();
         }
 
@@ -999,7 +1052,12 @@ mod performance_and_snapshots {
             let timestamp = 1000 + (i as u64 * 10);
 
             group_state
-                .apply_event(&event, event_id, alice_key.public_key(), timestamp)
+                .apply_event(
+                    event,
+                    event_id,
+                    IdentityRef::Key(alice_key.public_key()),
+                    timestamp,
+                )
                 .unwrap();
         }
 
@@ -1017,25 +1075,26 @@ mod performance_and_snapshots {
         let (mut group_state, alice_key, bob_key, _) = create_test_group_with_members();
 
         // Create events to build history
+        let creation_message_id = get_creation_message_id(&group_state);
         for i in 1..=200u8 {
             let event = if i % 20 == 0 {
                 // Every 20th event is a permission change
                 GroupActivityEvent::new_assign_role(
-                    IdentityRef::Key(bob_key.public_key()),
+                    IdentityType::Main,
                     if i % 40 == 0 {
                         GroupRole::Admin
                     } else {
                         GroupRole::Member
                     },
-                    test_message_id(1), // Simplified acknowledgments
-                    test_message_id(3), // Charlie's join
+                    creation_message_id, // Simplified acknowledgments
+                    test_message_id(3),  // Charlie's join
                 )
             } else {
                 // Regular name updates
                 GroupActivityEvent::new_update_group(
                     vec![GroupInfoUpdate::Name(format!("Name {}", i))],
-                    test_message_id(1),
-                    test_message_id(1),
+                    creation_message_id,
+                    creation_message_id,
                 )
             };
 
@@ -1043,7 +1102,12 @@ mod performance_and_snapshots {
             let timestamp = 1000 + (i as u64 * 10);
 
             group_state
-                .apply_event(&event, event_id, alice_key.public_key(), timestamp)
+                .apply_event(
+                    event,
+                    event_id,
+                    IdentityRef::Key(alice_key.public_key()),
+                    timestamp,
+                )
                 .unwrap();
         }
 
@@ -1051,7 +1115,7 @@ mod performance_and_snapshots {
         assert!(!group_state.group_state_snapshots.is_empty());
 
         // Verify current state is correct
-        assert_eq!(group_state.name, "Name 200");
+        assert_eq!(group_state.group_info.name, "Name 200");
         assert_eq!(group_state.version, 203); // Initial + 2 joins + 200 updates
 
         // Verify Bob's final role (200 % 40 != 0, so should be Member from event 180)

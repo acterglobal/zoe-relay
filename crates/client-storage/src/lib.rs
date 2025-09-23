@@ -12,7 +12,7 @@ pub use error::{Result, StorageError};
 pub use sqlite::SqliteMessageStorage;
 pub use storage::{
     BlobStorage, BlobUploadStatus, MessageQuery, MessageStorage, RelaySyncStatus, StateNamespace,
-    StateStorage, StorageConfig, StorageStats, SubscriptionState,
+    StateStorage, StorageConfig, StorageStats,
 };
 
 // Storage factory for creating appropriate storage implementations

@@ -9,7 +9,8 @@ use futures::{Stream, StreamExt};
 use zoe_wire_protocol::{Filter, KeyId, MessageFull, PqxdhEncryptedContent, Tag};
 
 use super::{PqxdhProtocolState, PqxdhSessionId, Result};
-use crate::{pqxdh::PqxdhError, services::MessagesManagerTrait};
+use crate::pqxdh::PqxdhError;
+use zoe_state_machine::messages::MessagesManagerTrait;
 
 pub struct PqxdhMessageListener<U> {
     inner: Pin<Box<dyn futures::Stream<Item = U> + Send>>,

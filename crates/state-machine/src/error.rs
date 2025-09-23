@@ -47,6 +47,9 @@ pub enum GroupError {
 
     #[error("Message full error: {0}")]
     MessageFullError(#[from] MessageFullError),
+
+    #[error("Message manager error: {0}")]
+    MessageError(String),
 }
 
 pub type GroupResult<T> = Result<T, GroupError>;

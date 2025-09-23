@@ -4,6 +4,7 @@
 //! used across all event types.
 
 use crate::group::app::GroupEvent;
+use crate::identity::IdentityType;
 use forward_compatible_enum::ForwardCompatibleEnum;
 use serde::{Deserialize, Serialize};
 use zoe_wire_protocol::MessageId;
@@ -26,7 +27,7 @@ use super::tasks::*;
 /// actor, timestamp, and group_id come from the wire-protocol Message envelope.
 /// Parent relationships are stored as fields within the content objects themselves.
 #[derive(Debug, Clone, PartialEq, ForwardCompatibleEnum)]
-pub enum DgoActivityEvent {
+pub enum DgoActivityEventContent {
     // === Text Content Events (10-19) ===
     /// Create a new text block
     #[discriminant(10)]
@@ -210,66 +211,99 @@ pub struct ObjectCore {
     pub parent_id: Option<MessageId>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DgoActivityEvent {
+    identity: IdentityType,
+    content: DgoActivityEventContent,
+}
+
+impl DgoActivityEvent {
+    /// Create a new DGO activity event with identity and content
+    pub fn new(identity: IdentityType, content: DgoActivityEventContent) -> Self {
+        Self { identity, content }
+    }
+
+    /// Get the identity type for this event
+    pub fn identity(&self) -> &IdentityType {
+        &self.identity
+    }
+
+    /// Get the event content
+    pub fn content(&self) -> &DgoActivityEventContent {
+        &self.content
+    }
+
+    /// Construct an IdentityRef from the event's identity and a verifying key
+    pub fn identity_ref(
+        &self,
+        verifying_key: &zoe_wire_protocol::VerifyingKey,
+    ) -> crate::identity::IdentityRef {
+        self.identity.to_identity_ref(verifying_key.clone())
+    }
+}
+
 impl GroupEvent for DgoActivityEvent {
     fn applies_to(&self) -> Option<Vec<MessageId>> {
-        match self {
+        match &self.content {
             // Text block events
-            DgoActivityEvent::CreateTextBlock { .. } => {
+            DgoActivityEventContent::CreateTextBlock { .. } => {
                 // For create events, we return None to indicate this creates a new model
                 None
             }
-            DgoActivityEvent::UpdateTextBlock { target_id, .. } => Some(vec![*target_id]),
+            DgoActivityEventContent::UpdateTextBlock { target_id, .. } => Some(vec![*target_id]),
 
             // Calendar events
-            DgoActivityEvent::CreateCalendarEvent { .. } => None,
-            DgoActivityEvent::UpdateCalendarEvent { target_id, .. } => Some(vec![*target_id]),
+            DgoActivityEventContent::CreateCalendarEvent { .. } => None,
+            DgoActivityEventContent::UpdateCalendarEvent { target_id, .. } => {
+                Some(vec![*target_id])
+            }
 
             // Task events
-            DgoActivityEvent::CreateTaskList { .. } => None,
-            DgoActivityEvent::UpdateTaskList { target_id, .. } => Some(vec![*target_id]),
-            DgoActivityEvent::CreateTask { .. } => None,
-            DgoActivityEvent::UpdateTask { target_id, .. } => Some(vec![*target_id]),
+            DgoActivityEventContent::CreateTaskList { .. } => None,
+            DgoActivityEventContent::UpdateTaskList { target_id, .. } => Some(vec![*target_id]),
+            DgoActivityEventContent::CreateTask { .. } => None,
+            DgoActivityEventContent::UpdateTask { target_id, .. } => Some(vec![*target_id]),
 
             // Comment events (would affect parent + create comment)
-            DgoActivityEvent::AddComment { target_id, .. } => Some(vec![*target_id]),
-            DgoActivityEvent::UpdateComment { target_id, .. } => Some(vec![*target_id]),
+            DgoActivityEventContent::AddComment { target_id, .. } => Some(vec![*target_id]),
+            DgoActivityEventContent::UpdateComment { target_id, .. } => Some(vec![*target_id]),
 
             // Reaction events (would affect parent)
-            DgoActivityEvent::AddReaction { target_id, .. } => Some(vec![*target_id]),
+            DgoActivityEventContent::AddReaction { target_id, .. } => Some(vec![*target_id]),
 
             // RSVP events (would affect parent) - TODO: Add when RSVP events exist
-            // DgoActivityEvent::AddRsvp { target_id, .. } => Some(vec![*target_id]),
+            // DgoActivityEventContent::AddRsvp { target_id, .. } => Some(vec![*target_id]),
 
             // Admin events
-            DgoActivityEvent::CreateDgoSettings { .. } => None,
-            DgoActivityEvent::UpdateDgoSettings { target_id, .. } => Some(vec![*target_id]),
-            DgoActivityEvent::Redact { target_id, .. } => Some(vec![*target_id]),
+            DgoActivityEventContent::CreateDgoSettings { .. } => None,
+            DgoActivityEventContent::UpdateDgoSettings { target_id, .. } => Some(vec![*target_id]),
+            DgoActivityEventContent::Redact { target_id, .. } => Some(vec![*target_id]),
 
             // Calendar RSVP events
-            DgoActivityEvent::RsvpCalendarEvent { target_id, .. } => Some(vec![*target_id]),
+            DgoActivityEventContent::RsvpCalendarEvent { target_id, .. } => Some(vec![*target_id]),
 
             // Task assignment events
-            DgoActivityEvent::SelfAssignTask { target_id, .. } => Some(vec![*target_id]),
-            DgoActivityEvent::UnassignTask { target_id, .. } => Some(vec![*target_id]),
+            DgoActivityEventContent::SelfAssignTask { target_id, .. } => Some(vec![*target_id]),
+            DgoActivityEventContent::UnassignTask { target_id, .. } => Some(vec![*target_id]),
 
             // Reaction removal events
-            DgoActivityEvent::RemoveReaction { target_id, .. } => Some(vec![*target_id]),
+            DgoActivityEventContent::RemoveReaction { target_id, .. } => Some(vec![*target_id]),
 
             // Attachment events
-            DgoActivityEvent::AddAttachment { target_id, .. } => Some(vec![*target_id]),
-            DgoActivityEvent::RemoveAttachment { target_id, .. } => Some(vec![*target_id]),
+            DgoActivityEventContent::AddAttachment { target_id, .. } => Some(vec![*target_id]),
+            DgoActivityEventContent::RemoveAttachment { target_id, .. } => Some(vec![*target_id]),
 
             // Read status events
-            DgoActivityEvent::MarkRead { target_id, .. } => Some(vec![*target_id]),
+            DgoActivityEventContent::MarkRead { target_id, .. } => Some(vec![*target_id]),
 
             // Unknown events
-            DgoActivityEvent::Unknown { .. } => None,
+            DgoActivityEventContent::Unknown { .. } => None,
         }
     }
 
     fn acknowledgment(&self) -> Option<crate::group::app::Acknowledgment> {
-        // For now, DGO events don't use acknowledgments
-        // This can be extended in the future for permission-changing DGO operations
+        // DGO events typically don't require acknowledgments since they're app-level events
+        // Only group-level permission-changing events require dual acknowledgments
         None
     }
 }
@@ -303,7 +337,7 @@ mod tests {
 
     #[test]
     fn test_dgo_activity_event_text_block_postcard() {
-        let event = DgoActivityEvent::CreateTextBlock {
+        let event = DgoActivityEventContent::CreateTextBlock {
             content: CreateTextBlockContent {
                 title: "My Text Block".to_string(),
                 description: Some("Rich text content".to_string()),
@@ -318,7 +352,7 @@ mod tests {
 
     #[test]
     fn test_dgo_activity_event_calendar_postcard() {
-        let event = DgoActivityEvent::CreateCalendarEvent {
+        let event = DgoActivityEventContent::CreateCalendarEvent {
             content: CreateCalendarEventContent {
                 title: "Team Meeting".to_string(),
                 description: Some("Weekly team sync".to_string()),
@@ -343,7 +377,7 @@ mod tests {
 
     #[test]
     fn test_dgo_activity_event_task_postcard() {
-        let event = DgoActivityEvent::CreateTask {
+        let event = DgoActivityEventContent::CreateTask {
             content: CreateTaskContent {
                 title: "Fix bug #123".to_string(),
                 description: Some("Critical bug in user authentication".to_string()),
@@ -366,7 +400,7 @@ mod tests {
 
     #[test]
     fn test_dgo_activity_event_comment_postcard() {
-        let event = DgoActivityEvent::AddComment {
+        let event = DgoActivityEventContent::AddComment {
             target_id: MessageId::from_bytes([3; 32]),
             content: AddCommentContent {
                 comment: "This looks great! 👍".to_string(),
@@ -382,7 +416,7 @@ mod tests {
 
     #[test]
     fn test_dgo_activity_event_reaction_postcard() {
-        let event = DgoActivityEvent::AddReaction {
+        let event = DgoActivityEventContent::AddReaction {
             target_id: MessageId::from_bytes([6; 32]),
             reaction: ReactionContent {
                 reaction_type: "❤️".to_string(),
@@ -394,7 +428,7 @@ mod tests {
 
     #[test]
     fn test_dgo_activity_event_rsvp_postcard() {
-        let event = DgoActivityEvent::RsvpCalendarEvent {
+        let event = DgoActivityEventContent::RsvpCalendarEvent {
             target_id: MessageId::from_bytes([9; 32]),
             response: RsvpResponse::Yes,
         };
@@ -405,7 +439,7 @@ mod tests {
 
     #[test]
     fn test_dgo_activity_event_redact_postcard() {
-        let event = DgoActivityEvent::Redact {
+        let event = DgoActivityEventContent::Redact {
             target_id: MessageId::from_bytes([10; 32]),
             reason: Some("Inappropriate content".to_string()),
         };
@@ -415,7 +449,7 @@ mod tests {
 
     #[test]
     fn test_dgo_activity_event_unknown_postcard() {
-        let event = DgoActivityEvent::Unknown {
+        let event = DgoActivityEventContent::Unknown {
             discriminant: 999,
             data: vec![1, 2, 3, 4, 5],
         };

@@ -17,7 +17,6 @@ pub mod api; // needs to be public for flutter rust bridge
 
 // the different features
 mod builder;
-mod group;
 mod info;
 mod secret;
 

@@ -1,7 +1,8 @@
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
-use zoe_wire_protocol::{Hash, KeyId, MessageFilters, MessageFull, MessageId, Tag, VerifyingKey};
+use zoe_state_machine::messages::SubscriptionState;
+use zoe_wire_protocol::{Hash, KeyId, MessageFull, MessageId, Tag, VerifyingKey};
 
 #[cfg(any(feature = "mock", test))]
 use mockall::{automock, predicate::*};
@@ -77,66 +78,6 @@ pub struct StorageStats {
     pub oldest_message_timestamp: Option<u64>,
     /// Newest message timestamp
     pub newest_message_timestamp: Option<u64>,
-}
-
-/// Serializable subscription state that can be persisted and restored.
-///
-/// This state contains all the information needed to restore a MessagesManager
-/// to its previous subscription state after a connection restart.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
-pub struct SubscriptionState {
-    /// The latest stream height we've received
-    /// Used to resume from the correct position after reconnection
-    pub latest_stream_height: Option<String>,
-
-    /// Combined subscription filters accumulated over time
-    /// This represents the union of all active subscriptions
-    pub current_filters: MessageFilters,
-}
-
-impl SubscriptionState {
-    /// Create a new empty subscription state
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Create subscription state with initial filters
-    pub fn with_filters(filters: MessageFilters) -> Self {
-        Self {
-            latest_stream_height: None,
-            current_filters: filters,
-        }
-    }
-
-    /// Add filters to the combined state
-    pub fn add_filters(&mut self, new_filters: &[zoe_wire_protocol::Filter]) {
-        let current_filters = self.current_filters.filters.get_or_insert_with(Vec::new);
-        for filter in new_filters {
-            if !current_filters.contains(filter) {
-                current_filters.push(filter.clone());
-            }
-        }
-    }
-
-    /// Remove filters from the combined state
-    pub fn remove_filters(&mut self, filters_to_remove: &[zoe_wire_protocol::Filter]) {
-        if let Some(current_filters) = self.current_filters.filters.as_mut() {
-            current_filters.retain(|f| !filters_to_remove.contains(f));
-            if current_filters.is_empty() {
-                self.current_filters.filters = None;
-            }
-        }
-    }
-
-    /// Update the latest stream height
-    pub fn set_stream_height(&mut self, height: String) {
-        self.latest_stream_height = Some(height);
-    }
-
-    /// Check if we have any active filters
-    pub fn has_active_filters(&self) -> bool {
-        !self.current_filters.is_empty()
-    }
 }
 
 /// Sync status for a message on a specific relay
