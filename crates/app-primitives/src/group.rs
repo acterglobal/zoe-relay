@@ -3,7 +3,6 @@ pub mod events;
 pub mod states;
 #[cfg(test)]
 mod tests {
-    use super::app::Acknowledgment;
     use super::events::join_info::GroupJoinInfo;
     use super::events::key_info::GroupKeyInfo;
     use super::events::permissions::{GroupAction, GroupPermissions, Permission};
@@ -13,7 +12,6 @@ mod tests {
     use crate::metadata::Metadata;
     use crate::relay::RelayEndpoint;
     use std::net::{IpAddr, Ipv4Addr, SocketAddr};
-    use zoe_wire_protocol::MessageId;
     use zoe_wire_protocol::{Ed25519VerifyingKey, KeyPair, VerifyingKey};
 
     fn create_test_verifying_key() -> VerifyingKey {
@@ -372,10 +370,6 @@ mod tests {
                 GroupInfoUpdate::KeyInfo(create_test_group_key_info(blake3::Hash::from([1u8; 32]))),
                 GroupInfoUpdate::SetMetadata(Vec::new()),
             ],
-            acknowledgment: Acknowledgment::new(
-                MessageId::from_bytes([1; 32]),
-                MessageId::from_bytes([1; 32]),
-            ),
         };
 
         let serialized = postcard::to_stdvec(&event).expect("Failed to serialize");

@@ -6,21 +6,23 @@
 use serde::{Deserialize, Serialize};
 use zoe_wire_protocol::MessageId;
 
+use crate::group::events::GroupId;
+
 use super::core::{GroupParam, ModelParam, ObjectListIndex, SectionIndex, SpecialListsIndex};
 
 /// Typed keys for different types of indexes in the DGO system
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub enum IndexKey {
     /// Activity history for a specific group
-    GroupHistory(MessageId),
+    GroupHistory(GroupId),
     /// All models within a specific group
-    GroupModels(MessageId),
+    GroupModels(GroupId),
     /// Activity history for a specific object
     ObjectHistory(MessageId),
     /// Objects within a section of a group (e.g., all calendar events)
     Section(SectionIndex),
     /// Objects within a section of a specific group
-    GroupSection(MessageId, SectionIndex),
+    GroupSection(GroupId, SectionIndex),
     /// Related objects for a specific object (e.g., comments on a task)
     ObjectList(MessageId, ObjectListIndex),
     /// Special cross-group indexes
@@ -39,43 +41,43 @@ pub enum ExecuteReference {
     /// Reference to a specific model/object
     Model(MessageId),
     /// Reference to a specific group
-    Group(MessageId),
+    Group(GroupId),
     /// Reference to group-level account data
-    GroupAccountData(MessageId, String),
+    GroupAccountData(GroupId, String),
     /// Reference to model-specific parameters
     ModelParam(MessageId, ModelParam),
     /// Reference to group-specific parameters
-    GroupParam(MessageId, GroupParam),
+    GroupParam(GroupId, GroupParam),
     /// Reference to user account data
     AccountData(String),
     /// Reference to a specific model type
     ModelType(String),
 }
 
-impl ExecuteReference {
-    /// Convert this reference to a storage key for persistence
-    pub fn as_storage_key(&self) -> String {
-        match self {
-            ExecuteReference::Model(message_id) => format!("dgo::{message_id}"),
-            ExecuteReference::ModelParam(message_id, param) => {
-                format!("{message_id}::{param:?}")
-            }
-            ExecuteReference::GroupParam(group_id, param) => {
-                format!("{group_id}::{param:?}")
-            }
-            ExecuteReference::ModelType(model_type) => model_type.clone(),
-            ExecuteReference::Index(IndexKey::Special(SpecialListsIndex::InvitedTo)) => {
-                "global_invited".to_owned() // Special case for global invitations
-            }
-            ExecuteReference::Index(index_key) => format!("index::{index_key:?}"),
-            ExecuteReference::Group(group_id) => format!("group::{group_id}"),
-            ExecuteReference::GroupAccountData(group_id, key) => {
-                format!("group_data::{group_id}::{key}")
-            }
-            ExecuteReference::AccountData(key) => format!("account_data::{key}"),
-        }
-    }
-}
+// impl ExecuteReference {
+//     /// Convert this reference to a storage key for persistence
+//     // pub fn as_storage_key(&self) -> String {
+//     //     match self {
+//     //         ExecuteReference::Model(message_id) => format!("dgo::{message_id}"),
+//     //         ExecuteReference::ModelParam(message_id, param) => {
+//     //             format!("{message_id}::{param:?}")
+//     //         }
+//     //         ExecuteReference::GroupParam(group_id, param) => {
+//     //             format!("{group_id}::{param:?}")
+//     //         }
+//     //         ExecuteReference::ModelType(model_type) => model_type.clone(),
+//     //         ExecuteReference::Index(IndexKey::Special(SpecialListsIndex::InvitedTo)) => {
+//     //             "global_invited".to_owned() // Special case for global invitations
+//     //         }
+//     //         ExecuteReference::Index(index_key) => format!("index::{index_key:?}"),
+//     //         ExecuteReference::Group(group_id) => format!("group::{group_id}"),
+//     //         ExecuteReference::GroupAccountData(group_id, key) => {
+//     //             format!("group_data::{group_id}::{key}")
+//     //         }
+//     //         ExecuteReference::AccountData(key) => format!("account_data::{key}"),
+//     //     }
+//     // }
+// }
 
 // Conversion implementations for common types
 

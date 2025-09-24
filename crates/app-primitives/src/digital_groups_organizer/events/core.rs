@@ -3,7 +3,7 @@
 //! This module contains the main `DgoActivityEvent` enum and shared data structures
 //! used across all event types.
 
-use crate::group::app::GroupEvent;
+use crate::group::app::ExecutorEvent;
 use crate::identity::IdentityType;
 use forward_compatible_enum::ForwardCompatibleEnum;
 use serde::{Deserialize, Serialize};
@@ -177,25 +177,34 @@ pub enum DgoActivityEventContent {
         /// Optional reason for redaction
         reason: Option<String>,
     },
-
-    /// Create new DGO permission settings for the group
-    #[discriminant(61)]
-    CreateDgoSettings {
-        /// Permission settings content
-        content: CreateDgoSettingsContent,
-    },
-
-    /// Update DGO permission settings for the group
-    #[discriminant(62)]
-    UpdateDgoSettings {
-        /// ID of the permission settings to update
-        target_id: MessageId,
-        /// Permission setting updates to apply
-        content: UpdateDgoSettingsContent,
-    },
-
     /// Unknown event type for forward compatibility
     Unknown { discriminant: u32, data: Vec<u8> },
+}
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DgoSettingsEvent {
+    identity: IdentityType,
+    /// Reference to the group state message for permission validation
+    /// This allows the app event to be validated against the group permissions
+    /// that were active at the time this reference was created.
+    group_state_reference: MessageId,
+    /// Permission settings content changes
+    content: UpdateDgoSettingsContent,
+}
+
+impl ExecutorEvent for DgoSettingsEvent {
+    fn applies_to(&self) -> Option<Vec<MessageId>> {
+        None
+    }
+    fn group_state_reference(&self) -> MessageId {
+        self.group_state_reference
+    }
+}
+
+impl DgoSettingsEvent {
+    /// Get the content of this settings event
+    pub fn content(&self) -> &UpdateDgoSettingsContent {
+        &self.content
+    }
 }
 
 /// Core object data that all Zoe objects share
@@ -215,12 +224,24 @@ pub struct ObjectCore {
 pub struct DgoActivityEvent {
     identity: IdentityType,
     content: DgoActivityEventContent,
+    /// Reference to the group state message for permission validation
+    /// This allows the app event to be validated against the group permissions
+    /// that were active at the time this reference was created.
+    group_state_reference: MessageId,
 }
 
 impl DgoActivityEvent {
-    /// Create a new DGO activity event with identity and content
-    pub fn new(identity: IdentityType, content: DgoActivityEventContent) -> Self {
-        Self { identity, content }
+    /// Create a new DGO activity event with identity, content, and group state reference
+    pub fn new(
+        identity: IdentityType,
+        content: DgoActivityEventContent,
+        group_state_reference: MessageId,
+    ) -> Self {
+        Self {
+            identity,
+            content,
+            group_state_reference,
+        }
     }
 
     /// Get the identity type for this event
@@ -240,9 +261,14 @@ impl DgoActivityEvent {
     ) -> crate::identity::IdentityRef {
         self.identity.to_identity_ref(verifying_key.clone())
     }
+
+    /// Get the group state reference for permission validation
+    pub fn get_group_state_reference(&self) -> MessageId {
+        self.group_state_reference
+    }
 }
 
-impl GroupEvent for DgoActivityEvent {
+impl ExecutorEvent for DgoActivityEvent {
     fn applies_to(&self) -> Option<Vec<MessageId>> {
         match &self.content {
             // Text block events
@@ -275,8 +301,6 @@ impl GroupEvent for DgoActivityEvent {
             // DgoActivityEventContent::AddRsvp { target_id, .. } => Some(vec![*target_id]),
 
             // Admin events
-            DgoActivityEventContent::CreateDgoSettings { .. } => None,
-            DgoActivityEventContent::UpdateDgoSettings { target_id, .. } => Some(vec![*target_id]),
             DgoActivityEventContent::Redact { target_id, .. } => Some(vec![*target_id]),
 
             // Calendar RSVP events
@@ -301,10 +325,8 @@ impl GroupEvent for DgoActivityEvent {
         }
     }
 
-    fn acknowledgment(&self) -> Option<crate::group::app::Acknowledgment> {
-        // DGO events typically don't require acknowledgments since they're app-level events
-        // Only group-level permission-changing events require dual acknowledgments
-        None
+    fn group_state_reference(&self) -> MessageId {
+        self.group_state_reference
     }
 }
 
@@ -445,6 +467,30 @@ mod tests {
         };
 
         test_postcard_roundtrip(&event).expect("Redact event should serialize/deserialize");
+    }
+
+    #[test]
+    fn test_dgo_activity_event_group_state_reference() {
+        use crate::identity::IdentityType;
+        use zoe_wire_protocol::MessageId;
+
+        let group_state_ref = MessageId::from_bytes([1; 32]);
+        let event = DgoActivityEvent::new(
+            IdentityType::Main,
+            DgoActivityEventContent::CreateTextBlock {
+                content: crate::digital_groups_organizer::events::content::CreateTextBlockContent {
+                    title: "Test".to_string(),
+                    description: Some("Test content".to_string()),
+                    icon: None,
+                    parent_id: None,
+                },
+            },
+            group_state_ref,
+        );
+
+        // Test the group state reference is correctly stored and retrieved
+        assert_eq!(event.get_group_state_reference(), group_state_ref);
+        assert_eq!(event.group_state_reference(), group_state_ref);
     }
 
     #[test]

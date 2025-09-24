@@ -657,10 +657,7 @@ mod tests {
 
         for feature_type in feature_types {
             test_postcard_roundtrip(&feature_type).unwrap_or_else(|_| {
-                panic!(
-                    "DgoFeatureType::{:?} should serialize/deserialize",
-                    feature_type
-                )
+                panic!("DgoFeatureType::{feature_type:?} should serialize/deserialize")
             });
         }
     }
@@ -681,10 +678,7 @@ mod tests {
 
         for operation_type in operation_types {
             test_postcard_roundtrip(&operation_type).unwrap_or_else(|_| {
-                panic!(
-                    "DgoOperationType::{:?} should serialize/deserialize",
-                    operation_type
-                )
+                panic!("DgoOperationType::{operation_type:?} should serialize/deserialize")
             });
         }
     }

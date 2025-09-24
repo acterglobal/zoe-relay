@@ -153,6 +153,6 @@ pub enum InMemoryStoreError {
 
 impl From<InMemoryStoreError> for ExecutorError {
     fn from(val: InMemoryStoreError) -> Self {
-        ExecutorError::StorageError(format!("{}", val))
+        ExecutorError::StorageError(format!("{val}"))
     }
 }

@@ -3,7 +3,7 @@
 //! This module provides the TextBlock model - a simple rich text content
 //! object within encrypted groups.
 
-use crate::identity::IdentityRef;
+use crate::{group::events::GroupId, identity::IdentityRef};
 use serde::{Deserialize, Serialize};
 use zoe_wire_protocol::MessageId;
 
@@ -77,8 +77,8 @@ impl TextBlock {
     }
 
     /// Get the group this model belongs to
-    pub fn group_id(&self) -> MessageId {
-        self.meta.group_id
+    pub fn group_id(&self) -> &GroupId {
+        &self.meta.group_id
     }
 
     /// Get the actor who created this model
@@ -99,10 +99,10 @@ impl DgoAppModel for TextBlock {
         vec![
             // Add to text blocks section
             IndexKey::Section(SectionIndex::TextBlocks),
-            IndexKey::GroupSection(self.group_id(), SectionIndex::TextBlocks),
+            IndexKey::GroupSection(self.group_id().clone(), SectionIndex::TextBlocks),
             // Add to object and group history
             IndexKey::ObjectHistory(self.model_id()),
-            IndexKey::GroupHistory(self.group_id()),
+            IndexKey::GroupHistory(self.group_id().clone()),
             IndexKey::AllHistory,
         ]
     }

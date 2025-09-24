@@ -305,7 +305,7 @@ impl<M: MessagesManagerTrait + Clone + 'static> GroupManager<M> {
                     message,
                     stream_height: _,
                 } => {
-                    if let Err(e) = self.handle_incoming_message(*message).await {
+                    if let Err(e) = self.handle_incoming_message_internal(*message).await {
                         tracing::error!(
                             error = ?e,
                             "Failed to process incoming message"
@@ -363,7 +363,7 @@ impl<M: MessagesManagerTrait + Clone + 'static> GroupManager<M> {
         // Process all catch-up messages
         while let Some(message_full) = catch_up_stream.next().await {
             let message_id = *message_full.id();
-            if let Err(e) = self.handle_incoming_message(*message_full).await {
+            if let Err(e) = self.handle_incoming_message_internal(*message_full).await {
                 tracing::error!(
                     error = ?e,
                     message_id = ?message_id,
@@ -422,13 +422,81 @@ impl<M: MessagesManagerTrait + Clone + 'static> GroupService for GroupManager<M>
         })
     }
 
-    async fn verify_acknowledgment(
+    async fn group_state_at_message(
         &self,
-        _group_id: &GroupId,
-        _acknowledgment: zoe_app_primitives::group::app::Acknowledgment,
-    ) -> GroupResult<bool> {
-        // FIXME: actually do something here
-        Ok(true)
+        group_id: &GroupId,
+        message_id: zoe_wire_protocol::MessageId,
+    ) -> Option<zoe_app_primitives::group::states::GroupState> {
+        let mut groups = self.groups.write().await;
+        let group_session = groups.get_mut(group_id)?;
+
+        // If message_id is all zeros, return current state
+        if message_id == MessageId::from([0u8; 32]) {
+            return Some(group_session.state.clone());
+        }
+
+        // Use the group state's reconstruction method to get state at specific message
+        group_session
+            .state
+            .lookup_group_state_at_message(message_id)
+    }
+
+    async fn get_permission_context(
+        &self,
+        group_id: &GroupId,
+        actor_identity_ref: &zoe_app_primitives::identity::IdentityRef,
+        group_state_reference: zoe_wire_protocol::MessageId,
+        app_id: &zoe_app_primitives::protocol::AppProtocolVariant,
+    ) -> (
+        zoe_app_primitives::group::events::roles::GroupRole,
+        zoe_wire_protocol::MessageId,
+    ) {
+        let mut groups = self.groups.write().await;
+
+        // Default to Member role and initial group creation message ID
+        let mut actor_role = zoe_app_primitives::group::events::roles::GroupRole::Member;
+        let mut app_state_message_id = MessageId::from([0u8; 32]); // Default fallback
+
+        if let Some(group_session) = groups.get_mut(group_id) {
+            // Get the initial group creation message ID from the event history
+            let initial_message_id = group_session
+                .state
+                .event_history
+                .first()
+                .copied()
+                .unwrap_or(MessageId::from([0u8; 32]));
+
+            // Optimize for the common case: if referencing current state (all zeros), use current state directly
+            if group_state_reference == MessageId::from([0u8; 32]) {
+                actor_role = group_session
+                    .state
+                    .members
+                    .get(actor_identity_ref)
+                    .map(|member| member.role.clone())
+                    .unwrap_or(zoe_app_primitives::group::events::roles::GroupRole::Member);
+
+                // For current state, use the initial group creation message ID as baseline
+                app_state_message_id = initial_message_id;
+            } else {
+                // For historical state, use the reconstruction method
+                if let Some(group_state) = group_session
+                    .state
+                    .lookup_group_state_at_message(group_state_reference)
+                {
+                    actor_role = group_state
+                        .get_actor_role_at_message(actor_identity_ref, group_state_reference)
+                        .unwrap_or(zoe_app_primitives::group::events::roles::GroupRole::Member);
+
+                    // Get the last app settings message ID before the group state reference
+                    // If no app settings found, use the initial group creation message ID
+                    app_state_message_id = group_state
+                        .get_app_settings_message_before(app_id, group_state_reference)
+                        .unwrap_or(initial_message_id);
+                }
+            }
+        }
+
+        (actor_role, app_state_message_id)
     }
 }
 
@@ -578,7 +646,13 @@ impl<M: MessagesManagerTrait + Clone + 'static> GroupManager<M> {
     }
 
     /// Process an incoming group event message
-    async fn handle_incoming_message(&self, message_full: MessageFull) -> GroupResult<()> {
+    #[cfg(test)]
+    pub async fn handle_incoming_message(&self, message_full: MessageFull) -> GroupResult<()> {
+        self.handle_incoming_message_internal(message_full).await
+    }
+
+    /// Process an incoming group event message (internal implementation)
+    async fn handle_incoming_message_internal(&self, message_full: MessageFull) -> GroupResult<()> {
         // Extract the encrypted payload from the message
         let message_id = *message_full.id();
         let Message::MessageV0(message) = message_full.message();
@@ -663,13 +737,13 @@ impl<M: MessagesManagerTrait + Clone + 'static> GroupManager<M> {
                     }
                     GroupStateError::StateTransition(msg) => GroupError::StateTransition(msg),
                     GroupStateError::InvalidOperation(msg) => GroupError::InvalidOperation(msg),
-                    GroupStateError::InvalidAcknowledgment(msg) => {
-                        GroupError::InvalidOperation(msg)
-                    }
                     GroupStateError::HistoryRewriteAttempt(msg) => {
                         GroupError::InvalidOperation(msg)
                     }
                     GroupStateError::InvalidSender(msg) => GroupError::InvalidOperation(msg),
+                    GroupStateError::InvalidAcknowledgment(msg) => {
+                        GroupError::InvalidOperation(msg)
+                    }
                 })?;
             group_session.clone()
         };
@@ -943,14 +1017,13 @@ pub fn create_role_update_event_for_testing(
     role: GroupRole,
 ) -> GroupActivityEvent {
     // Use placeholder acknowledgments for testing
-    let placeholder_ack = MessageId::from_bytes([0; 32]);
+    let _placeholder_ack = MessageId::from_bytes([0; 32]);
 
     // Create a role assignment event with acknowledgments
-    use zoe_app_primitives::group::events::{Acknowledgment, GroupActivityEvent};
+    use zoe_app_primitives::group::events::GroupActivityEvent;
     GroupActivityEvent::AssignRole {
         target: zoe_app_primitives::identity::IdentityType::Main,
         role,
-        acknowledgment: Acknowledgment::new(placeholder_ack, placeholder_ack),
     }
 }
 

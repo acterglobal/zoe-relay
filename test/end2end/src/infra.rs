@@ -226,7 +226,7 @@ mod tests {
     use serial_test::serial;
     use zoe_app_primitives::{
         group::{
-            app::GroupEvent,
+            app::ExecutorEvent,
             events::{GroupActivityEvent, roles::GroupRole},
         },
         identity::IdentityInfo,

@@ -203,7 +203,7 @@ mod tests {
         );
 
         println!("✅ Decoupled architecture test passed!");
-        println!("   - DGO executor available: {}", is_available);
-        println!("   - Unknown executor available: {}", is_unknown_available);
+        println!("   - DGO executor available: {is_available}");
+        println!("   - Unknown executor available: {is_unknown_available}");
     }
 }

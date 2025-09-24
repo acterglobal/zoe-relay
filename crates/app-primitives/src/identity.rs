@@ -9,7 +9,6 @@ use flutter_rust_bridge::frb;
 /// Unified identity type - either a raw VerifyingKey or a VerifyingKey + alias
 ///
 /// This is the fundamental identity concept in the system.
-
 #[cfg_attr(feature = "frb-api", frb(opaque, ignore_all))]
 #[derive(Debug, Clone, Hash, PartialEq, PartialOrd, Eq, Ord, Serialize, Deserialize)]
 pub enum IdentityRef {

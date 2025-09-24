@@ -3,12 +3,19 @@
 //! This module defines the core trait that all DGO models must implement,
 //! along with error handling and permission types.
 
-use crate::identity::IdentityRef;
+use crate::{
+    digital_groups_organizer::events::admin::{DgoFeatureSettings, DgoFeatureType},
+    group::events::GroupId,
+    identity::IdentityRef,
+};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use zoe_wire_protocol::MessageId;
 
-use crate::group::events::{permissions::Permission, roles::GroupRole};
+use crate::group::events::{
+    permissions::{GroupPermissions, Permission},
+    roles::GroupRole,
+};
 
 /// Operations that can be performed on DGO models
 ///
@@ -70,8 +77,8 @@ use crate::digital_groups_organizer::{
 pub struct ActivityMeta {
     /// Unique identifier for this activity (Blake3 hash of encrypted message)
     pub activity_id: MessageId,
-    /// The encrypted group this activity belongs to (from Channel tag)
-    pub group_id: MessageId,
+    /// The group this activity belongs to (from Channel tag)
+    pub group_id: GroupId,
     /// The cryptographic identity that created this activity (from message.sender)
     pub actor: IdentityRef,
     /// Unix timestamp when this activity was created (from message.when)
@@ -117,52 +124,40 @@ pub type DgoResult<T> = Result<T, DgoModelError>;
 pub struct DgoPermissionContext {
     /// The actor attempting the operation
     pub actor: IdentityRef,
-    /// The group context
-    pub group_id: MessageId,
+    /// The message ID this permission context is based on
+    pub message_id: MessageId,
     /// The actor's role in this group
     pub actor_role: GroupRole,
-    /// Whether the actor is confirmed as a group member
-    pub is_group_member: bool,
     /// The group's current DGO permission settings (event-sourced model)
-    pub dgo_settings: crate::digital_groups_organizer::events::admin::DgoFeatureSettings,
+    pub dgo_settings: DgoFeatureSettings,
+    /// the current group permissions we know of
+    pub group_settings: GroupPermissions,
 }
 
-// Implement the generic PermissionContext trait for DgoPermissionContext
-impl crate::group::app::PermissionContext for DgoPermissionContext {
-    fn actor(&self) -> &IdentityRef {
-        &self.actor
-    }
-
-    fn group_id(&self) -> MessageId {
-        self.group_id
-    }
-
-    fn is_group_member(&self) -> bool {
-        self.is_group_member
-    }
-}
+// Implement the generic AppPermissionState trait for DgoPermissionContext
+impl crate::group::app::AppPermissionState for DgoPermissionContext {}
 
 impl DgoPermissionContext {
     /// Create a new permission context
     pub fn new(
         actor: IdentityRef,
-        group_id: MessageId,
+        message_id: MessageId,
         actor_role: GroupRole,
-        is_group_member: bool,
-        dgo_settings: crate::digital_groups_organizer::events::admin::DgoFeatureSettings,
+        dgo_settings: DgoFeatureSettings,
+        group_settings: GroupPermissions,
     ) -> Self {
         Self {
             actor,
-            group_id,
+            message_id,
             actor_role,
-            is_group_member,
             dgo_settings,
+            group_settings,
         }
     }
 
     /// Check if the actor has the required permission level
     pub fn has_permission(&self, required: Permission) -> bool {
-        self.is_group_member && self.actor_role.has_permission(&required)
+        self.actor_role.has_permission(&required)
     }
 
     /// Check if the actor can perform admin-level operations
@@ -179,13 +174,9 @@ impl DgoPermissionContext {
     /// using the granular permission system
     pub fn can_perform_dgo_operation(
         &self,
-        feature_type: crate::digital_groups_organizer::events::admin::DgoFeatureType,
+        feature_type: DgoFeatureType,
         operation: &DgoOperation,
     ) -> bool {
-        if !self.is_group_member {
-            return false;
-        }
-
         self.dgo_settings.can_perform_operation(
             feature_type,
             operation.to_operation_type(),
@@ -204,10 +195,6 @@ impl DgoPermissionContext {
         operation: &DgoOperation,
         creator: &IdentityRef,
     ) -> bool {
-        if !self.is_group_member {
-            return false;
-        }
-
         // Creator can always update/delete their own content
         if matches!(operation, DgoOperation::Update | DgoOperation::Delete)
             && self.actor == *creator
@@ -346,7 +333,7 @@ mod tests {
 
         for operation in operations {
             test_postcard_roundtrip(&operation).unwrap_or_else(|_| {
-                panic!("DgoOperation::{:?} should serialize/deserialize", operation)
+                panic!("DgoOperation::{operation:?} should serialize/deserialize")
             });
         }
     }
@@ -378,32 +365,32 @@ mod tests {
             IdentityRef::Key(member_key),
             group_id,
             GroupRole::Member,
-            true,
             default_settings.clone(),
+            GroupPermissions::default(),
         );
 
         let moderator_context = DgoPermissionContext::new(
             IdentityRef::Key(moderator_key),
             group_id,
             GroupRole::Moderator,
-            true,
             default_settings.clone(),
+            GroupPermissions::default(),
         );
 
         let admin_context = DgoPermissionContext::new(
             IdentityRef::Key(admin_key),
             group_id,
             GroupRole::Admin,
-            true,
             default_settings.clone(),
+            GroupPermissions::default(),
         );
 
         let owner_context = DgoPermissionContext::new(
             IdentityRef::Key(owner_key),
             group_id,
             GroupRole::Owner,
-            true,
             default_settings,
+            GroupPermissions::default(),
         );
 
         // Test text block permissions with default settings
@@ -491,8 +478,8 @@ mod tests {
             IdentityRef::Key(creator_key.clone()),
             group_id,
             GroupRole::Member,
-            true,
             settings.clone(),
+            GroupPermissions::default(),
         );
 
         // Other user context (member role)
@@ -500,8 +487,8 @@ mod tests {
             IdentityRef::Key(other_key),
             group_id,
             GroupRole::Member,
-            true,
-            settings,
+            settings.clone(),
+            GroupPermissions::default(),
         );
 
         // Test creator override for update operations
@@ -571,33 +558,38 @@ mod tests {
         let non_member_key = non_member_keypair.public_key();
         let group_id = MessageId::from_bytes([10; 32]);
 
-        let settings = DgoFeatureSettings::default();
+        // Use highly moderated settings where members have limited permissions
+        let settings = DgoFeatureSettings::highly_moderated();
 
-        // Non-member context (even with admin role, not a group member)
-        let non_member_context = DgoPermissionContext::new(
+        // Test with a low-privilege member (Member role) in a highly moderated group
+        let low_privilege_context = DgoPermissionContext::new(
             IdentityRef::Key(non_member_key.clone()),
             group_id,
-            GroupRole::Admin, // High role but not a member
-            false,            // Not a group member
+            GroupRole::Member, // Member role with limited permissions
             settings,
+            GroupPermissions::default(),
         );
 
-        // Non-members cannot perform any operations, regardless of role
+        // In highly moderated settings, members cannot create text blocks (requires moderator+)
         assert!(
-            !non_member_context
+            !low_privilege_context
                 .can_perform_dgo_operation(DgoFeatureType::TextBlock, &DgoOperation::Create)
         );
 
+        // But members can still comment and react
         assert!(
-            !non_member_context
+            low_privilege_context
                 .can_perform_dgo_operation(DgoFeatureType::TextBlock, &DgoOperation::Comment)
         );
 
+        // Test that a member cannot update content created by someone else (requires admin+)
+        let other_creator_key =
+            zoe_wire_protocol::KeyPair::generate(&mut rand::rngs::OsRng).public_key();
         assert!(
-            !non_member_context.can_perform_dgo_operation_with_creator_override(
+            !low_privilege_context.can_perform_dgo_operation_with_creator_override(
                 DgoFeatureType::TextBlock,
                 &DgoOperation::Update,
-                &IdentityRef::Key(non_member_key.clone())
+                &IdentityRef::Key(other_creator_key)
             )
         );
     }

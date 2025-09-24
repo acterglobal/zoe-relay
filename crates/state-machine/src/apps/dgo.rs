@@ -7,14 +7,15 @@
 use async_trait::async_trait;
 use zoe_wire_protocol::MessageId;
 
+use crate::execution::ExecutorResult;
+use zoe_app_primitives::group::events::{GroupId, roles::GroupRole};
+
 use zoe_app_primitives::{
     digital_groups_organizer::{
-        events::core::{DgoActivityEvent, DgoActivityEventContent},
+        events::core::DgoActivityEvent,
         models::{
-            any::AnyDgoModel,
-            core::{ActivityMeta, DgoPermissionContext},
+            any::AnyDgoModel, core::DgoPermissionContext,
             permission_settings::DgoPermissionSettings,
-            text_block::TextBlock,
         },
     },
     group::app::GroupStateModel,
@@ -42,6 +43,7 @@ pub struct DgoFactory;
 #[async_trait]
 impl ModelFactory for DgoFactory {
     type Model = AnyDgoModel;
+    type SettingsModel = DgoPermissionSettings;
     type Error = ExecutorError;
 
     async fn load_state<T: ExecutorStore>(_store: &T) -> Result<Box<Self>, Self::Error> {
@@ -49,81 +51,37 @@ impl ModelFactory for DgoFactory {
         Ok(Box::new(DgoFactory))
     }
 
-    async fn create_model_from_event(
-        &self,
-        event: &<Self::Model as GroupStateModel>::Event,
-        activity_id: MessageId,
-    ) -> Result<Option<Self::Model>, Self::Error> {
-        match event.content() {
-            DgoActivityEventContent::CreateTextBlock { content } => {
-                // Create a new text block from the event
-                let meta = ActivityMeta {
-                    activity_id,
-                    group_id: MessageId::from([0u8; 32]), // TODO: Get from context
-                    actor: IdentityRef::Key(
-                        zoe_wire_protocol::KeyPair::generate(&mut rand::thread_rng()).public_key(),
-                    ), // TODO: Get from context
-                    timestamp: std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap()
-                        .as_secs(),
-                };
-
-                let text_block = TextBlock {
-                    meta,
-                    title: content.title.clone(),
-                    description: content.description.clone(),
-                    icon: content.icon.clone(),
-                    parent_id: content.parent_id,
-                    version: 1,
-                };
-
-                Ok(Some(AnyDgoModel::from_text_block(text_block)))
-            }
-
-            DgoActivityEventContent::CreateDgoSettings { content } => {
-                // Create new permission settings from the event
-                let meta = ActivityMeta {
-                    activity_id,
-                    group_id: MessageId::from([0u8; 32]), // TODO: Get from context
-                    actor: IdentityRef::Key(
-                        zoe_wire_protocol::KeyPair::generate(&mut rand::thread_rng()).public_key(),
-                    ), // TODO: Get from context
-                    timestamp: std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap()
-                        .as_secs(),
-                };
-
-                let settings = content.initial_settings.clone()
-                    .unwrap_or_else(zoe_app_primitives::digital_groups_organizer::events::admin::DgoFeatureSettings::default);
-                let permission_settings = DgoPermissionSettings::new(meta, settings);
-                Ok(Some(AnyDgoModel::from_permission_settings(
-                    permission_settings,
-                )))
-            }
-
-            _ => {
-                // Other events don't create new models
-                Ok(None)
-            }
-        }
-    }
-
     async fn load_permission_context(
         &self,
         actor: &IdentityRef,
-        group_id: MessageId,
-    ) -> Result<Option<<Self::Model as GroupStateModel>::PermissionContext>, Self::Error> {
-        // For now, create a basic permission context
-        // In a real implementation, this would query the group state
-        Ok(Some(DgoPermissionContext::new(
+        _group_id: GroupId,
+        actor_role: GroupRole,
+        state_message_id: MessageId,
+    ) -> ExecutorResult<Option<<Self::Model as GroupStateModel>::PermissionState>> {
+        // Create DGO-specific permission context with provided parameters
+        // The group state has already looked up the actor's role and app state message
+
+        // Load DGO-specific settings from the app state at state_message_id
+        // TODO: Implement actual DGO settings loading from app state
+        // For now, use default settings as the app state loading infrastructure is not yet complete
+        let dgo_settings = zoe_app_primitives::digital_groups_organizer::events::admin::DgoFeatureSettings::default();
+
+        // Load group permissions - use default for now
+        // TODO: Load actual group permissions from the group state at the state message ID
+        let group_permissions =
+            zoe_app_primitives::group::events::permissions::GroupPermissions::default();
+
+        // Create the DGO permission context with all the required information
+        // This context now has the correct actor role from historical lookup
+        let permission_context = DgoPermissionContext::new(
             actor.clone(),
-            group_id,
-            zoe_app_primitives::group::events::roles::GroupRole::Member, // Default role
-            true, // Assume member
-            zoe_app_primitives::digital_groups_organizer::events::admin::DgoFeatureSettings::default(),
-        )))
+            state_message_id,
+            actor_role, // This is now the actual role from group state historical lookup
+            dgo_settings,
+            group_permissions,
+        );
+
+        Ok(Some(permission_context))
     }
 
     async fn add_to_index<K, E>(
@@ -214,7 +172,13 @@ impl ModelFactory for DgoFactory {
 #[cfg(test)]
 mod tests {
     use super::*;
+
     use zoe_app_primitives::digital_groups_organizer::events::content::CreateTextBlockContent;
+    use zoe_app_primitives::digital_groups_organizer::events::core::DgoActivityEventContent;
+    use zoe_app_primitives::digital_groups_organizer::indexing::keys::ExecuteReference;
+    use zoe_app_primitives::digital_groups_organizer::models::core::ActivityMeta;
+
+    use zoe_wire_protocol::MessageId;
 
     #[tokio::test]
     async fn test_dgo_executor_create_text_block() {
@@ -232,14 +196,31 @@ mod tests {
         let event = DgoActivityEvent::new(
             zoe_app_primitives::identity::IdentityType::Main,
             event_content,
+            zoe_wire_protocol::MessageId::from([1u8; 32]), // Mock group state reference
         );
 
         let activity_id = MessageId::from([1u8; 32]);
+        let group_meta = ActivityMeta {
+            activity_id,
+            group_id: vec![0u8; 32],
+            actor: IdentityRef::Key(
+                zoe_wire_protocol::KeyPair::generate(&mut rand::thread_rng()).public_key(),
+            ),
+            timestamp: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs(),
+        };
 
-        let refs = executor.execute_event(event, activity_id).await.unwrap();
+        let actor_role = zoe_app_primitives::group::events::roles::GroupRole::Member;
+        let state_message_id = zoe_wire_protocol::MessageId::from([2u8; 32]);
+        let refs = executor
+            .execute_event(event, group_meta, actor_role, state_message_id)
+            .await
+            .unwrap();
 
         assert_eq!(refs.len(), 1);
-        assert_eq!(refs[0], activity_id);
+        assert_eq!(refs[0], ExecuteReference::Model(activity_id));
 
         // Verify the model was created
         let model: Option<AnyDgoModel> = executor.store().load(activity_id).await.unwrap();
@@ -274,11 +255,30 @@ mod tests {
         let create_event = DgoActivityEvent::new(
             zoe_app_primitives::identity::IdentityType::Main,
             create_event_content,
+            zoe_wire_protocol::MessageId::from([1u8; 32]), // Mock group state reference
         );
 
         let model_id = MessageId::from([1u8; 32]);
+        let create_group_meta = ActivityMeta {
+            activity_id: model_id,
+            group_id: vec![0u8; 32],
+            actor: IdentityRef::Key(
+                zoe_wire_protocol::KeyPair::generate(&mut rand::thread_rng()).public_key(),
+            ),
+            timestamp: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs(),
+        };
+        let actor_role = zoe_app_primitives::group::events::roles::GroupRole::Member;
+        let state_message_id = zoe_wire_protocol::MessageId::from([2u8; 32]);
         executor
-            .execute_event(create_event, model_id)
+            .execute_event(
+                create_event,
+                create_group_meta,
+                actor_role.clone(),
+                state_message_id,
+            )
             .await
             .unwrap();
 
@@ -293,16 +293,33 @@ mod tests {
         let update_event = DgoActivityEvent::new(
             zoe_app_primitives::identity::IdentityType::Main,
             update_event_content,
+            zoe_wire_protocol::MessageId::from([1u8; 32]), // Mock group state reference
         );
 
         let activity_id = MessageId::from([2u8; 32]);
+        let update_group_meta = ActivityMeta {
+            activity_id,
+            group_id: vec![0u8; 32],
+            actor: IdentityRef::Key(
+                zoe_wire_protocol::KeyPair::generate(&mut rand::thread_rng()).public_key(),
+            ),
+            timestamp: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs(),
+        };
         let refs = executor
-            .execute_event(update_event, activity_id)
+            .execute_event(
+                update_event,
+                update_group_meta,
+                actor_role,
+                state_message_id,
+            )
             .await
             .unwrap();
 
         assert_eq!(refs.len(), 1);
-        assert_eq!(refs[0], model_id);
+        assert_eq!(refs[0], ExecuteReference::Model(model_id));
 
         // Verify the model was updated
         let model: AnyDgoModel = executor.store().load(model_id).await.unwrap().unwrap();
