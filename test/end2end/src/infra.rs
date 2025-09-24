@@ -16,6 +16,7 @@ use tempfile::TempDir;
 use tokio::time::timeout;
 use tracing::{debug, info, warn};
 use zoe_app_primitives::file::CompressionConfig;
+use zoe_app_primitives::identity::IdentityRef;
 use zoe_blob_store::service::BlobServiceImpl;
 use zoe_client::Client;
 use zoe_client::{RelayClient, RelayClientBuilder};
@@ -874,9 +875,15 @@ mod tests {
             create_group_result.group_id
         );
         assert_eq!(group_session.state.members.len(), 1);
-        assert!(group_session.state.is_member(&client1.public_key()));
+        assert!(
+            group_session
+                .state
+                .is_member(&IdentityRef::Key(client1.public_key()))
+        );
         assert_eq!(
-            group_session.state.member_role(&client1.public_key()),
+            group_session
+                .state
+                .member_role(&IdentityRef::Key(client1.public_key())),
             Some(GroupRole::Owner)
         );
         assert_eq!(
@@ -906,7 +913,11 @@ mod tests {
                         create_group_result.group_id
                     );
                     assert_eq!(group_session.state.members.len(), 2);
-                    assert!(group_session.state.is_member(&client2.public_key()));
+                    assert!(
+                        group_session
+                            .state
+                            .is_member(&IdentityRef::Key(client2.public_key()))
+                    );
 
                     return Ok(());
                 }

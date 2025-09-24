@@ -6,6 +6,7 @@ mod join_group_tests {
     use mockall::predicate::*;
     use std::sync::Arc;
     use zoe_app_primitives::group::events::settings::GroupSettings;
+    use zoe_app_primitives::identity::IdentityRef;
     use zoe_wire_protocol::{Filter, KeyPair, PublishResult};
 
     fn create_test_keys() -> (KeyPair, KeyPair) {
@@ -106,7 +107,11 @@ mod join_group_tests {
             Some("A test group for unit tests".to_string())
         );
         assert_eq!(bob_session.state.members.len(), 1); // Only Alice is a member initially
-        assert!(bob_session.state.is_member(&alice_key.public_key()));
+        assert!(
+            bob_session
+                .state
+                .is_member(&IdentityRef::Key(alice_key.public_key()))
+        );
 
         // Verify installed apps were preserved
         assert_eq!(bob_session.state.group_info.installed_apps.len(), 1);

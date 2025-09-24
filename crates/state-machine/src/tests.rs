@@ -7,6 +7,7 @@ use std::sync::Arc;
 use zoe_app_primitives::group::events::GroupActivityEvent;
 use zoe_app_primitives::group::events::roles::GroupRole;
 use zoe_app_primitives::group::events::settings::GroupSettings;
+use zoe_app_primitives::identity::IdentityRef;
 use zoe_wire_protocol::{Content, Filter, KeyPair, PublishResult, Tag};
 
 fn create_test_keys() -> (KeyPair, KeyPair) {
@@ -84,9 +85,9 @@ async fn test_create_encrypted_group() {
         Some("A test group for unit tests".to_string())
     );
     assert_eq!(group_state.members.len(), 1);
-    assert!(group_state.is_member(&alice_key.public_key()));
+    assert!(group_state.is_member(&IdentityRef::Key(alice_key.public_key())));
     assert_eq!(
-        group_state.member_role(&alice_key.public_key()),
+        group_state.member_role(&IdentityRef::Key(alice_key.public_key())),
         Some(GroupRole::Owner)
     );
 }
@@ -121,7 +122,7 @@ async fn test_process_encrypted_create_group_event() {
         Some("A test group for unit tests".to_string())
     );
     assert_eq!(group_state.members.len(), 1);
-    assert!(group_state.is_member(&alice_key.public_key()));
+    assert!(group_state.is_member(&IdentityRef::Key(alice_key.public_key())));
 }
 
 #[tokio::test]
@@ -153,7 +154,7 @@ async fn test_encrypted_group_activity() {
     // Verify Alice is still the only member (she was already the creator)
     let group_state = dga.group_state(&result.group_id).await.unwrap();
     assert_eq!(group_state.members.len(), 1);
-    assert!(group_state.is_member(&alice_key.public_key()));
+    assert!(group_state.is_member(&IdentityRef::Key(alice_key.public_key())));
 }
 
 #[tokio::test]
@@ -184,17 +185,19 @@ async fn test_new_member_via_activity() {
             metadata: vec![],
         });
     // Alice processes Bob's message
-    dga.publish_group_event(&result.group_id, bob_activity, &bob_key)
+    let bob_message = dga
+        .publish_group_event(&result.group_id, bob_activity, &bob_key)
         .await
         .unwrap();
+    dga.handle_incoming_message(bob_message).await.unwrap();
 
     // Verify Bob is now an active member
     let group_state = dga.group_state(&result.group_id).await.unwrap();
     assert_eq!(group_state.members.len(), 2);
-    assert!(group_state.is_member(&alice_key.public_key()));
-    assert!(group_state.is_member(&bob_key.public_key()));
+    assert!(group_state.is_member(&IdentityRef::Key(alice_key.public_key())));
+    assert!(group_state.is_member(&IdentityRef::Key(bob_key.public_key())));
     assert_eq!(
-        group_state.member_role(&bob_key.public_key()),
+        group_state.member_role(&IdentityRef::Key(bob_key.public_key())),
         Some(GroupRole::Member)
     );
 }
@@ -221,22 +224,26 @@ async fn test_role_update() {
             metadata: vec![],
         });
 
-    dga.publish_group_event(&result.group_id, bob_activity, &bob_key)
+    let bob_message = dga
+        .publish_group_event(&result.group_id, bob_activity, &bob_key)
         .await
         .unwrap();
+    dga.handle_incoming_message(bob_message).await.unwrap();
 
     // Alice promotes Bob to Admin
     let role_update: GroupActivityEvent =
         create_role_update_event_for_testing(bob_key.public_key(), GroupRole::Admin);
 
-    dga.publish_group_event(&result.group_id, role_update, &alice_key)
+    let role_message = dga
+        .publish_group_event(&result.group_id, role_update, &alice_key)
         .await
         .unwrap();
+    dga.handle_incoming_message(role_message).await.unwrap();
 
     // Verify Bob's role was updated
     let group_state = dga.group_state(&result.group_id).await.unwrap();
     assert_eq!(
-        group_state.member_role(&bob_key.public_key()),
+        group_state.member_role(&IdentityRef::Key(bob_key.public_key())),
         Some(GroupRole::Admin)
     );
 }
@@ -251,20 +258,17 @@ async fn test_leave_group_event() {
     let result = dga.create_group(create_group, &alice_key).await.unwrap();
 
     // Add Bob as a member first
-    let bob_dga = create_test_group_manager().await;
-    let group_session = dga.group_session(&result.group_id).await.unwrap();
-    bob_dga
-        .add_group_session(result.group_id.clone(), group_session)
-        .await;
     let bob_activity =
         GroupActivityEvent::SetIdentity(zoe_app_primitives::identity::IdentityInfo {
             display_name: "bob_user".to_string(),
             metadata: vec![],
         });
-    bob_dga
+    // Publish Bob's SetIdentity event and process it to update the group state
+    let bob_message = dga
         .publish_group_event(&result.group_id, bob_activity, &bob_key)
         .await
         .unwrap();
+    dga.handle_incoming_message(bob_message).await.unwrap();
 
     // Verify Bob is a member
     assert_eq!(
@@ -281,15 +285,17 @@ async fn test_leave_group_event() {
         message: Some("Thanks for having me!".to_string()),
     };
 
-    dga.publish_group_event(&result.group_id, leave_event, &bob_key)
+    let leave_message = dga
+        .publish_group_event(&result.group_id, leave_event, &bob_key)
         .await
         .unwrap();
+    dga.handle_incoming_message(leave_message).await.unwrap();
 
     // Verify Bob is no longer in active members
     let group_state = dga.group_state(&result.group_id).await.unwrap();
     assert_eq!(group_state.members.len(), 1);
-    assert!(!group_state.is_member(&bob_key.public_key()));
-    assert!(group_state.is_member(&alice_key.public_key()));
+    assert!(!group_state.is_member(&IdentityRef::Key(bob_key.public_key())));
+    assert!(group_state.is_member(&IdentityRef::Key(alice_key.public_key())));
 }
 
 #[tokio::test]
@@ -363,15 +369,15 @@ async fn test_permission_denied_for_role_update() {
     let group_state_bob = bob_dga.group_state(&result.group_id).await.unwrap();
     println!(
         "Bob's role (from Alice's view): {:?}",
-        group_state_alice.member_role(&bob_key.public_key())
+        group_state_alice.member_role(&IdentityRef::Key(bob_key.public_key()))
     );
     println!(
         "Bob's role (from Bob's view): {:?}",
-        group_state_bob.member_role(&bob_key.public_key())
+        group_state_bob.member_role(&IdentityRef::Key(bob_key.public_key()))
     );
     println!(
         "Alice's role: {:?}",
-        group_state_alice.member_role(&alice_key.public_key())
+        group_state_alice.member_role(&IdentityRef::Key(alice_key.public_key()))
     );
     println!(
         "Group permissions: {:?}",
@@ -680,9 +686,15 @@ async fn test_join_group_end_to_end() {
         Some("A test group for join functionality".to_string())
     );
     assert_eq!(bob_session.state.members.len(), 1); // Only Alice is a member initially
-    assert!(bob_session.state.is_member(&alice_key.public_key()));
+    assert!(
+        bob_session
+            .state
+            .is_member(&IdentityRef::Key(alice_key.public_key()))
+    );
     assert_eq!(
-        bob_session.state.member_role(&alice_key.public_key()),
+        bob_session
+            .state
+            .member_role(&IdentityRef::Key(alice_key.public_key())),
         Some(GroupRole::Owner)
     );
 

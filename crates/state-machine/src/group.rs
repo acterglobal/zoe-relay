@@ -6,6 +6,7 @@ use zoe_app_primitives::{
         events::{GroupInfo, GroupInitialization, settings::GroupSettings},
         states::GroupState,
     },
+    identity::IdentityRef,
     metadata::Metadata,
     protocol::{AppProtocolVariant, InstalledApp},
 };
@@ -164,7 +165,7 @@ impl<M: MessagesManagerTrait + Clone + 'static> GroupManager<M> {
         let groups = self.groups.read().await;
         groups
             .get(group_id)
-            .map(|session| session.state.is_member(user))
+            .map(|session| session.state.is_member(&IdentityRef::Key(user.clone())))
             .unwrap_or(false)
     }
 
@@ -173,7 +174,7 @@ impl<M: MessagesManagerTrait + Clone + 'static> GroupManager<M> {
         let groups = self.groups.read().await;
         groups
             .get(group_id)
-            .and_then(|session| session.state.member_role(user).clone())
+            .and_then(|session| session.state.member_role(&IdentityRef::Key(user.clone())))
     }
 
     /// Subscribe to messages for a specific group
@@ -450,6 +451,7 @@ impl<M: MessagesManagerTrait + Clone + 'static> GroupService for GroupManager<M>
     ) -> (
         zoe_app_primitives::group::events::roles::GroupRole,
         zoe_wire_protocol::MessageId,
+        zoe_app_primitives::group::events::permissions::GroupPermissions,
     ) {
         let mut groups = self.groups.write().await;
 
@@ -496,7 +498,14 @@ impl<M: MessagesManagerTrait + Clone + 'static> GroupService for GroupManager<M>
             }
         }
 
-        (actor_role, app_state_message_id)
+        // Get group permissions from the group state (always present)
+        let group_permissions = if let Some(group_session) = groups.get(group_id) {
+            group_session.state.group_info.settings.permissions.clone()
+        } else {
+            zoe_app_primitives::group::events::permissions::GroupPermissions::default()
+        };
+
+        (actor_role, app_state_message_id, group_permissions)
     }
 }
 
@@ -1013,7 +1022,7 @@ impl CreateGroupBuilder {
 ///
 #[cfg(test)]
 pub fn create_role_update_event_for_testing(
-    _member: VerifyingKey,
+    member: VerifyingKey,
     role: GroupRole,
 ) -> GroupActivityEvent {
     // Use placeholder acknowledgments for testing
@@ -1022,7 +1031,7 @@ pub fn create_role_update_event_for_testing(
     // Create a role assignment event with acknowledgments
     use zoe_app_primitives::group::events::GroupActivityEvent;
     GroupActivityEvent::AssignRole {
-        target: zoe_app_primitives::identity::IdentityType::Main,
+        target: IdentityRef::Key(member),
         role,
     }
 }

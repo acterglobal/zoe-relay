@@ -25,7 +25,7 @@ type Notifiers<E> = Arc<RwLock<HashMap<String, broadcast::Sender<E>>>>;
 #[derive(Debug, Clone)]
 pub struct GenericExecutor<TFactory, TStore>
 where
-    TFactory: ModelFactory + Send + Sync + 'static,
+    TFactory: ModelFactory<TStore> + Send + Sync + 'static,
     TStore: ExecutorStore + Send + Sync + 'static,
 {
     factory: TFactory,
@@ -35,11 +35,11 @@ where
 
 impl<TFactory, TStore> GenericExecutor<TFactory, TStore>
 where
-    TFactory: ModelFactory + Send + Sync + 'static,
+    TFactory: ModelFactory<TStore> + Send + Sync + 'static,
     TStore: ExecutorStore + Send + Sync + 'static,
     TFactory::SettingsModel: GroupStateModel<
-        PermissionState = <<TFactory as ModelFactory>::Model as GroupStateModel>::PermissionState,
-        ExecutiveKey = <<TFactory as ModelFactory>::Model as GroupStateModel>::ExecutiveKey,
+        PermissionState = <<TFactory as ModelFactory<TStore>>::Model as GroupStateModel>::PermissionState,
+        ExecutiveKey = <<TFactory as ModelFactory<TStore>>::Model as GroupStateModel>::ExecutiveKey,
     >,
 {
     /// Create a new generic executor
@@ -132,6 +132,7 @@ where
                 group_meta.group_id.clone(),
                 actor_role.clone(),
                 state_message_id,
+                zoe_app_primitives::group::events::permissions::GroupPermissions::default(), // Settings events use default permissions for now
             )
             .await
             .map_err(|e| {
@@ -170,6 +171,7 @@ where
         group_meta: ActivityMeta,
         actor_role: GroupRole,
         state_message_id: MessageId,
+        group_permissions: Option<zoe_app_primitives::group::events::permissions::GroupPermissions>,
     ) -> Result<Vec<<TFactory::Model as GroupStateModel>::ExecutiveKey>, ExecutorError> {
         let permission_context = self
             .factory
@@ -178,6 +180,7 @@ where
                 group_meta.group_id.clone(),
                 actor_role.clone(),
                 state_message_id,
+                group_permissions.unwrap_or_default(),
             )
             .await
             .map_err(|e| {
@@ -415,13 +418,13 @@ mod tests {
     struct MockFactory;
 
     #[async_trait]
-    impl ModelFactory for MockFactory {
+    impl<T: ExecutorStore> ModelFactory<T> for MockFactory {
         type Model = MockModel;
         type SettingsModel = MockSettingsModel; // Separate settings model
         type Error = ExecutorError;
 
-        async fn load_state<T: ExecutorStore>(_store: &T) -> Result<Box<Self>, Self::Error> {
-            Ok(Box::new(MockFactory))
+        async fn load_state(_store: &T) -> Result<Self, Self::Error> {
+            Ok(MockFactory)
         }
 
         async fn load_permission_context(
@@ -430,6 +433,7 @@ mod tests {
             group_id: zoe_app_primitives::group::events::GroupId,
             _actor_role: zoe_app_primitives::group::events::roles::GroupRole,
             _state_message_id: MessageId,
+            _group_permissions: zoe_app_primitives::group::events::permissions::GroupPermissions,
         ) -> Result<Option<MockPermissionContext>, Self::Error> {
             Ok(Some(MockPermissionContext {
                 actor: actor.clone(),
@@ -504,7 +508,7 @@ mod tests {
         let actor_role = zoe_app_primitives::group::events::roles::GroupRole::Member;
         let state_message_id = MessageId::from([2u8; 32]);
         let refs = executor
-            .execute_event(event, group_meta, actor_role, state_message_id)
+            .execute_event(event, group_meta, actor_role, state_message_id, None)
             .await
             .unwrap();
         assert!(!refs.is_empty());

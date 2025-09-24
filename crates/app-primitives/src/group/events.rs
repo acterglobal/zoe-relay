@@ -1,4 +1,7 @@
-use crate::protocol::{AppProtocolVariant, InstalledApp};
+use crate::{
+    identity::IdentityRef,
+    protocol::{AppProtocolVariant, InstalledApp},
+};
 use forward_compatible_enum::ForwardCompatibleEnum;
 use serde::{Deserialize, Serialize};
 use zoe_wire_protocol::ChannelId;
@@ -6,10 +9,7 @@ use zoe_wire_protocol::ChannelId;
 // GroupActivityEvent no longer implements any executor traits
 
 use super::events::{roles::GroupRole, settings::GroupSettings};
-use crate::{
-    identity::{IdentityInfo, IdentityType},
-    metadata::Metadata,
-};
+use crate::{identity::IdentityInfo, metadata::Metadata};
 
 pub mod join_info;
 pub mod key_info;
@@ -138,7 +138,7 @@ pub enum GroupActivityEvent {
     #[discriminant(14)]
     AssignRole {
         /// The identity to assign a role to
-        target: IdentityType,
+        target: IdentityRef,
         /// The new role to assign
         role: GroupRole,
     },
@@ -161,7 +161,7 @@ pub enum GroupActivityEvent {
     #[discriminant(15)]
     RemoveFromGroup {
         /// The identity to remove from the group
-        target: IdentityType,
+        target: IdentityRef,
     },
 
     /// Update app-specific settings for an installed application

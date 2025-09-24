@@ -14,13 +14,19 @@ use tokio::sync::RwLock;
 use tokio::task::JoinHandle;
 use zoe_app_primitives::{
     digital_groups_organizer::{events::core::DgoActivityEvent, models::core::ActivityMeta},
-    group::{app::ExecutorEvent, events::GroupId, states::GroupState},
+    group::{
+        app::ExecutorEvent,
+        events::{GroupId, permissions::GroupPermissions, roles::GroupRole},
+        states::GroupState,
+    },
+    identity::IdentityRef,
     protocol::{AppProtocolVariant, InstalledApp},
 };
-use zoe_wire_protocol::{ChannelId, Filter, MessageFull, MessageId};
+use zoe_wire_protocol::{ChaCha20Poly1305Content, ChannelId, Filter, MessageFull, MessageId};
+use zoe_wire_protocol::{Content, Message, StreamMessage, Tag};
 
 use crate::{
-    apps::dgo::DgoExecutor,
+    apps::dgo::{DgoExecutor, DgoFactory},
     error::{GroupError, GroupResult},
     execution::ExecutorStore,
     group::GroupDataUpdate,
@@ -103,21 +109,21 @@ pub trait GroupService: Send + Sync {
     async fn decrypt_app_message<T: DeserializeOwned>(
         &self,
         group_id: &GroupId,
-        encrypted_content: &zoe_wire_protocol::ChaCha20Poly1305Content,
+        encrypted_content: &ChaCha20Poly1305Content,
     ) -> GroupResult<T>;
 
     /// Get group state at a specific message ID for cross-channel validation
     async fn group_state_at_message(
         &self,
         group_id: &GroupId,
-        message_id: zoe_wire_protocol::MessageId,
+        message_id: MessageId,
     ) -> Option<GroupState>;
 
-    /// Get actor role and app state message ID for permission validation
+    /// Get actor role, app state message ID, and group permissions for permission validation
     ///
     /// This is a convenience function that optimizes the common case where
-    /// we need both the actor's role and the last app state message ID for
-    /// a specific group state reference and app combination.
+    /// we need the actor's role, the last app state message ID, and the group permissions
+    /// for a specific group state reference and app combination.
     ///
     /// # Arguments
     /// * `group_id` - The group to query
@@ -126,20 +132,18 @@ pub trait GroupService: Send + Sync {
     /// * `app_id` - The app protocol variant to get state for
     ///
     /// # Returns
-    /// A tuple of (actor_role, app_state_message_id). The actor_role defaults to Member
+    /// A tuple of (actor_role, app_state_message_id, group_permissions). The actor_role defaults to Member
     /// if the actor is not found in the group. The app_state_message_id is always the
     /// initial group creation message ID as the baseline, or the last app settings update
-    /// if one exists before the group state reference.
+    /// if one exists before the group state reference. The group_permissions are the current
+    /// group permissions from the group state (always present).
     async fn get_permission_context(
         &self,
         group_id: &GroupId,
-        actor_identity_ref: &zoe_app_primitives::identity::IdentityRef,
-        group_state_reference: zoe_wire_protocol::MessageId,
-        app_id: &zoe_app_primitives::protocol::AppProtocolVariant,
-    ) -> (
-        zoe_app_primitives::group::events::roles::GroupRole,
-        zoe_wire_protocol::MessageId,
-    );
+        actor_identity_ref: &IdentityRef,
+        group_state_reference: MessageId,
+        app_id: &AppProtocolVariant,
+    ) -> (GroupRole, MessageId, GroupPermissions);
 }
 
 /// Manages app-specific message processing, decoupled from group management
@@ -176,7 +180,7 @@ impl<
     /// Create a new AppManager
     pub async fn new(message_manager: Arc<M>, group_service: Arc<G>, store: S) -> Self {
         // Create DGO executor - always available at startup
-        let dgo_executor = Arc::new(DgoExecutor::new(crate::apps::dgo::DgoFactory, store));
+        let dgo_executor = Arc::new(DgoExecutor::new(DgoFactory::new(store.clone()), store));
 
         let current_states = group_service.current_group_states().await;
         let app_states = Arc::new(RwLock::new(
@@ -211,8 +215,6 @@ impl<
         let app_manager_clone = app_manager.clone();
 
         let task_handle = tokio::spawn(async move {
-            use zoe_wire_protocol::StreamMessage;
-
             loop {
                 tokio::select! {
                     notification = message_group_notifications.recv() => {
@@ -331,7 +333,7 @@ impl<
 
     /// Handle an incoming app message
     async fn handle_app_message(&self, message_full: MessageFull) -> GroupResult<()> {
-        use zoe_wire_protocol::{Content, Message};
+        use {Content, Message};
 
         let Message::MessageV0(message) = message_full.message();
         let activity_id = *message_full.id();
@@ -348,7 +350,7 @@ impl<
             .clone()
             .into_iter()
             .filter_map(|tag| match tag {
-                zoe_wire_protocol::Tag::Channel { id, .. } => Some(id),
+                Tag::Channel { id, .. } => Some(id),
                 _ => None,
             })
             .collect::<Vec<_>>();
@@ -380,8 +382,6 @@ impl<
         app_state: AppState,
         message_full: MessageFull,
     ) -> GroupResult<()> {
-        use zoe_wire_protocol::{Content, Message};
-
         let Message::MessageV0(message) = message_full.message();
         let activity_id = *message_full.id();
 
@@ -407,8 +407,8 @@ impl<
                 // Extract actor identity from the message envelope (not from the event)
                 let actor_identity_ref = dgo_event.identity_ref(&message.sender);
 
-                // Use the convenience function to get both actor role and app state message ID
-                let (actor_role, state_message_id) = self
+                // Use the convenience function to get actor role, app state message ID, and group permissions
+                let (actor_role, state_message_id, group_permissions) = self
                     .group_service
                     .get_permission_context(
                         &app_state.group_id,
@@ -427,7 +427,13 @@ impl<
 
                 // Execute through DGO executor with resolved permissions
                 self.dgo_executor
-                    .execute_event(dgo_event, group_meta, actor_role, state_message_id)
+                    .execute_event(
+                        dgo_event,
+                        group_meta,
+                        actor_role,
+                        state_message_id,
+                        Some(group_permissions),
+                    )
                     .await
                     .map_err(|e| {
                         GroupError::InvalidEvent(format!("Failed to execute DGO event: {e}"))
@@ -479,7 +485,7 @@ impl<
     pub async fn sync_with_group_channel(
         &self,
         group_id: &GroupId,
-        app_channel_id: &zoe_wire_protocol::ChannelId,
+        app_channel_id: &ChannelId,
     ) -> GroupResult<SyncResult> {
         tracing::info!(
             group_id = ?group_id,
@@ -558,7 +564,7 @@ impl<
     pub async fn validate_app_event_lazy<T>(
         &self,
         app_event: &T,
-        sender: &zoe_app_primitives::identity::IdentityRef,
+        sender: &IdentityRef,
         app_state: &AppState,
     ) -> GroupResult<()>
     where
@@ -602,7 +608,7 @@ impl<
     pub async fn reconstruct_app_state_from_valid_events(
         &self,
         group_id: &GroupId,
-        app_channel_id: &zoe_wire_protocol::ChannelId,
+        app_channel_id: &ChannelId,
         up_to_message: Option<MessageId>,
     ) -> GroupResult<ReconstructionResult> {
         tracing::info!(
@@ -654,7 +660,7 @@ impl<
     pub async fn resolve_app_event_conflicts(
         &self,
         group_id: &GroupId,
-        app_channel_id: &zoe_wire_protocol::ChannelId,
+        app_channel_id: &ChannelId,
         conflict_strategy: ConflictResolutionStrategy,
     ) -> GroupResult<ConflictResolutionResult> {
         tracing::info!(
@@ -695,6 +701,7 @@ mod tests {
     use crate::messages::MockMessagesManagerTrait;
     use std::sync::Arc;
     use zoe_app_primitives::protocol::default_dgo_app;
+    use zoe_wire_protocol::{KeyPair, PublishResult};
 
     #[derive(Clone)]
     struct MockGroupService;
@@ -713,7 +720,7 @@ mod tests {
         async fn decrypt_app_message<T: DeserializeOwned>(
             &self,
             _group_id: &GroupId,
-            _encrypted_content: &zoe_wire_protocol::ChaCha20Poly1305Content,
+            _encrypted_content: &ChaCha20Poly1305Content,
         ) -> GroupResult<T> {
             // Mock decryption - return a default value
             Err(GroupError::InvalidEvent(
@@ -724,7 +731,7 @@ mod tests {
         async fn group_state_at_message(
             &self,
             _group_id: &GroupId,
-            _message_id: zoe_wire_protocol::MessageId,
+            _message_id: MessageId,
         ) -> Option<GroupState> {
             // Mock implementation - return None for testing
             None
@@ -733,25 +740,23 @@ mod tests {
         async fn get_permission_context(
             &self,
             _group_id: &GroupId,
-            _actor_identity_ref: &zoe_app_primitives::identity::IdentityRef,
-            _group_state_reference: zoe_wire_protocol::MessageId,
-            _app_id: &zoe_app_primitives::protocol::AppProtocolVariant,
-        ) -> (
-            zoe_app_primitives::group::events::roles::GroupRole,
-            zoe_wire_protocol::MessageId,
-        ) {
+            _actor_identity_ref: &IdentityRef,
+            _group_state_reference: MessageId,
+            _app_id: &AppProtocolVariant,
+        ) -> (GroupRole, MessageId, GroupPermissions) {
             // Return default values for tests
             (
-                zoe_app_primitives::group::events::roles::GroupRole::Member,
-                zoe_wire_protocol::MessageId::from([0u8; 32]),
+                GroupRole::Member,
+                MessageId::from([0u8; 32]),
+                GroupPermissions::default(),
             )
         }
     }
 
     #[tokio::test]
     async fn test_app_manager_creation() {
+        use PublishResult;
         use mockall::predicate::function;
-        use zoe_wire_protocol::PublishResult;
 
         let mut mock_manager = MockMessagesManagerTrait::new();
 
@@ -803,8 +808,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_sync_with_group_channel() {
+        use PublishResult;
         use mockall::predicate::function;
-        use zoe_wire_protocol::PublishResult;
 
         let mut mock_manager = MockMessagesManagerTrait::new();
 
@@ -860,8 +865,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_validate_app_event_lazy() {
+        use PublishResult;
         use mockall::predicate::function;
-        use zoe_wire_protocol::PublishResult;
 
         let mut mock_manager = MockMessagesManagerTrait::new();
 
@@ -900,17 +905,17 @@ mod tests {
         // Create a mock app event
         #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
         struct MockExecutorEvent {
-            group_ref: zoe_wire_protocol::MessageId,
+            group_ref: MessageId,
         }
 
         impl zoe_app_primitives::group::app::ExecutorEvent for MockExecutorEvent {
-            fn group_state_reference(&self) -> zoe_wire_protocol::MessageId {
+            fn group_state_reference(&self) -> MessageId {
                 self.group_ref
             }
         }
 
         let app_event = MockExecutorEvent {
-            group_ref: zoe_wire_protocol::MessageId::from([3u8; 32]),
+            group_ref: MessageId::from([3u8; 32]),
         };
 
         let app_state = AppState {
@@ -918,9 +923,7 @@ mod tests {
             installed_app: default_dgo_app(),
         };
 
-        let sender = zoe_app_primitives::identity::IdentityRef::Key(
-            zoe_wire_protocol::KeyPair::generate(&mut rand::thread_rng()).public_key(),
-        );
+        let sender = IdentityRef::Key(KeyPair::generate(&mut rand::thread_rng()).public_key());
 
         // Test validation - should fail because MockGroupService returns None
         let result = app_manager
@@ -938,8 +941,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_reconstruct_app_state_from_valid_events() {
+        use PublishResult;
         use mockall::predicate::function;
-        use zoe_wire_protocol::PublishResult;
 
         let mut mock_manager = MockMessagesManagerTrait::new();
 
@@ -994,7 +997,6 @@ mod tests {
     #[tokio::test]
     async fn test_resolve_app_event_conflicts() {
         use mockall::predicate::function;
-        use zoe_wire_protocol::PublishResult;
 
         let mut mock_manager = MockMessagesManagerTrait::new();
 

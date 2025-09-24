@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
-use zoe_wire_protocol::{MessageFull, MessageId, VerifyingKey};
+use zoe_wire_protocol::{MessageFull, MessageId};
 
 use super::events::{
     GroupActivityEvent, GroupInfoUpdate, roles::GroupRole, settings::GroupSettings,
@@ -10,7 +10,7 @@ use crate::{
         GroupInfo,
         permissions::{GroupPermissions, Permission},
     },
-    identity::IdentityRef,
+    identity::{IdentityInfo, IdentityRef},
     metadata::Metadata,
     protocol::AppProtocolVariant,
 };
@@ -356,6 +356,8 @@ pub struct GroupMember {
     pub last_active: u64,
     /// Member-specific metadata using structured types
     pub metadata: Vec<Metadata>,
+    /// Member's display name
+    pub display_name: Option<String>,
 }
 
 /// The complete runtime state of a distributed encrypted group.
@@ -525,6 +527,7 @@ impl GroupState {
                 joined_at: *message.when(),
                 last_active: *message.when(),
                 metadata: vec![],
+                display_name: None,
             },
         );
 
@@ -580,40 +583,6 @@ impl GroupState {
         }
     }
 
-    /// Extract role assignment cache information from an event (if it's an AssignRole event)
-    fn extract_role_assignment_cache(
-        &self,
-        event: &GroupActivityEvent,
-        sender: &IdentityRef,
-    ) -> Option<RoleAssignmentCache> {
-        match event {
-            GroupActivityEvent::AssignRole { target, role, .. } => {
-                // Convert IdentityType to IdentityRef using the sender's controlling key
-                let controlling_key = sender.controlling_key();
-                let target_ref = target.to_identity_ref(controlling_key);
-
-                Some(RoleAssignmentCache {
-                    target: target_ref,
-                    role: role.clone(),
-                })
-            }
-            _ => None,
-        }
-    }
-
-    /// Extract app settings update cache information from an event (if it's an UpdateAppSettings event)
-    fn extract_app_settings_cache(
-        &self,
-        event: &GroupActivityEvent,
-    ) -> Option<AppSettingsUpdateCache> {
-        match event {
-            GroupActivityEvent::UpdateAppSettings { app_id, .. } => Some(AppSettingsUpdateCache {
-                app_id: app_id.clone(),
-            }),
-            _ => None,
-        }
-    }
-
     pub fn apply_event(
         &mut self,
         event: GroupActivityEvent,
@@ -622,8 +591,26 @@ impl GroupState {
         timestamp: u64,
     ) -> GroupStateResult<()> {
         // Store message metadata for all events with cached information
-        let role_assignment = self.extract_role_assignment_cache(&event, &sender);
-        let app_settings_update = self.extract_app_settings_cache(&event);
+        let role_assignment = match event {
+            GroupActivityEvent::AssignRole {
+                ref target,
+                ref role,
+                ..
+            } => Some(RoleAssignmentCache {
+                target: target.clone(),
+                role: role.clone(),
+            }),
+            _ => None,
+        };
+
+        let app_settings_update = match event {
+            GroupActivityEvent::UpdateAppSettings { ref app_id, .. } => {
+                Some(AppSettingsUpdateCache {
+                    app_id: app_id.clone(),
+                })
+            }
+            _ => None,
+        };
 
         self.message_metadata.insert(
             event_id,
@@ -668,15 +655,7 @@ impl GroupState {
     ) -> GroupStateResult<()> {
         match event {
             GroupActivityEvent::LeaveGroup { message } => {
-                let sender_key = match &sender_ref {
-                    IdentityRef::Key(key) => key.clone(),
-                    _ => {
-                        return Err(GroupStateError::InvalidSender(
-                            "Only keys can leave groups".to_string(),
-                        ));
-                    }
-                };
-                self.handle_leave_group(sender_key, message.clone(), timestamp)?;
+                self.handle_leave_group(sender_ref, message.clone(), timestamp)?;
             }
 
             GroupActivityEvent::UpdateGroup { updates, .. } => {
@@ -710,69 +689,11 @@ impl GroupState {
             }
 
             GroupActivityEvent::AssignRole { target, role, .. } => {
-                let sender_key = match &sender_ref {
-                    IdentityRef::Key(key) => key.clone(),
-                    _ => {
-                        return Err(GroupStateError::InvalidSender(
-                            "Only keys can assign roles".to_string(),
-                        ));
-                    }
-                };
-
-                // Convert IdentityType to IdentityRef using the sender's key
-                let target_ref = match target {
-                    crate::identity::IdentityType::Main => {
-                        // For Main identity, we need to determine which key this refers to
-                        // This is a limitation of the current design - AssignRole events should specify the target more clearly
-                        // For now, we'll assume it's targeting the sender's key (self-assignment) or look up members
-                        if let IdentityRef::Key(sender_key) = &sender_ref {
-                            // Check if this is a self-assignment
-                            let actor_ref = IdentityRef::Key(sender_key.clone());
-                            if self.members.contains_key(&actor_ref) {
-                                actor_ref
-                            } else {
-                                // Look for the first member that's not the sender
-                                let target_key = self
-                                    .members
-                                    .iter()
-                                    .find(|(key, _)| *key != &sender_ref)
-                                    .and_then(|(key, _)| match key {
-                                        IdentityRef::Key(k) => Some(k.clone()),
-                                        _ => None,
-                                    })
-                                    .ok_or_else(|| GroupStateError::MemberNotFound {
-                                        member: "target member".to_string(),
-                                        group: format!("{:?}", self.group_info.group_id),
-                                    })?;
-                                IdentityRef::Key(target_key)
-                            }
-                        } else {
-                            return Err(GroupStateError::InvalidSender(
-                                "Only key identities can assign roles for now".to_string(),
-                            ));
-                        }
-                    }
-                    crate::identity::IdentityType::Alias { .. } => {
-                        // Convert alias to IdentityRef using the sender's controlling key
-                        let controlling_key = sender_ref.controlling_key();
-                        target.to_identity_ref(controlling_key)
-                    }
-                };
-
-                self.handle_role_assignment(sender_key, &target_ref, &role, timestamp)?;
+                self.handle_role_assignment(sender_ref, &target, &role, timestamp)?;
             }
 
-            GroupActivityEvent::SetIdentity(_) => {
-                let sender_key = match &sender_ref {
-                    IdentityRef::Key(key) => key.clone(),
-                    _ => {
-                        return Err(GroupStateError::InvalidSender(
-                            "Only keys can set identity".to_string(),
-                        ));
-                    }
-                };
-                // Handle identity setting - for now just ensure sender is a member
-                self.handle_member_announcement(IdentityRef::Key(sender_key), timestamp)?;
+            GroupActivityEvent::SetIdentity(identity) => {
+                self.handle_member_announcement(sender_ref, timestamp, identity)?;
             }
 
             GroupActivityEvent::RemoveFromGroup { target: _, .. } => {
@@ -856,10 +777,13 @@ impl GroupState {
         &mut self,
         sender: IdentityRef,
         timestamp: u64,
+        identity: IdentityInfo,
     ) -> GroupStateResult<()> {
         // Add or update member
         if let Some(existing_member) = self.members.get_mut(&sender) {
             existing_member.last_active = timestamp;
+            existing_member.metadata = identity.metadata;
+            existing_member.display_name = Some(identity.display_name);
         } else {
             // New member - anyone with the key can participate
             self.members.insert(
@@ -869,7 +793,8 @@ impl GroupState {
                     role: GroupRole::Member, // Default role for new key holders
                     joined_at: timestamp,
                     last_active: timestamp,
-                    metadata: vec![],
+                    metadata: identity.metadata,
+                    display_name: Some(identity.display_name),
                 },
             );
         }
@@ -879,14 +804,13 @@ impl GroupState {
 
     fn handle_leave_group(
         &mut self,
-        sender: VerifyingKey,
+        sender: IdentityRef,
         _message: Option<String>,
         _timestamp: u64,
     ) -> GroupStateResult<()> {
-        let sender_ref = IdentityRef::Key(sender.clone());
         // In encrypted groups, leaving is just an announcement - they still have the key
         // This removes them from the active member list but doesn't revoke access
-        if !self.members.contains_key(&sender_ref) {
+        if !self.members.contains_key(&sender) {
             return Err(GroupStateError::MemberNotFound {
                 member: format!("{sender:?}"),
                 group: format!("{:?}", self.group_info.group_id),
@@ -894,36 +818,36 @@ impl GroupState {
         }
 
         // Remove from active members list
-        self.members.remove(&sender_ref);
+        self.members.remove(&sender);
         Ok(())
     }
 
     /// Handle role assignment using IdentityRef
     fn handle_role_assignment(
         &mut self,
-        sender: VerifyingKey,
+        sender: IdentityRef,
         target: &IdentityRef,
         role: &GroupRole,
-        _timestamp: u64,
+        timestamp: u64,
     ) -> GroupStateResult<()> {
         // Check permission - sender must have permission to assign roles
-        self.check_permission(
-            &IdentityRef::Key(sender),
-            &self.group_info.settings.permissions.assign_roles,
-        )?;
+        self.check_permission(&sender, &self.group_info.settings.permissions.assign_roles)?;
 
-        // Check if target member exists
-        let group_id = self.group_info.group_id.clone(); // Get group_id before mutable borrow
-        let member_info =
-            self.members
-                .get_mut(target)
-                .ok_or_else(|| GroupStateError::MemberNotFound {
-                    member: format!("{target:?}"),
-                    group: format!("{group_id:?}"),
-                })?;
-
-        // Update role
-        member_info.role = role.clone();
+        let _member_info = self
+            .members
+            .entry(target.clone())
+            .and_modify(|member| {
+                member.role = role.clone();
+                member.last_active = timestamp;
+            })
+            .or_insert(GroupMember {
+                key: target.clone(),
+                role: role.clone(),
+                joined_at: timestamp,
+                last_active: timestamp,
+                metadata: vec![],
+                display_name: None,
+            });
         Ok(())
     }
 
@@ -933,15 +857,13 @@ impl GroupState {
     }
 
     /// Check if a user is a member of this group
-    pub fn is_member(&self, user: &VerifyingKey) -> bool {
-        let user_ref = IdentityRef::Key(user.clone());
-        self.members.contains_key(&user_ref)
+    pub fn is_member(&self, user_ref: &IdentityRef) -> bool {
+        self.members.contains_key(user_ref)
     }
 
-    /// Get a member's role
-    pub fn member_role(&self, user: &VerifyingKey) -> Option<GroupRole> {
-        let user_ref = IdentityRef::Key(user.clone());
-        self.members.get(&user_ref).map(|m| m.role.clone())
+    /// Get a member's role, None if not defined (but if they can write they are member)
+    pub fn member_role(&self, user_ref: &IdentityRef) -> Option<GroupRole> {
+        self.members.get(user_ref).map(|m| m.role.clone())
     }
 
     /// Get an actor's role at a specific message in the group history
@@ -1246,6 +1168,7 @@ impl GroupState {
                             joined_at: 0, // We don't store this in snapshots
                             last_active: 0,
                             metadata: Vec::new(),
+                            display_name: None,
                         },
                     )
                 })
@@ -1767,14 +1690,7 @@ impl GroupState {
 
         // Check if sender is a group member at the referenced state
         // For now, we check current membership since historical reconstruction is not fully implemented
-        if !self.is_member(&match sender {
-            IdentityRef::Key(key) => key.clone(),
-            _ => {
-                return Err(GroupStateError::InvalidSender(
-                    "Only key-based identities are supported for app events".to_string(),
-                ));
-            }
-        }) {
+        if !self.is_member(sender) {
             self.metrics.validations_failed += 1;
             self.metrics.validation_time_ms += start_time.elapsed().as_millis() as u64;
             return Err(GroupStateError::MemberNotFound {
@@ -1899,7 +1815,7 @@ mod tests {
     use crate::group::events::settings::GroupSettings;
     use crate::group::events::{GroupActivityEvent, GroupInfo};
     use crate::group::states::Permission;
-    use crate::identity::{IdentityInfo, IdentityType};
+    use crate::identity::IdentityInfo;
     use crate::metadata::Metadata;
     use serde::{Deserialize, Serialize};
 
@@ -1981,6 +1897,7 @@ mod tests {
             joined_at: timestamp,
             last_active: timestamp,
             metadata: vec![],
+            display_name: None,
         };
 
         assert_eq!(member.key, identity_ref);
@@ -2009,6 +1926,7 @@ mod tests {
             joined_at: 1000,
             last_active: 2000,
             metadata: metadata.clone(),
+            display_name: None,
         };
 
         assert_eq!(member.metadata, metadata);
@@ -2045,9 +1963,9 @@ mod tests {
         assert_eq!(group_state.event_history[0], *message.id());
 
         // Verify creator is added as owner
-        assert!(group_state.is_member(&creator_key.public_key()));
+        assert!(group_state.is_member(&IdentityRef::Key(creator_key.public_key())));
         assert_eq!(
-            group_state.member_role(&creator_key.public_key()),
+            group_state.member_role(&IdentityRef::Key(creator_key.public_key())),
             Some(&GroupRole::Owner).cloned()
         );
     }
@@ -2065,7 +1983,7 @@ mod tests {
         assert_eq!(group_state.group_info.name, group_info.name);
         assert_eq!(group_state.group_info.settings, group_info.settings);
         assert_eq!(group_state.group_info.metadata, group_info.metadata);
-        assert!(group_state.is_member(&creator_key.public_key()));
+        assert!(group_state.is_member(&IdentityRef::Key(creator_key.public_key())));
     }
 
     #[test]
@@ -2090,8 +2008,8 @@ mod tests {
         let group_info = create_test_group_info();
         let group_state = GroupState::initial(&message, group_info);
 
-        assert!(group_state.is_member(&creator_key.public_key()));
-        assert!(!group_state.is_member(&other_key.public_key()));
+        assert!(group_state.is_member(&IdentityRef::Key(creator_key.public_key())));
+        assert!(!group_state.is_member(&IdentityRef::Key(other_key.public_key())));
     }
 
     #[test]
@@ -2103,12 +2021,15 @@ mod tests {
         let group_state = GroupState::initial(&message, group_info);
 
         assert_eq!(
-            group_state.member_role(&creator_key.public_key()),
+            group_state.member_role(&IdentityRef::Key(creator_key.public_key())),
             Some(&GroupRole::Owner).cloned()
         );
 
         let non_member_key = KeyPair::generate(&mut OsRng);
-        assert_eq!(group_state.member_role(&non_member_key.public_key()), None);
+        assert_eq!(
+            group_state.member_role(&IdentityRef::Key(non_member_key.public_key())),
+            None
+        );
     }
 
     #[test]
@@ -2219,7 +2140,7 @@ mod tests {
         );
 
         assert!(result.is_ok());
-        assert!(group_state.is_member(&new_member_key.public_key()));
+        assert!(group_state.is_member(&IdentityRef::Key(new_member_key.public_key())));
         assert_eq!(group_state.members.len(), 2);
         assert_eq!(group_state.version, 1);
         assert_eq!(group_state.last_event_timestamp, 1001);
@@ -2228,7 +2149,7 @@ mod tests {
 
         // Verify new member has default role
         assert_eq!(
-            group_state.member_role(&new_member_key.public_key()),
+            group_state.member_role(&IdentityRef::Key(new_member_key.public_key())),
             Some(&GroupRole::Member).cloned()
         );
     }
@@ -2297,7 +2218,7 @@ mod tests {
             )
             .unwrap();
 
-        assert!(group_state.is_member(&member_key.public_key()));
+        assert!(group_state.is_member(&IdentityRef::Key(member_key.public_key())));
         assert_eq!(group_state.members.len(), 2);
 
         // Member leaves
@@ -2312,7 +2233,7 @@ mod tests {
         );
 
         assert!(result.is_ok());
-        assert!(!group_state.is_member(&member_key.public_key()));
+        assert!(!group_state.is_member(&IdentityRef::Key(member_key.public_key())));
         assert_eq!(group_state.members.len(), 1);
         assert_eq!(group_state.version, 2);
     }
@@ -2340,23 +2261,23 @@ mod tests {
             )
             .unwrap();
 
-        // Assign admin role
+        // Assign admin role to the member
         let _creation_message_id = group_state.event_history[0];
         let assign_role_event: GroupActivityEvent = GroupActivityEvent::AssignRole {
-            target: IdentityType::Main,
+            target: IdentityRef::Key(member_key.public_key()),
             role: GroupRole::Admin,
         };
 
         let result = group_state.apply_event(
             assign_role_event,
             create_test_message_id(19),
-            IdentityRef::Key(creator_key.public_key()),
+            IdentityRef::Key(creator_key.public_key()), // Creator assigns role to member
             1002,
         );
 
         assert!(result.is_ok());
         assert_eq!(
-            group_state.member_role(&member_key.public_key()),
+            group_state.member_role(&IdentityRef::Key(member_key.public_key())),
             Some(&GroupRole::Admin).cloned()
         );
         assert_eq!(group_state.version, 2);
@@ -2545,7 +2466,7 @@ mod tests {
         let mut group_state = GroupState::initial(&message, group_info);
 
         let assign_role_event: GroupActivityEvent = GroupActivityEvent::AssignRole {
-            target: IdentityType::Main,
+            target: IdentityRef::Key(creator_key.public_key()),
             role: GroupRole::Admin,
         };
 
@@ -2597,7 +2518,7 @@ mod tests {
 
         // Regular member tries to assign role (should fail)
         let assign_role_event: GroupActivityEvent = GroupActivityEvent::AssignRole {
-            target: IdentityType::Main,
+            target: IdentityRef::Key(member_key.public_key()),
             role: GroupRole::Admin,
         };
 
@@ -2629,6 +2550,7 @@ mod tests {
                 key: "department".to_string(),
                 value: "engineering".to_string(),
             }],
+            display_name: None,
         };
 
         let serialized = postcard::to_stdvec(&member).expect("Failed to serialize");
@@ -2717,7 +2639,7 @@ mod tests {
 
         assert_eq!(group_state.members.len(), 2);
         assert_eq!(group_state.version, 1);
-        assert!(group_state.is_member(&member1_key.public_key()));
+        assert!(group_state.is_member(&IdentityRef::Key(member1_key.public_key())));
 
         // Member 2 joins
         group_state
@@ -2734,7 +2656,7 @@ mod tests {
 
         // Creator promotes member1 to admin
         let promote_event: GroupActivityEvent = GroupActivityEvent::AssignRole {
-            target: IdentityType::Main,
+            target: IdentityRef::Key(member1_key.public_key()),
             role: GroupRole::Admin,
         };
         group_state
@@ -2747,14 +2669,14 @@ mod tests {
             .unwrap();
 
         assert_eq!(
-            group_state.member_role(&member1_key.public_key()),
+            group_state.member_role(&IdentityRef::Key(member1_key.public_key())),
             Some(&GroupRole::Admin).cloned()
         );
         assert_eq!(group_state.version, 3);
 
         // Creator (owner) promotes member2 to moderator (only owners can assign roles by default)
         let promote_event2: GroupActivityEvent = GroupActivityEvent::AssignRole {
-            target: IdentityType::Main,
+            target: IdentityRef::Key(member2_key.public_key()),
             role: GroupRole::Moderator,
         };
         group_state
@@ -2769,7 +2691,7 @@ mod tests {
         // Note: Our simplified target resolution assigns to the first non-sender member
         // So member1 gets the Moderator role (overwriting the previous Admin role)
         assert_eq!(
-            group_state.member_role(&member1_key.public_key()),
+            group_state.member_role(&IdentityRef::Key(member1_key.public_key())),
             Some(&GroupRole::Moderator).cloned()
         );
         assert_eq!(group_state.version, 4);
@@ -2827,16 +2749,16 @@ mod tests {
             )
             .unwrap();
 
-        assert!(!group_state.is_member(&member2_key.public_key()));
+        assert!(!group_state.is_member(&IdentityRef::Key(member2_key.public_key())));
         assert_eq!(group_state.members.len(), 2);
         assert_eq!(group_state.version, 6);
 
         // Verify final state
         assert_eq!(group_state.event_history.len(), 7);
         assert_eq!(group_state.last_event_timestamp, 1006);
-        assert!(group_state.is_member(&creator_key.public_key()));
-        assert!(group_state.is_member(&member1_key.public_key()));
-        assert!(!group_state.is_member(&member2_key.public_key()));
+        assert!(group_state.is_member(&IdentityRef::Key(creator_key.public_key())));
+        assert!(group_state.is_member(&IdentityRef::Key(member1_key.public_key())));
+        assert!(!group_state.is_member(&IdentityRef::Key(member2_key.public_key())));
     }
 
     #[test]
@@ -3149,7 +3071,7 @@ mod tests {
                     app_settings_update: None,
                 },
                 GroupActivityEvent::AssignRole {
-                    target: IdentityType::Main,
+                    target: _target.clone(),
                     role: GroupRole::Member,
                 },
             ),
@@ -3165,7 +3087,7 @@ mod tests {
                     app_settings_update: None,
                 },
                 GroupActivityEvent::AssignRole {
-                    target: IdentityType::Main,
+                    target: _target.clone(),
                     role: GroupRole::Admin,
                 },
             ),
