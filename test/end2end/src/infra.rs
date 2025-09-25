@@ -14,7 +14,7 @@ use std::sync::Once;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tempfile::TempDir;
 use tokio::time::timeout;
-use tracing::{debug, info, warn};
+use tracing::{debug, info, trace, warn};
 use zoe_app_primitives::file::CompressionConfig;
 use zoe_app_primitives::identity::IdentityRef;
 use zoe_blob_store::service::BlobServiceImpl;
@@ -76,7 +76,7 @@ impl TestInfrastructure {
             .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
             .try_init();
 
-        info!("🚀 Setting up end-to-end test infrastructure");
+        debug!("🚀 Setting up end-to-end test infrastructure");
 
         // Create temporary directories for blob storage
         let blob_temp_dir = TempDir::new().context("Failed to create blob temp directory")?;
@@ -86,14 +86,14 @@ impl TestInfrastructure {
         let server_keypair = KeyPair::generate_ed25519(&mut rand::thread_rng()); // Ed25519 for transport
         let server_public_key = server_keypair.public_key();
 
-        info!(
+        debug!(
             "🔑 Server public key: {}",
             hex::encode(server_public_key.encode())
         );
 
         // Create blob service
         let blob_service = BlobServiceImpl::new(blob_dir.clone()).await?;
-        info!("✅ Connected to blob service");
+        debug!("✅ Connected to blob service");
 
         // Use a random database number to avoid conflicts between parallel tests
         let db_num = rand::random::<u8>() % 15 + 1; // Use databases 1-15 (avoid 0 which might be used elsewhere)
@@ -102,7 +102,7 @@ impl TestInfrastructure {
         // Try to connect to Redis, but don't fail if it's not available
         let message_service = match RedisMessageStorage::new(redis_url.clone()).await {
             Ok(service) => {
-                info!("✅ Connected to Redis message store");
+                debug!("✅ Connected to Redis message store");
 
                 // Clean up the test database to ensure isolation
                 let client = redis::Client::open(redis_url.clone()).map_err(|e| {
@@ -141,7 +141,7 @@ impl TestInfrastructure {
         let server_addr = relay_server.local_addr()?;
 
         // Spawn server in background
-        info!("🌐 Starting relay server on {}", server_addr);
+        debug!("🌐 Starting relay server on {}", server_addr);
         let server_handle = tokio::spawn(async move { relay_server.run().await });
 
         // Wait a bit for server to start
@@ -150,7 +150,7 @@ impl TestInfrastructure {
         // Generate client key
         let client_keypair = KeyPair::generate(&mut thread_rng());
 
-        info!("✅ Test infrastructure setup complete");
+        debug!("✅ Test infrastructure setup complete");
 
         Ok(Self {
             server_handle,
@@ -174,14 +174,43 @@ impl TestInfrastructure {
         client_builder.server_info(self.server_public_key.clone(), self.server_addr);
         client_builder.encryption_key([0u8; 32]);
         client_builder.db_storage_dir(temp_dir.path().to_path_buf().to_string_lossy().to_string());
+        client_builder
+            .media_storage_dir(temp_dir.path().to_path_buf().to_string_lossy().to_string());
 
         let client = client_builder.build().await?;
+
+        // Connect the client to the relay server
+        use zoe_app_primitives::connection::RelayAddress;
+        let relay_address = RelayAddress::new(self.server_public_key.clone())
+            .with_address(self.server_addr.into())
+            .with_name("Test Server".to_string());
+
+        client.add_relay(relay_address).await?;
+
+        // Wait for the connection to be established
+        let mut attempts = 0;
+        const MAX_ATTEMPTS: u32 = 50; // 5 seconds total (50 * 100ms)
+
+        while attempts < MAX_ATTEMPTS {
+            if client.has_connected_relays().await {
+                break;
+            }
+            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+            attempts += 1;
+        }
+
+        if attempts >= MAX_ATTEMPTS {
+            return Err(anyhow::anyhow!(
+                "Failed to establish relay connection within timeout"
+            ));
+        }
+
         Ok(client)
     }
 
     /// Create a new relay client with a specific signature type
     pub async fn create_client_for_algorithm(&self, algorithm: Algorithm) -> Result<RelayClient> {
-        info!("👤 Creating relay client with {} signature", algorithm);
+        debug!("👤 Creating relay client with {} signature", algorithm);
 
         let keypair = KeyPair::generate_for_algorithm(algorithm, &mut rand::thread_rng());
         let temp_dir = TempDir::new().context("Failed to create temp directory")?;
@@ -198,7 +227,7 @@ impl TestInfrastructure {
         )
         .await??;
 
-        info!(
+        debug!(
             "✅ Relay client with {} signature connected successfully",
             algorithm
         );
@@ -207,7 +236,7 @@ impl TestInfrastructure {
 
     /// Clean up the test infrastructure
     pub async fn cleanup(self) -> Result<()> {
-        info!("🧹 Cleaning up test infrastructure");
+        debug!("🧹 Cleaning up test infrastructure");
 
         // Abort the server
         self.server_handle.abort();
@@ -216,7 +245,7 @@ impl TestInfrastructure {
         // Temp directories are automatically cleaned up when dropped
         drop(self.temp_dirs);
 
-        info!("✅ Cleanup complete");
+        debug!("✅ Cleanup complete");
         Ok(())
     }
 }
@@ -261,10 +290,10 @@ mod tests {
         let blob_service = client.blob_service().await?;
 
         // This should succeed (connection-wise) - blob_service is already an Arc<BlobService>
-        info!("✅ Successfully connected to blob service");
+        debug!("✅ Successfully connected to blob service");
 
         // Skip message service test due to current API issues
-        info!("🔄 Skipping message service connection test due to API inconsistencies");
+        debug!("🔄 Skipping message service connection test due to API inconsistencies");
 
         infra.cleanup().await?;
         Ok(())
@@ -284,12 +313,12 @@ mod tests {
 
         // Upload a blob
         let blob_hash = blob_service.upload_blob(test_data).await?;
-        info!("📤 Uploaded blob with hash: {}", blob_hash);
+        debug!("📤 Uploaded blob with hash: {}", blob_hash);
         // BlobId is always valid if upload succeeded, no need to check is_empty
 
         // Download the blob back
         let downloaded_data = blob_service.get_blob(&blob_hash).await?;
-        info!("📥 Downloaded {} bytes", downloaded_data.len());
+        debug!("📥 Downloaded {} bytes", downloaded_data.len());
         assert_eq!(
             downloaded_data, test_data,
             "Downloaded data should match uploaded data"
@@ -322,7 +351,7 @@ mod tests {
                 persistence_manager.all_messages_stream(),
             ),
         ));
-        info!(
+        debug!(
             "Message service connection result: {:?}",
             connection_result.is_ok()
         );
@@ -416,12 +445,12 @@ mod tests {
             .await??
         };
 
-        info!("👥 Created two clients for message communication test");
-        info!(
+        debug!("👥 Created two clients for message communication test");
+        debug!(
             "🔑 Client 1 public key id: {}",
             hex::encode(client1.public_key().id())
         );
-        info!(
+        debug!(
             "🔑 Client 2 public key id: {}",
             hex::encode(client2.public_key().id())
         );
@@ -435,7 +464,7 @@ mod tests {
         let mut messages_stream2 = persistence_manager2.all_messages_stream();
         let messages_service2 = persistence_manager2.messages_manager().clone();
 
-        info!("📡 Both clients connected to message service");
+        debug!("📡 Both clients connected to message service");
 
         // Define a common channel for communication
         let channel_name = "e2e_test_channel";
@@ -476,7 +505,7 @@ mod tests {
             .map_err(|e| anyhow::anyhow!("Failed to create MessageFull for client 1: {}", e))?;
 
         let message1_id = message1_full.id();
-        info!(
+        debug!(
             "📝 Client 1 created message with ID: {}",
             hex::encode(message1_id.as_bytes())
         );
@@ -495,21 +524,21 @@ mod tests {
             .map_err(|e| anyhow::anyhow!("Failed to create MessageFull for client 2: {}", e))?;
 
         let message2_id = message2_full.id();
-        info!(
+        debug!(
             "📝 Client 2 created message with ID: {}",
             hex::encode(message2_id.as_bytes())
         );
 
         // Publish messages
-        info!("📤 Client 1 publishing message...");
+        debug!("📤 Client 1 publishing message...");
         let publish_result1 = messages_service1.publish(message1_full).await?;
-        info!("✅ Client 1 message published: {:?}", publish_result1);
+        debug!("✅ Client 1 message published: {:?}", publish_result1);
 
         tokio::time::sleep(Duration::from_millis(100)).await;
 
-        info!("📤 Client 2 publishing message...");
+        debug!("📤 Client 2 publishing message...");
         let publish_result2 = messages_service2.publish(message2_full).await?;
-        info!("✅ Client 2 message published: {:?}", publish_result2);
+        debug!("✅ Client 2 message published: {:?}", publish_result2);
 
         // Wait for messages to be processed and distributed
         tokio::time::sleep(Duration::from_millis(300)).await;
@@ -521,7 +550,7 @@ mod tests {
         // Try to receive messages (with timeout)
         let receive_timeout = Duration::from_millis(500);
 
-        info!("👂 Collecting messages received by clients...");
+        debug!("👂 Collecting messages received by clients...");
 
         // Collect from client 1's stream
         futures::pin_mut!(messages_stream1);
@@ -529,7 +558,7 @@ mod tests {
             // Try multiple times
             match timeout(receive_timeout, messages_stream1.next()).await {
                 Ok(Some(stream_msg)) => {
-                    info!("📥 Client 1 received message: {:?}", stream_msg);
+                    debug!("📥 Client 1 received message: {:?}", stream_msg);
                     client1_received.push(stream_msg);
                 }
                 Ok(None) => break,
@@ -543,7 +572,7 @@ mod tests {
             // Try multiple times
             match timeout(receive_timeout, messages_stream2.next()).await {
                 Ok(Some(stream_msg)) => {
-                    info!("📥 Client 2 received message: {:?}", stream_msg);
+                    debug!("📥 Client 2 received message: {:?}", stream_msg);
                     client2_received.push(stream_msg);
                 }
                 Ok(None) => break,
@@ -552,9 +581,9 @@ mod tests {
         }
 
         // Verify message exchange
-        info!("🔍 Verifying message exchange...");
-        info!("Client 1 received {} messages", client1_received.len());
-        info!("Client 2 received {} messages", client2_received.len());
+        debug!("🔍 Verifying message exchange...");
+        debug!("Client 1 received {} messages", client1_received.len());
+        debug!("Client 2 received {} messages", client2_received.len());
 
         // At minimum, we should have some message activity
         // Due to potential API inconsistencies, we'll be lenient but still verify basic functionality
@@ -564,8 +593,8 @@ mod tests {
             "Expected to receive at least some messages, but got none. This suggests message routing is broken."
         );
 
-        info!("✅ Message communication test completed successfully!");
-        info!(
+        debug!("✅ Message communication test completed successfully!");
+        debug!(
             "📊 Summary: {} total messages exchanged between clients",
             total_messages
         );
@@ -594,12 +623,12 @@ mod tests {
             .await??
         };
 
-        info!("👥 Created two clients for file storage test");
-        info!(
+        debug!("👥 Created two clients for file storage test");
+        debug!(
             "🔑 Client 1 public key id: {}",
             hex::encode(client1.public_key().id())
         );
-        info!(
+        debug!(
             "🔑 Client 2 public key id: {}",
             hex::encode(client2.public_key().id())
         );
@@ -608,7 +637,7 @@ mod tests {
         let blob_service1 = client1.blob_service().await?;
         let blob_service2 = client2.blob_service().await?;
 
-        info!("📡 Both clients connected to blob service");
+        debug!("📡 Both clients connected to blob service");
 
         // Create temporary directories for each client's local storage
         let temp_dir1 = tempfile::TempDir::new()?;
@@ -629,7 +658,7 @@ mod tests {
         )
         .await?;
 
-        info!("💾 Created FileStorage instances with remote blob service support");
+        debug!("💾 Created FileStorage instances with remote blob service support");
 
         // Create test file content
         let test_content = format!(
@@ -646,15 +675,15 @@ mod tests {
         );
         let test_bytes = test_content.as_bytes();
 
-        info!("📝 Created test content ({} bytes)", test_bytes.len());
-        info!(
+        debug!("📝 Created test content ({} bytes)", test_bytes.len());
+        debug!(
             "📄 Content preview: {}",
             &test_content[..100.min(test_content.len())]
         );
 
         // Client 1: Store the file using FileStorage
         // This should store locally AND push to remote blob service
-        info!("📤 Client 1 storing file...");
+        debug!("📤 Client 1 storing file...");
         let stored_file_ref = file_storage1
             .store_data(
                 test_bytes,
@@ -663,52 +692,52 @@ mod tests {
             )
             .await?;
 
-        info!("✅ Client 1 stored file with:");
-        info!("   📋 Blob hash: {}", stored_file_ref.blob_hash);
-        info!("   📁 Filename: {:?}", stored_file_ref.filename());
-        info!(
+        debug!("✅ Client 1 stored file with:");
+        debug!("   📋 Blob hash: {}", stored_file_ref.blob_hash);
+        debug!("   📁 Filename: {:?}", stored_file_ref.filename());
+        debug!(
             "   📊 Original size: {} bytes",
             stored_file_ref.original_size()
         );
-        info!(
+        debug!(
             "   🗜️ Was compressed: {}",
             stored_file_ref.encryption_info.was_compressed
         );
 
         // Verify Client 1 can retrieve its own file (should come from local storage)
-        info!("🔍 Client 1 verifying local retrieval...");
+        debug!("🔍 Client 1 verifying local retrieval...");
         let client1_retrieved = file_storage1.retrieve_file(&stored_file_ref).await?;
 
         assert_eq!(
             client1_retrieved, test_bytes,
             "Client 1 local retrieval should match original"
         );
-        info!("✅ Client 1 local retrieval verified");
+        debug!("✅ Client 1 local retrieval verified");
 
         // Give some time for remote synchronization to complete
         tokio::time::sleep(Duration::from_millis(500)).await;
 
         // Client 2: Try to retrieve the file using the FileRef
         // This should NOT find it locally, then fetch from remote and cache locally
-        info!("🔍 Client 2 attempting remote retrieval...");
-        info!("   📋 Looking for blob hash: {}", stored_file_ref.blob_hash);
+        debug!("🔍 Client 2 attempting remote retrieval...");
+        debug!("   📋 Looking for blob hash: {}", stored_file_ref.blob_hash);
 
         // First verify Client 2 doesn't have it locally
         let has_local = file_storage2.has_file(&stored_file_ref).await?;
-        info!("   💾 Client 2 local storage has file: {}", has_local);
+        debug!("   💾 Client 2 local storage has file: {}", has_local);
 
         // Now retrieve the file - should fetch from remote and cache locally
         let client2_retrieved = file_storage2.retrieve_file(&stored_file_ref).await?;
 
-        info!("✅ Client 2 successfully retrieved file from remote");
-        info!("   📊 Retrieved {} bytes", client2_retrieved.len());
+        debug!("✅ Client 2 successfully retrieved file from remote");
+        debug!("   📊 Retrieved {} bytes", client2_retrieved.len());
 
         // Verify content integrity across clients
         assert_eq!(
             client2_retrieved, test_bytes,
             "Client 2 remote retrieval should match original content"
         );
-        info!("✅ Content integrity verified across clients");
+        debug!("✅ Content integrity verified across clients");
 
         // Verify the retrieved content is actually the same
         let retrieved_content = String::from_utf8(client2_retrieved.clone())
@@ -720,23 +749,23 @@ mod tests {
 
         // Now Client 2 should have it cached locally
         let has_local_after = file_storage2.has_file(&stored_file_ref).await?;
-        info!(
+        debug!(
             "   💾 Client 2 local cache after retrieval: {}",
             has_local_after
         );
 
         // Test retrieving again (should now come from local cache)
-        info!("🔍 Client 2 testing local cache retrieval...");
+        debug!("🔍 Client 2 testing local cache retrieval...");
         let client2_cached = file_storage2.retrieve_file(&stored_file_ref).await?;
 
         assert_eq!(
             client2_cached, test_bytes,
             "Client 2 cached retrieval should match original"
         );
-        info!("✅ Client 2 local cache retrieval verified");
+        debug!("✅ Client 2 local cache retrieval verified");
 
         // Test convergent encryption property - same content should produce same hash
-        info!("🔒 Testing convergent encryption property...");
+        debug!("🔒 Testing convergent encryption property...");
         let duplicate_ref = file_storage2
             .store_data(
                 test_bytes,
@@ -749,10 +778,10 @@ mod tests {
             stored_file_ref.blob_hash, duplicate_ref.blob_hash,
             "Convergent encryption should produce same hash for same content"
         );
-        info!("✅ Convergent encryption property verified");
+        debug!("✅ Convergent encryption property verified");
 
         // Performance test - measure retrieval times
-        info!("⏱️ Performance testing...");
+        debug!("⏱️ Performance testing...");
         let start_remote = std::time::Instant::now();
 
         // Create a third client to test fresh remote retrieval
@@ -784,20 +813,20 @@ mod tests {
         let _client3_cached = file_storage3.retrieve_file(&stored_file_ref).await?;
         let local_time = start_local.elapsed();
 
-        info!("⏱️ Remote retrieval time: {:?}", remote_time);
-        info!("⏱️ Local cached time: {:?}", local_time);
-        info!(
+        debug!("⏱️ Remote retrieval time: {:?}", remote_time);
+        debug!("⏱️ Local cached time: {:?}", local_time);
+        debug!(
             "📈 Speedup ratio: {:.2}x",
             remote_time.as_secs_f64() / local_time.as_secs_f64()
         );
 
-        info!("✅ File storage test completed successfully!");
-        info!("📊 Summary:");
-        info!("   💾 File stored by Client 1 with remote sync");
-        info!("   🌐 File retrieved by Client 2 from remote");
-        info!("   💨 File cached locally on Client 2");
-        info!("   🔒 Convergent encryption verified");
-        info!("   ⚡ Performance improvement from local caching");
+        debug!("✅ File storage test completed successfully!");
+        debug!("📊 Summary:");
+        debug!("   💾 File stored by Client 1 with remote sync");
+        debug!("   🌐 File retrieved by Client 2 from remote");
+        debug!("   💨 File cached locally on Client 2");
+        debug!("   🔒 Convergent encryption verified");
+        debug!("   ⚡ Performance improvement from local caching");
 
         // Cleanup
         drop(temp_dir1);
@@ -824,12 +853,12 @@ mod tests {
         let client1 = infra.create_full_client().await?;
         let client2 = infra.create_full_client().await?;
 
-        info!("👥 Created two clients for group creation and sharing test");
-        info!(
+        debug!("👥 Created two clients for group creation and sharing test");
+        debug!(
             "🔑 Client 1 public key id: {}",
             hex::encode(client1.public_key().id())
         );
-        info!(
+        debug!(
             "🔑 Client 2 public key id: {}",
             hex::encode(client2.public_key().id())
         );
@@ -906,7 +935,7 @@ mod tests {
 
         timeout(Duration::from_secs(5), async move {
             while let Ok(update) = group_manager_updates2.recv().await {
-                info!("Received group manager update: {:?}", update);
+                debug!("Received group manager update: {:?}", update);
                 if let GroupDataUpdate::GroupUpdated(group_session) = update {
                     assert_eq!(
                         group_session.state.group_info.group_id,
@@ -937,7 +966,7 @@ mod tests {
         use rand::RngCore;
         let infra = TestInfrastructure::setup().await?;
 
-        info!("🔍 Starting catch-up and live subscription test");
+        debug!("🔍 Starting catch-up and live subscription test");
 
         // Create two different clients with different keys
         let client1 = infra.create_client().await?;
@@ -953,12 +982,12 @@ mod tests {
             .await??
         };
 
-        info!("👥 Created two clients for catch-up and subscription test");
-        info!(
+        debug!("👥 Created two clients for catch-up and subscription test");
+        debug!(
             "🔑 Client 1 public key id: {}",
             hex::encode(client1.public_key().id())
         );
-        info!(
+        debug!(
             "🔑 Client 2 public key id: {}",
             hex::encode(client2.public_key().id())
         );
@@ -978,7 +1007,7 @@ mod tests {
             .build(client1.connection())
             .await?;
 
-        info!("📬 Client 1 subscribed to '{general_channel}' channel");
+        debug!("📬 Client 1 subscribed to '{general_channel}' channel");
 
         // Connect Client 2 to message service with no initial filters
         let messages_manager2 = MessagesManager::builder()
@@ -1000,7 +1029,7 @@ mod tests {
 
         // Client 2 is already connected via messages_manager2 created above
 
-        info!(
+        debug!(
             "📤 Client 2 publishing {} historical messages to '{}'",
             num_historical_messages, new_channel
         );
@@ -1028,13 +1057,13 @@ mod tests {
 
             let publish_result = messages_manager2.publish(message_full).await?;
 
-            info!("✅ Published message {}: {:?}", i + 1, publish_result);
+            debug!("✅ Published message {}: {:?}", i + 1, publish_result);
 
             // Small delay between messages to ensure ordering
             tokio::time::sleep(Duration::from_millis(50)).await;
         }
 
-        info!(
+        debug!(
             "✅ Client 2 finished publishing {} historical messages",
             num_historical_messages
         );
@@ -1043,7 +1072,7 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(300)).await;
 
         // Step 3: Test the catch-up API functionality
-        info!("🔍 Client 1 testing catch-up API for '{}'", new_channel);
+        debug!("🔍 Client 1 testing catch-up API for '{}'", new_channel);
 
         // Get the stream from catch_up_and_subscribe
         let original_stream = messages_manager1
@@ -1058,15 +1087,15 @@ mod tests {
         let (message_tx, mut message_rx) = tokio::sync::mpsc::unbounded_channel();
         let stream_task = tokio::spawn(async move {
             pin_mut!(original_stream);
-            info!("🔄 Background stream task started");
+            debug!("🔄 Background stream task started");
             let mut message_count = 0;
             loop {
-                info!("🔍 Background task polling stream...");
+                debug!("🔍 Background task polling stream...");
                 match tokio::time::timeout(Duration::from_millis(100), original_stream.next()).await
                 {
                     Ok(Some(message)) => {
                         message_count += 1;
-                        info!(
+                        debug!(
                             "📥 Background task received message {}: {}",
                             message_count,
                             hex::encode(message.id().as_bytes())
@@ -1077,7 +1106,7 @@ mod tests {
                         }
                     }
                     Ok(None) => {
-                        info!("🔚 Background task: stream ended");
+                        debug!("🔚 Background task: stream ended");
                         break;
                     }
                     Err(_) => {
@@ -1086,7 +1115,7 @@ mod tests {
                     }
                 }
             }
-            info!(
+            debug!(
                 "🏁 Background stream task ended after {} messages",
                 message_count
             );
@@ -1096,7 +1125,7 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(500)).await;
 
         // Step 4: Client 1 updates subscription to include the new channel for real-time messages
-        info!(
+        debug!(
             "🔄 Client 1 updating subscription to include '{}'",
             new_channel
         );
@@ -1108,7 +1137,7 @@ mod tests {
             ))
             .await?;
 
-        info!("✅ Client 1 updated subscription filters");
+        debug!("✅ Client 1 updated subscription filters");
 
         // Give more time for filter update to be processed and propagated
         tokio::time::sleep(Duration::from_millis(1000)).await;
@@ -1117,7 +1146,7 @@ mod tests {
         let num_live_messages = 3usize;
         let mut expected_live_messages = Vec::new();
 
-        info!("📤 Client 2 publishing {} live messages", num_live_messages);
+        debug!("📤 Client 2 publishing {} live messages", num_live_messages);
 
         for i in 0..num_live_messages {
             let message_content = format!("Live message {} from Client 2", i + 1);
@@ -1142,7 +1171,7 @@ mod tests {
 
             let publish_result = messages_manager2.publish(message_full).await?;
 
-            info!("✅ Published live message {}: {:?}", i + 1, publish_result);
+            debug!("✅ Published live message {}: {:?}", i + 1, publish_result);
 
             // Small delay between messages
             tokio::time::sleep(Duration::from_millis(100)).await;
@@ -1152,7 +1181,7 @@ mod tests {
         let mut received_live_messages = Vec::new();
         let live_timeout = Duration::from_secs(4);
 
-        info!("👂 Waiting for live messages...");
+        debug!("👂 Waiting for live messages...");
 
         let start_time = std::time::Instant::now();
         while start_time.elapsed() < live_timeout {
@@ -1172,7 +1201,7 @@ mod tests {
                             message_id: Some(**message.id()),
                             timestamp: *message.when(),
                         });
-                        info!("📥 Received live message: {}", content);
+                        debug!("📥 Received live message: {}", content);
                     }
                 }
                 Ok(None) => break,  // Stream closed
@@ -1188,7 +1217,7 @@ mod tests {
         // **COMPREHENSIVE VALIDATION FOR REGRESSION TESTING**
 
         // Step 7: Validate live message content and count
-        info!("🔍 Validating live message reception...");
+        debug!("🔍 Validating live message reception...");
 
         assert_eq!(
             received_live_messages.len(),
@@ -1226,7 +1255,7 @@ mod tests {
             );
         }
 
-        info!(
+        debug!(
             "✅ Live message validation passed: All {} messages received with correct content",
             num_live_messages
         );
@@ -1235,15 +1264,15 @@ mod tests {
         // For now, we verify the API was called successfully and the service logs show responses
 
         // Final verification summary
-        info!("🎯 **REGRESSION TEST RESULTS**:");
-        info!(
+        debug!("🎯 **REGRESSION TEST RESULTS**:");
+        debug!(
             "   📊 Historical messages published: {} ✅",
             num_historical_messages
         );
-        info!("   📊 Catch-up API called successfully: ✅");
-        info!("   📊 Subscription filter update: ✅");
-        info!("   📊 Live messages published: {} ✅", num_live_messages);
-        info!(
+        debug!("   📊 Catch-up API called successfully: ✅");
+        debug!("   📊 Subscription filter update: ✅");
+        debug!("   📊 Live messages published: {} ✅", num_live_messages);
+        debug!(
             "   📊 Live messages received with correct content: {} ✅",
             received_live_messages.len()
         );
@@ -1256,7 +1285,7 @@ mod tests {
             received_live_messages.len()
         );
 
-        info!(
+        debug!(
             "🏆 ALL ASSERTIONS PASSED - Server properly handling catch-up and live subscriptions!"
         );
 

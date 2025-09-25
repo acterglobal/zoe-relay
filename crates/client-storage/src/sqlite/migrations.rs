@@ -8,14 +8,14 @@ mod embedded {
 
 /// Run all pending database migrations
 pub fn run_migrations(conn: &mut rusqlite::Connection) -> Result<()> {
-    tracing::info!("Running SQLite schema migrations...");
+    tracing::debug!("Running SQLite schema migrations...");
 
     let report = embedded::migrations::runner()
         .run(conn)
         .map_err(|e| StorageError::Migration(format!("Migration failed: {e}")))?;
 
     for migration in report.applied_migrations() {
-        tracing::info!(
+        tracing::trace!(
             "Applied migration: {} (version {})",
             migration.name(),
             migration.version()
@@ -25,7 +25,7 @@ pub fn run_migrations(conn: &mut rusqlite::Connection) -> Result<()> {
     if report.applied_migrations().is_empty() {
         tracing::debug!("No migrations needed - database is up to date");
     } else {
-        tracing::info!(
+        tracing::trace!(
             "Successfully applied {} migrations",
             report.applied_migrations().len()
         );

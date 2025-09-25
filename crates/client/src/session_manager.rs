@@ -125,7 +125,7 @@ impl<S: StateStorage + 'static, M: MessagesManagerTrait + Clone + 'static>
             client_keypair,
         };
 
-        tracing::info!("SessionManager built and initialized successfully");
+        tracing::debug!("SessionManager built and initialized successfully");
         Ok(manager)
     }
 }
@@ -258,10 +258,10 @@ impl<S: StateStorage + 'static, M: MessagesManagerTrait + Clone + 'static> Sessi
                     }
                 }
             }
-            tracing::info!("Group manager listener task ended");
+            tracing::debug!("Group manager listener task ended");
         });
 
-        tracing::info!("Group manager listener started");
+        tracing::debug!("Group manager listener started");
         Ok((group_manager, task))
     }
 
@@ -311,7 +311,7 @@ impl<S: StateStorage + 'static, M: MessagesManagerTrait + Clone + 'static> Sessi
             );
         }
 
-        tracing::info!("PQXDH state loading completed");
+        tracing::debug!("PQXDH state loading completed");
         Ok(handlers)
     }
 
@@ -342,7 +342,7 @@ impl<S: StateStorage + 'static, M: MessagesManagerTrait + Clone + 'static> Sessi
         let handler_id_clone = handler_id.clone();
 
         let listener_task = tokio::spawn(async move {
-            tracing::info!("Started PQXDH state listener for handler: {handler_id_clone}");
+            tracing::debug!("Started PQXDH state listener for handler: {handler_id_clone}");
 
             // Listen for state changes
             while let Some(new_state) = subscriber.next().await {
@@ -368,7 +368,7 @@ impl<S: StateStorage + 'static, M: MessagesManagerTrait + Clone + 'static> Sessi
             tracing::debug!("PQXDH state listener ended for handler: {handler_id_clone}");
         });
 
-        tracing::info!("Registered PQXDH handler: {}", handler_id);
+        tracing::debug!("Registered PQXDH handler: {}", handler_id);
         Ok((handler_id.clone(), (handler, listener_task)))
     }
 }

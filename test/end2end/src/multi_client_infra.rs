@@ -359,6 +359,13 @@ impl MultiClientTestHarness {
     pub async fn setup() -> Result<Self> {
         info!("🚀 Setting up multi-client test harness");
 
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter(
+                tracing_subscriber::EnvFilter::try_from_default_env()
+                    .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warm")),
+            )
+            .try_init();
+
         let infra = TestInfrastructure::setup()
             .await
             .context("Failed to setup test infrastructure")?;
