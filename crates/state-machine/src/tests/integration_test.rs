@@ -35,7 +35,7 @@ mod tests {
         });
 
         // Set up default expectations for messages_stream calls
-        mock_manager.expect_messages_stream().returning(|| {
+        mock_manager.expect_message_events_stream().returning(|| {
             let (tx, rx) = async_broadcast::broadcast(1);
             // Close the sender immediately to create an empty stream
             drop(tx);
@@ -163,7 +163,7 @@ mod tests {
         });
 
         // Set up default expectations for messages_stream calls
-        mock_manager.expect_messages_stream().returning(|| {
+        mock_manager.expect_message_events_stream().returning(|| {
             let (tx, rx) = async_broadcast::broadcast(1);
             // Close the sender immediately to create an empty stream
             drop(tx);

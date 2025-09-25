@@ -1,5 +1,5 @@
 use crate::error::{ClientError, Result};
-use async_broadcast::Receiver;
+use async_broadcast::{InactiveReceiver, Receiver, Sender};
 use async_trait::async_trait;
 use eyeball::AsyncLock;
 use futures::Stream;
@@ -223,6 +223,11 @@ pub struct GenericMessagePersistenceManager<T: MessagesManagerTrait> {
     messages_manager: Arc<T>,
     /// Handle to the background persistence task
     persistence_task: Arc<AbortOnDrop<Result<()>>>,
+    /// Filtered message events stream (only new messages)
+    filtered_events_sender: Arc<Sender<MessageEvent>>,
+
+    /// keeping around to keep the sender alive
+    _filered_events_keeper: Arc<InactiveReceiver<MessageEvent>>,
 }
 
 /// Type alias for the common case of MessagePersistenceManager with concrete MessagesManager
@@ -271,10 +276,14 @@ impl<T: MessagesManagerTrait> GenericMessagePersistenceManager<T> {
         messages_manager: Arc<T>,
         relay_id: KeyId,
     ) -> Result<Self> {
+        // Create filtered events stream
+        let (filtered_sender, filtered_receiver) = async_broadcast::broadcast(100);
+
         // Get the message events stream before spawning the task to avoid lifetime issues
         let mut events_stream = messages_manager.message_events_stream();
         let mut state_updates = messages_manager.get_subscription_state_updates().await;
         let storage_clone = storage.clone();
+        let filtered_sender_clone = filtered_sender.clone();
 
         // Start the background persistence task
         let persistence_task = tokio::spawn(async move {
@@ -292,11 +301,19 @@ impl<T: MessagesManagerTrait> GenericMessagePersistenceManager<T> {
                                 break;
                             }
                         };
-                        if let Err(e) =
-                            Self::handle_message_event(&*storage_clone, &event, &relay_id).await
-                        {
-                            warn!("Failed to handle message event {:?}: {}", event, e);
-                            // Continue processing other events even if one fails
+
+                        // Handle the message event and check if it was already stored
+                        match Self::handle_message_event(&*storage_clone, event, &relay_id).await {
+                            Ok(result) => {
+                                if let Some(event) = result
+                                    && let Err(e) = filtered_sender_clone.broadcast(event).await {
+                                        warn!("Failed to broadcast filtered event: {e}");
+                                    }
+                            }
+                            Err(e) => {
+                                warn!("Failed to handle message event {e}");
+                                // Continue processing other events even if one fails
+                            }
                         }
                     }
                     state = state_updates.next() => {
@@ -318,16 +335,19 @@ impl<T: MessagesManagerTrait> GenericMessagePersistenceManager<T> {
         Ok(Self {
             messages_manager,
             persistence_task: Arc::new(AbortOnDrop(persistence_task)),
+            filtered_events_sender: Arc::new(filtered_sender),
+            _filered_events_keeper: Arc::new(filtered_receiver.deactivate()),
         })
     }
 
     /// Handle a single message event by persisting it
+    /// Returns whether the message was already stored (true) or newly stored (false)
     async fn handle_message_event(
         storage: &dyn MessageStorage,
-        event: &MessageEvent,
+        event: MessageEvent,
         relay_id: &KeyId,
-    ) -> Result<()> {
-        match event {
+    ) -> Result<Option<MessageEvent>> {
+        match &event {
             MessageEvent::MessageReceived {
                 message,
                 stream_height,
@@ -336,7 +356,7 @@ impl<T: MessagesManagerTrait> GenericMessagePersistenceManager<T> {
                     "Persisting received message: {}",
                     hex::encode(message.id().as_bytes())
                 );
-                storage.store_message(message).await.map_err(|e| {
+                let was_already_stored = storage.store_message(message).await.map_err(|e| {
                     ClientError::Generic(format!("Failed to store received message: {e}"))
                 })?;
 
@@ -347,15 +367,26 @@ impl<T: MessagesManagerTrait> GenericMessagePersistenceManager<T> {
                     .map_err(|e| {
                         ClientError::Generic(format!("Failed to mark message as synced: {e}"))
                     })?;
+
+                Ok(if was_already_stored {
+                    None
+                } else {
+                    Some(event)
+                })
             }
             MessageEvent::MessageSent { message, .. } => {
                 debug!(
                     "Persisting sent message: {}",
                     hex::encode(message.id().as_bytes())
                 );
-                storage.store_message(message).await.map_err(|e| {
+                let was_already_stored = storage.store_message(message).await.map_err(|e| {
                     ClientError::Generic(format!("Failed to store sent message: {e}"))
                 })?;
+                Ok(if was_already_stored {
+                    None
+                } else {
+                    Some(event)
+                })
             }
             MessageEvent::CatchUpMessage {
                 message,
@@ -366,21 +397,26 @@ impl<T: MessagesManagerTrait> GenericMessagePersistenceManager<T> {
                     request_id,
                     hex::encode(message.id().as_bytes())
                 );
-                storage.store_message(message).await.map_err(|e| {
+                let was_already_stored = storage.store_message(message).await.map_err(|e| {
                     ClientError::Generic(format!("Failed to store catch-up message: {e}"))
                 })?;
+                Ok(if was_already_stored {
+                    None
+                } else {
+                    Some(event)
+                })
             }
             MessageEvent::StreamHeightUpdate { .. } => {
                 // Stream height updates don't need persistence by themselves
                 // They're already handled as part of MessageReceived events
+                Ok(None) // Consider these as "already processed" since they don't contain messages
             }
             MessageEvent::CatchUpCompleted { request_id } => {
                 debug!("Catch-up completed for request {}", request_id);
                 // Could be used for metrics or completion tracking
+                Ok(None) // Consider these as "already processed" since they don't contain messages
             }
         }
-
-        Ok(())
     }
 
     /// Check if the persistence task is still running
@@ -412,7 +448,7 @@ impl<T: MessagesManagerTrait + 'static> MessagesManagerTrait
     for GenericMessagePersistenceManager<T>
 {
     fn message_events_stream(&self) -> Receiver<MessageEvent> {
-        self.messages_manager.message_events_stream()
+        self.filtered_events_sender.new_receiver()
     }
 
     async fn get_subscription_state_updates(
@@ -548,7 +584,7 @@ mod tests {
             .expect_store_message()
             .with(eq(message.clone()))
             .times(1)
-            .returning(|_| Ok(()));
+            .returning(|_| Ok(false));
 
         mock_storage
             .expect_mark_message_synced()
@@ -564,7 +600,7 @@ mod tests {
 
         // Test the handler
         let result =
-            MessagePersistenceManager::handle_message_event(&mock_storage, &event, &relay_id).await;
+            MessagePersistenceManager::handle_message_event(&mock_storage, event, &relay_id).await;
 
         assert!(result.is_ok());
     }
@@ -583,7 +619,7 @@ mod tests {
             .expect_store_message()
             .with(eq(message.clone()))
             .times(1)
-            .returning(|_| Ok(()));
+            .returning(|_| Ok(false));
 
         // Create message event
         let event = MessageEvent::MessageSent {
@@ -593,7 +629,7 @@ mod tests {
 
         // Test the handler
         let result =
-            MessagePersistenceManager::handle_message_event(&mock_storage, &event, &relay_id).await;
+            MessagePersistenceManager::handle_message_event(&mock_storage, event, &relay_id).await;
 
         assert!(result.is_ok());
     }
@@ -610,7 +646,7 @@ mod tests {
             .expect_store_message()
             .with(eq(message.clone()))
             .times(1)
-            .returning(|_| Ok(()));
+            .returning(|_| Ok(false));
 
         // Create message event
         let event = MessageEvent::CatchUpMessage {
@@ -620,7 +656,7 @@ mod tests {
 
         // Test the handler
         let result =
-            MessagePersistenceManager::handle_message_event(&mock_storage, &event, &relay_id).await;
+            MessagePersistenceManager::handle_message_event(&mock_storage, event, &relay_id).await;
 
         assert!(result.is_ok());
     }
@@ -637,7 +673,7 @@ mod tests {
 
         // Test the handler - should succeed without any storage calls
         let result =
-            MessagePersistenceManager::handle_message_event(&mock_storage, &event, &relay_id).await;
+            MessagePersistenceManager::handle_message_event(&mock_storage, event, &relay_id).await;
 
         assert!(result.is_ok());
     }
@@ -652,7 +688,7 @@ mod tests {
 
         // Test the handler - should succeed without any storage calls
         let result =
-            MessagePersistenceManager::handle_message_event(&mock_storage, &event, &relay_id).await;
+            MessagePersistenceManager::handle_message_event(&mock_storage, event, &relay_id).await;
 
         assert!(result.is_ok());
     }
@@ -680,7 +716,7 @@ mod tests {
 
         // Test the handler - should return an error
         let result =
-            MessagePersistenceManager::handle_message_event(&mock_storage, &event, &relay_id).await;
+            MessagePersistenceManager::handle_message_event(&mock_storage, event, &relay_id).await;
 
         assert!(result.is_err());
         assert!(
@@ -855,7 +891,7 @@ mod tests {
             let relay_id = KeyId::from_bytes([1u8; 32]);
 
             // Set up storage expectations
-            mock_storage.expect_store_message().returning(|_| Ok(()));
+            mock_storage.expect_store_message().returning(|_| Ok(false));
             mock_storage
                 .expect_mark_message_synced()
                 .returning(|_, _, _| Ok(()));
@@ -966,7 +1002,7 @@ mod tests {
                 .expect_store_message()
                 .with(eq(test_message.clone()))
                 .times(1)
-                .returning(|_| Ok(()));
+                .returning(|_| Ok(false));
 
             mock_storage
                 .expect_mark_message_synced()
@@ -1123,7 +1159,7 @@ mod tests {
                 if call_count == 1 {
                     Err(StorageError::Internal("Simulated failure".to_string()))
                 } else {
-                    Ok(())
+                    Ok(false)
                 }
             });
 
@@ -1243,7 +1279,7 @@ mod tests {
             mock_storage
                 .expect_store_message()
                 .times(2) // Only for MessageReceived and MessageSent
-                .returning(|_| Ok(()));
+                .returning(|_| Ok(false));
 
             mock_storage
                 .expect_mark_message_synced()

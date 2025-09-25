@@ -46,7 +46,7 @@ async fn create_test_group_manager() -> GroupManager<MockMessagesManagerTrait> {
     });
 
     // Set up default expectations for messages_stream calls
-    mock_manager.expect_messages_stream().returning(|| {
+    mock_manager.expect_message_events_stream().returning(|| {
         let (tx, rx) = async_broadcast::broadcast(1);
         // Close the sender immediately to create an empty stream
         drop(tx);
@@ -800,7 +800,7 @@ async fn test_group_manager_handles_stream_closure_gracefully() {
     });
 
     // Create a stream that will close after a short delay
-    mock_manager.expect_messages_stream().returning(|| {
+    mock_manager.expect_message_events_stream().returning(|| {
         let (tx, rx) = async_broadcast::broadcast(10);
 
         // Spawn a task that will close the sender after a short delay
@@ -957,7 +957,7 @@ async fn test_app_manager_handles_stream_closure_gracefully() {
     });
 
     // Create a stream that will close after a short delay
-    mock_manager.expect_messages_stream().returning(|| {
+    mock_manager.expect_message_events_stream().returning(|| {
         let (tx, rx) = async_broadcast::broadcast(10);
 
         // Spawn a task that will close the sender after a short delay
@@ -1106,7 +1106,7 @@ async fn test_multiple_receivers_handle_stream_closure_independently() {
     });
 
     // Create a stream that will close after a short delay
-    mock_manager.expect_messages_stream().returning(|| {
+    mock_manager.expect_message_events_stream().returning(|| {
         let (tx, rx) = async_broadcast::broadcast(10);
 
         // Spawn a task that will close the sender after a short delay

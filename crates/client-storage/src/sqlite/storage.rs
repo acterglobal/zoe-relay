@@ -242,13 +242,25 @@ impl SqliteMessageStorage {
 
 #[async_trait]
 impl MessageStorage for SqliteMessageStorage {
-    async fn store_message(&self, message: &MessageFull) -> Result<()> {
+    async fn store_message(&self, message: &MessageFull) -> Result<bool> {
         let mut conn = self
             .conn
             .lock()
             .map_err(|e| StorageError::Internal(format!("Failed to acquire database lock: {e}")))?;
 
         let id = message.id().as_bytes();
+
+        // Check if message already exists
+        let exists = conn
+            .prepare("SELECT 1 FROM messages WHERE id = ?")?
+            .query_row(params![id], |_| Ok(true))
+            .optional()?
+            .is_some();
+
+        if exists {
+            // already stored, nothing else to do here
+            return Ok(true);
+        }
 
         // Serialize the entire message for key-value storage
         let data = postcard::to_stdvec(message)?;
@@ -299,8 +311,8 @@ impl MessageStorage for SqliteMessageStorage {
         }
 
         tx.commit()?;
-        tracing::debug!("Stored message with ID: {}", hex::encode(id));
-        Ok(())
+        tracing::debug!(message_id = %message.id(), "Stored message");
+        Ok(false)
     }
 
     async fn get_message(&self, id: &MessageId) -> Result<Option<MessageFull>> {

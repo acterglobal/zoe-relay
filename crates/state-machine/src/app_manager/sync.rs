@@ -4,14 +4,14 @@ use zoe_app_primitives::{
     group::app::ExecutorEvent,
     protocol::AppProtocolVariant,
 };
-use zoe_wire_protocol::{Content, Message, StreamMessage, Tag};
+use zoe_wire_protocol::{Content, Message, Tag};
 use zoe_wire_protocol::{Filter, MessageFull};
 
 use crate::{
     error::{GroupError, GroupResult},
     execution::ExecutorStore,
     group::GroupDataUpdate,
-    messages::MessagesManagerTrait,
+    messages::{MessageEvent, MessagesManagerTrait},
 };
 
 use super::{AppManager, AppState, GroupService};
@@ -26,8 +26,7 @@ impl<
         let app_manager_clone = self.clone();
 
         let mut message_group_notifications = self.group_service.message_group_receiver();
-        let mut messages_stream = self.message_manager.messages_stream();
-        let mut catch_up_stream = self.message_manager.catch_up_stream();
+        let mut messages_stream = self.message_manager.message_events_stream();
         tokio::spawn(async move {
             loop {
                 tokio::select! {
@@ -49,45 +48,10 @@ impl<
                         }
                     }
 
-                    catch_up_response = catch_up_stream.recv() => {
-                        match catch_up_response {
-                            Ok(catch_up_response) => {
-                                for message in catch_up_response.messages {
-                                    if let Err(e) = app_manager_clone.handle_app_message(message).await {
-                                        tracing::error!(error = ?e, "Failed to process app message");
-                                    }
-                                }
-                            }
-                            Err(async_broadcast::RecvError::Closed) => {
-                                tracing::debug!("Catch-up stream closed, stopping message processing");
-                                break;
-                            }
-                            Err(e) => {
-                                tracing::error!(error = ?e, "Failed to receive catch-up response from stream in AppManager");
-                                continue;
-                            }
-                        }
-                    }
+                    message_event = messages_stream.recv() => {
+                        let message_event = match message_event {
+                            Ok(message_event) => message_event,
 
-                    stream_message = messages_stream.recv() => {
-                        match stream_message {
-                            Ok(stream_message) => {
-                                match stream_message {
-                                    StreamMessage::MessageReceived { message, stream_height: _ } => {
-                                        let message_id = *message.id();
-                                        if let Err(e) = app_manager_clone.handle_app_message(*message).await {
-                                            tracing::error!(
-                                                error = ?e,
-                                                message_id = ?message_id,
-                                                "Failed to process app message"
-                                            );
-                                        }
-                                    }
-                                    StreamMessage::StreamHeightUpdate(height) => {
-                                        tracing::debug!(height = %height, "App message stream height updated");
-                                    }
-                                }
-                            }
                             Err(async_broadcast::RecvError::Closed) => {
                                 tracing::debug!("App message stream closed, stopping message processing");
                                 break;
@@ -96,6 +60,33 @@ impl<
                                 tracing::error!(error = ?e, "Failed to receive message from stream in AppManager");
                                 continue;
                             }
+                        };
+
+                        let msg = match message_event {
+                            MessageEvent::MessageReceived { message, stream_height: _ } => {
+                                tracing::trace!(message_id = ?message.id(), "Received app message");
+                                message
+                            }
+                            MessageEvent::MessageSent { message, .. } => {
+                                tracing::trace!(message_id = ?message.id(), "Sent app message");
+                                message
+                            }
+                            MessageEvent::CatchUpMessage { message, .. } => {
+                                tracing::trace!(message_id = ?message.id(), "Catch-up app message");
+                                message
+                            }
+                            MessageEvent::StreamHeightUpdate { height } => {
+                                tracing::debug!(height = %height, "App message stream height updated");
+                                continue;
+                            }
+                            MessageEvent::CatchUpCompleted { request_id } => {
+                                tracing::debug!(request_id = %request_id, "Catch-up completed");
+                                continue;
+                            }
+                        };
+
+                        if let Err(e) = app_manager_clone.handle_app_message(msg).await {
+                            tracing::error!(error = ?e, "Failed to process app message");
                         }
                     }
                 }

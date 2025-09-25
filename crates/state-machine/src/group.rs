@@ -1,5 +1,5 @@
 // ChaCha20-Poly1305 and AES-GCM functionality moved to crypto module
-use zoe_wire_protocol::{ChaCha20Poly1305Content, KeyPair, MessageId, StreamMessage, VerifyingKey};
+use zoe_wire_protocol::{ChaCha20Poly1305Content, KeyPair, MessageId, VerifyingKey};
 
 use zoe_app_primitives::{
     group::{
@@ -24,7 +24,7 @@ use zoe_wire_protocol::{Kind, Message, MessageFull, Tag};
 use crate::{
     app_manager::GroupService,
     error::{GroupError, GroupResult},
-    messages::MessagesManagerTrait,
+    messages::{MessageEvent, MessagesManagerTrait},
     state::GroupSession,
     state::encrypt_group_initialization_content,
 };
@@ -312,7 +312,7 @@ impl<M: MessagesManagerTrait + Clone + 'static> GroupManager<M> {
 
     /// Start processing incoming messages from the message manager
     async fn start_message_processing(&self) {
-        let mut messages_stream = self.message_manager.messages_stream();
+        let mut messages_stream = self.message_manager.message_events_stream();
         let group_ids: Vec<GroupId> = {
             let groups = self.groups.read().await;
             groups.keys().cloned().collect()
@@ -342,19 +342,38 @@ impl<M: MessagesManagerTrait + Clone + 'static> GroupManager<M> {
                 }
             };
             match stream_message {
-                StreamMessage::MessageReceived {
+                MessageEvent::MessageReceived {
                     message,
                     stream_height: _,
                 } => {
-                    if let Err(e) = self.handle_incoming_message_internal(*message).await {
+                    if let Err(e) = self.handle_incoming_message_internal(message).await {
                         tracing::error!(
                             error = ?e,
                             "Failed to process incoming message"
                         );
                     }
                 }
-                StreamMessage::StreamHeightUpdate(height) => {
+                MessageEvent::MessageSent { message, .. } => {
+                    if let Err(e) = self.handle_incoming_message_internal(message).await {
+                        tracing::error!(
+                            error = ?e,
+                            "Failed to process sent message"
+                        );
+                    }
+                }
+                MessageEvent::CatchUpMessage { message, .. } => {
+                    if let Err(e) = self.handle_incoming_message_internal(message).await {
+                        tracing::error!(
+                            error = ?e,
+                            "Failed to process catch-up message"
+                        );
+                    }
+                }
+                MessageEvent::StreamHeightUpdate { height } => {
                     tracing::debug!(height = %height, "Stream height updated");
+                }
+                MessageEvent::CatchUpCompleted { request_id } => {
+                    tracing::debug!(request_id = %request_id, "Catch-up completed");
                 }
             }
         }

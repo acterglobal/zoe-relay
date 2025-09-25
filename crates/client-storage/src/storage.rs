@@ -109,7 +109,8 @@ pub struct BlobUploadStatus {
 #[async_trait]
 pub trait MessageStorage: Send + Sync {
     /// Store a new message or update an existing one
-    async fn store_message(&self, message: &MessageFull) -> Result<(), crate::StorageError>;
+    /// Returns whether the message was already stored before, false if this is newly stored
+    async fn store_message(&self, message: &MessageFull) -> Result<bool, crate::StorageError>;
 
     /// Retrieve a message by its ID
     async fn get_message(&self, id: &MessageId)

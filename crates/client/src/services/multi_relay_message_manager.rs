@@ -790,7 +790,7 @@ mod tests {
         mock_storage
             .expect_store_message()
             .times(1)
-            .returning(|_| Ok(()));
+            .returning(|_| Ok(false));
 
         let manager = MultiRelayMessageManager::new(Arc::new(mock_storage));
         let test_message = create_test_message();
@@ -936,7 +936,7 @@ mod tests {
         mock_storage
             .expect_store_message()
             .times(1)
-            .returning(|_| Ok(()));
+            .returning(|_| Ok(false));
 
         let storage = Arc::new(mock_storage);
 
@@ -1055,7 +1055,7 @@ mod tests {
         mock_storage
             .expect_store_message()
             .times(5)
-            .returning(|_| Ok(()));
+            .returning(|_| Ok(false));
 
         let storage = Arc::new(mock_storage);
 
@@ -1169,7 +1169,7 @@ mod tests {
         mock_storage
             .expect_store_message()
             .times(3)
-            .returning(|_| Ok(()));
+            .returning(|_| Ok(false));
 
         let storage = Arc::new(mock_storage);
 
@@ -1310,7 +1310,7 @@ mod tests {
         mock_storage
             .expect_store_message()
             .times(1)
-            .returning(|_| Ok(()));
+            .returning(|_| Ok(false));
 
         let storage = Arc::new(mock_storage);
 
