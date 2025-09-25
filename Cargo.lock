@@ -9745,6 +9745,7 @@ dependencies = [
  "zoe-app-primitives",
  "zoe-blob-store",
  "zoe-client",
+ "zoe-client-storage",
  "zoe-message-store",
  "zoe-relay",
  "zoe-state-machine",

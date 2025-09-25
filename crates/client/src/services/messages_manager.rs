@@ -175,15 +175,15 @@ pub struct MessagesManager {
     /// Broadcast sender for all message events (for persistence and monitoring)
     message_events_tx: Arc<Sender<MessageEvent>>,
     /// Keeper receiver to prevent broadcast channel closure (not actively used)
-    _broadcast_keeper: async_broadcast::InactiveReceiver<StreamMessage>,
+    _broadcast_keeper: Arc<async_broadcast::InactiveReceiver<StreamMessage>>,
     /// Keeper receiver to prevent catch-up channel closure (not actively used)
-    _catch_up_keeper: async_broadcast::InactiveReceiver<CatchUpResponse>,
+    _catch_up_keeper: Arc<async_broadcast::InactiveReceiver<CatchUpResponse>>,
     /// Keeper receiver to prevent message events channel closure (not actively used)
-    _message_events_keeper: async_broadcast::InactiveReceiver<MessageEvent>,
+    _message_events_keeper: Arc<async_broadcast::InactiveReceiver<MessageEvent>>,
     /// Current subscription state (persistent across reconnections)
     state: SharedObservable<SubscriptionState, AsyncLock>,
     /// Background task handle for syncing with the server
-    _sync_handler: Arc<AbortOnDrop<Result<()>>>,
+    _sync_handler: Arc<AbortOnDrop<()>>,
     /// Catch-up request ID counter
     catch_up_request_id: Arc<AtomicU32>,
 }
@@ -246,12 +246,12 @@ impl MessagesManager {
             let mut c_stream = catch_up_stream;
             loop {
                 select! {
-                    message = m_stream.recv() => {
-                        let Some(message) = message else {
-                            tracing::debug!("📪 Subscriptions stream ended");
-                            break;
+                    msg = m_stream.recv() => {
+                        let Some(message) = msg else {
+                            tracing::debug!("📪 Subscriptions stream ended, but keeping broadcast channel open");
+                            continue;
                         };
-                        match &message {
+                        match message {
                             StreamMessage::StreamHeightUpdate(height) => {
                                 // Update both the internal state and the observable
                                 {
@@ -289,34 +289,33 @@ impl MessagesManager {
                     }
                     catch_up_response = c_stream.recv() => {
                         let Some(catch_up_response) = catch_up_response else {
-                            tracing::debug!("📪 Catch-up stream ended");
-                            break;
+                            tracing::debug!("📪 Catch-up stream ended, but keeping broadcast channel open");
+                            continue;
                         };
-                        tracing::debug!("📨 MessagesManager received catch-up response: {:?}", catch_up_response);
+                            tracing::debug!("📨 MessagesManager received catch-up response: {:?}", catch_up_response);
 
-                        // Emit catch-up message events
-                        for message in &catch_up_response.messages {
-                            let event = MessageEvent::CatchUpMessage {
-                                message: message.clone(),
-                                request_id: catch_up_response.request_id
-                            };
-                            Self::safe_broadcast(&message_events_tx_clone, event, "CatchUpMessage event");
+                            // Emit catch-up message events
+                            for message in &catch_up_response.messages {
+                                let event = MessageEvent::CatchUpMessage {
+                                    message: message.clone(),
+                                    request_id: catch_up_response.request_id
+                                };
+                                Self::safe_broadcast(&message_events_tx_clone, event, "CatchUpMessage event");
+                            }
+
+                            if catch_up_response.is_complete {
+                                let event = MessageEvent::CatchUpCompleted {
+                                    request_id: catch_up_response.request_id
+                                };
+                                Self::safe_broadcast(&message_events_tx_clone, event, "CatchUpCompleted event");
+                            }
+
+                            Self::safe_broadcast(&catch_up_tx_clone, catch_up_response, "CatchUpResponse");
                         }
-
-                        if catch_up_response.is_complete {
-                            let event = MessageEvent::CatchUpCompleted {
-                                request_id: catch_up_response.request_id
-                            };
-                            Self::safe_broadcast(&message_events_tx_clone, event, "CatchUpCompleted event");
-                        }
-
-                        Self::safe_broadcast(&catch_up_tx_clone, catch_up_response, "CatchUpResponse");
                     }
                 }
             }
-
-            Ok(())
-        });
+        );
 
         Self {
             messages_service: Arc::new(messages_service),
@@ -325,9 +324,9 @@ impl MessagesManager {
             message_events_tx: Arc::new(message_events_tx),
             state,
             catch_up_request_id: Arc::new(AtomicU32::new(0)),
-            _broadcast_keeper: broadcast_keeper.deactivate(),
-            _catch_up_keeper: catch_up_keeper.deactivate(),
-            _message_events_keeper: message_events_keeper.deactivate(),
+            _broadcast_keeper: Arc::new(broadcast_keeper.deactivate()),
+            _catch_up_keeper: Arc::new(catch_up_keeper.deactivate()),
+            _message_events_keeper: Arc::new(message_events_keeper.deactivate()),
             _sync_handler: Arc::new(AbortOnDrop(sync_handler)),
         }
     }

@@ -4,9 +4,10 @@
 //! supporting both synchronous and asynchronous execution patterns with flexible
 //! permission context handling.
 
-use std::collections::HashMap;
+use async_broadcast::{Receiver, Sender, broadcast};
+use std::collections::BTreeMap;
 use std::sync::Arc;
-use tokio::sync::{RwLock, broadcast};
+use tokio::sync::RwLock;
 use zoe_wire_protocol::MessageId;
 
 use super::{error::ExecutorError, model_factory::ModelFactory, store::ExecutorStore};
@@ -17,7 +18,7 @@ use zoe_app_primitives::{
         events::roles::GroupRole,
     },
 };
-type Notifiers<E> = Arc<RwLock<HashMap<String, broadcast::Sender<E>>>>;
+type Notifiers<E> = Arc<RwLock<BTreeMap<E, Sender<()>>>>;
 /// Unified generic executor for event-sourced models
 ///
 /// This executor works with any ModelFactory and ExecutorStore combination.
@@ -47,7 +48,7 @@ where
         Self {
             factory,
             store,
-            notifiers: Arc::new(RwLock::new(HashMap::new())),
+            notifiers: Arc::new(RwLock::new(Default::default())),
         }
     }
 
@@ -55,27 +56,28 @@ where
     pub async fn subscribe(
         &self,
         key: <TFactory::Model as GroupStateModel>::ExecutiveKey,
-    ) -> broadcast::Receiver<<TFactory::Model as GroupStateModel>::ExecutiveKey> {
+    ) -> Receiver<()> {
         let mut notifiers = self.notifiers.write().await;
-        let key_string = format!("{key:?}");
 
-        match notifiers.get(&key_string) {
-            Some(sender) => sender.subscribe(),
-            None => {
-                let (sender, receiver) = broadcast::channel(16);
-                notifiers.insert(key_string, sender);
-                receiver
+        if let Some(sender) = notifiers.get(&key)
+            && !sender.is_closed() { // closed senders need to be dropped and restarted
+                return sender.new_receiver();
             }
-        }
+
+        let (sender, receiver) = broadcast(16);
+        notifiers.insert(key, sender);
+        receiver
     }
 
-    /// Send a notification for the given executive key
-    async fn notify(&self, key: &<TFactory::Model as GroupStateModel>::ExecutiveKey) {
-        let notifiers = self.notifiers.read().await;
-        let key_string = format!("{key:?}");
-        if let Some(sender) = notifiers.get(&key_string) {
-            // Ignore errors - if there are no receivers, that's fine
-            let _ = sender.send(key.clone());
+    async fn notify_many(&self, keys: &[<TFactory::Model as GroupStateModel>::ExecutiveKey]) {
+        let mut notifiers = self.notifiers.write().await;
+        for key in keys {
+            if let Some(sender) = notifiers.get(key)
+                && let Err(async_broadcast::TrySendError::Closed(_)) = sender.try_broadcast(()) {
+                    // the receivers have all dropped and the sender is closed. let's evict to spare
+                    // memory and computational resources.
+                    notifiers.remove(key);
+                }
         }
     }
 
@@ -104,10 +106,7 @@ where
         all_exec_keys.dedup(); // we only want to notify about each once.
 
         // Send notifications
-        // Both Model and SettingsModel use the same ExecutiveKey type
-        for key in &all_exec_keys {
-            self.notify(key).await;
-        }
+        self.notify_many(&all_exec_keys).await;
 
         Ok(all_exec_keys)
     }

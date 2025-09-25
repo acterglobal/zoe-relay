@@ -186,6 +186,5 @@ mod tests {
         let store = crate::execution::InMemoryStore::new();
         let _app_manager =
             AppManager::new(message_manager.clone(), group_manager.clone(), store).await;
-
     }
 }

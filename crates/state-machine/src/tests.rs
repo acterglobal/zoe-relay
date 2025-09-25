@@ -1,3 +1,4 @@
+use crate::app_manager::GroupService;
 use crate::group::create_role_update_event_for_testing;
 use crate::group::{CreateGroupBuilder, GroupDataUpdate, GroupManager};
 use crate::messages::MockMessagesManagerTrait;

@@ -278,8 +278,8 @@ impl<M: MessagesManagerTrait + Clone + 'static> GroupManager<M> {
         self.publish_group_event(group_id, event, sender).await
     }
 
-    // /// Create and publish an app event in one operation
-    pub async fn publish_app_event<T: Serialize>(
+    /// Create and publish an app event in one operation
+    pub async fn publish_event_with_tag<T: serde::Serialize + Send>(
         &self,
         group_id: &GroupId,
         app_tag: ChannelId,
@@ -330,7 +330,18 @@ impl<M: MessagesManagerTrait + Clone + 'static> GroupManager<M> {
 
         tracing::info!("Starting automatic message processing for GroupManager");
 
-        while let Ok(stream_message) = messages_stream.recv().await {
+        loop {
+            let stream_message = match messages_stream.recv().await {
+                Ok(stream_message) => stream_message,
+                Err(async_broadcast::RecvError::Closed) => {
+                    tracing::debug!("Message stream closed, stopping message processing");
+                    break;
+                }
+                Err(e) => {
+                    tracing::error!(error = ?e, "Failed to receive message from stream");
+                    continue;
+                }
+            };
             match stream_message {
                 StreamMessage::MessageReceived {
                     message,
@@ -547,8 +558,8 @@ impl<M: MessagesManagerTrait + Clone + 'static> GroupService for GroupManager<M>
         event: T,
         sender: &zoe_wire_protocol::KeyPair,
     ) -> GroupResult<zoe_wire_protocol::MessageFull> {
-        self.publish_app_event(group_id, app_tag, event, sender)
-            .await
+        // Call the actual implementation method (not the trait method)
+        GroupManager::publish_event_with_tag(self, group_id, app_tag, event, sender).await
     }
 }
 

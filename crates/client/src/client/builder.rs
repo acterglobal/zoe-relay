@@ -13,6 +13,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use zoe_app_primitives::{connection::RelayAddress, file::CompressionConfig};
 use zoe_client_storage::{SqliteMessageStorage, StorageConfig};
+use zoe_state_machine::app_manager::AppManager;
 use zoe_wire_protocol::{KeyPair, VerifyingKey};
 
 #[cfg(feature = "frb-api")]
@@ -148,6 +149,15 @@ impl ClientBuilder {
                 })?,
         );
 
+        let app_manager = Arc::new(
+            AppManager::new(
+                message_manager.clone(),
+                Arc::new(session_manager.group_manager().clone()),
+                (*storage).clone(),
+            )
+            .await,
+        );
+
         let fs =
             FileStorage::new(&fs_path, blob_service.clone(), CompressionConfig::default()).await?;
 
@@ -175,6 +185,7 @@ impl ClientBuilder {
             _relay_status_keeper: Arc::new(relay_status_keeper),
             connection_monitors: Arc::new(RwLock::new(BTreeMap::new())),
             session_manager,
+            app_manager,
         };
 
         // If autoconnect is enabled, add the first server immediately

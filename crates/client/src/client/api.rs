@@ -1,14 +1,13 @@
 use super::{
     ZoeClientBlobService, ZoeClientMessageManager, ZoeClientSessionManager, ZoeClientStorage,
 };
-use crate::error::Result;
+use crate::{
+    client::{ZoeClientAppManager, ZoeClientGroupManager},
+    error::Result,
+};
 use std::sync::Arc;
 use zoe_blob_store::client::BlobClient;
-use zoe_state_machine::group::GroupManager;
 use zoe_wire_protocol::{KeyPair, VerifyingKey};
-
-// Type alias for the GroupManager used in the client
-type ClientGroupManager = GroupManager<ZoeClientMessageManager>;
 
 #[cfg(not(feature = "frb-api"))]
 mod file_storage;
@@ -54,8 +53,12 @@ impl Client {
         self.session_manager.clone()
     }
 
-    pub fn group_manager(&self) -> ClientGroupManager {
+    pub fn group_manager(&self) -> ZoeClientGroupManager {
         self.session_manager.group_manager()
+    }
+
+    pub fn app_manager(&self) -> Arc<ZoeClientAppManager> {
+        self.app_manager.clone()
     }
 }
 

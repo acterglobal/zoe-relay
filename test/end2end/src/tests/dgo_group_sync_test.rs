@@ -28,7 +28,10 @@ use zoe_app_primitives::{
     identity::{IdentityInfo, IdentityRef},
 };
 use zoe_client::services::MessagesManager;
-use zoe_state_machine::group::{CreateGroupBuilder, GroupDataUpdate};
+use zoe_state_machine::{
+    app_manager::AppManager,
+    group::{CreateGroupBuilder, GroupDataUpdate},
+};
 use zoe_wire_protocol::{
     Algorithm, Content, Filter, KeyPair, Kind, Message, MessageFilters, MessageFull, MessageId,
     StoreKey, StreamMessage, Tag, VerifyingKey,
@@ -102,17 +105,35 @@ async fn test_dgo_group_synchronization() -> Result<()> {
             .is_member(&IdentityRef::Key(client_a.public_key()))
     );
 
+    // Create AppManager instances for both clients now that the group exists
+    info!("🔧 Creating AppManager for Alice...");
+    let app_manager_a = client_a.app_manager();
+    info!("✅ AppManager for Alice created successfully");
+
+    info!("🔧 Creating AppManager for Bob...");
+    let app_manager_b = client_b.app_manager();
+    info!("✅ AppManager for Bob created successfully");
+
     // Step 2: Client A creates DGO content (text block) using real DGO events
     let text_block_title = "Welcome to our DGO group!";
     let text_block_description = "This is a test text block created by Alice";
 
-    let text_block_id = create_dgo_text_block(
-        &client_a,
-        &group_id,
-        text_block_title,
-        text_block_description,
-    )
-    .await?;
+    info!("📝 Creating DGO text block...");
+    let text_block_msg = app_manager_a
+        .publish_dgo_event(
+            &group_id,
+            DgoActivityEventContent::CreateTextBlock {
+                content: CreateTextBlockContent {
+                    title: text_block_title.to_string(),
+                    description: Some(text_block_description.to_string()),
+                    icon: None,
+                    parent_id: None,
+                },
+            },
+            client_a.keypair(),
+        )
+        .await?;
+    let text_block_id = *text_block_msg.id();
     info!(
         "📝 Created text block '{}' with ID: {:?}",
         text_block_title, text_block_id
@@ -183,8 +204,21 @@ async fn test_dgo_group_synchronization() -> Result<()> {
     // Step 5: Client B creates additional DGO content
     let bob_text_title = "Hello from Bob!";
     let bob_text_description = "This is Bob's contribution to the group";
-    let bob_text_id =
-        create_dgo_text_block(&client_b, &group_id, bob_text_title, bob_text_description).await?;
+    let blob_msg = app_manager_b
+        .publish_dgo_event(
+            &group_id,
+            DgoActivityEventContent::CreateTextBlock {
+                content: CreateTextBlockContent {
+                    title: bob_text_title.to_string(),
+                    description: Some(bob_text_description.to_string()),
+                    icon: None,
+                    parent_id: None,
+                },
+            },
+            client_b.keypair(),
+        )
+        .await?;
+    let bob_text_id = *blob_msg.id();
     info!(
         "📝 Bob created text block '{}' with ID: {:?}",
         bob_text_title, bob_text_id
@@ -244,154 +278,6 @@ async fn test_dgo_content_updates() -> Result<()> {
     // This test requires create_group function that needs to be implemented
 
     info!("⏭️ Skipping DGO content updates test - requires additional implementation");
-    Ok(())
-}
-
-// Helper functions for DGO operations
-
-/// Create a DGO text block using real DGO events
-async fn create_dgo_text_block(
-    client: &zoe_client::Client,
-    group_id: &zoe_app_primitives::group::events::GroupId,
-    title: &str,
-    description: &str,
-) -> Result<MessageId> {
-    use zoe_app_primitives::{
-        digital_groups_organizer::events::{
-            content::CreateTextBlockContent,
-            core::{DgoActivityEvent, DgoActivityEventContent},
-        },
-        identity::IdentityType,
-        protocol::AppProtocolVariant,
-    };
-    use zoe_wire_protocol::MessageId;
-
-    // Get the group session to access the current state
-    let group_manager = client.group_manager();
-    let group_session = group_manager
-        .group_session(group_id)
-        .await
-        .ok_or_else(|| anyhow::anyhow!("Group not found: {:?}", group_id))?;
-
-    // Use the initial group creation message ID as the group state reference
-    // This represents the current state for permission validation
-    let group_state_reference = group_session
-        .state
-        .event_history
-        .first()
-        .copied()
-        .unwrap_or(MessageId::from([0u8; 32]));
-
-    // Create the DGO text block content
-    let content = CreateTextBlockContent {
-        title: title.to_string(),
-        description: Some(description.to_string()),
-        icon: None,
-        parent_id: None,
-    };
-
-    // Create the DGO activity event
-    let dgo_event = DgoActivityEvent::new(
-        IdentityType::Main, // Use main identity (the verifying key itself)
-        DgoActivityEventContent::CreateTextBlock { content },
-        group_state_reference,
-    );
-
-    // Get the DGO app's channel tag from the group's installed apps
-    let app_tag = group_session
-        .state
-        .group_info
-        .installed_apps
-        .iter()
-        .find(|app| app.app_id == AppProtocolVariant::DigitalGroupsOrganizer)
-        .ok_or_else(|| anyhow::anyhow!("DGO app not found in group"))?
-        .app_tag
-        .clone();
-
-    // Use the GroupManager's generic publish_app_event method
-    let message = group_manager
-        .publish_app_event(group_id, app_tag, dgo_event, client.keypair())
-        .await
-        .map_err(|e| anyhow::anyhow!("Failed to publish DGO event: {}", e))?;
-
-    let message_id = *message.id();
-    info!(
-        "📝 Created real DGO text block '{}' with message ID: {:?}",
-        title, message_id
-    );
-    Ok(message_id)
-}
-
-/// Update a DGO text block using real DGO events
-async fn update_dgo_text_block(
-    client: &zoe_client::Client,
-    group_id: &zoe_app_primitives::group::events::GroupId,
-    text_block_id: &MessageId,
-    title: &str,
-    description: &str,
-) -> Result<()> {
-    use zoe_app_primitives::{
-        digital_groups_organizer::events::{
-            content::{TextBlockUpdate, UpdateTextBlockContent},
-            core::{DgoActivityEvent, DgoActivityEventContent},
-        },
-        identity::IdentityType,
-        protocol::AppProtocolVariant,
-    };
-    use zoe_wire_protocol::MessageId;
-
-    // Get the group session to access the current state
-    let group_manager = client.group_manager();
-    let group_session = group_manager
-        .group_session(group_id)
-        .await
-        .ok_or_else(|| anyhow::anyhow!("Group not found: {:?}", group_id))?;
-
-    // Use the initial group creation message ID as the group state reference
-    let group_state_reference = group_session
-        .state
-        .event_history
-        .first()
-        .copied()
-        .unwrap_or(MessageId::from([0u8; 32]));
-
-    // Create the text block update content
-    let content: UpdateTextBlockContent = vec![
-        TextBlockUpdate::Title(title.to_string()),
-        TextBlockUpdate::Description(description.to_string()),
-    ];
-
-    // Create the DGO activity event
-    let dgo_event = DgoActivityEvent::new(
-        IdentityType::Main, // Use main identity (the verifying key itself)
-        DgoActivityEventContent::UpdateTextBlock {
-            target_id: *text_block_id,
-            content,
-        },
-        group_state_reference,
-    );
-
-    // Get the DGO app's channel tag from the group's installed apps
-    let app_tag = group_session
-        .state
-        .group_info
-        .installed_apps
-        .iter()
-        .find(|app| app.app_id == AppProtocolVariant::DigitalGroupsOrganizer)
-        .ok_or_else(|| anyhow::anyhow!("DGO app not found in group"))?
-        .app_tag
-        .clone();
-
-    // Use the GroupManager's generic publish_app_event method
-    let _message = group_manager
-        .publish_app_event(group_id, app_tag, dgo_event, client.keypair())
-        .await
-        .map_err(|e| anyhow::anyhow!("Failed to publish DGO update event: {}", e))?;
-
-    info!(
-        "✏️ Updated DGO text block {:?} with title '{}'",
-        text_block_id, title
-    );
     Ok(())
 }
 

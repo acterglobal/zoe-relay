@@ -8,6 +8,7 @@ publish = false
 # Core zoe crates we're testing
 zoe-relay = { path = "../../crates/relay" }
 zoe-client = { path = "../../crates/client", features = ["test-utils"] }
+zoe-client-storage = { path = "../../crates/client-storage" }
 zoe-blob-store = { path = "../../crates/blob-store" }
 zoe-message-store = { path = "../../crates/message-store" }
 zoe-wire-protocol = { path = "../../crates/wire-protocol" }

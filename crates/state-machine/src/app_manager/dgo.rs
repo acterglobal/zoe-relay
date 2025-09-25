@@ -1,5 +1,9 @@
+use async_broadcast::Receiver;
 use zoe_app_primitives::{
-    digital_groups_organizer::events::core::{DgoActivityEvent, DgoActivityEventContent},
+    digital_groups_organizer::{
+        events::core::{DgoActivityEvent, DgoActivityEventContent},
+        indexing::keys::ExecuteReference,
+    },
     group::events::GroupId,
     identity::IdentityType,
     protocol::AppProtocolVariant,
@@ -83,5 +87,9 @@ impl<
         // Publish the event through the generic publish_app_event method
         self.publish_app_event(group_id, app_tag, dgo_event, sender)
             .await
+    }
+
+    pub async fn subscribe_to_dgo_notification(&self, reference: ExecuteReference) -> Receiver<()> {
+        self.dgo_executor.subscribe(reference).await
     }
 }

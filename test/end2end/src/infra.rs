@@ -179,14 +179,6 @@ impl TestInfrastructure {
 
         let client = client_builder.build().await?;
 
-        // Connect the client to the relay server
-        use zoe_app_primitives::connection::RelayAddress;
-        let relay_address = RelayAddress::new(self.server_public_key.clone())
-            .with_address(self.server_addr.into())
-            .with_name("Test Server".to_string());
-
-        client.add_relay(relay_address).await?;
-
         // Wait for the connection to be established
         let mut attempts = 0;
         const MAX_ATTEMPTS: u32 = 50; // 5 seconds total (50 * 100ms)

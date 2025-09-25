@@ -110,7 +110,9 @@ pub trait GroupStateModel:
         + Sync
         + Clone
         + std::fmt::Debug
-        + PartialEq;
+        + PartialEq
+        + Eq
+        + Ord;
 
     /// if an event doesn't return anything in "applies_to", this model will be created and
     /// the event will be exected on the default model

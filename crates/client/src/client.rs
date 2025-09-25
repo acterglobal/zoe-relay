@@ -8,6 +8,8 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tokio::task::JoinHandle;
 use zoe_client_storage::SqliteMessageStorage;
+use zoe_state_machine::app_manager::AppManager;
+use zoe_state_machine::group::GroupManager;
 use zoe_wire_protocol::KeyId;
 
 #[cfg(not(feature = "frb-api"))]
@@ -35,6 +37,9 @@ use flutter_rust_bridge::frb;
 
 pub type ZoeClientStorage = SqliteMessageStorage;
 pub type ZoeClientSessionManager = SessionManager<ZoeClientStorage, ZoeClientMessageManager>;
+pub type ZoeClientGroupManager = GroupManager<ZoeClientMessageManager>;
+pub type ZoeClientAppManager =
+    AppManager<ZoeClientMessageManager, ZoeClientGroupManager, ZoeClientStorage>;
 pub type ZoeClientMessageManager = MultiRelayMessageManager<ZoeClientStorage>;
 pub type ZoeClientBlobService = MultiRelayBlobService<ZoeClientStorage>;
 pub type ZoeClientFileStorage = FileStorage<ZoeClientBlobService>;
@@ -61,6 +66,8 @@ pub struct Client {
     pub(crate) connection_monitors: Arc<RwLock<BTreeMap<KeyId, JoinHandle<()>>>>,
     /// Session manager for the client
     pub(crate) session_manager: Arc<ZoeClientSessionManager>,
+    /// App manager for the client
+    pub(crate) app_manager: Arc<ZoeClientAppManager>,
 }
 
 #[cfg(test)]
