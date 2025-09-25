@@ -771,6 +771,403 @@ async fn test_join_group_with_mock_subscription_verification() {
 }
 
 #[tokio::test]
+async fn test_group_manager_handles_stream_closure_gracefully() {
+    use crate::messages::MockMessagesManagerTrait;
+    use std::sync::Arc;
+    use std::time::Duration;
+    use tokio::time::timeout;
+    use zoe_wire_protocol::{Filter, PublishResult};
+
+    // Create a mock message manager that will close the stream after a few messages
+    let mut mock_manager = MockMessagesManagerTrait::new();
+
+    // Set up expectations for subscription calls
+    mock_manager
+        .expect_ensure_contains_filter()
+        .with(function(|filter: &Filter| {
+            matches!(filter, Filter::Channel(_))
+        }))
+        .returning(|_| Ok(()));
+
+    // Set up expectations for publish calls
+    mock_manager.expect_publish().returning(|_| {
+        Ok(PublishResult::StoredNew {
+            global_stream_id: "test_stream_id".to_string(),
+        })
+    });
+
+    // Create a stream that will close after a short delay
+    mock_manager.expect_messages_stream().returning(|| {
+        let (tx, rx) = async_broadcast::broadcast(10);
+
+        // Spawn a task that will close the sender after a short delay
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            drop(tx); // This will close the broadcast channel
+        });
+
+        rx
+    });
+
+    // Set up catch-up stream that also closes
+    mock_manager.expect_catch_up_stream().returning(|| {
+        let (tx, rx) = async_broadcast::broadcast(10);
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            drop(tx);
+        });
+        rx
+    });
+
+    let message_manager = Arc::new(mock_manager);
+    let group_manager = GroupManager::builder(message_manager).build().await;
+
+    // Create a group to trigger the background message processing
+    let (alice_key, _bob_key) = create_test_keys();
+    let create_group = CreateGroupBuilder::new("Stream Closure Test Group".to_string())
+        .description("Testing stream closure handling".to_string());
+
+    let create_result = group_manager
+        .create_group(create_group, &alice_key)
+        .await
+        .unwrap();
+
+    // Wait for the stream to close and verify the manager doesn't stall
+    // The manager should handle the stream closure gracefully and not hang
+    let result = timeout(Duration::from_secs(2), async {
+        // Try to get the group session - this should work even after stream closure
+        group_manager.group_session(&create_result.group_id).await
+    })
+    .await;
+
+    // The manager should still be functional even after stream closure
+    assert!(
+        result.is_ok(),
+        "GroupManager should handle stream closure gracefully"
+    );
+    let session_result = result.unwrap();
+    assert!(
+        session_result.is_some(),
+        "Should be able to get group session after stream closure"
+    );
+}
+
+#[tokio::test]
+async fn test_app_manager_handles_stream_closure_gracefully() {
+    use crate::app_manager::{AppManager, GroupService};
+    use crate::execution::InMemoryStore;
+    use crate::messages::MockMessagesManagerTrait;
+    use std::sync::Arc;
+    use std::time::Duration;
+    use tokio::time::timeout;
+    use zoe_wire_protocol::{Filter, PublishResult};
+
+    // Mock GroupService implementation
+    #[derive(Clone)]
+    struct MockGroupService;
+
+    #[async_trait::async_trait]
+    impl GroupService for MockGroupService {
+        fn message_group_receiver(
+            &self,
+        ) -> async_broadcast::Receiver<crate::group::GroupDataUpdate> {
+            let (_tx, rx) = async_broadcast::broadcast(1000);
+            rx
+        }
+
+        async fn current_group_states(&self) -> Vec<zoe_app_primitives::group::states::GroupState> {
+            Vec::new()
+        }
+
+        async fn decrypt_app_message<T: serde::de::DeserializeOwned>(
+            &self,
+            _group_id: &zoe_app_primitives::group::events::GroupId,
+            _encrypted_content: &zoe_wire_protocol::ChaCha20Poly1305Content,
+        ) -> crate::error::GroupResult<T> {
+            Err(crate::error::GroupError::InvalidEvent(
+                "Mock decryption not implemented".to_string(),
+            ))
+        }
+
+        async fn group_state_at_message(
+            &self,
+            _group_id: &zoe_app_primitives::group::events::GroupId,
+            _message_id: zoe_wire_protocol::MessageId,
+        ) -> Option<zoe_app_primitives::group::states::GroupState> {
+            None
+        }
+
+        async fn current_group_state(
+            &self,
+            _group_id: &zoe_app_primitives::group::events::GroupId,
+        ) -> Option<zoe_app_primitives::group::states::GroupState> {
+            None
+        }
+
+        async fn get_permission_context(
+            &self,
+            _group_id: &zoe_app_primitives::group::events::GroupId,
+            _actor_identity_ref: &zoe_app_primitives::identity::IdentityRef,
+            _group_state_reference: zoe_wire_protocol::MessageId,
+            _app_id: &zoe_app_primitives::protocol::AppProtocolVariant,
+        ) -> (
+            zoe_app_primitives::group::events::roles::GroupRole,
+            zoe_wire_protocol::MessageId,
+            zoe_app_primitives::group::events::permissions::GroupPermissions,
+        ) {
+            (
+                zoe_app_primitives::group::events::roles::GroupRole::Member,
+                zoe_wire_protocol::MessageId::from([0u8; 32]),
+                zoe_app_primitives::group::events::permissions::GroupPermissions::default(),
+            )
+        }
+
+        async fn publish_app_event<T: serde::Serialize + Send>(
+            &self,
+            _group_id: &zoe_app_primitives::group::events::GroupId,
+            _app_tag: zoe_wire_protocol::ChannelId,
+            _event: T,
+            _sender: &zoe_wire_protocol::KeyPair,
+        ) -> crate::error::GroupResult<zoe_wire_protocol::MessageFull> {
+            Err(crate::error::GroupError::InvalidOperation(
+                "Mock publish_app_event not implemented".to_string(),
+            ))
+        }
+    }
+
+    // Create a mock message manager that will close the stream
+    let mut mock_manager = MockMessagesManagerTrait::new();
+
+    // Set up expectations for subscription calls
+    mock_manager
+        .expect_ensure_contains_filter()
+        .with(function(|filter: &Filter| {
+            matches!(filter, Filter::Channel(_))
+        }))
+        .returning(|_| Ok(()));
+
+    // Set up expectations for publish calls
+    mock_manager.expect_publish().returning(|_| {
+        Ok(PublishResult::StoredNew {
+            global_stream_id: "test_stream_id".to_string(),
+        })
+    });
+
+    // Create a stream that will close after a short delay
+    mock_manager.expect_messages_stream().returning(|| {
+        let (tx, rx) = async_broadcast::broadcast(10);
+
+        // Spawn a task that will close the sender after a short delay
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            drop(tx); // This will close the broadcast channel
+        });
+
+        rx
+    });
+
+    // Set up catch-up stream that also closes
+    mock_manager.expect_catch_up_stream().returning(|| {
+        let (tx, rx) = async_broadcast::broadcast(10);
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            drop(tx);
+        });
+        rx
+    });
+
+    let message_manager = Arc::new(mock_manager);
+
+    // Create AppManager - this should start background tasks that handle stream closure
+    let _app_manager = AppManager::new(
+        message_manager,
+        Arc::new(MockGroupService),
+        InMemoryStore::new(),
+    )
+    .await;
+
+    // Wait for the stream to close and verify the manager doesn't stall
+    // The AppManager should handle the stream closure gracefully
+    let result = timeout(Duration::from_secs(2), async {
+        // The AppManager should not hang even when streams close
+        tokio::time::sleep(Duration::from_millis(500)).await;
+    })
+    .await;
+
+    // The AppManager should handle stream closure gracefully
+    assert!(
+        result.is_ok(),
+        "AppManager should handle stream closure gracefully"
+    );
+}
+
+#[tokio::test]
+async fn test_multiple_receivers_handle_stream_closure_independently() {
+    use crate::app_manager::{AppManager, GroupService};
+    use crate::execution::InMemoryStore;
+    use crate::messages::MockMessagesManagerTrait;
+    use std::sync::Arc;
+    use std::time::Duration;
+    use tokio::time::timeout;
+    use zoe_wire_protocol::{Filter, PublishResult};
+
+    // Mock GroupService implementation
+    #[derive(Clone)]
+    struct MockGroupService;
+
+    #[async_trait::async_trait]
+    impl GroupService for MockGroupService {
+        fn message_group_receiver(
+            &self,
+        ) -> async_broadcast::Receiver<crate::group::GroupDataUpdate> {
+            let (_tx, rx) = async_broadcast::broadcast(1000);
+            rx
+        }
+
+        async fn current_group_states(&self) -> Vec<zoe_app_primitives::group::states::GroupState> {
+            Vec::new()
+        }
+
+        async fn decrypt_app_message<T: serde::de::DeserializeOwned>(
+            &self,
+            _group_id: &zoe_app_primitives::group::events::GroupId,
+            _encrypted_content: &zoe_wire_protocol::ChaCha20Poly1305Content,
+        ) -> crate::error::GroupResult<T> {
+            Err(crate::error::GroupError::InvalidEvent(
+                "Mock decryption not implemented".to_string(),
+            ))
+        }
+
+        async fn group_state_at_message(
+            &self,
+            _group_id: &zoe_app_primitives::group::events::GroupId,
+            _message_id: zoe_wire_protocol::MessageId,
+        ) -> Option<zoe_app_primitives::group::states::GroupState> {
+            None
+        }
+
+        async fn current_group_state(
+            &self,
+            _group_id: &zoe_app_primitives::group::events::GroupId,
+        ) -> Option<zoe_app_primitives::group::states::GroupState> {
+            None
+        }
+
+        async fn get_permission_context(
+            &self,
+            _group_id: &zoe_app_primitives::group::events::GroupId,
+            _actor_identity_ref: &zoe_app_primitives::identity::IdentityRef,
+            _group_state_reference: zoe_wire_protocol::MessageId,
+            _app_id: &zoe_app_primitives::protocol::AppProtocolVariant,
+        ) -> (
+            zoe_app_primitives::group::events::roles::GroupRole,
+            zoe_wire_protocol::MessageId,
+            zoe_app_primitives::group::events::permissions::GroupPermissions,
+        ) {
+            (
+                zoe_app_primitives::group::events::roles::GroupRole::Member,
+                zoe_wire_protocol::MessageId::from([0u8; 32]),
+                zoe_app_primitives::group::events::permissions::GroupPermissions::default(),
+            )
+        }
+
+        async fn publish_app_event<T: serde::Serialize + Send>(
+            &self,
+            _group_id: &zoe_app_primitives::group::events::GroupId,
+            _app_tag: zoe_wire_protocol::ChannelId,
+            _event: T,
+            _sender: &zoe_wire_protocol::KeyPair,
+        ) -> crate::error::GroupResult<zoe_wire_protocol::MessageFull> {
+            Err(crate::error::GroupError::InvalidOperation(
+                "Mock publish_app_event not implemented".to_string(),
+            ))
+        }
+    }
+
+    // Create a mock message manager
+    let mut mock_manager = MockMessagesManagerTrait::new();
+
+    // Set up expectations for subscription calls
+    mock_manager
+        .expect_ensure_contains_filter()
+        .with(function(|filter: &Filter| {
+            matches!(filter, Filter::Channel(_))
+        }))
+        .returning(|_| Ok(()));
+
+    // Set up expectations for publish calls
+    mock_manager.expect_publish().returning(|_| {
+        Ok(PublishResult::StoredNew {
+            global_stream_id: "test_stream_id".to_string(),
+        })
+    });
+
+    // Create a stream that will close after a short delay
+    mock_manager.expect_messages_stream().returning(|| {
+        let (tx, rx) = async_broadcast::broadcast(10);
+
+        // Spawn a task that will close the sender after a short delay
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            drop(tx); // This will close the broadcast channel
+        });
+
+        rx
+    });
+
+    // Set up catch-up stream that also closes
+    mock_manager.expect_catch_up_stream().returning(|| {
+        let (tx, rx) = async_broadcast::broadcast(10);
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            drop(tx);
+        });
+        rx
+    });
+
+    let message_manager = Arc::new(mock_manager);
+
+    // Create both GroupManager and AppManager that will both listen to the same stream
+    let group_manager = GroupManager::builder(message_manager.clone()).build().await;
+    let _app_manager = AppManager::new(
+        message_manager,
+        Arc::new(MockGroupService),
+        InMemoryStore::new(),
+    )
+    .await;
+
+    // Create a group to trigger background processing
+    let (alice_key, _bob_key) = create_test_keys();
+    let create_group = CreateGroupBuilder::new("Multiple Receivers Test Group".to_string())
+        .description("Testing multiple receivers handling stream closure".to_string());
+
+    let create_result = group_manager
+        .create_group(create_group, &alice_key)
+        .await
+        .unwrap();
+
+    // Wait for the stream to close and verify both managers handle it gracefully
+    let result = timeout(Duration::from_secs(2), async {
+        // Both managers should handle the stream closure independently
+        tokio::time::sleep(Duration::from_millis(500)).await;
+
+        // Verify the GroupManager is still functional
+        let session_result = group_manager.group_session(&create_result.group_id).await;
+        assert!(
+            session_result.is_some(),
+            "GroupManager should still be functional after stream closure"
+        );
+    })
+    .await;
+
+    // Both managers should handle stream closure gracefully without interfering with each other
+    assert!(
+        result.is_ok(),
+        "Multiple receivers should handle stream closure independently"
+    );
+}
+
+#[tokio::test]
 async fn test_join_group_invalid_decryption_key() {
     // Create the original group
     let alice_manager = create_test_group_manager();

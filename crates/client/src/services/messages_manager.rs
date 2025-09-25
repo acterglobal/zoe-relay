@@ -246,76 +246,75 @@ impl MessagesManager {
             let mut c_stream = catch_up_stream;
             loop {
                 select! {
-                    msg = m_stream.recv() => {
-                        let Some(message) = msg else {
-                            tracing::debug!("📪 Subscriptions stream ended, but keeping broadcast channel open");
-                            continue;
-                        };
-                        match message {
-                            StreamMessage::StreamHeightUpdate(height) => {
-                                // Update both the internal state and the observable
-                                {
-                                    let mut state = state_clone.write().await;
-                                    ObservableWriteGuard::update(&mut state, |state: &mut SubscriptionState| {
-                                        state.set_stream_height(height.clone());
-                                    });
-                                }
-                                // Emit height update event
-                                let event = MessageEvent::StreamHeightUpdate { height: height.clone() };
-                                Self::safe_broadcast(&message_events_tx_clone, event, "StreamHeightUpdate event");
-                            },
-                            StreamMessage::MessageReceived { message: msg, stream_height } => {
-                                // Update both the internal state and the observable
-                                {
-                                    let mut state = state_clone.write().await;
-                                    ObservableWriteGuard::update(&mut state, |state: &mut SubscriptionState| {
-                                        state.set_stream_height(stream_height.clone());
-                                    });
-                                }
-
-                                // Emit message received event
-                                let event = MessageEvent::MessageReceived {
-                                    message: (**msg).clone(),
-                                    stream_height: stream_height.clone()
-                                };
-                                Self::safe_broadcast(&message_events_tx_clone, event, "MessageReceived event");
+                msg = m_stream.recv() => {
+                    let Some(message) = msg else {
+                        tracing::debug!("📪 Subscriptions stream ended, but keeping broadcast channel open");
+                        continue;
+                    };
+                    match message {
+                        StreamMessage::StreamHeightUpdate(ref height) => {
+                            // Update both the internal state and the observable
+                            {
+                                let mut state = state_clone.write().await;
+                                ObservableWriteGuard::update(&mut state, |state: &mut SubscriptionState| {
+                                    state.set_stream_height(height.clone());
+                                });
                             }
-                        }
+                            // Emit height update event
+                            let event = MessageEvent::StreamHeightUpdate { height: height.clone() };
+                            Self::safe_broadcast(&message_events_tx_clone, event, "StreamHeightUpdate event");
+                        },
+                        StreamMessage::MessageReceived { message: ref msg, ref stream_height } => {
+                            // Update both the internal state and the observable
+                            {
+                                let mut state = state_clone.write().await;
+                                ObservableWriteGuard::update(&mut state, |state: &mut SubscriptionState| {
+                                    state.set_stream_height(stream_height.clone());
+                                });
+                            }
 
-                        // Forward message to all subscribers
-                        // async-broadcast queues messages for receivers even if they're not actively polling
-                        tracing::debug!("MessagesManager forwarding message to broadcast channel: {:?}", message);
-                        Self::safe_broadcast(&tx_clone, message, "StreamMessage");
+                             // Emit message received event
+                             let event = MessageEvent::MessageReceived {
+                                 message: (**msg).clone(),
+                                 stream_height: stream_height.clone()
+                             };
+                            Self::safe_broadcast(&message_events_tx_clone, event, "MessageReceived event");
+                        }
                     }
-                    catch_up_response = c_stream.recv() => {
-                        let Some(catch_up_response) = catch_up_response else {
-                            tracing::debug!("📪 Catch-up stream ended, but keeping broadcast channel open");
-                            continue;
-                        };
-                            tracing::debug!("📨 MessagesManager received catch-up response: {:?}", catch_up_response);
 
-                            // Emit catch-up message events
-                            for message in &catch_up_response.messages {
-                                let event = MessageEvent::CatchUpMessage {
-                                    message: message.clone(),
-                                    request_id: catch_up_response.request_id
-                                };
-                                Self::safe_broadcast(&message_events_tx_clone, event, "CatchUpMessage event");
-                            }
+                    // Forward message to all subscribers
+                    // async-broadcast queues messages for receivers even if they're not actively polling
+                    tracing::debug!("MessagesManager forwarding message to broadcast channel: {:?}", message);
+                    Self::safe_broadcast(&tx_clone, message, "StreamMessage");
+                }
+                catch_up_response = c_stream.recv() => {
+                    let Some(catch_up_response) = catch_up_response else {
+                        tracing::debug!("📪 Catch-up stream ended, but keeping broadcast channel open");
+                        continue;
+                    };
+                        tracing::debug!("📨 MessagesManager received catch-up response: {:?}", catch_up_response);
 
-                            if catch_up_response.is_complete {
-                                let event = MessageEvent::CatchUpCompleted {
-                                    request_id: catch_up_response.request_id
-                                };
-                                Self::safe_broadcast(&message_events_tx_clone, event, "CatchUpCompleted event");
-                            }
-
-                            Self::safe_broadcast(&catch_up_tx_clone, catch_up_response, "CatchUpResponse");
+                        // Emit catch-up message events
+                        for message in &catch_up_response.messages {
+                            let event = MessageEvent::CatchUpMessage {
+                                message: message.clone(),
+                                request_id: catch_up_response.request_id
+                            };
+                            Self::safe_broadcast(&message_events_tx_clone, event, "CatchUpMessage event");
                         }
+
+                        if catch_up_response.is_complete {
+                            let event = MessageEvent::CatchUpCompleted {
+                                request_id: catch_up_response.request_id
+                            };
+                            Self::safe_broadcast(&message_events_tx_clone, event, "CatchUpCompleted event");
+                        }
+
+                        Self::safe_broadcast(&catch_up_tx_clone, catch_up_response, "CatchUpResponse");
                     }
                 }
             }
-        );
+        });
 
         Self {
             messages_service: Arc::new(messages_service),
