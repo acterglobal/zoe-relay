@@ -248,6 +248,36 @@ impl<M: MessagesManagerTrait + Clone + 'static> GroupManager<M> {
         Ok(message)
     }
 
+    /// Set identity for the current user in a group
+    ///
+    /// This is a convenience method that creates and publishes a SetIdentity event
+    /// to announce the user's participation in the group.
+    ///
+    /// # Arguments
+    /// * `group_id` - The group to set identity in
+    /// * `display_name` - The display name for the user
+    /// * `metadata` - Additional metadata for the user
+    /// * `sender` - The keypair of the user setting their identity
+    ///
+    /// # Returns
+    /// The published message containing the SetIdentity event
+    pub async fn set_identity(
+        &self,
+        group_id: &GroupId,
+        display_name: String,
+        metadata: Vec<zoe_app_primitives::metadata::Metadata>,
+        sender: &KeyPair,
+    ) -> GroupResult<MessageFull> {
+        let identity = zoe_app_primitives::identity::IdentityInfo {
+            display_name,
+            metadata,
+        };
+
+        let event = zoe_app_primitives::group::events::GroupActivityEvent::SetIdentity(identity);
+
+        self.publish_group_event(group_id, event, sender).await
+    }
+
     // /// Create and publish an app event in one operation
     pub async fn publish_app_event<T: Serialize>(
         &self,
@@ -506,6 +536,17 @@ impl<M: MessagesManagerTrait + Clone + 'static> GroupService for GroupManager<M>
         };
 
         (actor_role, app_state_message_id, group_permissions)
+    }
+
+    async fn publish_app_event<T: serde::Serialize + Send>(
+        &self,
+        group_id: &GroupId,
+        app_tag: zoe_wire_protocol::ChannelId,
+        event: T,
+        sender: &zoe_wire_protocol::KeyPair,
+    ) -> GroupResult<zoe_wire_protocol::MessageFull> {
+        self.publish_app_event(group_id, app_tag, event, sender)
+            .await
     }
 }
 

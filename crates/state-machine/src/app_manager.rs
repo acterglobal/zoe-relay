@@ -144,6 +144,27 @@ pub trait GroupService: Send + Sync {
         group_state_reference: MessageId,
         app_id: &AppProtocolVariant,
     ) -> (GroupRole, MessageId, GroupPermissions);
+
+    /// Publish an app event to a group
+    ///
+    /// This is a generic method for publishing any app-specific event to a group.
+    /// The app-specific logic (like DGO event creation) should be handled by the caller.
+    ///
+    /// # Arguments
+    /// * `group_id` - The group to publish the event to
+    /// * `app_tag` - The app channel tag to publish to
+    /// * `event` - The app event to publish
+    /// * `sender` - The keypair of the user publishing the event
+    ///
+    /// # Returns
+    /// The published message containing the app event
+    async fn publish_app_event<T: serde::Serialize + Send>(
+        &self,
+        group_id: &GroupId,
+        app_tag: zoe_wire_protocol::ChannelId,
+        event: T,
+        sender: &zoe_wire_protocol::KeyPair,
+    ) -> GroupResult<zoe_wire_protocol::MessageFull>;
 }
 
 /// Manages app-specific message processing, decoupled from group management
@@ -466,6 +487,97 @@ impl<
         }
     }
 
+    /// Publish an app event to a group
+    ///
+    /// This is a generic method that delegates to the GroupService's publish_app_event method.
+    /// App-specific logic (like DGO event creation) should be handled by the caller.
+    ///
+    /// # Arguments
+    /// * `group_id` - The group to publish the event to
+    /// * `app_tag` - The app channel tag to publish to
+    /// * `event` - The app event to publish
+    /// * `sender` - The keypair of the user publishing the event
+    ///
+    /// # Returns
+    /// The published message containing the app event
+    pub async fn publish_app_event<T: serde::Serialize + Send>(
+        &self,
+        group_id: &GroupId,
+        app_tag: zoe_wire_protocol::ChannelId,
+        event: T,
+        sender: &zoe_wire_protocol::KeyPair,
+    ) -> GroupResult<zoe_wire_protocol::MessageFull> {
+        self.group_service
+            .publish_app_event(group_id, app_tag, event, sender)
+            .await
+    }
+
+    /// Publish a DGO activity event to a group
+    ///
+    /// This is a DGO-specific convenience method that handles the complete flow of publishing a DGO event:
+    /// 1. Validates the group exists and has DGO app installed
+    /// 2. Gets the current group state reference for permission validation
+    /// 3. Creates the DGO activity event with proper identity and reference
+    /// 4. Publishes the event through the generic publish_app_event method
+    ///
+    /// # Arguments
+    /// * `group_id` - The group to publish the event to
+    /// * `content` - The DGO activity event content
+    /// * `identity_type` - Optional identity type to use (defaults to Main)
+    /// * `sender` - The keypair of the user publishing the event
+    ///
+    /// # Returns
+    /// The published message containing the DGO event
+    pub async fn publish_dgo_event(
+        &self,
+        group_id: &GroupId,
+        content: zoe_app_primitives::digital_groups_organizer::events::core::DgoActivityEventContent,
+        identity_type: Option<zoe_app_primitives::identity::IdentityType>,
+        sender: &zoe_wire_protocol::KeyPair,
+    ) -> GroupResult<zoe_wire_protocol::MessageFull> {
+        use zoe_app_primitives::{
+            digital_groups_organizer::events::core::DgoActivityEvent, identity::IdentityType,
+            protocol::AppProtocolVariant,
+        };
+        use zoe_wire_protocol::MessageId;
+
+        // Get the group session to access the current state
+        let group_session = self
+            .group_service
+            .group_state_at_message(group_id, MessageId::from([0u8; 32]))
+            .await
+            .ok_or_else(|| GroupError::GroupNotFound(format!("Group not found: {:?}", group_id)))?;
+
+        // Use the initial group creation message ID as the group state reference
+        // This represents the current state for permission validation
+        let group_state_reference = group_session
+            .event_history
+            .first()
+            .copied()
+            .unwrap_or(MessageId::from([0u8; 32]));
+
+        // Create the DGO activity event
+        let dgo_event = DgoActivityEvent::new(
+            identity_type.unwrap_or(IdentityType::Main),
+            content,
+            group_state_reference,
+        );
+
+        // Get the DGO app's channel tag from the group's installed apps
+        let app_tag = group_session
+            .group_info
+            .installed_apps
+            .iter()
+            .find(|app| app.app_id == AppProtocolVariant::DigitalGroupsOrganizer)
+            .ok_or_else(|| GroupError::InvalidOperation("DGO app not found in group".to_string()))?
+            .app_tag
+            .clone();
+
+        // Publish the event through the generic publish_app_event method
+        self.publish_app_event(group_id, app_tag, dgo_event, sender)
+            .await
+    }
+
     /// Synchronize app channel with group channel state
     ///
     /// This method implements lazy validation and app state reconstruction by:
@@ -750,6 +862,19 @@ mod tests {
                 MessageId::from([0u8; 32]),
                 GroupPermissions::default(),
             )
+        }
+
+        async fn publish_app_event<T: serde::Serialize + Send>(
+            &self,
+            _group_id: &GroupId,
+            _app_tag: zoe_wire_protocol::ChannelId,
+            _event: T,
+            _sender: &zoe_wire_protocol::KeyPair,
+        ) -> GroupResult<zoe_wire_protocol::MessageFull> {
+            // Mock implementation - return an error for tests
+            Err(GroupError::InvalidOperation(
+                "Mock publish_app_event not implemented".to_string(),
+            ))
         }
     }
 

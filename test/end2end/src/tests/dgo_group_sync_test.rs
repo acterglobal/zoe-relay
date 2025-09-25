@@ -145,24 +145,24 @@ async fn test_dgo_group_synchronization() -> Result<()> {
         while let Ok(update) = group_updates_b.recv().await {
             info!("📊 Bob received group update: {:?}", update);
             if let GroupDataUpdate::GroupAdded(session) = update
-                && session.state.group_info.group_id == group_id_clone {
-                    info!("✅ Bob received GroupAdded event for the group");
-                    return Ok(());
-                }
+                && session.state.group_info.group_id == group_id_clone
+            {
+                info!("✅ Bob received GroupAdded event for the group");
+                return Ok(());
+            }
         }
         Err(anyhow::anyhow!("GroupAdded event not received by Bob"))
     })
     .await??;
 
     // Bob announces his identity to be added to the group's member list
-    let bob_identity = zoe_app_primitives::identity::IdentityInfo {
-        display_name: "bob_user".to_string(),
-        metadata: vec![],
-    };
-    let bob_activity =
-        zoe_app_primitives::group::events::GroupActivityEvent::SetIdentity(bob_identity);
     let bob_message = group_manager_b
-        .publish_group_event(&group_id, bob_activity, client_b.keypair())
+        .set_identity(
+            &group_id,
+            "bob_user".to_string(),
+            vec![],
+            client_b.keypair(),
+        )
         .await?;
 
     info!("📢 Bob announced his identity");
@@ -307,6 +307,8 @@ async fn create_dgo_text_block(
         .ok_or_else(|| anyhow::anyhow!("DGO app not found in group"))?
         .app_tag
         .clone();
+
+    // Use the GroupManager's generic publish_app_event method
     let message = group_manager
         .publish_app_event(group_id, app_tag, dgo_event, client.keypair())
         .await
@@ -379,6 +381,8 @@ async fn update_dgo_text_block(
         .ok_or_else(|| anyhow::anyhow!("DGO app not found in group"))?
         .app_tag
         .clone();
+
+    // Use the GroupManager's generic publish_app_event method
     let _message = group_manager
         .publish_app_event(group_id, app_tag, dgo_event, client.keypair())
         .await
