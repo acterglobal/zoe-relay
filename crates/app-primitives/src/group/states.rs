@@ -228,9 +228,6 @@ pub enum GroupStateError {
     #[error("Permission denied: {0}")]
     PermissionDenied(String),
 
-    #[error("Member not found: {member} in group {group}")]
-    MemberNotFound { member: String, group: String },
-
     #[error("State transition error: {0}")]
     StateTransition(String),
 
@@ -703,12 +700,8 @@ impl GroupState {
                 // Note: Skipping member removal due to key type mismatch during ML-DSA transition
             }
 
-            GroupActivityEvent::UpdateAppSettings { app_id, update } => {
-                // Handle app-specific settings updates
-                // For now, we'll store the update data but not process it
-                // This will be handled by the app model factory in the future
-                // TODO: Implement app model factory pattern for processing app-specific updates
-                let _ = (app_id, update); // Acknowledge parameters without warning
+            GroupActivityEvent::UpdateAppSettings { .. } => {
+                // this isn't for us
             }
 
             GroupActivityEvent::Unknown { discriminant, .. } => {
@@ -748,26 +741,23 @@ impl GroupState {
     }
 
     /// Check if a member has permission to perform an action
+    /// if no other entry is found in the listing, the member is given GroupRole::Member
     pub fn check_permission(
         &self,
         member: &IdentityRef,
         required_permission: &Permission,
     ) -> GroupStateResult<()> {
-        match self.members.get(member) {
-            Some(member_info) => {
-                if member_info.role.has_permission(required_permission) {
-                    Ok(())
-                } else {
-                    Err(GroupStateError::PermissionDenied(format!(
-                        "Member {:?} with role {:?} does not have required permission {:?}",
-                        member, member_info.role, required_permission
-                    )))
-                }
-            }
-            None => Err(GroupStateError::MemberNotFound {
-                member: format!("{member:?}"),
-                group: format!("{:?}", self.group_info.group_id),
-            }),
+        let role = self
+            .members
+            .get(member)
+            .map(|m| m.role.clone())
+            .unwrap_or(GroupRole::Member);
+        if !role.has_permission(required_permission) {
+            Err(GroupStateError::PermissionDenied(format!(
+                "Member {member:?} with role {role:?} does not have required permission {required_permission:?}",
+            )))
+        } else {
+            Ok(())
         }
     }
 
@@ -808,15 +798,6 @@ impl GroupState {
         _message: Option<String>,
         _timestamp: u64,
     ) -> GroupStateResult<()> {
-        // In encrypted groups, leaving is just an announcement - they still have the key
-        // This removes them from the active member list but doesn't revoke access
-        if !self.members.contains_key(&sender) {
-            return Err(GroupStateError::MemberNotFound {
-                member: format!("{sender:?}"),
-                group: format!("{:?}", self.group_info.group_id),
-            });
-        }
-
         // Remove from active members list
         self.members.remove(&sender);
         Ok(())
@@ -833,8 +814,7 @@ impl GroupState {
         // Check permission - sender must have permission to assign roles
         self.check_permission(&sender, &self.group_info.settings.permissions.assign_roles)?;
 
-        let _member_info = self
-            .members
+        self.members
             .entry(target.clone())
             .and_modify(|member| {
                 member.role = role.clone();
@@ -1285,177 +1265,6 @@ impl GroupState {
         self.metrics.metadata_bytes = metadata_size as u64;
     }
 
-    /// Optimize memory usage for large event histories
-    ///
-    /// Implements several strategies to reduce memory footprint:
-    /// 1. Compress old event metadata
-    /// 2. Archive old events beyond retention period
-    /// 3. Optimize snapshot storage
-    /// 4. Clean up redundant data
-    pub fn optimize_memory_usage(&mut self) -> Result<MemoryUsageStats, CrossChannelError> {
-        const MAX_EVENT_HISTORY: usize = 10000;
-        const METADATA_COMPRESSION_THRESHOLD: usize = 1000;
-
-        let initial_usage = self.get_memory_usage();
-
-        // Archive old events if history is too large
-        if self.event_history.len() > MAX_EVENT_HISTORY {
-            self.archive_old_events(MAX_EVENT_HISTORY).map_err(|e| {
-                CrossChannelError::MemoryError {
-                    message: format!("Failed to archive old events: {e}"),
-                    current_usage_bytes: initial_usage.total_bytes,
-                    operation: MemoryOperation::Archival,
-                }
-            })?;
-        }
-
-        // Compress metadata for old events
-        if self.message_metadata.len() > METADATA_COMPRESSION_THRESHOLD {
-            self.compress_old_metadata()
-                .map_err(|e| CrossChannelError::MemoryError {
-                    message: format!("Failed to compress metadata: {e}"),
-                    current_usage_bytes: initial_usage.total_bytes,
-                    operation: MemoryOperation::Compression,
-                })?;
-        }
-
-        // Optimize snapshots
-        self.optimize_snapshots()
-            .map_err(|e| CrossChannelError::MemoryError {
-                message: format!("Failed to optimize snapshots: {e}"),
-                current_usage_bytes: initial_usage.total_bytes,
-                operation: MemoryOperation::Optimization,
-            })?;
-
-        // Update metrics
-        self.update_memory_metrics();
-
-        let final_usage = self.get_memory_usage();
-
-        // Log optimization results (would use tracing in full implementation)
-        // tracing::info!(
-        //     initial_bytes = initial_usage.total_bytes,
-        //     final_bytes = final_usage.total_bytes,
-        //     saved_bytes = initial_usage.total_bytes - final_usage.total_bytes,
-        //     "Memory optimization completed"
-        // );
-
-        Ok(final_usage)
-    }
-
-    /// Archive old events beyond retention period
-    ///
-    /// Moves old events to compressed storage and removes detailed metadata
-    /// while preserving essential information for reconstruction.
-    fn archive_old_events(&mut self, max_events: usize) -> Result<(), String> {
-        if self.event_history.len() <= max_events {
-            return Ok(());
-        }
-
-        let events_to_archive = self.event_history.len() - max_events;
-
-        // Take a snapshot before archiving to preserve state reconstruction capability
-        if let Some(&last_archived_event) = self.event_history.get(events_to_archive - 1)
-            && let Some(metadata) = self.message_metadata.get(&last_archived_event)
-        {
-            self.take_state_snapshot(metadata.timestamp, last_archived_event);
-        }
-
-        // Remove old events from history
-        let archived_events: Vec<_> = self.event_history.drain(0..events_to_archive).collect();
-
-        // Remove corresponding metadata for archived events
-        for event_id in archived_events {
-            self.message_metadata.remove(&event_id);
-        }
-
-        // Log archival (would use tracing in full implementation)
-        // tracing::info!("Archived {} old events, {} remaining", events_to_archive, self.event_history.len());
-
-        Ok(())
-    }
-
-    /// Compress metadata for old events
-    ///
-    /// Reduces memory usage by compressing metadata for events older than a threshold
-    fn compress_old_metadata(&mut self) -> Result<(), String> {
-        const OLD_EVENT_THRESHOLD_SECONDS: u64 = 86400 * 30; // 30 days
-
-        let current_time = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
-
-        let mut compressed_count = 0;
-
-        // For old events, we can remove non-essential metadata fields
-        // In a full implementation, this would use actual compression algorithms
-        for (_, metadata) in self.message_metadata.iter_mut() {
-            if current_time - metadata.timestamp > OLD_EVENT_THRESHOLD_SECONDS {
-                // Clear non-essential fields for old events
-                if metadata.invalidity_reason.is_some() {
-                    metadata.invalidity_reason = Some("archived".to_string());
-                    compressed_count += 1;
-                }
-            }
-        }
-
-        if compressed_count > 0 {
-            // Log compression (would use tracing in full implementation)
-            // tracing::debug!("Compressed metadata for {} old events", compressed_count);
-        }
-
-        Ok(())
-    }
-
-    /// Optimize snapshot storage
-    ///
-    /// Removes redundant snapshots and optimizes snapshot data structure
-    fn optimize_snapshots(&mut self) -> Result<(), String> {
-        const MAX_SNAPSHOTS: usize = 20;
-
-        // Remove excess snapshots, keeping the most recent ones
-        if self.group_state_snapshots.len() > MAX_SNAPSHOTS {
-            let excess_count = self.group_state_snapshots.len() - MAX_SNAPSHOTS;
-            let oldest_timestamps: Vec<_> = self
-                .group_state_snapshots
-                .keys()
-                .take(excess_count)
-                .cloned()
-                .collect();
-
-            for timestamp in oldest_timestamps {
-                self.group_state_snapshots.remove(&timestamp);
-            }
-
-            // Log optimization (would use tracing in full implementation)
-            // tracing::debug!("Removed {} snapshots, {} remaining", excess_count, self.group_state_snapshots.len());
-        }
-
-        Ok(())
-    }
-
-    /// Get memory usage statistics
-    ///
-    /// Returns detailed breakdown of memory usage for monitoring and optimization
-    pub fn get_memory_usage(&mut self) -> MemoryUsageStats {
-        self.update_memory_metrics();
-
-        MemoryUsageStats {
-            total_bytes: self.metrics.cache_memory_bytes
-                + self.metrics.snapshot_memory_bytes
-                + self.metrics.event_history_bytes
-                + self.metrics.metadata_bytes,
-            cache_bytes: self.metrics.cache_memory_bytes,
-            snapshots_bytes: self.metrics.snapshot_memory_bytes,
-            event_history_bytes: self.metrics.event_history_bytes,
-            metadata_bytes: self.metrics.metadata_bytes,
-            event_count: self.event_history.len(),
-            snapshot_count: self.group_state_snapshots.len(),
-            cache_entries: self.state_reconstruction_cache.len() + self.permission_cache.len(),
-        }
-    }
-
     /// Get current performance metrics
     ///
     /// Returns a snapshot of current performance statistics for monitoring and debugging
@@ -1468,85 +1277,6 @@ impl GroupState {
     /// Clears all performance counters and timers. Useful for testing or periodic resets.
     pub fn reset_performance_metrics(&mut self) {
         self.metrics = CrossChannelMetrics::default();
-    }
-
-    /// Generate comprehensive debugging report for cross-channel dependencies
-    ///
-    /// This method provides detailed information about the current state,
-    /// dependencies, caches, and potential issues for debugging purposes.
-    pub fn generate_debug_report(&mut self) -> CrossChannelDebugReport {
-        self.update_memory_metrics();
-
-        let mut dependency_issues = Vec::new();
-        let mut cache_issues = Vec::new();
-
-        // Check for potential dependency issues
-        for (event_id, metadata) in &self.message_metadata {
-            if metadata.is_invalid {
-                dependency_issues.push(DependencyIssue {
-                    event_id: *event_id,
-                    issue_type: DependencyIssueType::InvalidEvent,
-                    description: metadata
-                        .invalidity_reason
-                        .clone()
-                        .unwrap_or_else(|| "Unknown invalidity reason".to_string()),
-                    severity: IssueSeverity::Warning,
-                });
-            }
-        }
-
-        // Check cache health
-        let cache_hit_rate = if self.metrics.cache_hits + self.metrics.cache_misses > 0 {
-            (self.metrics.cache_hits as f64)
-                / ((self.metrics.cache_hits + self.metrics.cache_misses) as f64)
-        } else {
-            0.0
-        };
-
-        if cache_hit_rate < 0.5 {
-            cache_issues.push(CacheIssue {
-                cache_type: CacheType::StateReconstruction,
-                issue_type: CacheIssueType::LowHitRate,
-                description: format!("Cache hit rate is low: {:.2}%", cache_hit_rate * 100.0),
-                severity: IssueSeverity::Warning,
-            });
-        }
-
-        // Check memory usage
-        let memory_stats = self.get_memory_usage();
-        let mut memory_issues = Vec::new();
-
-        if memory_stats.total_bytes > 100 * 1024 * 1024 {
-            // 100MB threshold
-            memory_issues.push(MemoryIssue {
-                issue_type: MemoryIssueType::HighUsage,
-                description: format!("High memory usage: {} bytes", memory_stats.total_bytes),
-                current_usage: memory_stats.total_bytes,
-                severity: IssueSeverity::Warning,
-            });
-        }
-
-        CrossChannelDebugReport {
-            group_id: self.group_info.group_id.clone(),
-            timestamp: std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_secs(),
-            event_count: self.event_history.len(),
-            snapshot_count: self.group_state_snapshots.len(),
-            cache_stats: CacheStats {
-                state_cache_entries: self.state_reconstruction_cache.len(),
-                permission_cache_entries: self.permission_cache.len(),
-                hit_rate: cache_hit_rate,
-                total_hits: self.metrics.cache_hits,
-                total_misses: self.metrics.cache_misses,
-            },
-            memory_stats,
-            performance_metrics: self.metrics.clone(),
-            dependency_issues,
-            cache_issues,
-            memory_issues,
-        }
     }
 
     /// Validate cross-channel dependencies
@@ -1654,69 +1384,6 @@ impl GroupState {
         Some(permissions)
     }
 
-    /// Validate app event permissions against group state at referenced message
-    ///
-    /// This method implements cross-channel validation where app events are validated
-    /// against the group permissions that were active when the referenced group message
-    /// was created.
-    ///
-    /// # Returns
-    ///
-    /// - `Ok(())` - Event is valid and permissions are satisfied
-    /// - `Err(GroupStateError)` - Event is invalid or permissions are insufficient
-    pub fn validate_app_event_permissions<T: crate::group::app::ExecutorEvent>(
-        &mut self,
-        app_event: &T,
-        sender: &IdentityRef,
-        _app_id: &crate::protocol::AppProtocolVariant,
-    ) -> GroupStateResult<()> {
-        let start_time = std::time::Instant::now();
-        self.metrics.validations_performed += 1;
-        // Get the group state reference from the app event
-        let group_state_ref = app_event.group_state_reference();
-
-        // Check if the referenced group state exists in our history
-        if !self.event_history.contains(&group_state_ref) {
-            self.metrics.validations_failed += 1;
-            self.metrics.validation_time_ms += start_time.elapsed().as_millis() as u64;
-            return Err(GroupStateError::InvalidSender(format!(
-                "Referenced group state {group_state_ref:?} not found in event history"
-            )));
-        }
-
-        // Permission context creation is now handled by the model factories
-        // This method provides basic validation as a fallback
-        // TODO: Remove this method once model factory validation is fully integrated
-
-        // Check if sender is a group member at the referenced state
-        // For now, we check current membership since historical reconstruction is not fully implemented
-        if !self.is_member(sender) {
-            self.metrics.validations_failed += 1;
-            self.metrics.validation_time_ms += start_time.elapsed().as_millis() as u64;
-            return Err(GroupStateError::MemberNotFound {
-                member: format!("{sender:?}"),
-                group: format!("{:?}", self.group_info.group_id),
-            });
-        }
-
-        // App-specific permission validation is handled by the app itself
-        // The group state only provides the permission context (group permissions + app settings)
-        // The actual validation logic is implemented in the app's event validation traits
-        // This maintains clean separation of concerns:
-        // - Group state: provides historical context and basic group membership
-        // - Apps: implement their own permission validation using the provided context
-
-        // App-specific validation is now handled by the model factories during execution
-        // This placeholder validation just ensures basic group membership
-        // TODO: Remove this method once model factory validation is fully integrated
-
-        // Update metrics
-        self.metrics.validation_time_ms += start_time.elapsed().as_millis() as u64;
-
-        // For now, basic validation passes if sender is a group member
-        Ok(())
-    }
-
     /// Lookup group state at a specific message ID
     ///
     /// This method provides access to the group state that was active when
@@ -1817,7 +1484,6 @@ mod tests {
     use crate::group::states::Permission;
     use crate::identity::IdentityInfo;
     use crate::metadata::Metadata;
-    use serde::{Deserialize, Serialize};
 
     use rand::rngs::OsRng;
     use zoe_wire_protocol::{KeyPair, MessageFullError, VerifyingKey};
@@ -2382,26 +2048,6 @@ mod tests {
         assert!(result.is_ok());
     }
 
-    #[test]
-    fn test_group_state_check_permission_member_not_found() {
-        let creator_key = KeyPair::generate(&mut OsRng);
-        let non_member_key = KeyPair::generate(&mut OsRng);
-        let message =
-            create_test_message_full(&creator_key, b"test content".to_vec(), 1000).unwrap();
-        let group_info = create_test_group_info();
-        let group_state = GroupState::initial(&message, group_info);
-
-        let result = group_state.check_permission(
-            &IdentityRef::Key(non_member_key.public_key()),
-            &Permission::AllMembers,
-        );
-        assert!(result.is_err());
-        match result.unwrap_err() {
-            GroupStateError::MemberNotFound { .. } => {}
-            _ => panic!("Expected MemberNotFound error"),
-        }
-    }
-
     // Error Handling Tests
     #[test]
     fn test_group_state_error_display() {
@@ -2409,15 +2055,6 @@ mod tests {
         assert_eq!(
             error.to_string(),
             "Permission denied: Test permission denied"
-        );
-
-        let error = GroupStateError::MemberNotFound {
-            member: "test_member".to_string(),
-            group: "test_group".to_string(),
-        };
-        assert_eq!(
-            error.to_string(),
-            "Member not found: test_member in group test_group"
         );
 
         let error = GroupStateError::StateTransition("Test transition error".to_string());
@@ -2431,30 +2068,6 @@ mod tests {
             error.to_string(),
             "Invalid operation: Test invalid operation"
         );
-    }
-
-    #[test]
-    fn test_group_state_handle_leave_group_member_not_found() {
-        let creator_key = KeyPair::generate(&mut OsRng);
-        let non_member_key = KeyPair::generate(&mut OsRng);
-        let message =
-            create_test_message_full(&creator_key, b"test content".to_vec(), 1000).unwrap();
-        let group_info = create_test_group_info();
-        let mut group_state = GroupState::initial(&message, group_info);
-
-        let leave_event: GroupActivityEvent = GroupActivityEvent::LeaveGroup { message: None };
-        let result = group_state.apply_event(
-            leave_event,
-            create_test_message_id(27),
-            IdentityRef::Key(non_member_key.public_key()),
-            1001,
-        );
-
-        assert!(result.is_err());
-        match result.unwrap_err() {
-            GroupStateError::MemberNotFound { .. } => {}
-            _ => panic!("Expected MemberNotFound error"),
-        }
     }
 
     #[test]
@@ -2916,66 +2529,6 @@ mod tests {
             event1_id,
         );
         assert!(app_settings_msg.is_none()); // Should be None since no app settings exist
-    }
-
-    #[test]
-    fn test_cross_channel_validation() {
-        let creator_key = KeyPair::generate(&mut OsRng);
-        let member_key = KeyPair::generate(&mut OsRng);
-        let message =
-            create_test_message_full(&creator_key, b"test content".to_vec(), 1000).unwrap();
-        let group_info = create_test_group_info();
-        let mut group_state = GroupState::initial(&message, group_info);
-
-        // Add member to group
-        let activity_event = GroupActivityEvent::SetIdentity(IdentityInfo {
-            display_name: "test_member".to_string(),
-            metadata: vec![],
-        });
-        group_state
-            .apply_event(
-                activity_event,
-                create_test_message_id(42),
-                IdentityRef::Key(member_key.public_key()),
-                1001,
-            )
-            .unwrap();
-
-        // Create a mock app event that references the group state
-        #[derive(Debug, Clone, Serialize, Deserialize)]
-        struct MockExecutorEvent {
-            group_ref: MessageId,
-        }
-
-        impl crate::group::app::ExecutorEvent for MockExecutorEvent {
-            fn group_state_reference(&self) -> MessageId {
-                self.group_ref
-            }
-        }
-
-        // Use the actual message ID from the event history
-        let group_ref = group_state.event_history[1]; // Use the SetIdentity event
-        let app_event = MockExecutorEvent { group_ref };
-
-        // Test validation for valid member
-        let result = group_state.validate_app_event_permissions(
-            &app_event,
-            &IdentityRef::Key(member_key.public_key()),
-            &crate::protocol::AppProtocolVariant::DigitalGroupsOrganizer,
-        );
-        if let Err(ref e) = result {
-            println!("Validation failed: {e:?}");
-        }
-        assert!(result.is_ok());
-
-        // Test validation for non-member
-        let non_member_key = KeyPair::generate(&mut OsRng);
-        let result = group_state.validate_app_event_permissions(
-            &app_event,
-            &IdentityRef::Key(non_member_key.public_key()),
-            &crate::protocol::AppProtocolVariant::DigitalGroupsOrganizer,
-        );
-        assert!(result.is_err());
     }
 
     #[test]

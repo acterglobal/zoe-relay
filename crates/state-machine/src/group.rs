@@ -115,8 +115,7 @@ impl<M: MessagesManagerTrait + Clone + 'static> GroupManagerBuilder<M> {
             message_manager,
         } = self;
         let message_manager = message_manager.expect("Message manager must be provided");
-        let (tx, rx) = async_broadcast::broadcast(1000);
-        let broadcast_keeper = rx.deactivate();
+        let (tx, rx) = async_broadcast::broadcast(10);
 
         let group_manager = GroupManager {
             groups: Arc::new(RwLock::new(HashMap::from_iter(
@@ -126,7 +125,7 @@ impl<M: MessagesManagerTrait + Clone + 'static> GroupManagerBuilder<M> {
             ))),
             message_manager,
             broadcast_channel: Arc::new(tx),
-            _broadcast_keeper: Arc::new(broadcast_keeper),
+            _broadcast_keeper: Arc::new(rx.deactivate()),
             spawn_handle: Arc::new(RwLock::new(None)),
         };
 
@@ -775,14 +774,20 @@ impl<M: MessagesManagerTrait + Clone + 'static> GroupManager<M> {
         let timestamp = *message_full.when();
 
         // Find the channel_id for this group session
-        let channel_id = channel_tags[0].clone(); // We know there's at least one from the check above
+        let group_id = group_session.state.group_info.group_id; // We know there's at least one from the check above
 
         let group_session = {
             // This is a subsequent event - apply to existing group state
             let mut groups = self.groups.write().await;
             let group_session = groups
-                .get_mut(&channel_id)
-                .ok_or_else(|| GroupError::GroupNotFound(format!("{channel_id:?}")))?;
+                .get_mut(&group_id)
+                .ok_or_else(|| GroupError::GroupNotFound(format!("{group_id:?}")))?;
+
+            tracing::trace!(
+                message_id = ?message_id,
+                group_id = ?group_id,
+                "Applying event to group state"
+            );
 
             // Apply the event to the group state (convert GroupStateError to GroupError)
             group_session
@@ -795,9 +800,6 @@ impl<M: MessagesManagerTrait + Clone + 'static> GroupManager<M> {
                 )
                 .map_err(|e| match e {
                     GroupStateError::PermissionDenied(msg) => GroupError::PermissionDenied(msg),
-                    GroupStateError::MemberNotFound { member, group } => {
-                        GroupError::MemberNotFound { member, group }
-                    }
                     GroupStateError::StateTransition(msg) => GroupError::StateTransition(msg),
                     GroupStateError::InvalidOperation(msg) => GroupError::InvalidOperation(msg),
                     GroupStateError::HistoryRewriteAttempt(msg) => {

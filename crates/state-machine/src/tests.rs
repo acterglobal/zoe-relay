@@ -11,6 +11,9 @@ use zoe_app_primitives::group::events::settings::GroupSettings;
 use zoe_app_primitives::identity::IdentityRef;
 use zoe_wire_protocol::{Content, Filter, KeyPair, PublishResult, Tag};
 
+mod integration_test;
+mod join_group_test;
+
 fn create_test_keys() -> (KeyPair, KeyPair) {
     let mut rng = thread_rng();
     let alice_key = KeyPair::generate_ml_dsa65(&mut rng);

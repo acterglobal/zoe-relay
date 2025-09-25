@@ -13,12 +13,3 @@ pub mod state;
 
 #[cfg(test)]
 mod tests;
-
-#[cfg(test)]
-mod integration_test;
-
-#[cfg(test)]
-mod join_group_test;
-
-// Note: Client crate is allowed to re-export from state-machine
-// but state-machine itself should not re-export

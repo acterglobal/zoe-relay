@@ -868,6 +868,15 @@ mod tests {
             )
             .await?;
 
+        let group_session = timeout(Duration::from_secs(1), async move {
+            let update = group_manager_updates1.recv().await?;
+            let GroupDataUpdate::GroupAdded(group_session) = update else {
+                return Err(anyhow::anyhow!("Group manager update not received"));
+            };
+            Ok(group_session)
+        })
+        .await??;
+
         let encryption_key = group_manager1
             .group_session(&create_group_result.group_id)
             .await
@@ -881,8 +890,8 @@ mod tests {
             .await?;
 
         let group_session = timeout(Duration::from_secs(1), async move {
-            let update = group_manager_updates1.recv().await?;
-            let GroupDataUpdate::GroupUpdated(group_session) = update else {
+            let update = group_manager_updates2.recv().await?;
+            let GroupDataUpdate::GroupAdded(group_session) = update else {
                 return Err(anyhow::anyhow!("Group manager update not received"));
             };
             Ok(group_session)
@@ -909,6 +918,8 @@ mod tests {
             group_session.state.group_info.name,
             "E2E Test Group".to_string()
         );
+
+        let mut group_manager_updates2 = group_manager2.subscribe_to_updates();
 
         group_manager2
             .publish_group_event(
