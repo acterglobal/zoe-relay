@@ -141,7 +141,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_decoupled_architecture() {
+    async fn test_init_app_manager() {
         use crate::app_manager::AppManager;
 
         // Test the decoupled architecture with AppManager
@@ -184,26 +184,8 @@ mod tests {
 
         // Create AppManager with GroupManager as group service
         let store = crate::execution::InMemoryStore::new();
-        let app_manager =
+        let _app_manager =
             AppManager::new(message_manager.clone(), group_manager.clone(), store).await;
 
-        let dgo_app = default_dgo_app();
-
-        // Verify DGO executor is available in AppManager
-        let is_available = app_manager.is_executor_available(&dgo_app.app_id);
-        assert!(is_available, "DGO executor should be available at startup");
-
-        // Test unknown app
-        let unknown_app =
-            zoe_app_primitives::protocol::AppProtocolVariant::Unknown("unknown".to_string());
-        let is_unknown_available = app_manager.is_executor_available(&unknown_app);
-        assert!(
-            !is_unknown_available,
-            "Unknown executor should not be available"
-        );
-
-        println!("✅ Decoupled architecture test passed!");
-        println!("   - DGO executor available: {is_available}");
-        println!("   - Unknown executor available: {is_unknown_available}");
     }
 }

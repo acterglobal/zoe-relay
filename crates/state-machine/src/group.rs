@@ -423,7 +423,7 @@ impl<M: MessagesManagerTrait + Clone + 'static> GroupService for GroupManager<M>
         self.broadcast_channel.new_receiver()
     }
 
-    async fn current_group_states(&self) -> Vec<zoe_app_primitives::group::states::GroupState> {
+    async fn current_group_states(&self) -> Vec<GroupState> {
         self.groups
             .read()
             .await
@@ -452,19 +452,21 @@ impl<M: MessagesManagerTrait + Clone + 'static> GroupService for GroupManager<M>
             GroupError::InvalidEvent(format!("Failed to deserialize decrypted data: {e}"))
         })
     }
+    async fn current_group_state(&self, group_id: &GroupId) -> Option<GroupState> {
+        self.groups
+            .read()
+            .await
+            .get(group_id)
+            .map(|session| session.state.clone())
+    }
 
     async fn group_state_at_message(
         &self,
         group_id: &GroupId,
-        message_id: zoe_wire_protocol::MessageId,
-    ) -> Option<zoe_app_primitives::group::states::GroupState> {
+        message_id: MessageId,
+    ) -> Option<GroupState> {
         let mut groups = self.groups.write().await;
         let group_session = groups.get_mut(group_id)?;
-
-        // If message_id is all zeros, return current state
-        if message_id == MessageId::from([0u8; 32]) {
-            return Some(group_session.state.clone());
-        }
 
         // Use the group state's reconstruction method to get state at specific message
         group_session
@@ -1082,20 +1084,6 @@ mod app_integration_tests {
     use super::*;
     use zoe_app_primitives::protocol::{AppProtocolVariant, default_dgo_app};
     use zoe_wire_protocol::version::Version;
-
-    #[tokio::test]
-    async fn test_app_executor_registration() {
-        let message_manager = Arc::new(MockMessagesManagerTrait::new());
-        let _manager = GroupManager::builder(message_manager).build();
-
-        // Create a test group ID and DGO app
-        let _group_id = MessageId::from_bytes([1u8; 32]);
-        let _dgo_app = default_dgo_app();
-
-        // Note: Executor availability is now handled by AppManager, not GroupManager
-        // This test now focuses on group management functionality
-        println!("GroupManager test completed - executor functionality moved to AppManager");
-    }
 
     #[tokio::test]
     async fn test_app_installation_handling() {

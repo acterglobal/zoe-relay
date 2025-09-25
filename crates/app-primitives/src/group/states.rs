@@ -478,7 +478,7 @@ pub struct GroupState {
     pub event_history: Vec<MessageId>,
 
     /// Last processed event timestamp (for ordering)
-    pub last_event_timestamp: u64,
+    pub latest_event: MessageId,
 
     /// State version (incremented on each event)
     pub version: u64,
@@ -549,7 +549,7 @@ impl GroupState {
             group_info,
             members,
             event_history: vec![*message.id()],
-            last_event_timestamp: *message.when(),
+            latest_event: *message.id(),
             version: 0,
             message_metadata,
             group_state_snapshots: BTreeMap::new(),
@@ -630,7 +630,7 @@ impl GroupState {
 
         // Update state metadata
         self.event_history.push(event_id);
-        self.last_event_timestamp = timestamp;
+        self.latest_event = event_id;
         self.version += 1;
 
         // Take periodic snapshots for efficient historical reconstruction
@@ -1958,7 +1958,7 @@ mod tests {
         assert_eq!(group_state.group_info.metadata, metadata);
         assert_eq!(group_state.members.len(), 1);
         assert_eq!(group_state.version, 0);
-        assert_eq!(group_state.last_event_timestamp, timestamp);
+        assert_eq!(group_state.latest_event, *message.id());
         assert_eq!(group_state.event_history.len(), 1);
         assert_eq!(group_state.event_history[0], *message.id());
 
@@ -2143,7 +2143,7 @@ mod tests {
         assert!(group_state.is_member(&IdentityRef::Key(new_member_key.public_key())));
         assert_eq!(group_state.members.len(), 2);
         assert_eq!(group_state.version, 1);
-        assert_eq!(group_state.last_event_timestamp, 1001);
+        assert_eq!(group_state.latest_event, event_id);
         assert_eq!(group_state.event_history.len(), 2);
         assert_eq!(group_state.event_history[1], event_id);
 
@@ -2598,10 +2598,7 @@ mod tests {
         );
         assert_eq!(group_state.members.len(), deserialized.members.len());
         assert_eq!(group_state.version, deserialized.version);
-        assert_eq!(
-            group_state.last_event_timestamp,
-            deserialized.last_event_timestamp
-        );
+        assert_eq!(group_state.latest_event, deserialized.latest_event);
         assert_eq!(group_state.event_history, deserialized.event_history);
     }
 
@@ -2755,7 +2752,7 @@ mod tests {
 
         // Verify final state
         assert_eq!(group_state.event_history.len(), 7);
-        assert_eq!(group_state.last_event_timestamp, 1006);
+        assert_eq!(group_state.latest_event, create_test_message_id(41));
         assert!(group_state.is_member(&IdentityRef::Key(creator_key.public_key())));
         assert!(group_state.is_member(&IdentityRef::Key(member1_key.public_key())));
         assert!(!group_state.is_member(&IdentityRef::Key(member2_key.public_key())));
