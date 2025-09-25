@@ -176,26 +176,24 @@ impl TestInfrastructure {
         client_builder.db_storage_dir(temp_dir.path().to_path_buf().to_string_lossy().to_string());
         client_builder
             .media_storage_dir(temp_dir.path().to_path_buf().to_string_lossy().to_string());
+        client_builder.autoconnect(true);
 
         let client = client_builder.build().await?;
 
-        // Wait for the connection to be established
-        let mut attempts = 0;
-        const MAX_ATTEMPTS: u32 = 50; // 5 seconds total (50 * 100ms)
-
-        while attempts < MAX_ATTEMPTS {
-            if client.has_connected_relays().await {
-                break;
+        let mut overall_status_stream = client.overall_status_stream();
+        timeout(Duration::from_secs(5), async move {
+            // ensure we are connected to our local relay, break otherwise
+            pin_mut!(overall_status_stream);
+            loop {
+                let Some(status) = overall_status_stream.next().await else {
+                    continue;
+                };
+                if status.is_connected {
+                    break;
+                }
             }
-            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-            attempts += 1;
-        }
-
-        if attempts >= MAX_ATTEMPTS {
-            return Err(anyhow::anyhow!(
-                "Failed to establish relay connection within timeout"
-            ));
-        }
+        })
+        .await?;
 
         Ok(client)
     }

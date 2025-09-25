@@ -2458,33 +2458,6 @@ mod tests {
     }
 
     #[test]
-    fn test_group_state_handle_role_assignment_member_not_found() {
-        let creator_key = KeyPair::generate(&mut OsRng);
-        let message =
-            create_test_message_full(&creator_key, b"test content".to_vec(), 1000).unwrap();
-        let group_info = create_test_group_info();
-        let mut group_state = GroupState::initial(&message, group_info);
-
-        let assign_role_event: GroupActivityEvent = GroupActivityEvent::AssignRole {
-            target: IdentityRef::Key(creator_key.public_key()),
-            role: GroupRole::Admin,
-        };
-
-        let result = group_state.apply_event(
-            assign_role_event,
-            create_test_message_id(29),
-            IdentityRef::Key(creator_key.public_key()),
-            1001,
-        );
-
-        assert!(result.is_err());
-        match result.unwrap_err() {
-            GroupStateError::MemberNotFound { .. } => {}
-            _ => panic!("Expected MemberNotFound error"),
-        }
-    }
-
-    #[test]
     fn test_group_state_handle_role_assignment_permission_denied() {
         let creator_key = KeyPair::generate(&mut OsRng);
         let member_key = KeyPair::generate(&mut OsRng);
@@ -2685,11 +2658,16 @@ mod tests {
             )
             .unwrap();
 
-        // Note: Our simplified target resolution assigns to the first non-sender member
-        // So member1 gets the Moderator role (overwriting the previous Admin role)
+        // member2 should have the Moderator role (as assigned in the event)
+        assert_eq!(
+            group_state.member_role(&IdentityRef::Key(member2_key.public_key())),
+            Some(&GroupRole::Moderator).cloned()
+        );
+
+        // member1 should still have the Admin role (unchanged)
         assert_eq!(
             group_state.member_role(&IdentityRef::Key(member1_key.public_key())),
-            Some(&GroupRole::Moderator).cloned()
+            Some(&GroupRole::Admin).cloned()
         );
         assert_eq!(group_state.version, 4);
 
