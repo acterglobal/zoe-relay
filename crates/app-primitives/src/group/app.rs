@@ -49,12 +49,16 @@ pub enum ExecuteError {
     EventNotApplicable(String),
 }
 
-pub struct ExecutionUpdateInfo<M, E> {
-    pub updated_models: Vec<M>,
+pub enum IndexChange<T> {
+    Added(T),
+    Removed(T),
+}
+pub struct ExecutionUpdateInfo<M, E, T> {
+    pub updated_models: Vec<(M, Vec<IndexChange<T>>)>,
     pub updated_references: Vec<E>,
 }
 
-impl<M, E> Default for ExecutionUpdateInfo<M, E> {
+impl<M, E, T> Default for ExecutionUpdateInfo<M, E, T> {
     fn default() -> Self {
         Self {
             updated_models: Vec::new(),
@@ -63,13 +67,22 @@ impl<M, E> Default for ExecutionUpdateInfo<M, E> {
     }
 }
 
-impl<M, E> ExecutionUpdateInfo<M, E> {
+impl<M, E, T> ExecutionUpdateInfo<M, E, T> {
     pub fn new() -> Self {
         Self::default()
     }
 
     pub fn add_model(mut self, model: M) -> Self {
-        self.updated_models.push(model);
+        self.updated_models.push((model, vec![]));
+        self
+    }
+
+    pub fn add_model_with_index_changes(
+        mut self,
+        model: M,
+        index_changes: Vec<IndexChange<T>>,
+    ) -> Self {
+        self.updated_models.push((model, index_changes));
         self
     }
 
@@ -79,10 +92,13 @@ impl<M, E> ExecutionUpdateInfo<M, E> {
     }
 }
 
-impl<M, E> From<(Vec<M>, Vec<E>)> for ExecutionUpdateInfo<M, E> {
+impl<M, E, T> From<(Vec<M>, Vec<E>)> for ExecutionUpdateInfo<M, E, T> {
     fn from((updated_models, updated_references): (Vec<M>, Vec<E>)) -> Self {
         Self {
-            updated_models,
+            updated_models: updated_models
+                .into_iter()
+                .map(|model| (model, vec![]))
+                .collect(),
             updated_references,
         }
     }
@@ -102,8 +118,20 @@ pub trait GroupStateModel:
     /// The type of permission context this model uses
     type PermissionState: AppPermissionState;
 
+    /// The error type for this model's execution
     type Error: Into<ExecuteError>;
 
+    /// A model might or might not be indixed
+    type IndexKey: serde::Serialize
+        + serde::de::DeserializeOwned
+        + Send
+        + Sync
+        + Clone
+        + PartialEq
+        + Eq
+        + Ord;
+
+    /// The way we inform others about the changes
     type ExecutiveKey: serde::Serialize
         + serde::de::DeserializeOwned
         + Send
@@ -112,7 +140,8 @@ pub trait GroupStateModel:
         + std::fmt::Debug
         + PartialEq
         + Eq
-        + Ord;
+        + Ord
+        + From<Self::IndexKey>;
 
     /// if an event doesn't return anything in "applies_to", this model will be created and
     /// the event will be exected on the default model
@@ -129,7 +158,7 @@ pub trait GroupStateModel:
         &mut self,
         event: &Self::Event,
         context: &Self::PermissionState,
-    ) -> Result<Vec<ExecutionUpdateInfo<Self, Self::ExecutiveKey>>, Self::Error>;
+    ) -> Result<Vec<ModelExecutionUpdateInfo<Self>>, Self::Error>;
 
     /// Handle redaction of this model
     ///
@@ -137,3 +166,6 @@ pub trait GroupStateModel:
     /// It should return appropriate ExecuteReferences for cleanup.
     fn redact(&self, context: &Self::PermissionState) -> Result<Vec<Self>, Self::Error>;
 }
+
+pub type ModelExecutionUpdateInfo<M> =
+    ExecutionUpdateInfo<M, <M as GroupStateModel>::ExecutiveKey, <M as GroupStateModel>::IndexKey>;

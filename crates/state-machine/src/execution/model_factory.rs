@@ -4,6 +4,7 @@ use super::{
 };
 use async_trait::async_trait;
 use zoe_app_primitives::{
+    digital_groups_organizer::models::core::ActivityMeta,
     group::{
         app::GroupStateModel,
         events::{GroupId, roles::GroupRole},
@@ -52,33 +53,18 @@ pub trait ModelFactory<T: ExecutorStore>: Sized {
     ) -> ExecutorResult<Option<<Self::Model as GroupStateModel>::PermissionState>>;
 
     /// Add executive references to an index, returns updated index data
-    async fn add_to_index<K, E>(
+    async fn add_to_index(
         &self,
-        store: &impl ExecutorStore,
-        list_id: K,
-        executive_refs: &[E],
-    ) -> ExecutorResult<()>
-    where
-        K: serde::Serialize + Send + Sync + Clone,
-        E: serde::Serialize + serde::de::DeserializeOwned + Send + Sync + Clone;
+        list_id: <Self::Model as GroupStateModel>::IndexKey,
+        model_meta: &ActivityMeta,
+    ) -> Vec<<Self::Model as GroupStateModel>::ExecutiveKey>;
 
     /// Remove executive references from an index, returns updated index data
-    async fn remove_from_index<K, E>(
+    async fn remove_from_index(
         &self,
-        store: &impl ExecutorStore,
-        list_id: K,
-        executive_refs: &[E],
-    ) -> ExecutorResult<()>
-    where
-        K: serde::Serialize + Send + Sync + Clone,
-        E: serde::Serialize + serde::de::DeserializeOwned + Send + Sync + Clone + PartialEq;
+        list_id: <Self::Model as GroupStateModel>::IndexKey,
+        model_meta: &ActivityMeta,
+    ) -> Vec<<Self::Model as GroupStateModel>::ExecutiveKey>;
 
-    /// Load models from an index - the factory reads the index data and loads the referenced models
-    async fn load_models_from_index<K>(
-        &self,
-        store: &impl ExecutorStore,
-        list_id: K,
-    ) -> Result<Vec<Self::Model>, Self::Error>
-    where
-        K: serde::Serialize + Send + Sync + Clone;
+    async fn sync(&self) -> Result<(), Self::Error>;
 }

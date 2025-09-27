@@ -14,7 +14,7 @@ use super::{error::ExecutorError, model_factory::ModelFactory, store::ExecutorSt
 use zoe_app_primitives::{
     digital_groups_organizer::models::core::ActivityMeta,
     group::{
-        app::{ExecutionUpdateInfo, ExecutorEvent, GroupStateModel},
+        app::{ExecutorEvent, GroupStateModel, IndexChange, ModelExecutionUpdateInfo},
         events::roles::GroupRole,
     },
 };
@@ -81,22 +81,35 @@ where
         }
     }
 
-    async fn save_and_notify<M: GroupStateModel>(&self,
-        execution_results: Vec<ExecutionUpdateInfo<M, <TFactory::Model as GroupStateModel>::ExecutiveKey>>
-    ) -> Result<Vec<<TFactory::SettingsModel as GroupStateModel>::ExecutiveKey>, ExecutorError>
+    async fn save_and_notify(&self,
+        execution_results: Vec<ModelExecutionUpdateInfo<TFactory::Model>>
+    ) -> Result<(), ExecutorError>
     {
 
-        let mut all_exec_keys: Vec<<TFactory::SettingsModel as GroupStateModel>::ExecutiveKey> =
+        let mut all_exec_keys: Vec<<TFactory::Model as GroupStateModel>::ExecutiveKey> =
             Vec::new();
 
         // Process execution results
-        for execution_info in execution_results {
+        for execution_info in execution_results.into_iter() {
             // Store any models created by the default settings model
-            for updated_model in &execution_info.updated_models {
+            for (updated_model, index_changes) in execution_info.updated_models.into_iter() {
+                let model_meta = updated_model.activity_meta().clone();
                 self.store
-                    .save(updated_model.activity_meta().activity_id, updated_model)
+                    .save(model_meta.activity_id, &updated_model)
                     .await
                     .map_err(|e| e.into())?;
+
+                for index_change in index_changes.into_iter() {
+                    // apply the index changes and add any further executive keys to the list to notify about
+                    all_exec_keys.extend( match index_change {
+                        IndexChange::Added(index_key) => {
+                            self.factory.add_to_index(index_key, &model_meta).await
+                        }
+                        IndexChange::Removed(index_key) => {
+                            self.factory.remove_from_index(index_key, &model_meta).await
+                        }
+                    });
+                }
             }
 
             // Add any executive references to indexes
@@ -107,8 +120,9 @@ where
 
         // Send notifications
         self.notify_many(&all_exec_keys).await;
+        self.factory.sync().await.map_err(|e| e.into())?;
 
-        Ok(all_exec_keys)
+        Ok(())
     }
 
     /// Execute a settings event and return the executive keys for broadcasting
@@ -117,11 +131,11 @@ where
     /// Settings events are processed using the default settings model pattern.
     pub async fn execute_settings_event(
         &self,
-        event: <TFactory::SettingsModel as GroupStateModel>::Event,
+        event: <TFactory::SettingsModel as  GroupStateModel>::Event,
         group_meta: ActivityMeta,
         actor_role: GroupRole,
         state_message_id: MessageId,
-    ) -> Result<Vec<<TFactory::SettingsModel as GroupStateModel>::ExecutiveKey>, ExecutorError>
+    ) -> Result<(), ExecutorError>
     {
 
         let permission_context = self
@@ -152,8 +166,23 @@ where
                     e.into()
                 ))
             })?;
-
-        self.save_and_notify(execution_results).await
+        // FIXME: due to the serttings model not having indixes, this has a slightly different layout
+        let mut all_exec_keys: Vec<<TFactory::SettingsModel as GroupStateModel>::ExecutiveKey> =
+            Vec::new();
+        for execution_info in execution_results.into_iter() {
+            // Store any models created by the default settings model
+            for (updated_model, _) in execution_info.updated_models.into_iter() {
+                // It feels like we might want to clean this up more, as settings have no indexes we care about
+                let model_meta = updated_model.activity_meta().clone();
+                self.store
+                    .save(model_meta.activity_id, &updated_model)
+                    .await
+                    .map_err(|e| e.into())?;
+            }
+            all_exec_keys.extend(execution_info.updated_references);
+        }
+        self.notify_many(&all_exec_keys).await;
+        Ok(())
     }
 
     /// Execute an event and return the executive keys for broadcasting
@@ -171,7 +200,7 @@ where
         actor_role: GroupRole,
         state_message_id: MessageId,
         group_permissions: Option<zoe_app_primitives::group::events::permissions::GroupPermissions>,
-    ) -> Result<Vec<<TFactory::Model as GroupStateModel>::ExecutiveKey>, ExecutorError> {
+    ) -> Result<(), ExecutorError> {
         let permission_context = self
             .factory
             .load_permission_context(
@@ -224,7 +253,8 @@ where
                     ))
                 })?
         };
-        self.save_and_notify(execution_results).await
+        self.save_and_notify(execution_results).await?;
+        Ok(())
     }
 
     /// Get access to the store for direct operations
@@ -246,7 +276,11 @@ mod tests {
     use serde::{Deserialize, Serialize};
 
     use zoe_app_primitives::{
-        digital_groups_organizer::models::core::ActivityMeta, identity::IdentityRef,
+        digital_groups_organizer::{
+            indexing::keys::{ExecuteReference, IndexKey},
+            models::core::ActivityMeta,
+        },
+        identity::IdentityRef,
     };
 
     #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -315,7 +349,8 @@ mod tests {
         type Event = MockSettingsEvent;
         type PermissionState = MockPermissionContext;
         type Error = zoe_app_primitives::group::app::ExecuteError;
-        type ExecutiveKey = MessageId;
+        type ExecutiveKey = ExecuteReference;
+        type IndexKey = IndexKey;
 
         fn default_model(group_meta: ActivityMeta) -> Self {
             MockSettingsModel {
@@ -333,7 +368,13 @@ mod tests {
             event: &Self::Event,
             _context: &Self::PermissionState,
         ) -> Result<
-            Vec<zoe_app_primitives::group::app::ExecutionUpdateInfo<Self, Self::ExecutiveKey>>,
+            Vec<
+                zoe_app_primitives::group::app::ExecutionUpdateInfo<
+                    Self,
+                    Self::ExecutiveKey,
+                    Self::IndexKey,
+                >,
+            >,
             Self::Error,
         > {
             use zoe_app_primitives::group::app::ExecutionUpdateInfo;
@@ -343,7 +384,7 @@ mod tests {
                     self.settings = new_settings.clone();
                     let update_info = ExecutionUpdateInfo::new()
                         .add_model(self.clone())
-                        .add_reference(self.meta.activity_id);
+                        .add_reference(ExecuteReference::Model(self.meta.activity_id));
                     Ok(vec![update_info])
                 }
             }
@@ -358,7 +399,8 @@ mod tests {
         type Event = MockEvent;
         type PermissionState = MockPermissionContext;
         type Error = zoe_app_primitives::group::app::ExecuteError;
-        type ExecutiveKey = MessageId;
+        type ExecutiveKey = ExecuteReference;
+        type IndexKey = IndexKey;
 
         fn default_model(group_meta: ActivityMeta) -> Self {
             MockModel {
@@ -376,7 +418,13 @@ mod tests {
             event: &Self::Event,
             _context: &Self::PermissionState,
         ) -> Result<
-            Vec<zoe_app_primitives::group::app::ExecutionUpdateInfo<Self, Self::ExecutiveKey>>,
+            Vec<
+                zoe_app_primitives::group::app::ExecutionUpdateInfo<
+                    Self,
+                    Self::ExecutiveKey,
+                    Self::IndexKey,
+                >,
+            >,
             Self::Error,
         > {
             use zoe_app_primitives::group::app::ExecutionUpdateInfo;
@@ -390,7 +438,7 @@ mod tests {
                         self.data = new_data.clone();
                         let update_info = ExecutionUpdateInfo::new()
                             .add_model(self.clone())
-                            .add_reference(self.meta.activity_id);
+                            .add_reference(ExecuteReference::Model(self.meta.activity_id));
                         Ok(vec![update_info])
                     } else {
                         Ok(vec![])
@@ -400,7 +448,7 @@ mod tests {
                     // For create events, return the model itself
                     let update_info = ExecutionUpdateInfo::new()
                         .add_model(self.clone())
-                        .add_reference(self.meta.activity_id);
+                        .add_reference(ExecuteReference::Model(self.meta.activity_id));
                     Ok(vec![update_info])
                 }
             }
@@ -441,44 +489,26 @@ mod tests {
             }))
         }
 
-        async fn add_to_index<K, E>(
+        /// Add executive references to an index, returns updated index data
+        async fn add_to_index(
             &self,
-            _store: &impl ExecutorStore,
-            _list_id: K,
-            _executive_refs: &[E],
-        ) -> Result<(), ExecutorError>
-        where
-            K: serde::Serialize + Send + Sync + Clone,
-            E: serde::Serialize + serde::de::DeserializeOwned + Send + Sync + Clone,
-        {
-            // Mock implementation - do nothing
-            Ok(())
+            _list_id: <Self::Model as GroupStateModel>::IndexKey,
+            _model_keys: &ActivityMeta,
+        ) -> Vec<<Self::Model as GroupStateModel>::ExecutiveKey> {
+            vec![]
         }
 
-        async fn remove_from_index<K, E>(
+        /// Remove executive references from an index, returns updated index data
+        async fn remove_from_index(
             &self,
-            _store: &impl ExecutorStore,
-            _list_id: K,
-            _executive_refs: &[E],
-        ) -> Result<(), ExecutorError>
-        where
-            K: serde::Serialize + Send + Sync + Clone,
-            E: serde::Serialize + serde::de::DeserializeOwned + Send + Sync + Clone + PartialEq,
-        {
-            // Mock implementation - do nothing
-            Ok(())
+            _list_id: <Self::Model as GroupStateModel>::IndexKey,
+            _model_keys: &ActivityMeta,
+        ) -> Vec<<Self::Model as GroupStateModel>::ExecutiveKey> {
+            vec![]
         }
 
-        async fn load_models_from_index<K>(
-            &self,
-            _store: &impl ExecutorStore,
-            _list_id: K,
-        ) -> Result<Vec<Self::Model>, Self::Error>
-        where
-            K: serde::Serialize + Send + Sync + Clone,
-        {
-            // Mock implementation - return empty list
-            Ok(vec![])
+        async fn sync(&self) -> Result<(), Self::Error> {
+            Ok(())
         }
     }
 
@@ -506,10 +536,10 @@ mod tests {
 
         let actor_role = zoe_app_primitives::group::events::roles::GroupRole::Member;
         let state_message_id = MessageId::from([2u8; 32]);
-        let refs = executor
+        executor
             .execute_event(event, group_meta, actor_role, state_message_id, None)
             .await
             .unwrap();
-        assert!(!refs.is_empty());
+        // Test passes if execution succeeds without error
     }
 }

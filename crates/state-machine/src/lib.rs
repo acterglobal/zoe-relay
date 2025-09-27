@@ -8,6 +8,7 @@ pub mod apps;
 pub mod error;
 pub mod execution;
 pub mod group;
+pub mod index;
 pub mod messages;
 pub mod state;
 

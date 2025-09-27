@@ -13,6 +13,7 @@ mock = ["dep:mockall"]
 zoe-app-primitives = { path = "../app-primitives" }
 zoe-wire-protocol = { path = "../wire-protocol" }
 serde = { version = "1.0", features = ["derive"] }
+eyeball-im = { workspace = true }
 blake3 = "1.5"
 libcrux-ml-dsa = { workspace = true }
 ed25519-dalek = { workspace = true }
@@ -25,7 +26,7 @@ rand = "0.8"
 thiserror = "1.0"
 async-broadcast = { workspace = true }
 async-trait = "0.1"
-eyeball = { version = "0.8.8", features = ["async-lock"] }
+eyeball = { workspace = true }
 futures = { workspace = true }
 tarpc = { workspace = true }
 hex = "0.4" # For encoding app tags in logs

@@ -20,7 +20,7 @@ use crate::{
         models::core::{ActivityMeta, DgoAppModel, DgoOperation, DgoPermissionContext},
     },
     group::{
-        app::{ExecuteError, ExecutionUpdateInfo, GroupStateModel},
+        app::{ExecuteError, ExecutionUpdateInfo, GroupStateModel, IndexChange},
         events::GroupId,
     },
 };
@@ -53,6 +53,7 @@ impl GroupStateModel for AnyDgoModel {
     type PermissionState = DgoPermissionContext;
     type Error = ExecuteError;
     type ExecutiveKey = ExecuteReference;
+    type IndexKey = IndexKey;
 
     fn default_model(group_meta: ActivityMeta) -> Self {
         AnyDgoModel::Default(group_meta)
@@ -69,7 +70,8 @@ impl GroupStateModel for AnyDgoModel {
         &mut self,
         event: &Self::Event,
         context: &Self::PermissionState,
-    ) -> Result<Vec<ExecutionUpdateInfo<Self, Self::ExecutiveKey>>, Self::Error> {
+    ) -> Result<Vec<ExecutionUpdateInfo<Self, Self::ExecutiveKey, Self::IndexKey>>, Self::Error>
+    {
         match self {
             AnyDgoModel::Default(meta) => match event.content() {
                 DgoActivityEventContent::CreateTextBlock { content } => {
@@ -96,21 +98,24 @@ impl GroupStateModel for AnyDgoModel {
                     new_text_block.meta.activity_id = meta.activity_id; // Use the activity_id from the default model
 
                     let new_model = AnyDgoModel::from_text_block(new_text_block);
-                    let update_info = ExecutionUpdateInfo::new()
-                        .add_model(new_model)
-                        .add_reference(ExecuteReference::Model(meta.activity_id))
-                        .add_reference(ExecuteReference::Index(IndexKey::Section(
-                            SectionIndex::TextBlocks,
-                        )))
-                        .add_reference(ExecuteReference::Index(IndexKey::GroupSection(
-                            meta.group_id.clone(),
-                            SectionIndex::TextBlocks,
-                        )))
-                        .add_reference(ExecuteReference::Index(IndexKey::GroupHistory(
-                            meta.group_id.clone(),
-                        )))
-                        .add_reference(ExecuteReference::Index(IndexKey::AllHistory));
-                    Ok(vec![update_info])
+                    Ok(vec![
+                        ExecutionUpdateInfo::new()
+                            .add_model_with_index_changes(
+                                new_model,
+                                vec![
+                                    IndexChange::Added(IndexKey::Section(SectionIndex::TextBlocks)),
+                                    IndexChange::Added(IndexKey::GroupSection(
+                                        meta.group_id.clone(),
+                                        SectionIndex::TextBlocks,
+                                    )),
+                                    IndexChange::Added(IndexKey::GroupHistory(
+                                        meta.group_id.clone(),
+                                    )),
+                                    IndexChange::Added(IndexKey::AllHistory),
+                                ],
+                            )
+                            .add_reference(ExecuteReference::Model(meta.activity_id)),
+                    ])
                 }
                 _ => Err(ExecuteError::EventNotApplicable(format!(
                     "Event not a create event: {:?}",

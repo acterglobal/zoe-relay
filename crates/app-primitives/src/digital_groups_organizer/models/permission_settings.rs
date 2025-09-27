@@ -5,7 +5,7 @@
 
 use crate::digital_groups_organizer::events::core::DgoSettingsEvent;
 use crate::digital_groups_organizer::indexing::core::GroupParam;
-use crate::digital_groups_organizer::indexing::keys::ExecuteReference;
+use crate::digital_groups_organizer::indexing::keys::{ExecuteReference, IndexKey};
 use crate::group::app::{ExecuteError, ExecutionUpdateInfo, GroupStateModel};
 use crate::group::events::GroupId;
 use crate::identity::IdentityRef;
@@ -100,6 +100,7 @@ impl GroupStateModel for DgoPermissionSettings {
     type PermissionState = DgoPermissionContext;
     type Error = ExecuteError;
     type ExecutiveKey = ExecuteReference;
+    type IndexKey = IndexKey;
 
     fn default_model(group_meta: ActivityMeta) -> Self {
         Self::new(group_meta, DgoFeatureSettings::default())
@@ -113,8 +114,10 @@ impl GroupStateModel for DgoPermissionSettings {
         &mut self,
         event: &Self::Event,
         context: &Self::PermissionState,
-    ) -> Result<Vec<crate::group::app::ExecutionUpdateInfo<Self, Self::ExecutiveKey>>, Self::Error>
-    {
+    ) -> Result<
+        Vec<crate::group::app::ExecutionUpdateInfo<Self, Self::ExecutiveKey, Self::IndexKey>>,
+        Self::Error,
+    > {
         if !context.is_admin_or_above() {
             return Err(ExecuteError::PermissionDenied(
                 "Only admins can change app settings".to_string(),
@@ -124,7 +127,6 @@ impl GroupStateModel for DgoPermissionSettings {
         let mut current_permissions = context.dgo_settings.clone();
         current_permissions.apply_updates(event.content().clone());
         self.settings = current_permissions; // we just overwrite the settings, it's easiest
-        // FIXME: need to return the executive key for settings change
         Ok(vec![
             ExecutionUpdateInfo::new()
                 .add_model(self.clone())
