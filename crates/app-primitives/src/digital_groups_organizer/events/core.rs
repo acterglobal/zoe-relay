@@ -201,6 +201,19 @@ impl ExecutorEvent for DgoSettingsEvent {
 }
 
 impl DgoSettingsEvent {
+    /// Create a new DGO settings event
+    pub fn new(
+        identity: IdentityType,
+        group_state_reference: MessageId,
+        content: UpdateDgoSettingsContent,
+    ) -> Self {
+        Self {
+            identity,
+            group_state_reference,
+            content,
+        }
+    }
+
     /// Get the content of this settings event
     pub fn content(&self) -> &UpdateDgoSettingsContent {
         &self.content

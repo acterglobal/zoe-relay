@@ -1,4 +1,5 @@
 pub mod app;
+pub mod app_updates;
 pub mod events;
 pub mod states;
 #[cfg(test)]

@@ -2,6 +2,7 @@ use async_broadcast::Receiver;
 use serde::de::DeserializeOwned;
 use zoe_app_primitives::{
     group::{
+        app_updates::GroupAppUpdate,
         events::{GroupId, permissions::GroupPermissions, roles::GroupRole},
         states::GroupState,
     },
@@ -10,12 +11,13 @@ use zoe_app_primitives::{
 };
 use zoe_wire_protocol::{ChaCha20Poly1305Content, MessageId};
 
-use crate::{error::GroupResult, group::GroupDataUpdate};
+use crate::error::GroupResult;
 
 /// Interface for requesting decryption services from the GroupManager
 #[async_trait::async_trait]
-pub trait GroupService: Send + Sync {
-    fn message_group_receiver(&self) -> Receiver<GroupDataUpdate>;
+pub trait GroupAppService: Send + Sync {
+    /// Get receiver for app-specific updates (app installations, settings updates)
+    fn group_app_updates(&self) -> Receiver<GroupAppUpdate>;
 
     async fn current_group_states(&self) -> Vec<GroupState>;
 

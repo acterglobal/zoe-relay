@@ -185,19 +185,16 @@ impl DgoIndex {
     pub fn new_for(key: &IndexKey, meta: &ActivityMeta) -> DgoIndex {
         match key {
             IndexKey::AllHistory | IndexKey::ObjectHistory(_) | IndexKey::GroupHistory(_) => {
-                DgoIndex::Ranked(RankedIndex::new_with(
-                    meta.timestamp,
-                    meta.activity_id,
-                ))
+                DgoIndex::Ranked(RankedIndex::new_with(meta.timestamp, meta.activity_id))
             }
             //RSVPs are latest first for collection
-            IndexKey::ObjectList(_, ObjectListIndex::Rsvps) => DgoIndex::Ranked(
-                RankedIndex::new_with(meta.timestamp, meta.activity_id),
-            ),
+            IndexKey::ObjectList(_, ObjectListIndex::Rsvps) => {
+                DgoIndex::Ranked(RankedIndex::new_with(meta.timestamp, meta.activity_id))
+            }
             IndexKey::Section(SectionIndex::Stories)
-            | IndexKey::GroupSection(_, SectionIndex::Stories) => DgoIndex::Ranked(
-                RankedIndex::new_with(meta.timestamp, meta.activity_id),
-            ),
+            | IndexKey::GroupSection(_, SectionIndex::Stories) => {
+                DgoIndex::Ranked(RankedIndex::new_with(meta.timestamp, meta.activity_id))
+            }
             IndexKey::ObjectList(_, ObjectListIndex::Tasks) => {
                 DgoIndex::Filo(FiloIndex::new_with(meta.activity_id))
             }
@@ -299,9 +296,6 @@ mod tests {
             .await
             .unwrap();
 
-        // Test passes if execution succeeds without error
-        // The executor handles notifications internally
-
         // Verify the model was created
         let model: Option<AnyDgoModel> = executor.store().load(activity_id).await.unwrap();
         assert!(model.is_some());
@@ -399,9 +393,6 @@ mod tests {
             )
             .await
             .unwrap();
-
-        // Test passes if execution succeeds without error
-        // The executor handles notifications internally
 
         // Verify the model was updated
         let model: AnyDgoModel = executor.store().load(model_id).await.unwrap().unwrap();

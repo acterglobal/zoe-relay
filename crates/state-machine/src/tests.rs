@@ -1,4 +1,4 @@
-use crate::app_manager::GroupService;
+use crate::app_manager::GroupAppService;
 use crate::group::create_role_update_event_for_testing;
 use crate::group::{CreateGroupBuilder, GroupDataUpdate, GroupManager};
 use crate::messages::MockMessagesManagerTrait;
@@ -857,7 +857,7 @@ async fn test_group_manager_handles_stream_closure_gracefully() {
 
 #[tokio::test]
 async fn test_app_manager_handles_stream_closure_gracefully() {
-    use crate::app_manager::{AppManager, GroupService};
+    use crate::app_manager::{AppManager, GroupAppService};
     use crate::execution::InMemoryStore;
     use crate::messages::MockMessagesManagerTrait;
     use std::sync::Arc;
@@ -865,15 +865,16 @@ async fn test_app_manager_handles_stream_closure_gracefully() {
     use tokio::time::timeout;
     use zoe_wire_protocol::{Filter, PublishResult};
 
-    // Mock GroupService implementation
+    // Mock GroupServiceimplementation
     #[derive(Clone)]
-    struct MockGroupService;
+    struct MockGroupAppService;
 
     #[async_trait::async_trait]
-    impl GroupService for MockGroupService {
-        fn message_group_receiver(
+    impl GroupAppService for MockGroupAppService {
+        fn group_app_updates(
             &self,
-        ) -> async_broadcast::Receiver<crate::group::GroupDataUpdate> {
+        ) -> async_broadcast::Receiver<zoe_app_primitives::group::app_updates::GroupAppUpdate>
+        {
             let (_tx, rx) = async_broadcast::broadcast(1000);
             rx
         }
@@ -984,7 +985,7 @@ async fn test_app_manager_handles_stream_closure_gracefully() {
     // Create AppManager - this should start background tasks that handle stream closure
     let _app_manager = AppManager::new(
         message_manager,
-        Arc::new(MockGroupService),
+        Arc::new(MockGroupAppService),
         InMemoryStore::new(),
     )
     .await;
@@ -1006,7 +1007,7 @@ async fn test_app_manager_handles_stream_closure_gracefully() {
 
 #[tokio::test]
 async fn test_multiple_receivers_handle_stream_closure_independently() {
-    use crate::app_manager::{AppManager, GroupService};
+    use crate::app_manager::{AppManager, GroupAppService};
     use crate::execution::InMemoryStore;
     use crate::messages::MockMessagesManagerTrait;
     use std::sync::Arc;
@@ -1014,15 +1015,16 @@ async fn test_multiple_receivers_handle_stream_closure_independently() {
     use tokio::time::timeout;
     use zoe_wire_protocol::{Filter, PublishResult};
 
-    // Mock GroupService implementation
+    // Mock GroupServiceimplementation
     #[derive(Clone)]
-    struct MockGroupService;
+    struct MockGroupAppService;
 
     #[async_trait::async_trait]
-    impl GroupService for MockGroupService {
-        fn message_group_receiver(
+    impl GroupAppService for MockGroupAppService {
+        fn group_app_updates(
             &self,
-        ) -> async_broadcast::Receiver<crate::group::GroupDataUpdate> {
+        ) -> async_broadcast::Receiver<zoe_app_primitives::group::app_updates::GroupAppUpdate>
+        {
             let (_tx, rx) = async_broadcast::broadcast(1000);
             rx
         }
@@ -1134,7 +1136,7 @@ async fn test_multiple_receivers_handle_stream_closure_independently() {
     let group_manager = GroupManager::builder(message_manager.clone()).build().await;
     let _app_manager = AppManager::new(
         message_manager,
-        Arc::new(MockGroupService),
+        Arc::new(MockGroupAppService),
         InMemoryStore::new(),
     )
     .await;
@@ -1392,5 +1394,395 @@ async fn test_group_manager_cloning_preserves_broadcast_channel() {
     match update3.unwrap().unwrap() {
         GroupDataUpdate::GroupAdded(_) => (),
         other => panic!("Expected GroupAdded, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn test_dgo_settings_update_processing() {
+    use mockall::predicate::function;
+    use zoe_app_primitives::{
+        digital_groups_organizer::events::admin::{
+            FeaturePermission, PermissionUpdate, TextBlocksPermissionUpdate,
+        },
+        group::events::GroupActivityEvent,
+        protocol::AppProtocolVariant,
+    };
+    use zoe_wire_protocol::{Filter, KeyPair, PublishResult};
+
+    let mut message_manager = MockMessagesManagerTrait::new();
+
+    // Set up expectations for subscription calls
+    message_manager
+        .expect_ensure_contains_filter()
+        .with(function(|filter: &Filter| {
+            matches!(filter, Filter::Channel(_))
+        }))
+        .returning(|_| Ok(()));
+
+    // Set up expectations for publish calls
+    message_manager.expect_publish().returning(|_| {
+        Ok(PublishResult::StoredNew {
+            global_stream_id: "test_stream_id".to_string(),
+        })
+    });
+
+    // Set up expectations for messages_stream calls
+    let (_message_tx, _message_rx) = async_broadcast::broadcast(10);
+    message_manager
+        .expect_message_events_stream()
+        .returning(move || _message_rx.clone());
+
+    let group_manager = GroupManager::builder(Arc::new(message_manager))
+        .build()
+        .await;
+
+    // Get the app updates receiver to verify forwarding
+    let mut app_updates_rx = group_manager.group_app_updates();
+
+    // Create a group with DGO app first
+    let mut rng = rand::thread_rng();
+    let creator = KeyPair::generate(&mut rng);
+    let create_result = group_manager
+        .create_group(
+            CreateGroupBuilder::new("Test Group".to_string()).install_dgo_app_default(),
+            &creator,
+        )
+        .await
+        .expect("Failed to create group");
+
+    // Create DGO settings update content
+    let settings_updates = vec![
+        PermissionUpdate::TextBlocks(TextBlocksPermissionUpdate::Create(
+            FeaturePermission::AllMembers,
+        )),
+        PermissionUpdate::TextBlocks(TextBlocksPermissionUpdate::Update(
+            FeaturePermission::ModeratorOrAbove,
+        )),
+    ];
+
+    // Serialize the settings updates
+    let settings_data =
+        postcard::to_stdvec(&settings_updates).expect("Failed to serialize DGO settings");
+
+    // Create an app settings update event
+    let app_settings_event = GroupActivityEvent::UpdateAppSettings {
+        app_id: AppProtocolVariant::DigitalGroupsOrganizer,
+        update: settings_data.clone(),
+    };
+
+    // Publish the app settings update
+    let message_full = group_manager
+        .publish_group_event(&create_result.group_id, app_settings_event, &creator)
+        .await
+        .expect("Failed to publish app settings update");
+
+    // Process the message to trigger app update generation
+    group_manager
+        .handle_incoming_message(message_full.clone())
+        .await
+        .expect("Failed to process app settings update message");
+
+    // Verify the message was published
+    assert_eq!(*message_full.id(), *message_full.id());
+
+    // Verify that the app settings update was forwarded to the app manager via the app updates channel
+    // The GroupManager should forward app settings updates to the app updates channel
+    // for processing by the AppManager
+    // Note: We need to consume the initial app installation event first
+    let _initial_message =
+        tokio::time::timeout(std::time::Duration::from_millis(100), app_updates_rx.recv())
+            .await
+            .expect("Timeout waiting for initial app installation message")
+            .unwrap();
+
+    let forwarded_message =
+        tokio::time::timeout(std::time::Duration::from_millis(100), app_updates_rx.recv())
+            .await
+            .expect("Timeout waiting for forwarded message")
+            .unwrap();
+
+    // Verify the forwarded message contains the expected app settings update
+    match forwarded_message {
+        zoe_app_primitives::group::app_updates::GroupAppUpdate::AppSettingsUpdate {
+            meta,
+            group_id,
+            app_id,
+            settings,
+        } => {
+            assert_eq!(group_id, create_result.group_id);
+            assert_eq!(app_id, AppProtocolVariant::DigitalGroupsOrganizer);
+            assert_eq!(settings, settings_data);
+            assert_eq!(meta.activity_id, *message_full.id());
+        }
+        other => panic!("Expected AppSettingsUpdate, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn test_dgo_settings_deserialization_error_handling() {
+    use mockall::predicate::function;
+    use zoe_app_primitives::{group::events::GroupActivityEvent, protocol::AppProtocolVariant};
+    use zoe_wire_protocol::{Filter, KeyPair, PublishResult};
+
+    let mut message_manager = MockMessagesManagerTrait::new();
+
+    // Set up expectations for subscription calls
+    message_manager
+        .expect_ensure_contains_filter()
+        .with(function(|filter: &Filter| {
+            matches!(filter, Filter::Channel(_))
+        }))
+        .returning(|_| Ok(()));
+
+    // Set up expectations for publish calls
+    message_manager.expect_publish().returning(|_| {
+        Ok(PublishResult::StoredNew {
+            global_stream_id: "test_stream_id".to_string(),
+        })
+    });
+
+    // Set up expectations for messages_stream calls
+    let (_message_tx, _message_rx) = async_broadcast::broadcast(10);
+    message_manager
+        .expect_message_events_stream()
+        .returning(move || _message_rx.clone());
+
+    let group_manager = GroupManager::builder(Arc::new(message_manager))
+        .build()
+        .await;
+
+    // Get the app updates receiver to verify forwarding
+    let mut app_updates_rx = group_manager.group_app_updates();
+
+    // Create a group with DGO app first
+    let mut rng = rand::thread_rng();
+    let creator = KeyPair::generate(&mut rng);
+    let create_result = group_manager
+        .create_group(
+            CreateGroupBuilder::new("Test Group".to_string()).install_dgo_app_default(),
+            &creator,
+        )
+        .await
+        .expect("Failed to create group");
+
+    // Create invalid settings data (not valid postcard serialized DGO settings)
+    let invalid_settings_data = b"invalid settings data".to_vec();
+
+    // Create an app settings update event with invalid data
+    let app_settings_event = GroupActivityEvent::UpdateAppSettings {
+        app_id: AppProtocolVariant::DigitalGroupsOrganizer,
+        update: invalid_settings_data.clone(),
+    };
+
+    // Publish the app settings update with invalid data
+    let result = group_manager
+        .publish_group_event(&create_result.group_id, app_settings_event, &creator)
+        .await;
+
+    // Verify the publish succeeded
+    assert!(result.is_ok());
+    let message_full = result.unwrap();
+
+    // Process the message to trigger app update generation
+    group_manager
+        .handle_incoming_message(message_full.clone())
+        .await
+        .expect("Failed to process app settings update message");
+
+    // Verify that the message was still forwarded to the app manager via the app updates channel
+    // The GroupManager should forward app settings updates regardless of data validity
+    // The AppManager will handle deserialization errors during processing
+    // Note: We need to consume the initial app installation event first
+    let _initial_message =
+        tokio::time::timeout(std::time::Duration::from_millis(100), app_updates_rx.recv())
+            .await
+            .expect("Timeout waiting for initial app installation message")
+            .unwrap();
+
+    let forwarded_message =
+        tokio::time::timeout(std::time::Duration::from_millis(100), app_updates_rx.recv())
+            .await
+            .expect("Timeout waiting for forwarded message")
+            .unwrap();
+
+    // Verify the forwarded message contains the invalid settings data
+    match forwarded_message {
+        zoe_app_primitives::group::app_updates::GroupAppUpdate::AppSettingsUpdate {
+            meta,
+            group_id,
+            app_id,
+            settings,
+        } => {
+            assert_eq!(group_id, create_result.group_id);
+            assert_eq!(app_id, AppProtocolVariant::DigitalGroupsOrganizer);
+            assert_eq!(settings, invalid_settings_data);
+            assert_eq!(meta.activity_id, *message_full.id());
+        }
+        other => panic!("Expected AppSettingsUpdate, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn test_dgo_settings_event_creation() {
+    use zoe_app_primitives::{
+        digital_groups_organizer::events::{
+            admin::{FeaturePermission, PermissionUpdate, TextBlocksPermissionUpdate},
+            core::DgoSettingsEvent,
+        },
+        group::app::ExecutorEvent,
+        identity::IdentityType,
+    };
+    use zoe_wire_protocol::MessageId;
+
+    // Create DGO settings update content
+    let settings_updates = vec![
+        PermissionUpdate::TextBlocks(TextBlocksPermissionUpdate::Create(
+            FeaturePermission::AllMembers,
+        )),
+        PermissionUpdate::TextBlocks(TextBlocksPermissionUpdate::Update(
+            FeaturePermission::ModeratorOrAbove,
+        )),
+    ];
+
+    // Create a DgoSettingsEvent using the constructor
+    let settings_event = DgoSettingsEvent::new(
+        IdentityType::Main,
+        MessageId::from_bytes([1u8; 32]),
+        settings_updates.clone(),
+    );
+
+    // Verify the event was created correctly
+    assert_eq!(settings_event.content(), &settings_updates);
+    assert_eq!(
+        settings_event.group_state_reference(),
+        MessageId::from_bytes([1u8; 32])
+    );
+}
+
+#[tokio::test]
+async fn test_dgo_settings_serialization_roundtrip() {
+    use zoe_app_primitives::digital_groups_organizer::events::admin::{
+        FeaturePermission, PermissionUpdate, TextBlocksPermissionUpdate,
+    };
+
+    // Create DGO settings update content
+    let original_settings = vec![
+        PermissionUpdate::TextBlocks(TextBlocksPermissionUpdate::Create(
+            FeaturePermission::AllMembers,
+        )),
+        PermissionUpdate::TextBlocks(TextBlocksPermissionUpdate::Update(
+            FeaturePermission::ModeratorOrAbove,
+        )),
+        PermissionUpdate::TextBlocks(TextBlocksPermissionUpdate::Delete(
+            FeaturePermission::ModeratorOrAbove,
+        )),
+    ];
+
+    // Serialize the settings
+    let serialized =
+        postcard::to_stdvec(&original_settings).expect("Failed to serialize DGO settings");
+
+    // Deserialize the settings
+    let deserialized: Vec<PermissionUpdate> =
+        postcard::from_bytes(&serialized).expect("Failed to deserialize DGO settings");
+
+    // Verify roundtrip
+    assert_eq!(original_settings, deserialized);
+}
+
+#[tokio::test]
+async fn test_app_installation_update_processing() {
+    use mockall::predicate::function;
+    use zoe_app_primitives::group::events::{GroupActivityEvent, GroupInfoUpdate};
+    use zoe_app_primitives::protocol::{AppProtocolVariant, InstalledApp};
+    use zoe_wire_protocol::{Filter, KeyPair, PublishResult, Version};
+
+    let mut message_manager = MockMessagesManagerTrait::new();
+
+    // Set up expectations for subscription calls
+    message_manager
+        .expect_ensure_contains_filter()
+        .with(function(|filter: &Filter| {
+            matches!(filter, Filter::Channel(_))
+        }))
+        .returning(|_| Ok(()));
+
+    // Set up expectations for publish calls
+    message_manager.expect_publish().returning(|_| {
+        Ok(PublishResult::StoredNew {
+            global_stream_id: "test_stream_id".to_string(),
+        })
+    });
+
+    // Set up expectations for messages_stream calls
+    let (_message_tx, _message_rx) = async_broadcast::broadcast(10);
+    message_manager
+        .expect_message_events_stream()
+        .returning(move || _message_rx.clone());
+
+    let group_manager = GroupManager::builder(Arc::new(message_manager))
+        .build()
+        .await;
+
+    // Get the app updates receiver to verify forwarding
+    let mut app_updates_rx = group_manager.group_app_updates();
+
+    // Create a group first
+    let mut rng = rand::thread_rng();
+    let creator = KeyPair::generate(&mut rng);
+    let create_result = group_manager
+        .create_group(CreateGroupBuilder::new("Test Group".to_string()), &creator)
+        .await
+        .expect("Failed to create group");
+
+    // Create an app installation event
+    let new_app = InstalledApp::new(
+        AppProtocolVariant::DigitalGroupsOrganizer,
+        Version::new(1, 0, 0),
+        vec![1, 2, 3, 4], // app_tag
+    );
+
+    let app_installation_event = GroupActivityEvent::UpdateGroup {
+        updates: vec![GroupInfoUpdate::AddApp(new_app.clone())],
+    };
+
+    // Publish the app installation update
+    let message_full = group_manager
+        .publish_group_event(&create_result.group_id, app_installation_event, &creator)
+        .await
+        .expect("Failed to publish app installation update");
+
+    // Process the message to trigger app update generation
+    group_manager
+        .handle_incoming_message(message_full.clone())
+        .await
+        .expect("Failed to process app installation update message");
+
+    // Verify the message was published
+    assert_eq!(*message_full.id(), *message_full.id());
+
+    // Verify that the app installation update was forwarded to the app manager via the app updates channel
+    // The GroupManager should forward app installation updates to the app updates channel
+    // for processing by the AppManager
+    let forwarded_message =
+        tokio::time::timeout(std::time::Duration::from_millis(100), app_updates_rx.recv())
+            .await
+            .expect("Timeout waiting for forwarded message")
+            .unwrap();
+
+    // Verify the forwarded message contains the expected app installation update
+    match forwarded_message {
+        zoe_app_primitives::group::app_updates::GroupAppUpdate::InstalledApsUpdate {
+            group_id,
+            installed_apps,
+        } => {
+            assert_eq!(group_id, create_result.group_id);
+            assert_eq!(installed_apps.len(), 1);
+            let installed_app = &installed_apps[0];
+            assert_eq!(installed_app.app_id, new_app.app_id);
+            assert_eq!(installed_app.version, new_app.version);
+            assert_eq!(installed_app.app_tag, new_app.app_tag);
+        }
+        other => panic!("Expected InstalledApsUpdate, got {other:?}"),
     }
 }

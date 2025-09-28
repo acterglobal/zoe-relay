@@ -3,7 +3,11 @@ use zoe_wire_protocol::{ChaCha20Poly1305Content, KeyPair, MessageId, VerifyingKe
 
 use zoe_app_primitives::{
     group::{
-        events::{GroupInfo, GroupInitialization, settings::GroupSettings},
+        app_updates::GroupAppUpdate,
+        events::{
+            GroupActivityEvent, GroupId, GroupInfo, GroupInitialization, key_info::GroupKeyInfo,
+            roles::GroupRole, settings::GroupSettings,
+        },
         states::GroupState,
     },
     identity::IdentityRef,
@@ -22,18 +26,11 @@ use serde::Serialize;
 use zoe_wire_protocol::{Kind, Message, MessageFull, Tag};
 
 use crate::{
-    app_manager::GroupService,
+    app_manager::GroupAppService,
     error::{GroupError, GroupResult},
     messages::{MessageEvent, MessagesManagerTrait},
     state::GroupSession,
     state::encrypt_group_initialization_content,
-};
-
-#[cfg(test)]
-use crate::messages::MockMessagesManagerTrait;
-use zoe_app_primitives::{
-    group::events::key_info::GroupKeyInfo,
-    group::events::{GroupActivityEvent, GroupId, roles::GroupRole},
 };
 
 use async_broadcast::{Receiver, Sender};
@@ -86,6 +83,11 @@ pub struct GroupManager<M: MessagesManagerTrait + Clone + 'static> {
     /// Arc-wrapped to ensure channel stays open even when GroupManager instances are cloned and dropped
     _broadcast_keeper: Arc<async_broadcast::InactiveReceiver<GroupDataUpdate>>,
 
+    /// Channel for broadcasting app settings updates to the app manager
+    app_updates_channel: Arc<Sender<GroupAppUpdate>>,
+    /// Keeper receiver to prevent app updates channel closure
+    _app_updates_keeper: Arc<async_broadcast::InactiveReceiver<GroupAppUpdate>>,
+
     spawn_handle: Arc<RwLock<Option<JoinHandle<()>>>>,
 }
 
@@ -116,6 +118,7 @@ impl<M: MessagesManagerTrait + Clone + 'static> GroupManagerBuilder<M> {
         } = self;
         let message_manager = message_manager.expect("Message manager must be provided");
         let (tx, rx) = async_broadcast::broadcast(10);
+        let (app_tx, app_rx) = async_broadcast::broadcast(10);
 
         let group_manager = GroupManager {
             groups: Arc::new(RwLock::new(HashMap::from_iter(
@@ -126,6 +129,8 @@ impl<M: MessagesManagerTrait + Clone + 'static> GroupManagerBuilder<M> {
             message_manager,
             broadcast_channel: Arc::new(tx),
             _broadcast_keeper: Arc::new(rx.deactivate()),
+            app_updates_channel: Arc::new(app_tx),
+            _app_updates_keeper: Arc::new(app_rx.deactivate()),
             spawn_handle: Arc::new(RwLock::new(None)),
         };
 
@@ -445,11 +450,11 @@ impl<M: MessagesManagerTrait + Clone + 'static> GroupManager<M> {
     }
 }
 
-/// Implementation of GroupService for GroupManager
+/// Implementation of GroupAppService for GroupManager
 #[async_trait::async_trait]
-impl<M: MessagesManagerTrait + Clone + 'static> GroupService for GroupManager<M> {
-    fn message_group_receiver(&self) -> async_broadcast::Receiver<GroupDataUpdate> {
-        self.broadcast_channel.new_receiver()
+impl<M: MessagesManagerTrait + Clone + 'static> GroupAppService for GroupManager<M> {
+    fn group_app_updates(&self) -> async_broadcast::Receiver<GroupAppUpdate> {
+        self.app_updates_channel.new_receiver()
     }
 
     async fn current_group_states(&self) -> Vec<GroupState> {
@@ -627,6 +632,7 @@ impl<M: MessagesManagerTrait + Clone + 'static> GroupManager<M> {
         let (enc_key, encrypted_payload, group_info) = create_group.build()?;
         // The group_id is the channel_id (no conversion needed)
         let group_id = group_info.group_id.clone();
+        let installed_apps = group_info.installed_apps.clone();
 
         // Create the wire protocol message with encrypted payload
         let message = Message::new_v0_encrypted(
@@ -677,11 +683,14 @@ impl<M: MessagesManagerTrait + Clone + 'static> GroupManager<M> {
         };
 
         // Broadcast the group addition
-        if let Err(e) = self
-            .broadcast_channel
-            .try_broadcast(GroupDataUpdate::GroupAdded(group_session))
-        {
-            tracing::error!(error=?e, "Failed to broadcast group addition");
+        self.safe_broadcast(GroupDataUpdate::GroupAdded(group_session.clone()));
+
+        // Broadcast app installations for any installed apps
+        if !installed_apps.is_empty() {
+            self.safe_broadcast_app_update(GroupAppUpdate::InstalledApsUpdate {
+                group_id: group_id.clone(),
+                installed_apps,
+            });
         }
 
         Ok(CreateGroupResult {
@@ -726,12 +735,6 @@ impl<M: MessagesManagerTrait + Clone + 'static> GroupManager<M> {
         Ok(MessageFull::new(message, sender)?)
     }
 
-    /// Process an incoming group event message
-    #[cfg(test)]
-    pub async fn handle_incoming_message(&self, message_full: MessageFull) -> GroupResult<()> {
-        self.handle_incoming_message_internal(message_full).await
-    }
-
     /// Process an incoming group event message (internal implementation)
     async fn handle_incoming_message_internal(&self, message_full: MessageFull) -> GroupResult<()> {
         // Extract the encrypted payload from the message
@@ -774,7 +777,8 @@ impl<M: MessagesManagerTrait + Clone + 'static> GroupManager<M> {
             return Ok(());
         };
 
-        let event = match group_session.decrypt_group_event(encrypted_payload) {
+        let event = match group_session.decrypt_group_event::<GroupActivityEvent>(encrypted_payload)
+        {
             Ok(event) => event,
             Err(e) => {
                 tracing::error!(
@@ -795,7 +799,7 @@ impl<M: MessagesManagerTrait + Clone + 'static> GroupManager<M> {
         // Find the channel_id for this group session
         let group_id = group_session.state.group_info.group_id; // We know there's at least one from the check above
 
-        let group_session = {
+        let (group_session, app_update) = {
             // This is a subsequent event - apply to existing group state
             let mut groups = self.groups.write().await;
             let group_session = groups
@@ -809,10 +813,10 @@ impl<M: MessagesManagerTrait + Clone + 'static> GroupManager<M> {
             );
 
             // Apply the event to the group state (convert GroupStateError to GroupError)
-            group_session
+            let app_update = group_session
                 .state
                 .apply_event(
-                    event,
+                    event.clone(),
                     *message_full.id(),
                     zoe_app_primitives::identity::IdentityRef::Key(sender.clone()),
                     timestamp,
@@ -829,8 +833,18 @@ impl<M: MessagesManagerTrait + Clone + 'static> GroupManager<M> {
                         GroupError::InvalidOperation(msg)
                     }
                 })?;
-            group_session.clone()
+            (group_session.clone(), app_update)
         };
+
+        // Forward app update to app manager if the event was authorized
+        if let Some(app_update) = app_update {
+            tracing::trace!(
+                message_id = ?message_id,
+                group_id = ?group_id,
+                "Forwarding authorized app update to app manager"
+            );
+            self.safe_broadcast_app_update(app_update);
+        }
 
         // Broadcast the group update
         self.safe_broadcast(GroupDataUpdate::GroupUpdated(group_session));
@@ -838,7 +852,7 @@ impl<M: MessagesManagerTrait + Clone + 'static> GroupManager<M> {
         Ok(())
     }
 
-    pub fn safe_broadcast(&self, message: GroupDataUpdate) {
+    fn safe_broadcast(&self, message: GroupDataUpdate) {
         match self.broadcast_channel.try_broadcast(message) {
             Ok(_) => {}
             Err(async_broadcast::TrySendError::Closed(_)) => {
@@ -848,38 +862,18 @@ impl<M: MessagesManagerTrait + Clone + 'static> GroupManager<M> {
         }
     }
 
-    /// Add a complete group session
-    pub async fn add_group_session(&self, group_id: GroupId, session: GroupSession) {
-        self.groups.write().await.insert(group_id, session.clone());
-        self.safe_broadcast(GroupDataUpdate::GroupAdded(session));
-    }
-
-    /// Remove a group session
-    pub async fn remove_group_session(&self, group_id: &GroupId) -> Option<GroupSession> {
-        if let Some(session) = self.groups.write().await.remove(group_id) {
-            let _ = self
-                .broadcast_channel
-                .try_broadcast(GroupDataUpdate::GroupRemoved(session.clone()));
-            Some(session)
-        } else {
-            None
+    fn safe_broadcast_app_update(&self, message: GroupAppUpdate) {
+        match self.app_updates_channel.try_broadcast(message) {
+            Ok(_) => {}
+            Err(async_broadcast::TrySendError::Closed(_)) => {
+                tracing::trace!("App updates channel closed, skipping broadcast");
+            }
+            Err(e) => tracing::error!(error=?e, "Failed to broadcast app update"),
         }
     }
-
     /// Subscribe to group updates
     pub fn subscribe_to_updates(&self) -> Receiver<GroupDataUpdate> {
         self.broadcast_channel.new_receiver()
-    }
-
-    /// Handle app installation for a group (placeholder implementation)
-    pub async fn handle_app_installation(
-        &self,
-        _group_id: GroupId,
-        _apps: &[InstalledApp],
-    ) -> GroupResult<()> {
-        // TODO: Implement proper app installation handling
-        // This is a placeholder for the test
-        Ok(())
     }
 
     /// Join an existing encrypted group by decrypting the group creation event
@@ -972,6 +966,32 @@ impl<M: MessagesManagerTrait + Clone + 'static> GroupManager<M> {
             id: group_id.clone(), // The group ID is the channel ID
             relays: vec![],       // Could be populated with known relays
         })
+    }
+}
+
+#[cfg(test)]
+impl<M: MessagesManagerTrait + Clone + 'static> GroupManager<M> {
+    /// Process an incoming group event message
+    pub async fn handle_incoming_message(&self, message_full: MessageFull) -> GroupResult<()> {
+        self.handle_incoming_message_internal(message_full).await
+    }
+
+    /// Add a complete group session
+    pub async fn add_group_session(&self, group_id: GroupId, session: GroupSession) {
+        self.groups.write().await.insert(group_id, session.clone());
+        self.safe_broadcast(GroupDataUpdate::GroupAdded(session));
+    }
+
+    /// Remove a group session
+    pub async fn remove_group_session(&self, group_id: &GroupId) -> Option<GroupSession> {
+        if let Some(session) = self.groups.write().await.remove(group_id) {
+            let _ = self
+                .broadcast_channel
+                .try_broadcast(GroupDataUpdate::GroupRemoved(session.clone()));
+            Some(session)
+        } else {
+            None
+        }
     }
 }
 
@@ -1114,33 +1134,8 @@ pub fn create_role_update_event_for_testing(
 #[cfg(test)]
 mod app_integration_tests {
     use super::*;
-    use zoe_app_primitives::protocol::{AppProtocolVariant, default_dgo_app};
+    use zoe_app_primitives::protocol::AppProtocolVariant;
     use zoe_wire_protocol::version::Version;
-
-    #[tokio::test]
-    async fn test_app_installation_handling() {
-        let message_manager = Arc::new(MockMessagesManagerTrait::new());
-        let manager = GroupManager::builder(message_manager).build();
-
-        // Create test apps
-        let group_id = MessageId::from_bytes([2u8; 32]);
-        let apps = vec![
-            default_dgo_app(),
-            InstalledApp::new_simple(
-                AppProtocolVariant::DigitalGroupsOrganizer,
-                1,
-                1,
-                vec![3, 4, 5, 6], // Different channel tag
-            ),
-        ];
-
-        // Handle app installation (placeholder implementation)
-        let manager = manager.await;
-        let result = manager
-            .handle_app_installation(group_id.as_bytes().to_vec(), &apps)
-            .await;
-        assert!(result.is_ok());
-    }
 
     #[test]
     fn test_installed_apps_support() {

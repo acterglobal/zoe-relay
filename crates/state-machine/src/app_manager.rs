@@ -24,14 +24,14 @@ mod group_service;
 mod sync;
 
 pub use app_state::AppState;
-pub use group_service::GroupService;
+pub use group_service::GroupAppService;
 
 /// Manages app-specific message processing, decoupled from group management
 
 #[derive(Clone)]
 pub struct AppManager<
     M: MessagesManagerTrait,
-    G: GroupService + 'static,
+    G: GroupAppService + 'static,
     S: ExecutorStore + 'static,
 > {
     /// Message manager for subscribing to app channels
@@ -53,7 +53,7 @@ pub struct AppManager<
 
 impl<
     M: MessagesManagerTrait + Clone + 'static,
-    G: GroupService + Clone + 'static,
+    G: GroupAppService + Clone + 'static,
     S: ExecutorStore + Clone + 'static,
 > AppManager<M, G, S>
 {
@@ -108,7 +108,7 @@ impl<
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{error::GroupError, group::GroupDataUpdate, messages::MockMessagesManagerTrait};
+    use crate::{error::GroupError, messages::MockMessagesManagerTrait};
     use serde::de::DeserializeOwned;
     use std::sync::Arc;
     use zoe_app_primitives::{
@@ -122,11 +122,14 @@ mod tests {
     use zoe_wire_protocol::{ChaCha20Poly1305Content, Filter, MessageId, PublishResult};
 
     #[derive(Clone)]
-    struct MockGroupService;
+    struct MockGroupAppService;
 
     #[async_trait::async_trait]
-    impl GroupService for MockGroupService {
-        fn message_group_receiver(&self) -> async_broadcast::Receiver<GroupDataUpdate> {
+    impl GroupAppService for MockGroupAppService {
+        fn group_app_updates(
+            &self,
+        ) -> async_broadcast::Receiver<zoe_app_primitives::group::app_updates::GroupAppUpdate>
+        {
             let (_tx, rx) = async_broadcast::broadcast(1000);
             rx
         }
@@ -227,7 +230,7 @@ mod tests {
         });
 
         let message_manager = Arc::new(mock_manager);
-        let group_service = Arc::new(MockGroupService);
+        let group_service = Arc::new(MockGroupAppService);
         let store = crate::execution::InMemoryStore::new();
 
         let _app_manager = AppManager::new(message_manager, group_service, store).await;

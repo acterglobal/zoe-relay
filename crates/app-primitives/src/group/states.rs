@@ -6,9 +6,13 @@ use super::events::{
     GroupActivityEvent, GroupInfoUpdate, roles::GroupRole, settings::GroupSettings,
 };
 use crate::{
-    group::events::{
-        GroupInfo,
-        permissions::{GroupPermissions, Permission},
+    digital_groups_organizer::models::core::ActivityMeta,
+    group::{
+        app_updates::GroupAppUpdate,
+        events::{
+            GroupInfo,
+            permissions::{GroupPermissions, Permission},
+        },
     },
     identity::{IdentityInfo, IdentityRef},
     metadata::Metadata,
@@ -556,6 +560,46 @@ impl GroupState {
         }
     }
 
+    /// Validate that the sender has permission to perform the given event
+    fn validate_event_permissions(
+        &self,
+        event: &GroupActivityEvent,
+        sender: &IdentityRef,
+    ) -> GroupStateResult<()> {
+        match event {
+            GroupActivityEvent::SetIdentity(_) => {
+                // Anyone can announce their participation (they have the group key)
+                Ok(())
+            }
+            GroupActivityEvent::LeaveGroup { .. } => {
+                // Anyone can leave the group
+                Ok(())
+            }
+            GroupActivityEvent::UpdateGroup { .. } => {
+                // Requires update_group permission
+                self.check_permission(sender, &self.group_info.settings.permissions.update_group)
+            }
+            GroupActivityEvent::AssignRole { .. } => {
+                // Requires assign_roles permission
+                self.check_permission(sender, &self.group_info.settings.permissions.assign_roles)
+            }
+            GroupActivityEvent::RemoveFromGroup { .. } => {
+                // Requires assign_roles permission (similar to role assignment)
+                self.check_permission(sender, &self.group_info.settings.permissions.assign_roles)
+            }
+            GroupActivityEvent::UpdateAppSettings { .. } => {
+                // Requires update_group permission (app settings are part of group management)
+                self.check_permission(sender, &self.group_info.settings.permissions.update_group)
+            }
+            GroupActivityEvent::Unknown { .. } => {
+                // Unknown events are rejected for security
+                Err(GroupStateError::PermissionDenied(
+                    "Unknown event types are not allowed".to_string(),
+                ))
+            }
+        }
+    }
+
     /// Determines if an event is permission-changing (for metadata tracking)
     fn is_permission_event(&self, event: &GroupActivityEvent) -> bool {
         match event {
@@ -586,7 +630,10 @@ impl GroupState {
         event_id: MessageId,
         sender: IdentityRef,
         timestamp: u64,
-    ) -> GroupStateResult<()> {
+    ) -> GroupStateResult<Option<GroupAppUpdate>> {
+        // Validate permissions BEFORE applying the event
+        self.validate_event_permissions(&event, &sender)?;
+
         // Store message metadata for all events with cached information
         let role_assignment = match event {
             GroupActivityEvent::AssignRole {
@@ -623,7 +670,7 @@ impl GroupState {
         );
 
         // Apply event to state with deterministic ordering
-        self.apply_event_to_state(event, event_id, sender, timestamp)?;
+        self.apply_event_to_state(event.clone(), event_id, sender.clone(), timestamp)?;
 
         // Update state metadata
         self.event_history.push(event_id);
@@ -635,7 +682,42 @@ impl GroupState {
             self.take_state_snapshot(timestamp, event_id);
         }
 
-        Ok(())
+        // Check if this event should generate an app update
+        let app_update = match event {
+            GroupActivityEvent::UpdateAppSettings { app_id, update } => {
+                Some(GroupAppUpdate::AppSettingsUpdate {
+                    meta: ActivityMeta {
+                        activity_id: event_id,
+                        group_id: self.group_info.group_id.clone(),
+                        actor: sender,
+                        timestamp,
+                    },
+                    group_id: self.group_info.group_id.clone(),
+                    app_id,
+                    settings: update,
+                })
+            }
+            GroupActivityEvent::UpdateGroup { updates, .. } => {
+                // Check if any of the updates are app installations
+                let mut installed_apps = Vec::new();
+                for update in updates {
+                    if let GroupInfoUpdate::AddApp(app) = update {
+                        installed_apps.push(app);
+                    }
+                }
+                if !installed_apps.is_empty() {
+                    Some(GroupAppUpdate::InstalledApsUpdate {
+                        group_id: self.group_info.group_id.clone(),
+                        installed_apps,
+                    })
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        };
+
+        Ok(app_update)
     }
 
     /// Apply an event to the group state (the actual state changes)

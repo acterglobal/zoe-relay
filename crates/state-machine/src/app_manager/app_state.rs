@@ -11,11 +11,11 @@ pub struct AppState {
     pub installed_app: InstalledApp,
 }
 
-use super::{AppManager, GroupService};
+use super::{AppManager, GroupAppService};
 
 impl<
     M: MessagesManagerTrait + Clone + 'static,
-    G: GroupService + Clone + 'static,
+    G: GroupAppService + Clone + 'static,
     S: ExecutorStore + Clone + 'static,
 > AppManager<M, G, S>
 {
