@@ -13,3 +13,4 @@ crates/whatsmeow/libwhatsmeow.a
 crates/whatsmeow/libwhatsmeow.so
 docs/static/rustdoc/
 .cargo
+.local

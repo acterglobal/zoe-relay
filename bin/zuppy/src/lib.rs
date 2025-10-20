@@ -1,4 +1,9 @@
-use gpui::*;
+use std::path::PathBuf;
+
+use gpui::{
+    AppContext, AsyncApp, Context, Entity, IntoElement, ParentElement, Render, SharedString,
+    Styled, Task, WeakEntity, Window, div,
+};
 use theme::Theme;
 use widgets::headline::Headline;
 use widgets::interactive_counter::InteractiveCounter;
@@ -21,26 +26,54 @@ pub struct ZuppyRoot {
     client: Entity<ClientState>,
     counter: Entity<InteractiveCounter>,
     status_bar: Entity<StatusBar>,
+
+    _client_task: Task<()>,
 }
 
 impl ZuppyRoot {
     pub fn new(cx: &mut Context<Self>) -> Self {
-        cx.spawn(async |me: WeakEntity<Self>, cx: &mut AsyncApp| {
-            let new_state = match ClientBuilder::default().build().await {
+        Self::with_storage_dir(cx, &PathBuf::from(".local/zuppy"))
+    }
+
+    pub fn with_storage_dir(cx: &mut Context<Self>, main_dir: &PathBuf) -> Self {
+        let mut builder = ClientBuilder::default();
+
+        builder
+            .db_storage_dir_pathbuf(main_dir.clone().join("db.sqlite"))
+            .media_storage_dir_pathbuf(main_dir.join("media"));
+        Self::with_builder(cx, builder)
+    }
+
+    async fn init_client_state(cx: &mut AsyncApp, builder: ClientBuilder) -> ClientState {
+        let client_state = gpui_tokio::Tokio::spawn(cx, async {
+            match builder.build().await {
                 Ok(client) => ClientState::Zoe(client),
                 Err(err) => ClientState::Error(err.to_string()),
-            };
+            }
+        });
+        match client_state {
+            Ok(inner_task) => match inner_task.await {
+                Ok(new_state) => new_state,
+                Err(err) => ClientState::Error(err.to_string()),
+            },
+            Err(err) => ClientState::Error(err.to_string()),
+        }
+    }
+
+    pub fn with_builder(cx: &mut Context<Self>, builder: ClientBuilder) -> Self {
+        let client_task = cx.spawn(async |me: WeakEntity<Self>, cx: &mut AsyncApp| {
+            let new_state = Self::init_client_state(cx, builder).await;
             if let Err(err) = me.update(cx, |me: &mut Self, cx: &mut Context<Self>| {
                 me.client.write(cx, new_state);
             }) {
                 warn!("Failed to update client state: {}", err);
             };
-        })
-        .detach();
+        });
 
         let client_state = cx.new(|_cx| ClientState::Init);
         Self {
             client: client_state.clone(),
+            _client_task: client_task,
             counter: cx.new(|_cx| InteractiveCounter::new(0)),
             status_bar: cx.new(|cx| StatusBar::new(client_state, cx)),
         }

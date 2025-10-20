@@ -204,15 +204,18 @@ impl ClientBuilder {
 #[cfg_attr(feature = "frb-api", frb(ignore))]
 // non Flutter Rust Bridge API methods
 impl ClientBuilder {
-    pub fn media_storage_dir_pathbuf(&mut self, media_storage_dir: PathBuf) {
+    pub fn media_storage_dir_pathbuf(&mut self, media_storage_dir: PathBuf) -> &mut Self {
         self.media_storage_dir = Some(PathBuf::from(media_storage_dir));
+        self
     }
 
-    pub fn inner_keypair(&mut self, inner_keypair: KeyPair) {
+    pub fn inner_keypair(&mut self, inner_keypair: KeyPair) -> &mut Self {
         self.inner_keypair = Some(Arc::new(inner_keypair));
+        self
     }
 
-    pub fn db_storage_dir_pathbuf(&mut self, path: PathBuf) {
+    pub fn db_storage_dir_pathbuf(&mut self, path: PathBuf) -> &mut Self {
         self.db_storage_dir = Some(path);
+        self
     }
 }

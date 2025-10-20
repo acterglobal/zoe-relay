@@ -11,10 +11,10 @@ fn main() {
         .init();
     let app = Application::new();
     app.run(|app: &mut App| {
+        gpui_tokio::init(app);
         theme::init(app);
-        if let Err(err) = app.open_window(WindowOptions::default(), |_, cx| {
-            cx.new(|cx| ZuppyRoot::new(cx))
-        }) {
+        if let Err(err) = app.open_window(WindowOptions::default(), |_, cx| cx.new(ZuppyRoot::new))
+        {
             error!("Failed to open window: {err}");
         }
     });
