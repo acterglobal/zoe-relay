@@ -13714,6 +13714,9 @@ name = "zuppy"
 version = "0.1.0"
 dependencies = [
  "gpui",
+ "tracing",
+ "tracing-subscriber",
+ "zoe-client",
 ]
 
 [[package]]

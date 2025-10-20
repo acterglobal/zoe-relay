@@ -5,6 +5,9 @@ edition = "2024"
 
 [dependencies]
 gpui = { git = "https://github.com/zed-industries/zed" }
+zoe-client = { path = "../../crates/client" }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
 # smallvec is included here for convenience, it is used by gpui when creating
 # components that can have children. uncomment this line or
 # use `cargo add smallvec` to add it to your project

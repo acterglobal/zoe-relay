@@ -1,13 +1,20 @@
 use gpui::*;
+use tracing::error;
 use zuppy::ZuppyRoot;
 
 fn main() {
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
+        )
+        .init();
     let app = Application::new();
-
-    app.run(|cx: &mut App| {
-        cx.open_window(WindowOptions::default(), |_, cx| {
+    app.run(|app: &mut App| {
+        if let Err(err) = app.open_window(WindowOptions::default(), |_, cx| {
             cx.new(|cx| ZuppyRoot::new(cx))
-        })
-        .unwrap();
+        }) {
+            error!("Failed to open window: {err}");
+        }
     });
 }
