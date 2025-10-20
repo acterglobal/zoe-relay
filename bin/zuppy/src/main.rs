@@ -1,6 +1,6 @@
 use gpui::*;
 use tracing::error;
-use zuppy::ZuppyRoot;
+use zuppy::{ZuppyRoot, theme};
 
 fn main() {
     let _ = tracing_subscriber::fmt()
@@ -11,6 +11,7 @@ fn main() {
         .init();
     let app = Application::new();
     app.run(|app: &mut App| {
+        theme::init(app);
         if let Err(err) = app.open_window(WindowOptions::default(), |_, cx| {
             cx.new(|cx| ZuppyRoot::new(cx))
         }) {

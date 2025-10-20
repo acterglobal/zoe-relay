@@ -1,7 +1,9 @@
 use gpui::{
     ClickEvent, Context, InteractiveElement, IntoElement, ParentElement, Render,
-    StatefulInteractiveElement, Styled, Window, black, div, green, red, white,
+    StatefulInteractiveElement, Styled, Window, div, green, red,
 };
+
+use crate::theme::Theme;
 
 pub struct InteractiveCounter {
     count: isize,
@@ -15,13 +17,16 @@ impl InteractiveCounter {
 
 impl Render for InteractiveCounter {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let dec_listener = cx.listener(Self::decrement);
+        let inc_listener = cx.listener(Self::increment);
+        let theme = cx.default_global::<Theme>();
         div()
             .size_full()
             .flex()
             .items_center()
             .justify_center()
             .gap_5()
-            .bg(white())
+            .bg(theme.background())
             .child(
                 div()
                     .id("decrement_button")
@@ -32,10 +37,10 @@ impl Render for InteractiveCounter {
                     .size_8()
                     .rounded_md()
                     .border_1()
-                    .border_color(black())
+                    .border_color(theme.border())
                     .child("-")
                     .hover(|style| style.bg(red()))
-                    .on_click(cx.listener(Self::decrement)),
+                    .on_click(dec_listener),
             )
             .child(
                 div()
@@ -54,10 +59,10 @@ impl Render for InteractiveCounter {
                     .size_8()
                     .rounded_md()
                     .border_1()
-                    .border_color(black())
+                    .border_color(theme.border())
                     .child("+")
                     .hover(|style| style.bg(green()))
-                    .on_click(cx.listener(Self::increment)),
+                    .on_click(inc_listener),
             )
     }
 }

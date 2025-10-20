@@ -1,11 +1,13 @@
 use gpui::*;
+use theme::Theme;
 use widgets::headline::Headline;
 use widgets::interactive_counter::InteractiveCounter;
 use widgets::status_bar::StatusBar;
 
-mod widgets;
+pub mod theme;
+pub mod widgets;
 
-use tracing::{error, warn};
+use tracing::warn;
 use zoe_client::ClientBuilder;
 
 pub enum ClientState {
@@ -18,6 +20,7 @@ pub enum ClientState {
 pub struct ZuppyRoot {
     client: Entity<ClientState>,
     counter: Entity<InteractiveCounter>,
+    status_bar: Entity<StatusBar>,
 }
 
 impl ZuppyRoot {
@@ -35,15 +38,18 @@ impl ZuppyRoot {
         })
         .detach();
 
+        let client_state = cx.new(|_cx| ClientState::Init);
         Self {
-            client: cx.new(|_cx| ClientState::Init),
+            client: client_state.clone(),
             counter: cx.new(|_cx| InteractiveCounter::new(0)),
+            status_bar: cx.new(|cx| StatusBar::new(client_state, cx)),
         }
     }
 }
 
 impl Render for ZuppyRoot {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = cx.default_global::<Theme>();
         div()
             .relative()
             .size_full()
@@ -53,7 +59,8 @@ impl Render for ZuppyRoot {
             .justify_start()
             .items_start()
             .overflow_hidden()
-            .bg(white())
+            .bg(theme.background())
+            .text_color(theme.text())
             .child(cx.new(|_cx| Headline::new(SharedString::new_static("Zuppy"))))
             .child(
                 div()
@@ -64,17 +71,15 @@ impl Render for ZuppyRoot {
                     .child(
                         div()
                             .flex()
-                            .bg(gpui::red())
                             .child(cx.new(|_cx| Headline::new(SharedString::new_static("Left")))),
                     )
                     .child(div().flex_grow().child(self.counter.clone()))
                     .child(
                         div()
                             .flex()
-                            .bg(gpui::blue())
                             .child(cx.new(|_cx| Headline::new(SharedString::new_static("Right")))),
                     ),
             )
-            .child(cx.new(|_cx| StatusBar::new(self.client.clone())))
+            .child(self.status_bar.clone())
     }
 }
