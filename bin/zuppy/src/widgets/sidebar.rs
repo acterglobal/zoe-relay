@@ -1,5 +1,8 @@
-use crate::components::icon::IconName;
-use gpui::{Context, IntoElement, ParentElement, Render, Window, prelude::FluentBuilder};
+use crate::{components::icon::IconName, models::routes::Routes};
+use gpui::{
+    Context, InteractiveElement, IntoElement, ParentElement, Render, StatefulInteractiveElement,
+    Styled, Window, prelude::FluentBuilder,
+};
 use gpui_component::{
     Icon, Side, h_flex,
     sidebar::{Sidebar, SidebarGroup, SidebarHeader, SidebarMenu, SidebarMenuItem},
@@ -23,8 +26,11 @@ impl Render for ZuppySidebar {
             .header(
                 SidebarHeader::new().child(
                     h_flex()
+                        .id("sidebar-menu-home")
                         .child(Icon::new(IconName::Menu))
-                        .when(!self.collapsed, |this| this.child("Home")),
+                        .cursor_pointer()
+                        .when(!self.collapsed, |this| this.child("Home"))
+                        .on_click(move |_, window, cx| Routes::Dashboard.route(window, cx)),
                 ),
             )
             .child(

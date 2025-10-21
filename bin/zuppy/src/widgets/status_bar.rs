@@ -1,7 +1,7 @@
 use gpui::{AppContext, Context, Entity, IntoElement, ParentElement, Render, Styled, Window, div};
 use gpui_component::ActiveTheme;
 
-use crate::ClientState;
+use crate::models::client_state::ClientState;
 
 mod connection_status;
 mod theme_toggle_button;

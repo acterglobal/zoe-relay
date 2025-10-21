@@ -1,6 +1,6 @@
 use gpui::{App, AppContext, Application, WindowOptions};
 use tracing::error;
-use zuppy::ZuppyRoot;
+use zuppy::root::ZuppyRoot;
 
 fn main() {
     let _ = tracing_subscriber::fmt()
@@ -11,8 +11,7 @@ fn main() {
         .init();
     let app = Application::new().with_assets(zuppy::util::assets::Assets);
     app.run(|app: &mut App| {
-        gpui_component::init(app);
-        zuppy::util::gpui_tokio::init(app);
+        zuppy::init(app);
         if let Err(err) = app.open_window(WindowOptions::default(), |_, cx| cx.new(ZuppyRoot::new))
         {
             error!("Failed to open window: {err}");

@@ -1,52 +1,18 @@
+use crate::models::{client_state::ClientState, routes::Routes, user_info::UserInfoModel};
 use gpui::{
-    AppContext, Context, Entity, IntoElement, ParentElement, Render, Subscription, Task, Window,
-    div,
+    AppContext, Context, Entity, InteractiveElement, IntoElement, ParentElement, Render,
+    StatefulInteractiveElement, Styled, Window, div,
 };
 use gpui_component::{Sizable, avatar::Avatar};
 
-use crate::ClientState;
-
-struct UserInfoInner {
-    _client_subscription: Subscription,
-    user_id: Option<String>,
-}
-
-impl UserInfoInner {
-    fn new(client_state: Entity<ClientState>, cx: &mut Context<Self>) -> Self {
-        let mut s = Self {
-            _client_subscription: cx.observe(&client_state, Self::on_client_state_update),
-            user_id: None,
-        };
-        s.on_client_state_update(client_state, cx);
-        s
-    }
-
-    fn on_client_state_update(
-        &mut self,
-        client_state: Entity<ClientState>,
-        cx: &mut Context<Self>,
-    ) {
-        let ClientState::Zoe(z) = client_state.read(cx) else {
-            tracing::info!("no client");
-            let should_notify = self.user_id.take().is_some();
-            if should_notify {
-                cx.notify();
-            }
-            return;
-        };
-
-        self.user_id = Some(z.id_hex())
-    }
-}
-
 pub struct UserInfo {
-    info: Entity<UserInfoInner>,
+    info: Entity<UserInfoModel>,
 }
 
 impl UserInfo {
     pub fn new(client_state: Entity<ClientState>, cx: &mut Context<Self>) -> Self {
         Self {
-            info: cx.new(|cx| UserInfoInner::new(client_state, cx)),
+            info: cx.new(|cx| UserInfoModel::new(cx, client_state)),
         }
     }
 }
@@ -56,6 +22,12 @@ impl Render for UserInfo {
         let Some(ref user_id) = self.info.read(cx).user_id else {
             return div();
         };
-        div().child(Avatar::new().name(user_id).xsmall())
+        div().child(
+            div()
+                .id("user-info-avatar-small")
+                .child(Avatar::new().name(user_id).xsmall())
+                .cursor_pointer()
+                .on_click(move |_, window, cx| Routes::MyUserInfo.route(window, cx)),
+        )
     }
 }

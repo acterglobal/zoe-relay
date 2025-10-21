@@ -8,7 +8,10 @@ use gpui_component::Colorize;
 use gpui_component::Icon;
 use zoe_client::OverallConnectionStatus;
 
-use crate::{ClientState, components::icon::IconName, widgets::simple_popover::SimplePopover};
+use crate::{
+    components::icon::IconName, models::client_state::ClientState,
+    widgets::simple_popover::SimplePopover,
+};
 
 struct ConnectionInfoInner {
     _client_subscription: Subscription,
