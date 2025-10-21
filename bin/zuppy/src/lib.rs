@@ -10,6 +10,7 @@ use widgets::interactive_counter::InteractiveCounter;
 use widgets::status_bar::StatusBar;
 
 pub mod theme;
+pub mod util;
 pub mod widgets;
 
 use tracing::warn;
@@ -62,7 +63,7 @@ impl ZuppyRoot {
     }
 
     async fn init_client_state(cx: &mut AsyncApp, builder: ClientBuilder) -> ClientState {
-        let client_state = gpui_tokio::Tokio::spawn(cx, async {
+        let client_state = crate::util::gpui_tokio::Tokio::spawn(cx, async {
             match builder.build().await {
                 Ok(client) => ClientState::Zoe(client),
                 Err(err) => ClientState::Error(err.to_string()),

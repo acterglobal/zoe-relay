@@ -1,4 +1,4 @@
-use gpui::*;
+use gpui::{App, AppContext, Application, WindowOptions};
 use tracing::error;
 use zuppy::{ZuppyRoot, theme};
 
@@ -11,7 +11,7 @@ fn main() {
         .init();
     let app = Application::new();
     app.run(|app: &mut App| {
-        gpui_tokio::init(app);
+        zuppy::util::gpui_tokio::init(app);
         theme::init(app);
         if let Err(err) = app.open_window(WindowOptions::default(), |_, cx| cx.new(ZuppyRoot::new))
         {
