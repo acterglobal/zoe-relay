@@ -1,6 +1,7 @@
+use crate::components::icon::IconName;
 use gpui::{Context, IntoElement, ParentElement, Render, Window, prelude::FluentBuilder};
 use gpui_component::{
-    Icon, IconName, Side, h_flex,
+    Icon, Side, h_flex,
     sidebar::{Sidebar, SidebarGroup, SidebarHeader, SidebarMenu, SidebarMenuItem},
 };
 
@@ -26,9 +27,10 @@ impl Render for ZuppySidebar {
                         .when(!self.collapsed, |this| this.child("Home")),
                 ),
             )
-            .child(SidebarGroup::new("Menu").child(
-                SidebarMenu::new().child(SidebarMenuItem::new("Files").icon(IconName::Folder)),
-            ))
+            .child(
+                SidebarGroup::new("Menu")
+                    .child(SidebarMenu::new().child(SidebarMenuItem::new("Files"))),
+            )
     }
 
     // // Toggle button

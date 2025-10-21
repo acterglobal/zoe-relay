@@ -1,11 +1,14 @@
 use futures::{StreamExt, pin_mut};
 use gpui::{
     AppContext, AsyncApp, Context, Entity, InteractiveElement, IntoElement, ParentElement, Render,
-    SharedString, StatefulInteractiveElement, Styled, Subscription, Task, WeakEntity, Window, div,
+    StatefulInteractiveElement, Styled, Subscription, Task, WeakEntity, Window, div,
 };
+use gpui_component::ActiveTheme;
+use gpui_component::Colorize;
+use gpui_component::Icon;
 use zoe_client::OverallConnectionStatus;
 
-use crate::{ClientState, widgets::simple_popover::SimplePopover};
+use crate::{ClientState, components::icon::IconName, widgets::simple_popover::SimplePopover};
 
 struct ConnectionInfoInner {
     _client_subscription: Subscription,
@@ -96,10 +99,10 @@ impl ConnectionStatus {
 }
 
 impl ConnectionStatus {
-    fn render_error(&mut self, error_message: String) -> impl IntoElement {
+    fn render_error(&self, error_message: String, cx: &mut Context<Self>) -> impl IntoElement {
         div()
             .id("client_error")
-            .child(SharedString::new_static("Error"))
+            .child(Icon::new(IconName::NetworkWorking).text_color(cx.theme().red))
             .cursor_pointer()
             .hoverable_tooltip(move |_w, ctx| {
                 ctx.new(|_| SimplePopover::new(error_message.clone().into()))
@@ -110,9 +113,12 @@ impl ConnectionStatus {
     fn render_connection_info(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
         let e = div()
             .id("connected_info")
-            .child(SharedString::new_static("Connected"));
+            .child(Icon::new(IconName::NetworkSynced).text_color(cx.theme().green.darken(0.2)));
         if let Some(ref info) = self.current_status.read(cx).current_state {
-            let msg = format!("{} / {}", info.connected_count, info.total_count);
+            let msg = format!(
+                "Connected to {} / {}",
+                info.connected_count, info.total_count
+            );
             return e.cursor_pointer().hoverable_tooltip(move |_w, ctx| {
                 ctx.new(|_| SimplePopover::new(msg.clone().into())).into()
             });
@@ -124,10 +130,10 @@ impl ConnectionStatus {
 impl Render for ConnectionStatus {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         match self.client_state.read(cx) {
-            ClientState::Init => div().child(SharedString::new_static("Initializing...")),
-            ClientState::Loading => div().child(SharedString::new_static("Loading...")),
+            ClientState::Init => div().child(Icon::new(IconName::NetworkWorking)),
+            ClientState::Loading => div().child(Icon::new(IconName::NetworkWorking)),
             ClientState::Zoe(_) => div().child(self.render_connection_info(cx)),
-            ClientState::Error(e) => div().child(self.render_error(e.clone())),
+            ClientState::Error(e) => div().child(self.render_error(e.clone(), cx)),
         }
     }
 }

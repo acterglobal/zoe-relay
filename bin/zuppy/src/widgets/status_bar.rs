@@ -1,4 +1,5 @@
 use gpui::{AppContext, Context, Entity, IntoElement, ParentElement, Render, Styled, Window, div};
+use gpui_component::ActiveTheme;
 
 use crate::ClientState;
 
@@ -22,11 +23,15 @@ impl StatusBar {
 }
 
 impl Render for StatusBar {
-    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         div()
+            .border_t_1()
+            .border_color(cx.theme().border)
+            .p_2()
             .flex()
             .flex_row()
             .w_full()
+            .gap_1()
             .justify_between()
             .child(self.render_left_tools())
             .child(self.render_right_tools())

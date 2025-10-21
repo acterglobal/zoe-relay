@@ -1,5 +1,5 @@
 use gpui::{Context, IntoElement, ParentElement, Render, SharedString, Styled, Window, div};
-use gpui_component::{ActiveTheme, Theme};
+use gpui_component::ActiveTheme;
 
 pub struct SimplePopover(SharedString);
 

@@ -1,8 +1,8 @@
 use std::path::PathBuf;
 
 use gpui::{
-    AppContext, AsyncApp, Context, Entity, IntoElement, ParentElement, Render, SharedString,
-    Styled, Task, WeakEntity, Window, div,
+    AppContext, AsyncApp, Context, Entity, IntoElement, ParentElement, Render, Styled, Task,
+    WeakEntity, Window, div,
 };
 use gpui_component::ActiveTheme;
 use widgets::sidebar::ZuppySidebar;
@@ -10,6 +10,7 @@ use widgets::sidebar::ZuppySidebar;
 use widgets::interactive_counter::InteractiveCounter;
 use widgets::status_bar::StatusBar;
 
+pub mod components;
 pub mod util;
 pub mod widgets;
 
