@@ -13,7 +13,9 @@ pub mod theme;
 pub mod widgets;
 
 use tracing::warn;
+use zoe_app_primitives::connection::RelayAddress;
 use zoe_client::ClientBuilder;
+use zoe_wire_protocol::VerifyingKey;
 
 pub enum ClientState {
     Init,
@@ -30,6 +32,10 @@ pub struct ZuppyRoot {
     _client_task: Task<()>,
 }
 
+const DEFAULT_SERVER_ADDRESS: &'static str = "a.dev.hellozoe.app:13918";
+const DEFAULT_SERVER_KEY: &'static str =
+    "00202ee21d8cc6e519ba164ca4d10c2bae101f83bfd46249f2b7bb86f9083d50ed76";
+
 impl ZuppyRoot {
     pub fn new(cx: &mut Context<Self>) -> Self {
         Self::with_storage_dir(cx, &PathBuf::from(".local/zuppy"))
@@ -38,9 +44,20 @@ impl ZuppyRoot {
     pub fn with_storage_dir(cx: &mut Context<Self>, main_dir: &PathBuf) -> Self {
         let mut builder = ClientBuilder::default();
 
+        // Parse server key
+        let server_key =
+            VerifyingKey::from_hex(DEFAULT_SERVER_KEY).expect("Static key doesn't fail");
+        // Create RelayAddress
+        let default_relay = RelayAddress::new(server_key)
+            .with_address_str(DEFAULT_SERVER_ADDRESS.to_owned())
+            .with_name("Default Server".to_string());
+
         builder
             .db_storage_dir_pathbuf(main_dir.clone().join("db.sqlite"))
-            .media_storage_dir_pathbuf(main_dir.join("media"));
+            .media_storage_dir_pathbuf(main_dir.join("media"))
+            .servers(vec![default_relay]);
+        builder.autoconnect(true);
+
         Self::with_builder(cx, builder)
     }
 

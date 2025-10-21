@@ -393,7 +393,10 @@ impl VerifyingKey {
         postcard::to_stdvec(self)
     }
 
-    pub fn from_hex(hex: String) -> Result<Self, String> {
+    pub fn from_hex<T>(hex: T) -> Result<Self, String>
+    where
+        T: AsRef<[u8]>,
+    {
         let bytes = hex::decode(hex).map_err(|e| format!("Invalid hex: {e}"))?;
         let key: VerifyingKey =
             postcard::from_bytes(&bytes).map_err(|e| format!("Invalid key data: {e}"))?;
