@@ -4,7 +4,7 @@ use gpui::{
     AppContext, AsyncApp, Context, Entity, IntoElement, ParentElement, Render, Styled, Task,
     WeakEntity, Window, div,
 };
-use gpui_component::ActiveTheme;
+use gpui_component::{ActiveTheme, Root};
 use widgets::sidebar::ZuppySidebar;
 
 use widgets::interactive_counter::InteractiveCounter;
@@ -102,28 +102,34 @@ impl ZuppyRoot {
 }
 
 impl Render for ZuppyRoot {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let notification_layer = Root::render_notification_layer(window, cx);
         let theme = cx.theme();
         div()
-            .relative()
             .size_full()
-            .flex()
-            .flex_col()
-            .gap_0()
-            .justify_start()
-            .items_start()
-            .overflow_hidden()
-            .bg(theme.background)
-            .text_color(theme.foreground)
             .child(
                 div()
+                    .relative()
+                    .size_full()
                     .flex()
-                    .flex_row()
-                    .flex_grow()
-                    .w_full()
-                    .child(self.sidebar.clone())
-                    .child(div().flex_grow().child(self.counter.clone())),
+                    .flex_col()
+                    .gap_0()
+                    .justify_start()
+                    .items_start()
+                    .overflow_hidden()
+                    .bg(theme.background)
+                    .text_color(theme.foreground)
+                    .child(
+                        div()
+                            .flex()
+                            .flex_row()
+                            .flex_grow()
+                            .w_full()
+                            .child(self.sidebar.clone())
+                            .child(div().flex_grow().child(self.counter.clone())),
+                    )
+                    .child(self.status_bar.clone()),
             )
-            .child(self.status_bar.clone())
+            .children(notification_layer)
     }
 }
