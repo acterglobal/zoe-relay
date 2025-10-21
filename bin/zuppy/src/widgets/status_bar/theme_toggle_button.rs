@@ -1,51 +1,33 @@
-use gpui::{
-    AppContext, ClickEvent, Context, Entity, InteractiveElement, IntoElement, ParentElement,
-    Render, SharedString, StatefulInteractiveElement, Styled, Window, div,
-};
+use gpui::{Context, IntoElement, Render, Window};
 
-use crate::{theme::Theme, widgets::simple_popover::SimplePopover};
+use gpui_component::{ActiveTheme, Side, Theme, ThemeMode, switch::Switch};
 
-pub struct ThemeToggleButton {
-    popover: Entity<SimplePopover>,
-}
+pub struct ThemeToggleButton {}
 
 impl ThemeToggleButton {
-    pub fn new(cx: &mut Context<Self>) -> Self {
-        Self {
-            popover: cx.new(|_| SimplePopover::new("Click to toggle theme".into())),
-        }
-    }
-
-    fn toggle_theme(&mut self, _event: &ClickEvent, _window: &mut Window, cx: &mut Context<Self>) {
-        tracing::info!("toggle dark mode");
-        let new_theme = cx.default_global::<Theme>().toggle_darkness();
-        cx.set_global(new_theme);
+    pub fn new(_cx: &mut Context<Self>) -> Self {
+        Self {}
     }
 }
 impl Render for ThemeToggleButton {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let clicker = cx.listener(Self::toggle_theme);
-        let theme = cx.default_global::<Theme>();
+        let theme = cx.theme();
 
-        let popover = self.popover.clone();
-        div()
-            .id("toggle_theme")
-            .cursor_pointer()
-            .flex()
-            .items_center()
-            .justify_center()
-            .rounded_md()
-            .child(if !theme.is_dark() {
-                SharedString::new_static("Dark Mode")
-            } else {
-                SharedString::new_static("Light Mode")
+        Switch::new("dark-mode-toggle")
+            .label(if !theme.is_dark() { "Dark" } else { "Light " })
+            .label_side(Side::Left)
+            .checked(theme.is_dark())
+            .on_click(|checked, w, cx| {
+                tracing::info!("toggle dark mode");
+                Theme::change(
+                    if *checked {
+                        ThemeMode::Dark
+                    } else {
+                        ThemeMode::Light
+                    },
+                    Some(w),
+                    cx,
+                )
             })
-            .hover(|style| {
-                style
-                    .bg(theme.background_inverse())
-                    .text_color(theme.text_inverse())
-            })
-            .hoverable_tooltip(move |_w, _cx| popover.clone().into())
-            .on_click(clicker)
     }
 }

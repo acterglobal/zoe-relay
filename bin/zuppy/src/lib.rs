@@ -4,12 +4,12 @@ use gpui::{
     AppContext, AsyncApp, Context, Entity, IntoElement, ParentElement, Render, SharedString,
     Styled, Task, WeakEntity, Window, div,
 };
-use theme::Theme;
-use widgets::headline::Headline;
+use gpui_component::ActiveTheme;
+use widgets::sidebar::ZuppySidebar;
+
 use widgets::interactive_counter::InteractiveCounter;
 use widgets::status_bar::StatusBar;
 
-pub mod theme;
 pub mod util;
 pub mod widgets;
 
@@ -26,6 +26,7 @@ pub enum ClientState {
 }
 
 pub struct ZuppyRoot {
+    sidebar: Entity<ZuppySidebar>,
     client: Entity<ClientState>,
     counter: Entity<InteractiveCounter>,
     status_bar: Entity<StatusBar>,
@@ -90,6 +91,7 @@ impl ZuppyRoot {
 
         let client_state = cx.new(|_cx| ClientState::Init);
         Self {
+            sidebar: cx.new(|_| ZuppySidebar::new()),
             client: client_state.clone(),
             _client_task: client_task,
             counter: cx.new(|_cx| InteractiveCounter::new(0)),
@@ -100,7 +102,7 @@ impl ZuppyRoot {
 
 impl Render for ZuppyRoot {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let theme = cx.default_global::<Theme>();
+        let theme = cx.theme();
         div()
             .relative()
             .size_full()
@@ -110,26 +112,16 @@ impl Render for ZuppyRoot {
             .justify_start()
             .items_start()
             .overflow_hidden()
-            .bg(theme.background())
-            .text_color(theme.text())
-            .child(cx.new(|_cx| Headline::new(SharedString::new_static("Zuppy"))))
+            .bg(theme.background)
+            .text_color(theme.foreground)
             .child(
                 div()
                     .flex()
                     .flex_row()
                     .flex_grow()
                     .w_full()
-                    .child(
-                        div()
-                            .flex()
-                            .child(cx.new(|_cx| Headline::new(SharedString::new_static("Left")))),
-                    )
-                    .child(div().flex_grow().child(self.counter.clone()))
-                    .child(
-                        div()
-                            .flex()
-                            .child(cx.new(|_cx| Headline::new(SharedString::new_static("Right")))),
-                    ),
+                    .child(self.sidebar.clone())
+                    .child(div().flex_grow().child(self.counter.clone())),
             )
             .child(self.status_bar.clone())
     }

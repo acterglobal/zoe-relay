@@ -1,6 +1,5 @@
 use gpui::{Context, IntoElement, ParentElement, Render, SharedString, Styled, Window, div};
-
-use crate::theme::Theme;
+use gpui_component::{ActiveTheme, Theme};
 
 pub struct SimplePopover(SharedString);
 
@@ -12,10 +11,10 @@ impl SimplePopover {
 
 impl Render for SimplePopover {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let theme = cx.default_global::<Theme>();
+        let theme = cx.theme();
         div()
-            .bg(theme.background())
-            .text_color(theme.text())
+            .bg(theme.background)
+            .text_color(theme.foreground)
             .child(self.0.clone())
     }
 }
