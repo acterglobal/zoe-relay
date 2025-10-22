@@ -11,6 +11,7 @@ gpui-component = "0.3.0-preview1"
 # ZOE sepcifics
 zoe-app-primitives = { path = "../../crates/app-primitives" }
 zoe-wire-protocol = { path = "../../crates/wire-protocol" }
+zoe-state-machine = { path = "../../crates/state-machine" }
 zoe-client = { path = "../../crates/client" }
 
 tracing = { workspace = true }

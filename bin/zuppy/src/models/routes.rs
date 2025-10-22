@@ -5,6 +5,7 @@ use gpui_router::use_navigate;
 pub enum Routes {
     Dashboard,
     MyUserInfo,
+    CreateSheet,
 }
 
 impl Routes {
@@ -12,6 +13,7 @@ impl Routes {
         match self {
             Routes::Dashboard => "dashboard",
             Routes::MyUserInfo => "user_info",
+            Routes::CreateSheet => "create_sheet",
         }
     }
 

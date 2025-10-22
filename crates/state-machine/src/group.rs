@@ -153,6 +153,19 @@ impl<M: MessagesManagerTrait + Clone + 'static> GroupManager<M> {
     pub fn generate_group_key() -> EncryptionKey {
         EncryptionKey::generate()
     }
+
+    /// Get the list of group IDs currently known
+    pub async fn groups_and_stream(&self) -> (Vec<GroupInfo>, Receiver<GroupDataUpdate>) {
+        let groups = self.groups.read().await;
+        (
+            groups
+                .values()
+                .map(|session| session.state.group_info.clone())
+                .collect(),
+            self.subscribe_to_updates(),
+        )
+    }
+
     /// Get a group's current state
     pub async fn group_state(&self, group_id: &GroupId) -> Option<GroupState> {
         let groups = self.groups.read().await;

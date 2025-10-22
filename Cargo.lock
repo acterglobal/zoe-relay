@@ -14472,6 +14472,7 @@ dependencies = [
  "tracing-subscriber",
  "zoe-app-primitives",
  "zoe-client",
+ "zoe-state-machine",
  "zoe-wire-protocol",
 ]
 

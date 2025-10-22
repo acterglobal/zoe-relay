@@ -55,8 +55,7 @@ impl ClientStateSetup {
 
         builder
             .db_storage_dir_pathbuf(main_dir.clone().join("db.sqlite"))
-            .media_storage_dir_pathbuf(main_dir.join("media"))
-            .servers(vec![default_relay]);
+            .media_storage_dir_pathbuf(main_dir.join("media"));
         builder.autoconnect(true);
 
         let credential_url = format!(
@@ -70,20 +69,29 @@ impl ClientStateSetup {
 
         let client_task = cx.spawn(async move |app: &mut AsyncApp| {
             tracing::trace!("reading creds");
-            match cred_read.await {
+            if !match cred_read.await {
                 Ok(None) => {
                     tracing::trace!("none found. contuing");
+                    false
                 }
                 Err(err) => {
                     tracing::error!(?err, "reading credentials failed");
+                    false
                 }
                 Ok(Some((_key, data))) => match ClientSecret::try_from(data) {
-                    Ok(secret) => builder.client_secret(secret),
+                    Ok(secret) => {
+                        builder.client_secret(secret);
+                        true
+                    }
                     Err(err) => {
                         tracing::error!(?err, "parsing secret failed");
+                        false
                     }
                 },
-            };
+            } {
+                // no credentials found, use default relay
+                builder.servers(vec![default_relay]);
+            }
 
             tracing::trace!("building client");
             let new_state = Self::init_client_state(app, builder).await;

@@ -1,3 +1,4 @@
+use crate::models::groups::Groups;
 use crate::router::Router;
 use crate::widgets::sidebar::ZuppySidebar;
 use gpui::{AppContext, Context, Entity, IntoElement, ParentElement, Render, Styled, Window, div};
@@ -11,14 +12,21 @@ pub struct ZuppyApp {
     sidebar: Entity<ZuppySidebar>,
     status_bar: Entity<StatusBar>,
     router: Entity<Router>,
+    groups: Entity<Groups>,
 }
 
 impl ZuppyApp {
-    pub fn new(cx: &mut Context<Self>, client_state: Entity<ClientState>) -> Self {
+    pub fn new(
+        win: &mut Window,
+        cx: &mut Context<Self>,
+        client_state: Entity<ClientState>,
+    ) -> Self {
+        let groups = cx.new(|cx| Groups::new(cx, client_state.clone()));
         Self {
-            sidebar: cx.new(|_| ZuppySidebar::new()),
-            router: cx.new(|cx| Router::new(cx, client_state.clone())),
+            sidebar: cx.new(|_| ZuppySidebar::new(groups.clone())),
+            router: cx.new(|cx| Router::new(win, cx, client_state.clone())),
             status_bar: cx.new(|cx| StatusBar::new(client_state, cx)),
+            groups,
         }
     }
 }
