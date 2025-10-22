@@ -1,6 +1,8 @@
+use std::process::exit;
+
 use gpui::{App, AppContext, Application, WindowOptions};
-use tracing::error;
-use zuppy::root::ZuppyRoot;
+use gpui_component::Root;
+use zuppy::app::ZuppyApp;
 
 fn main() {
     let _ = tracing_subscriber::fmt()
@@ -12,9 +14,13 @@ fn main() {
     let app = Application::new().with_assets(zuppy::util::assets::Assets);
     app.run(|app: &mut App| {
         zuppy::init(app);
-        if let Err(err) = app.open_window(WindowOptions::default(), |_, cx| cx.new(ZuppyRoot::new))
-        {
-            error!("Failed to open window: {err}");
+        let client_state = zuppy::models::client_state::ClientStateSetup::new(app);
+        if let Err(err) = app.open_window(WindowOptions::default(), |window, cx| {
+            let view = cx.new(|cx| ZuppyApp::new(cx, client_state));
+            cx.new(|cx| Root::new(view.into(), window, cx))
+        }) {
+            tracing::error!("Running zuppy failed: {err}");
+            exit(1);
         }
     });
 }

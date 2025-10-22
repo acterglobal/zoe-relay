@@ -7,13 +7,13 @@ use crate::widgets::status_bar::StatusBar;
 
 use crate::models::client_state::ClientState;
 
-pub struct ZuppyLayout {
+pub struct ZuppyApp {
     sidebar: Entity<ZuppySidebar>,
     status_bar: Entity<StatusBar>,
     router: Entity<Router>,
 }
 
-impl ZuppyLayout {
+impl ZuppyApp {
     pub fn new(cx: &mut Context<Self>, client_state: Entity<ClientState>) -> Self {
         Self {
             sidebar: cx.new(|_| ZuppySidebar::new()),
@@ -23,9 +23,8 @@ impl ZuppyLayout {
     }
 }
 
-impl Render for ZuppyLayout {
+impl Render for ZuppyApp {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let notification_layer = Root::render_notification_layer(window, cx);
         let theme = cx.theme();
         div()
             .size_full()
@@ -52,6 +51,8 @@ impl Render for ZuppyLayout {
                     )
                     .child(self.status_bar.clone()),
             )
-            .children(notification_layer)
+            .children(Root::render_modal_layer(window, cx))
+            .children(Root::render_drawer_layer(window, cx))
+            .children(Root::render_notification_layer(window, cx))
     }
 }
