@@ -23,7 +23,7 @@ impl UserInfoModel {
         cx: &mut Context<Self>,
     ) {
         let ClientState::Zoe(z) = client_state.read(cx) else {
-            tracing::info!("no client");
+            tracing::trace!("no client");
             let should_notify = self.user_id.take().is_some();
             if should_notify {
                 cx.notify();

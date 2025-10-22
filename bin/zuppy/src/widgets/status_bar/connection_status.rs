@@ -36,7 +36,7 @@ impl ConnectionInfoInner {
         cx: &mut Context<Self>,
     ) {
         let ClientState::Zoe(z) = client_state.read(cx) else {
-            tracing::info!("no client");
+            tracing::trace!("no client");
             let mut should_notify = self.current_state.take().is_some();
             if let Some(t) = self.current_task.take() {
                 should_notify = true;
@@ -69,9 +69,9 @@ impl ConnectionInfoInner {
         new_status: OverallConnectionStatus,
         ctx: &mut AsyncApp,
     ) -> bool {
-        tracing::info!("gotten status: {new_status:?}");
+        tracing::trace!(?new_status, "gotten status");
         let Some(current_status) = w.upgrade() else {
-            tracing::info!("entity is already gone");
+            tracing::trace!("entity is already gone");
             return false;
         };
 
@@ -82,7 +82,7 @@ impl ConnectionInfoInner {
             tracing::warn!("Updating connection info status failed: {e}");
             return false;
         }
-        tracing::info!("updated status");
+        tracing::trace!("updated status");
         return true;
     }
 }

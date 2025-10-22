@@ -1,8 +1,11 @@
-use std::path::PathBuf;
+use std::{
+    fmt::{Debug, Write},
+    path::PathBuf,
+};
 
 use gpui::{App, AppContext, AsyncApp, Context, Entity, Global, Task};
 use zoe_app_primitives::connection::RelayAddress;
-use zoe_client::ClientBuilder;
+use zoe_client::{ClientBuilder, ClientSecret};
 use zoe_wire_protocol::VerifyingKey;
 
 pub enum ClientState {
@@ -12,9 +15,20 @@ pub enum ClientState {
     Error(String),
 }
 
+impl Debug for ClientState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            ClientState::Init => "ClientState::Init",
+            ClientState::Loading => "ClientState::Loading",
+            ClientState::Zoe(_client) => "ClientState::Zoe",
+            ClientState::Error(_) => "ClientState::Error",
+        })
+    }
+}
+
 struct ClientStateSyncHolder {
     _client_state: Entity<ClientState>,
-    _client_task: Task<()>,
+    _client_task: Task<gpui::Result<()>>,
 }
 
 impl Global for ClientStateSyncHolder {}
@@ -31,6 +45,7 @@ impl ClientStateSetup {
     }
 
     pub fn with_storage_dir(cx: &mut App, main_dir: &PathBuf) -> Entity<ClientState> {
+        let client_state_main = cx.new(|_cx| ClientState::Init);
         let mut builder = ClientBuilder::default();
 
         // Parse server key
@@ -47,7 +62,70 @@ impl ClientStateSetup {
             .servers(vec![default_relay]);
         builder.autoconnect(true);
 
-        Self::with_builder(cx, builder)
+        let credential_url = format!(
+            "zuppy:{}",
+            std::path::absolute(main_dir)
+                .expect("Failed to read dir path")
+                .display()
+        );
+        let client_state = client_state_main.clone();
+        let cred_read = cx.read_credentials(&credential_url);
+
+        let client_task = cx.spawn(async move |app: &mut AsyncApp| {
+            tracing::trace!("reading creds");
+            match cred_read.await {
+                Ok(None) => {
+                    tracing::trace!("none found. contuing");
+                }
+                Err(err) => {
+                    tracing::error!(?err, "reading credentials failed");
+                }
+                Ok(Some((_key, data))) => match ClientSecret::try_from(data) {
+                    Ok(secret) => builder.client_secret(secret),
+                    Err(err) => {
+                        tracing::error!(?err, "parsing secret failed");
+                    }
+                },
+            };
+
+            tracing::trace!("building client");
+            let new_state = Self::init_client_state(app, builder).await;
+
+            if let ClientState::Zoe(ref zoe) = new_state {
+                tracing::trace!("has a zoe");
+                match zoe.client_secret().as_bytes() {
+                    Err(err) => {
+                        tracing::error!(?err, "Can't store the client secret");
+                    }
+                    Ok(s) => {
+                        if let Err(err) = app.update(move |cx: &mut App| {
+                            cx.write_credentials(&credential_url, "", &s)
+                                .detach_and_log_err(cx)
+                        }) {
+                            tracing::error!(?err, "Failed to store credentials");
+                        }
+                    }
+                }
+            }; // we store the new credentials
+            if let Err(err) = app.update_entity(
+                &client_state,
+                |me: &mut ClientState, cx: &mut Context<ClientState>| {
+                    tracing::trace!(?new_state, "Setting to new client");
+                    *me = new_state;
+                    cx.notify();
+                },
+            ) {
+                tracing::warn!("Failed to update client state: {err}");
+            };
+            Ok(())
+        });
+
+        cx.set_global(ClientStateSyncHolder {
+            _client_task: client_task,
+            _client_state: client_state_main.clone(),
+        });
+
+        client_state_main
     }
 
     async fn init_client_state(cx: &mut AsyncApp, builder: ClientBuilder) -> ClientState {
@@ -64,29 +142,5 @@ impl ClientStateSetup {
             },
             Err(err) => ClientState::Error(err.to_string()),
         }
-    }
-
-    fn with_builder(cx: &mut App, builder: ClientBuilder) -> Entity<ClientState> {
-        let client_state = cx.new(|_cx| ClientState::Init);
-        let cl_clone = client_state.clone();
-        let client_task = cx.spawn(async move |cx: &mut AsyncApp| {
-            let new_state = Self::init_client_state(cx, builder).await;
-            if let Err(err) = cx.update_entity(
-                &cl_clone,
-                |me: &mut ClientState, cx: &mut Context<ClientState>| {
-                    *me = new_state;
-                    cx.notify();
-                },
-            ) {
-                tracing::warn!("Failed to update client state: {err}");
-            };
-        });
-
-        cx.set_global(ClientStateSyncHolder {
-            _client_task: client_task,
-            _client_state: client_state.clone(),
-        });
-
-        client_state
     }
 }

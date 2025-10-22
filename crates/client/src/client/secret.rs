@@ -80,12 +80,11 @@ where
     ))
 }
 
-impl ClientSecret {
-    pub fn from_hex(hex: &str) -> Result<Self> {
-        let bytes = hex::decode(hex).map_err(|e| {
-            ClientError::BuildError(format!("Failed to decode hex for client secret: {e}"))
-        })?;
-        let secret = match postcard::from_bytes(&bytes) {
+impl TryFrom<Vec<u8>> for ClientSecret {
+    type Error = ClientError;
+
+    fn try_from(value: Vec<u8>) -> std::result::Result<Self, Self::Error> {
+        Ok(match postcard::from_bytes(&value) {
             Ok(secret) => secret,
             Err(e) => {
                 tracing::warn!(
@@ -93,7 +92,7 @@ impl ClientSecret {
                     e
                 );
                 let legacy_secret: LegacyClientSecret =
-                    postcard::from_bytes(&bytes).map_err(|e| {
+                    postcard::from_bytes(&value).map_err(|e| {
                         ClientError::BuildError(format!(
                             "Failed to deserialize legacy client secret: {e}"
                         ))
@@ -107,14 +106,24 @@ impl ClientSecret {
                     encryption_key: legacy_secret.encryption_key,
                 }
             }
-        };
-        Ok(secret)
+        })
+    }
+}
+
+impl ClientSecret {
+    pub fn from_hex(hex: &str) -> Result<Self> {
+        let bytes = hex::decode(hex).map_err(|e| {
+            ClientError::BuildError(format!("Failed to decode hex for client secret: {e}"))
+        })?;
+        Self::try_from(bytes)
     }
 
     pub fn to_hex(&self) -> Result<String> {
-        let bytes = postcard::to_stdvec(&self).map_err(|e| {
-            ClientError::BuildError(format!("Failed to serialize client secret: {e}"))
-        })?;
-        Ok(hex::encode(bytes))
+        Ok(hex::encode(self.as_bytes()?))
+    }
+
+    pub fn as_bytes(&self) -> Result<Vec<u8>> {
+        postcard::to_stdvec(&self)
+            .map_err(|e| ClientError::BuildError(format!("Failed to serialize client secret: {e}")))
     }
 }

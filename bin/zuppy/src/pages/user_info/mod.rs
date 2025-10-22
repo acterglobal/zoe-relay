@@ -20,7 +20,6 @@ impl UserInfoPage {
 
 impl Render for UserInfoPage {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        tracing::info!("user info page");
         let d = div()
             .size_full()
             .m_5()

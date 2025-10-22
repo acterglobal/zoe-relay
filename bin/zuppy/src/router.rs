@@ -46,7 +46,7 @@ impl Render for NoMatch {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let params = use_params(cx);
         let location = use_location(cx);
-        tracing::info!(?params, ?location, "not found");
+        tracing::warn!(?params, ?location, "not found");
         div().child(div().child("Nothing to see here!")).child(
             NavLink::new()
                 .to("/")

@@ -16,10 +16,9 @@ impl Routes {
     }
 
     pub fn route(&self, window: &mut Window, cx: &mut App) {
-        tracing::info!(route=?self, "Routing");
+        tracing::trace!(route=?self, "Routing");
         let mut nav = use_navigate(cx);
         nav(format!("/{}", self.path()).into());
         window.refresh();
-        tracing::info!("issued")
     }
 }
