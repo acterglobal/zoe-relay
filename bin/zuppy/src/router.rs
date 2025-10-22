@@ -18,13 +18,13 @@ impl Router {
         Self {
             user_info_page: cx.new(|cx| UserInfoPage::new(cx, client_state.clone())),
             dashboard: cx.new(|cx| DashboardPage::new(cx, client_state.clone())),
-            no_match: cx.new(|cx| NoMatch {}),
+            no_match: cx.new(|_cx| NoMatch {}),
         }
     }
 }
 
 impl Render for Router {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
         GpuiRoutes::new().basename("/").children(vec![
             Route::new()
                 .path(Routes::MyUserInfo.path())
@@ -43,7 +43,7 @@ impl Render for Router {
 struct NoMatch;
 
 impl Render for NoMatch {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let params = use_params(cx);
         let location = use_location(cx);
         tracing::warn!(?params, ?location, "not found");

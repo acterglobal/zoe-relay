@@ -34,7 +34,7 @@ impl Render for ZuppySidebar {
                 ),
             )
             .child(
-                SidebarGroup::new("Menu")
+                SidebarGroup::new("Sheets")
                     .child(SidebarMenu::new().child(SidebarMenuItem::new("Files"))),
             )
     }

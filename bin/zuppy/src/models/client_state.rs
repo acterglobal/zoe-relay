@@ -1,7 +1,4 @@
-use std::{
-    fmt::{Debug, Write},
-    path::PathBuf,
-};
+use std::{fmt::Debug, path::PathBuf};
 
 use gpui::{App, AppContext, AsyncApp, Context, Entity, Global, Task};
 use zoe_app_primitives::connection::RelayAddress;
