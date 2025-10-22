@@ -1,12 +1,12 @@
+use std::ops::Deref;
+
 use crate::{
     identity::IdentityRef,
     protocol::{AppProtocolVariant, InstalledApp},
 };
 use forward_compatible_enum::ForwardCompatibleEnum;
 use serde::{Deserialize, Serialize};
-use zoe_wire_protocol::ChannelId;
-
-// GroupActivityEvent no longer implements any executor traits
+use zoe_wire_protocol::{ChannelId, Hash};
 
 use super::events::{roles::GroupRole, settings::GroupSettings};
 use crate::{identity::IdentityInfo, metadata::Metadata};
@@ -19,7 +19,80 @@ pub mod settings;
 
 use key_info::GroupKeyInfo;
 
-pub type GroupId = ChannelId;
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
+pub struct GroupId(Hash);
+
+impl From<Hash> for GroupId {
+    fn from(value: Hash) -> Self {
+        Self(value)
+    }
+}
+
+impl GroupId {
+    pub fn as_slice(&self) -> &[u8] {
+        self.0.as_bytes()
+    }
+
+    pub fn to_hex(&self) -> String {
+        hex::encode(self.0.as_bytes())
+    }
+
+    pub fn from_hex(hex: &str) -> Result<Self, String> {
+        let bytes = hex::decode(hex).map_err(|e| format!("Decoding hex failed: {e}"))?;
+        let hash = Hash::from_slice(&bytes).map_err(|e| format!("Invalid hash: {e}"))?;
+        Ok(Self(hash))
+    }
+}
+
+impl Into<ChannelId> for GroupId {
+    fn into(self) -> ChannelId {
+        ChannelId::from(self.0.as_bytes().to_vec())
+    }
+}
+
+impl Into<ChannelId> for &GroupId {
+    fn into(self) -> ChannelId {
+        ChannelId::from(self.0.as_bytes().to_vec())
+    }
+}
+
+impl From<[u8; 32]> for GroupId {
+    fn from(value: [u8; 32]) -> Self {
+        Self(Hash::from_bytes(value))
+    }
+}
+
+impl TryFrom<ChannelId> for GroupId {
+    type Error = ();
+
+    fn try_from(value: ChannelId) -> Result<Self, Self::Error> {
+        if value.len() != 32 {
+            return Err(());
+        }
+        let (bytes, _) = value.as_chunks::<32>();
+        Ok(Self::from(bytes[0]))
+    }
+}
+
+impl Deref for GroupId {
+    type Target = Hash;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl PartialOrd for GroupId {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for GroupId {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.0.as_bytes().cmp(other.0.as_bytes())
+    }
+}
 
 #[cfg(feature = "frb-api")]
 use flutter_rust_bridge::frb;

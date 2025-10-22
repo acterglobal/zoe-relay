@@ -1,6 +1,6 @@
 use gpui::{
-    AppContext, Context, Entity, IntoElement, ParentElement, Pixels, Render, SharedString, Styled,
-    Window, div,
+    AppContext, Context, Entity, IntoElement, ParentElement, Render, SharedString, Styled, Window,
+    div,
 };
 use gpui_component::{
     ContextModal, Sizable,
@@ -8,11 +8,11 @@ use gpui_component::{
     form::{form_field, v_form},
     group_box::GroupBox,
     input::{InputState, TextInput},
-    notification::{Notification, NotificationType},
+    notification::NotificationType,
 };
 use zoe_state_machine::group::CreateGroupBuilder;
 
-use crate::models::client_state::ClientState;
+use crate::models::{client_state::ClientState, routes::Routes};
 
 pub struct CreateSheetPage {
     client_state: Entity<ClientState>,
@@ -69,11 +69,12 @@ impl CreateSheetPage {
                             cx,
                         );
                     }),
-                    Ok(_) => w.update(|window, cx| {
+                    Ok(res) => w.update(|window, cx| {
                         window.push_notification(
                             (NotificationType::Success, "Sheet created successfully"),
                             cx,
                         );
+                        Routes::Sheet.route_sub(window, cx, Some(res.group_id.to_hex()));
                     }),
                 } {
                     tracing::error!(?err, "failed to show push");

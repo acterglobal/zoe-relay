@@ -24,7 +24,7 @@ impl ZuppyApp {
         let groups = cx.new(|cx| Groups::new(cx, client_state.clone()));
         Self {
             sidebar: cx.new(|_| ZuppySidebar::new(groups.clone())),
-            router: cx.new(|cx| Router::new(win, cx, client_state.clone())),
+            router: cx.new(|cx| Router::new(win, cx, client_state.clone(), groups.clone())),
             status_bar: cx.new(|cx| StatusBar::new(client_state, cx)),
             groups,
         }

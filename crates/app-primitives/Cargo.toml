@@ -20,6 +20,7 @@ zoe-wire-protocol = { path = "../wire-protocol" }
 serde = { workspace = true }
 serde_repr = "0.1"
 postcard = { workspace = true }
+hex = { workspace = true }
 
 # Error handling
 thiserror = { workspace = true }

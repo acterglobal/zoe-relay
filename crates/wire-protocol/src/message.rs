@@ -1,4 +1,4 @@
-use crate::{KeyPair, Signature, VerifyError, VerifyingKey};
+use crate::{ChannelId, KeyPair, Signature, VerifyError, VerifyingKey};
 use blake3::Hasher;
 use serde::{Deserialize, Serialize};
 
@@ -29,7 +29,7 @@ pub enum Tag {
     },
     Channel {
         // Refers to a channel in some form, custom length but often times a hash
-        id: Vec<u8>,
+        id: ChannelId,
         #[serde(default)]
         relays: Vec<String>,
     },
@@ -85,7 +85,7 @@ pub enum Kind {
 /// This enum uses [postcard](https://docs.rs/postcard/) for efficient binary serialization.
 /// Postcard distinguishes enum variants using a compact binary tag system:
 /// - `Raw(Vec<u8>)` → serialized as `[0, ...data bytes...]`
-/// - `ChaCha20Poly1305(content)` → serialized as `[1, ...encrypted content...]`  
+/// - `ChaCha20Poly1305(content)` → serialized as `[1, ...encrypted content...]`
 /// - `Ed25519Encrypted(content)` → serialized as `[2, ...encrypted content...]`
 ///
 /// The first byte indicates which variant is being deserialized, making the format
@@ -204,7 +204,7 @@ pub enum Content {
     /// Uses ephemeral X25519 key pairs for each message to encrypt for
     /// the recipient. Only the recipient can decrypt (proper public key encryption).
     /// Provides perfect forward secrecy. Suitable for:
-    /// - RPC calls over message infrastructure  
+    /// - RPC calls over message infrastructure
     /// - One-off encrypted messages
     /// - Public key encryption scenarios
     #[discriminant(80)]
@@ -536,7 +536,7 @@ pub struct MessageV0Header {
     ///
     /// Used for:
     /// - Message ordering in conversations
-    /// - Expiration of ephemeral messages  
+    /// - Expiration of ephemeral messages
     /// - Preventing replay attacks (with reasonable clock skew tolerance)
     pub when: u64,
 
@@ -632,7 +632,7 @@ pub struct MessageV0 {
     ///
     /// See [`Content`] for available variants:
     /// - `Raw`: Unencrypted data
-    /// - `ChaCha20Poly1305`: Context-encrypted data  
+    /// - `ChaCha20Poly1305`: Context-encrypted data
     /// - `Ed25519Encrypted`: Identity-encrypted data
     pub content: Content,
 }
@@ -731,7 +731,7 @@ impl std::ops::Deref for MessageV0 {
 /// ## Storage Integration
 ///
 /// This structure is optimized for the key-value storage architecture:
-/// - **Primary key**: `id` field for O(1) message retrieval  
+/// - **Primary key**: `id` field for O(1) message retrieval
 /// - **Indexed fields**: `sender` and `when` extracted from embedded message for queries
 /// - **Tag tables**: Separate tables for efficient tag-based filtering
 /// - **Blob storage**: Entire `MessageFull` serialized as atomic unit

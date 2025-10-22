@@ -145,6 +145,8 @@ pub mod services;
 pub mod streaming;
 pub mod version;
 
+use std::ops::Deref;
+
 pub use blob::*;
 pub use challenge::*;
 pub use connection_info::*;
@@ -156,6 +158,8 @@ pub use invitation::{
 };
 pub use message::*;
 pub use relay::*;
+use serde::Deserialize;
+use serde::Serialize;
 pub use services::*;
 pub use streaming::*; // Re-export streaming protocol types
 pub use version::*; // Re-export protocol version negotiation types
@@ -178,8 +182,61 @@ pub use ed25519_dalek::VerifyingKey as Ed25519VerifyingKey;
 // Hash type alias
 pub type Hash = blake3::Hash;
 
-// Channel ID type alias
-pub type ChannelId = Vec<u8>;
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Ord, PartialOrd, Eq, Hash)]
+pub struct ChannelId(Vec<u8>);
+
+impl Deref for ChannelId {
+    type Target = Vec<u8>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl From<Vec<u8>> for ChannelId {
+    fn from(value: Vec<u8>) -> Self {
+        Self(value)
+    }
+}
+
+impl From<[u8; 32]> for ChannelId {
+    fn from(bytes: [u8; 32]) -> Self {
+        Self(bytes.to_vec())
+    }
+}
+
+impl AsRef<[u8]> for ChannelId {
+    fn as_ref(&self) -> &[u8] {
+        self.0.as_slice()
+    }
+}
+
+#[cfg(feature = "rusqlite")]
+impl rusqlite::ToSql for ChannelId {
+    fn to_sql(&self) -> rusqlite::Result<rusqlite::types::ToSqlOutput<'_>> {
+        Ok(rusqlite::types::ToSqlOutput::from(self.0.as_slice()))
+    }
+}
+
+#[cfg(feature = "rusqlite")]
+impl rusqlite::types::FromSql for ChannelId {
+    fn column_result(value: rusqlite::types::ValueRef<'_>) -> rusqlite::types::FromSqlResult<Self> {
+        match value {
+            rusqlite::types::ValueRef::Blob(bytes) => {
+                if bytes.len() != 32 {
+                    return Err(rusqlite::types::FromSqlError::InvalidBlobSize {
+                        expected_size: 32,
+                        blob_size: bytes.len(),
+                    });
+                }
+                let mut array = [0u8; 32];
+                array.copy_from_slice(bytes);
+                Ok(ChannelId::from(array))
+            }
+            _ => Err(rusqlite::types::FromSqlError::InvalidType),
+        }
+    }
+}
 
 /// Convinience function to creates from simple byte slices
 pub fn hash(data: &[u8]) -> Hash {

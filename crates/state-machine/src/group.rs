@@ -199,7 +199,7 @@ impl<M: MessagesManagerTrait + Clone + 'static> GroupManager<M> {
         use zoe_wire_protocol::Filter;
 
         // Subscribe to group events (messages tagged with this group ID)
-        let group_filter = Filter::Channel(group_id.clone());
+        let group_filter = Filter::Channel(group_id.into());
         self.message_manager
             .ensure_contains_filter(group_filter)
             .await
@@ -253,7 +253,7 @@ impl<M: MessagesManagerTrait + Clone + 'static> GroupManager<M> {
                 timestamp,
                 Kind::Regular,
                 vec![Tag::Channel {
-                    id: group_id.clone(),
+                    id: group_id.into(),
                     relays: vec![],
                 }],
             )
@@ -399,7 +399,7 @@ impl<M: MessagesManagerTrait + Clone + 'static> GroupManager<M> {
         tracing::warn!("Message processing stream ended");
     }
 
-    async fn session_for_channel_ids(&self, channel_ids: &[ChannelId]) -> Option<GroupSession> {
+    async fn session_for_channel_ids(&self, channel_ids: &[GroupId]) -> Option<GroupSession> {
         let groups = self.groups.read().await;
         for channel_id in channel_ids {
             if let Some(group_session) = groups.get(channel_id) {
@@ -417,7 +417,7 @@ impl<M: MessagesManagerTrait + Clone + 'static> GroupManager<M> {
         use futures::StreamExt;
         use zoe_wire_protocol::Filter;
 
-        let group_filter = Filter::Channel(group_id.clone());
+        let group_filter = Filter::Channel(group_id.into());
 
         tracing::info!(
             group_id = ?group_id,
@@ -768,10 +768,10 @@ impl<M: MessagesManagerTrait + Clone + 'static> GroupManager<M> {
             .clone()
             .into_iter()
             .filter_map(|tag| match tag {
-                zoe_wire_protocol::Tag::Channel { id, .. } => Some(id),
+                zoe_wire_protocol::Tag::Channel { id, .. } => id.try_into().ok(),
                 _ => None,
             })
-            .collect::<Vec<_>>();
+            .collect::<Vec<GroupId>>();
 
         if channel_tags.is_empty() {
             tracing::trace!(
@@ -976,8 +976,8 @@ impl<M: MessagesManagerTrait + Clone + 'static> GroupManager<M> {
         }
 
         Ok(Tag::Channel {
-            id: group_id.clone(), // The group ID is the channel ID
-            relays: vec![],       // Could be populated with known relays
+            id: group_id.into(), // The group ID is the channel ID
+            relays: vec![],      // Could be populated with known relays
         })
     }
 }
@@ -1069,7 +1069,7 @@ impl CreateGroupBuilder {
         self.installed_apps.push(InstalledApp::new(
             AppProtocolVariant::DigitalGroupsOrganizer,
             version,
-            app_tag,
+            app_tag.into(),
         ));
         self
     }
@@ -1079,12 +1079,12 @@ impl CreateGroupBuilder {
     /// Creates a cryptographically random 32-byte identifier that serves as both
     /// the channel ID and group ID. This provides privacy by disconnecting the
     /// group identifier from the original message hash.
-    fn geenrate_random_group_id() -> ChannelId {
+    fn geenrate_random_group_id() -> GroupId {
         use rand::RngCore;
         let mut rng = rand::thread_rng();
         let mut channel_id = [0u8; 32];
         rng.fill_bytes(&mut channel_id);
-        channel_id.to_vec()
+        channel_id.into()
     }
 
     /// Install the Digital Groups Organizer app with default version (1.0.0)

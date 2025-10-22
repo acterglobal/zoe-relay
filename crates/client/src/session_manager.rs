@@ -149,7 +149,7 @@ pub struct SessionManager<S: StateStorage + 'static, M: MessagesManagerTrait + C
     storage: Arc<S>,
     /// Messages manager for subscription and message handling
     messages_manager: Arc<M>,
-    /// PQXDH handlers with their background listener tasks  
+    /// PQXDH handlers with their background listener tasks
     pqxdh_handlers: RwLock<PqxdhHandlerStates<M>>,
     /// Group manager instance with background listener task
     group_manager: GroupManager<M>,

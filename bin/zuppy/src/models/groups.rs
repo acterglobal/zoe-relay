@@ -1,5 +1,5 @@
 use gpui::{Context, Entity, Subscription, Task, WeakEntity};
-use zoe_app_primitives::group::events::GroupInfo;
+use zoe_app_primitives::group::events::{GroupId, GroupInfo};
 use zoe_state_machine::group::GroupDataUpdate;
 
 use crate::models::client_state::ClientState;
@@ -19,6 +19,10 @@ impl Groups {
         };
         s.on_client_state_update(client_state, cx);
         s
+    }
+
+    pub fn get(&self, group_id: GroupId) -> Option<GroupInfo> {
+        self.groups.iter().find(|g| g.group_id == group_id).cloned()
     }
 
     fn on_client_state_update(

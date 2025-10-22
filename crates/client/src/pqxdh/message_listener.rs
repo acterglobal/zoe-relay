@@ -41,6 +41,7 @@ where
 
         let inner = Box::pin(messages_stream.filter_map(move |message_full| {
             let state = state.clone();
+            let session_id = session_id.clone();
             async move {
                 tracing::debug!(
                     "🔄 PQXDH handler received message: {}",
@@ -73,7 +74,7 @@ where
     ) -> Result<U> {
         let shared_secret = {
             let current_state = state.get().await;
-            let Some(session) = current_state.sessions.get(&KeyId::from_bytes(*session_id)) else {
+            let Some(session) = current_state.sessions.get(&session_id.into()) else {
                 return Err(PqxdhError::SessionNotFound);
             };
 

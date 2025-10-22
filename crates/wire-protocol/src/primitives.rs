@@ -282,12 +282,6 @@ impl AsRef<[u8]> for MessageId {
     }
 }
 
-/// A unique identifier for communication channels
-///
-/// Simple byte vector that uniquely identifies a channel for message routing.
-/// Used in the channel-per-app architecture to isolate different application communications.
-pub type ChannelId = Vec<u8>;
-
 impl PartialOrd for MessageId {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         Some(self.cmp(other))

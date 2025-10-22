@@ -1,6 +1,5 @@
 use eyeball::{AsyncLock, ObservableWriteGuard, SharedObservable};
 use futures::StreamExt;
-use rand::RngCore;
 use serde::{Deserialize, Serialize};
 
 use std::sync::Arc;
@@ -33,7 +32,7 @@ use zoe_state_machine::messages::MessagesManagerTrait;
 /// - Manages multiple concurrent client sessions
 /// - Handles initial message decryption and session establishment
 ///
-/// ## Client Mode  
+/// ## Client Mode
 /// - Discovers and connects to service provider inboxes
 /// - Establishes secure sessions with service providers
 /// - Sends messages over established sessions
@@ -337,7 +336,7 @@ impl<T: MessagesManagerTrait + 'static> PqxdhProtocolHandler<T> {
             )
             .await?;
 
-        let my_session_id = session.my_session_channel_id;
+        let my_session_id = session.my_session_channel_id.clone();
 
         // Update state and notify observers
         {
@@ -345,7 +344,7 @@ impl<T: MessagesManagerTrait + 'static> PqxdhProtocolHandler<T> {
             ObservableWriteGuard::update(&mut state, |state| {
                 if state
                     .sessions
-                    .insert(KeyId::from_bytes(my_session_id), session)
+                    .insert(my_session_id.clone().into(), session)
                     .is_some()
                 {
                     warn!("overwriting existing pqxdh session. Shouldn't happen");
@@ -354,7 +353,7 @@ impl<T: MessagesManagerTrait + 'static> PqxdhProtocolHandler<T> {
         }
 
         Ok((
-            my_session_id,
+            my_session_id.clone(),
             self.listen_for_messages(my_session_id, true).await?,
         ))
     }
@@ -369,7 +368,7 @@ impl<T: MessagesManagerTrait + 'static> PqxdhProtocolHandler<T> {
     {
         let listening_tag = {
             let state = self.state.get().await;
-            let Some(session) = state.sessions.get(&KeyId::from_bytes(my_session_id)) else {
+            let Some(session) = state.sessions.get(&(&my_session_id).into()) else {
                 return Err(PqxdhError::SessionNotFound);
             };
             session.listening_channel_tag()
@@ -398,7 +397,7 @@ impl<T: MessagesManagerTrait + 'static> PqxdhProtocolHandler<T> {
         // Create the incoming stream first
         let stream = self
             .clone()
-            .listen_for_messages::<Req>(session_id, false)
+            .listen_for_messages::<Req>(session_id.clone(), false)
             .await?;
 
         let me: PqxdhProtocolHandler<T> = self.clone();
@@ -484,7 +483,7 @@ impl<T: MessagesManagerTrait + 'static> PqxdhProtocolHandler<T> {
     /// let mut inbox_stream = Box::pin(handler.inbox_stream::<String>().await?);
     /// while let Some((session_id, message)) = inbox_stream.next().await {
     ///     println!("Received message from session {:?}: {}", session_id, message);
-    ///     
+    ///
     ///     // Echo the message back to the client
     ///     handler.send_message(&session_id, &format!("Echo: {}", message)).await?;
     /// }
@@ -592,19 +591,18 @@ impl<T: MessagesManagerTrait> PqxdhProtocolHandler<T> {
 
         // Generate randomized channel ID for session messages
         let mut rng = rand::thread_rng();
-        let mut session_channel_id_prefix = PqxdhSessionId::default();
-        rng.fill_bytes(&mut session_channel_id_prefix);
+        let session_channel_id_prefix = PqxdhSessionId::random(&mut rng);
 
         let their_session_channel_id = {
             let mut hasher = blake3::Hasher::new();
-            hasher.update(&session_channel_id_prefix);
+            hasher.update(session_channel_id_prefix.as_slice());
             hasher.update(target_public_key.id().as_ref());
             hasher.finalize()
         };
 
         let my_session_channel_id = {
             let mut hasher = blake3::Hasher::new();
-            hasher.update(&session_channel_id_prefix);
+            hasher.update(session_channel_id_prefix.as_slice());
             hasher.update(self.client_keypair.public_key().id().as_ref());
             hasher.finalize()
         };
@@ -612,7 +610,7 @@ impl<T: MessagesManagerTrait> PqxdhProtocolHandler<T> {
         // Create the combined initial payload with channel ID
         let initial_payload_struct = PqxdhInitialPayload {
             user_payload: initial_payload,
-            session_channel_id_prefix,
+            session_channel_id_prefix: session_channel_id_prefix.into(),
         };
 
         let combined_payload_bytes = postcard::to_stdvec(&initial_payload_struct)?;
@@ -712,14 +710,14 @@ impl<T: MessagesManagerTrait> PqxdhProtocolHandler<T> {
             session_channel_id_prefix,
         } = initial_payload;
 
-        let my_session_channel_id = {
+        let my_session_channel_id: PqxdhSessionId = {
             let mut hasher = blake3::Hasher::new();
             hasher.update(&session_channel_id_prefix);
             hasher.update(my_public_key.id().as_ref());
             hasher.finalize().into()
         };
 
-        let their_session_channel_id = {
+        let their_session_channel_id: PqxdhSessionId = {
             let mut hasher = blake3::Hasher::new();
             hasher.update(&session_channel_id_prefix);
             hasher.update(message_full.author().id().as_ref());
@@ -729,8 +727,8 @@ impl<T: MessagesManagerTrait> PqxdhProtocolHandler<T> {
         // Create session
         let session = PqxdhSession::from_shared_secret(
             shared_secret,
-            my_session_channel_id,
-            their_session_channel_id,
+            my_session_channel_id.clone(),
+            their_session_channel_id.clone(),
             message_full.author().clone(),
         );
 
@@ -739,7 +737,7 @@ impl<T: MessagesManagerTrait> PqxdhProtocolHandler<T> {
         ObservableWriteGuard::update(&mut current_state, |state| {
             if state
                 .sessions
-                .insert(KeyId::from_bytes(my_session_channel_id), session)
+                .insert((&my_session_channel_id).into(), session)
                 .is_some()
             {
                 error!("overwriting existing pqxdh session. Shouldn't happen");
@@ -760,20 +758,15 @@ impl<T: MessagesManagerTrait> PqxdhProtocolHandler<T> {
     {
         let full_msg = {
             let mut current_state = self.state.write().await;
-            let Some(mut session) = current_state
-                .sessions
-                .get(&KeyId::from_bytes(*session_id))
-                .cloned()
-            else {
+            let key = session_id.into();
+            let Some(mut session) = current_state.sessions.get(&key).cloned() else {
                 return Err(PqxdhError::SessionNotFound);
             };
 
             let msg = session.gen_next_message(&self.client_keypair, message, kind)?;
 
             ObservableWriteGuard::update(&mut current_state, |state: &mut PqxdhProtocolState| {
-                state
-                    .sessions
-                    .insert(KeyId::from_bytes(*session_id), session); // re-add the changed session
+                state.sessions.insert(key, session); // re-add the changed session
             });
 
             msg

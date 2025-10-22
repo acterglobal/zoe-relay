@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::hash::Hash as StdHash;
 use tarpc::{ClientMessage, Response};
 
-use crate::{KeyId, MessageFull, MessageId, StoreKey, Tag};
+use crate::{ChannelId, KeyId, MessageFull, MessageId, StoreKey, Tag};
 
 /// Unified filter type for different kinds of message filtering
 #[derive(Clone, PartialEq, Eq, StdHash, Serialize, Deserialize)]
@@ -10,7 +10,7 @@ pub enum Filter {
     /// Filter by message author
     Author(KeyId),
     /// Filter by channel ID
-    Channel(Vec<u8>),
+    Channel(ChannelId),
     /// Filter by event ID
     Event(MessageId),
     /// Filter by user key (for user-targeted messages)
@@ -97,12 +97,12 @@ pub enum FilterOperation {
 
 impl FilterOperation {
     /// Add channels to the filter
-    pub fn add_channels(channels: Vec<Vec<u8>>) -> Self {
+    pub fn add_channels(channels: Vec<ChannelId>) -> Self {
         Self::Add(channels.into_iter().map(Filter::Channel).collect())
     }
 
     /// Remove channels from the filter
-    pub fn remove_channels(channels: Vec<Vec<u8>>) -> Self {
+    pub fn remove_channels(channels: Vec<ChannelId>) -> Self {
         Self::Remove(channels.into_iter().map(Filter::Channel).collect())
     }
 
@@ -254,7 +254,7 @@ pub type MessageResult<T> = Result<T, MessageError>;
 pub enum PublishResult {
     /// Message was newly stored with this global stream ID
     StoredNew { global_stream_id: String },
-    /// Message already existed at this global stream ID  
+    /// Message already existed at this global stream ID
     AlreadyExists { global_stream_id: String },
     /// Message was expired and not stored
     Expired,
@@ -276,7 +276,7 @@ impl PublishResult {
     }
 }
 
-/// Error types for message operations  
+/// Error types for message operations
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, thiserror::Error)]
 pub enum MessageError {
     #[error("Message not found: {hash}")]
@@ -316,7 +316,7 @@ pub struct CatchUpRequest {
 impl CatchUpRequest {
     /// Convenience constructor for channel catch-up
     pub fn for_channel(
-        channel_id: Vec<u8>,
+        channel_id: ChannelId,
         since: Option<String>,
         max_messages: Option<usize>,
         request_id: u32,

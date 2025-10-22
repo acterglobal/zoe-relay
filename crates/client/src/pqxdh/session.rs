@@ -1,14 +1,76 @@
 use serde::{Deserialize, Serialize};
 
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::{
+    ops::Deref,
+    time::{SystemTime, UNIX_EPOCH},
+};
 use zoe_wire_protocol::{
-    Content, Kind, Message, MessageFull, Tag, VerifyingKey,
+    ChannelId, Content, KeyId, Kind, Message, MessageFull, Tag, VerifyingKey,
     inbox::pqxdh::{PqxdhSharedSecret, encrypt_pqxdh_session_message},
 };
 
 use super::{PqxdhError, Result};
 
-pub type PqxdhSessionId = [u8; 32];
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Ord, PartialOrd, Eq, Hash)]
+pub struct PqxdhSessionId([u8; 32]);
+
+impl PqxdhSessionId {
+    pub fn random(rng: &mut impl rand::Rng) -> Self {
+        let mut id = [0u8; 32];
+        rng.fill_bytes(&mut id);
+        Self(id)
+    }
+}
+
+impl Deref for PqxdhSessionId {
+    type Target = [u8; 32];
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl From<blake3::Hash> for PqxdhSessionId {
+    fn from(hash: blake3::Hash) -> Self {
+        Self(hash.into())
+    }
+}
+
+impl Into<ChannelId> for &PqxdhSessionId {
+    fn into(self) -> ChannelId {
+        ChannelId::from(self.0)
+    }
+}
+
+impl Into<ChannelId> for PqxdhSessionId {
+    fn into(self) -> ChannelId {
+        ChannelId::from(self.0)
+    }
+}
+
+impl Into<KeyId> for &PqxdhSessionId {
+    fn into(self) -> KeyId {
+        KeyId::from(self.0)
+    }
+}
+
+impl Into<KeyId> for PqxdhSessionId {
+    fn into(self) -> KeyId {
+        KeyId::from(self.0)
+    }
+}
+
+impl Into<[u8; 32]> for &PqxdhSessionId {
+    fn into(self) -> [u8; 32] {
+        self.0.into()
+    }
+}
+
+impl Into<[u8; 32]> for PqxdhSessionId {
+    fn into(self) -> [u8; 32] {
+        self.0.into()
+    }
+}
 
 /// A PQXDH session for secure communication
 ///
@@ -44,7 +106,7 @@ impl PqxdhSession {
     /// Get the channel they are listening for
     pub fn publish_channel_tag(&self) -> Tag {
         Tag::Channel {
-            id: self.their_session_channel_id.to_vec(),
+            id: (&self.their_session_channel_id).into(),
             relays: vec![],
         }
     }
@@ -52,7 +114,7 @@ impl PqxdhSession {
     /// Get the channel tag we want to be listening for
     pub fn listening_channel_tag(&self) -> Tag {
         Tag::Channel {
-            id: self.my_session_channel_id.to_vec(),
+            id: (&self.my_session_channel_id).into(),
             relays: vec![],
         }
     }

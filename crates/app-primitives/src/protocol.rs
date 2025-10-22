@@ -120,7 +120,7 @@ fn generate_random_tag() -> ChannelId {
     let mut rng = rand::thread_rng();
     let mut tag = vec![0u8; 32]; // 256-bit random tag
     rng.fill_bytes(&mut tag);
-    tag
+    tag.into()
 }
 
 /// Create a default DGO installed app
