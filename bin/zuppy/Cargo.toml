@@ -6,7 +6,7 @@ edition = "2024"
 [dependencies]
 # GPUI from zed
 gpui = "0.2.1"
-gpui-component = "0.2.0"
+gpui-component = "0.3.0-preview1"
 
 # ZOE sepcifics
 zoe-app-primitives = { path = "../../crates/app-primitives" }
