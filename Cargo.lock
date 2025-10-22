@@ -14466,6 +14466,7 @@ dependencies = [
  "gpui-component",
  "gpui-router",
  "rust-embed",
+ "serde_json",
  "tokio",
  "tracing",
  "tracing-subscriber",
