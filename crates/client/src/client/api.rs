@@ -8,20 +8,10 @@ use crate::{
 use std::sync::Arc;
 use zoe_blob_store::client::BlobClient;
 use zoe_wire_protocol::{KeyPair, VerifyingKey};
-
-#[cfg(not(feature = "frb-api"))]
-mod file_storage;
-#[cfg(not(feature = "frb-api"))]
-mod relay;
-#[cfg(not(feature = "frb-api"))]
-mod secret;
-
 // need to be public for flutter rust bridge
-#[cfg(feature = "frb-api")]
 pub mod file_storage;
-#[cfg(feature = "frb-api")]
+pub mod groups;
 pub mod relay;
-#[cfg(feature = "frb-api")]
 pub mod secret;
 
 pub use super::Client;

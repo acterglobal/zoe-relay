@@ -14100,6 +14100,7 @@ dependencies = [
  "env_logger 0.11.8",
  "extend",
  "eyeball",
+ "eyeball-im",
  "flutter_rust_bridge",
  "futures",
  "hex",
@@ -14461,6 +14462,7 @@ name = "zuppy"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "eyeball-im",
  "futures",
  "gpui",
  "gpui-component",

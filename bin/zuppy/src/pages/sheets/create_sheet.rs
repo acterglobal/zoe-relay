@@ -54,12 +54,7 @@ impl CreateSheetPage {
         let create_group_b = CreateGroupBuilder::default().name(name.into());
         window
             .spawn(cx, async move |w| {
-                let keypair = zoe.keypair();
-                if let Err(err) = match zoe
-                    .group_manager()
-                    .create_group(create_group_b, keypair)
-                    .await
-                {
+                if let Err(err) = match zoe.create_group(create_group_b).await {
                     Err(e) => w.update(|window, cx| {
                         window.push_notification(
                             (

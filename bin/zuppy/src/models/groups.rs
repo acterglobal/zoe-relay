@@ -1,13 +1,17 @@
+use std::sync::Arc;
+
+use futures::{StreamExt, pin_mut, select};
 use gpui::{Context, Entity, Subscription, Task, WeakEntity};
-use zoe_app_primitives::group::events::{GroupId, GroupInfo};
-use zoe_state_machine::group::GroupDataUpdate;
+use zoe_app_primitives::group::events::GroupId;
+use zoe_client::client::api::groups::SimpleGroupView;
 
 use crate::models::client_state::ClientState;
+use crate::util::vector_diff::VectorDiffApplicator;
 
 pub struct Groups {
     _client_subscription: Subscription,
     current_task: Option<Task<()>>,
-    pub groups: Vec<GroupInfo>,
+    pub groups: Vec<Arc<SimpleGroupView>>,
 }
 
 impl Groups {
@@ -21,7 +25,7 @@ impl Groups {
         s
     }
 
-    pub fn get(&self, group_id: GroupId) -> Option<GroupInfo> {
+    pub fn get(&self, group_id: GroupId) -> Option<Arc<SimpleGroupView>> {
         self.groups.iter().find(|g| g.group_id == group_id).cloned()
     }
 
@@ -49,7 +53,14 @@ impl Groups {
 
         let zoe = zoe.clone();
         let watch_task = cx.spawn(async move |w: WeakEntity<Self>, cx| {
-            let (groups, mut updates_stream) = zoe.group_manager().groups_and_stream().await;
+            let (groups, mut diff_stream, mut updates_stream) = match zoe.groups_view().await {
+                Ok(view) => view,
+                Err(err) => {
+                    tracing::error!(?err, "Error getting groups view");
+                    return;
+                }
+            };
+
             {
                 // set current
                 let Some(g) = w.upgrade() else {
@@ -64,51 +75,34 @@ impl Groups {
                 }
             }
 
+            pin_mut!(updates_stream);
+            pin_mut!(diff_stream);
+            let mut fu = updates_stream.fuse();
+            let mut ds = diff_stream.fuse();
+
             loop {
-                let update = match updates_stream.recv().await {
-                    Err(e) => {
-                        tracing::error!("Error receiving group update: {}", e);
-                        return;
-                    }
-                    Ok(update) => update,
-                };
-                let Some(e) = w.upgrade() else {
-                    tracing::trace!("Weak reference to widget has been dropped");
-                    return;
-                };
-                if let Err(err) = match update {
-                    GroupDataUpdate::GroupAdded(group) => e.update(cx, |i, cx| {
-                        i.groups.push(group.state.group_info);
-                        cx.notify();
-                    }),
-                    GroupDataUpdate::GroupUpdated(group) => {
-                        let info = group.state.group_info;
-                        e.update(cx, |i, cx| {
-                            if let Some(index) =
-                                i.groups.iter().position(|g| g.group_id == info.group_id)
-                            {
-                                i.groups[index] = info;
-                                cx.notify();
-                            } else {
-                                tracing::warn!("Group with id {:?} not found", info.group_id);
+                select! {
+                    _ = fu.next() => {
+                        // nothing for us to do than just ensure we poll the stream
+                        }
+                    o_vec_diff = ds.next() => {
+                        let Some(vec_diffs) = o_vec_diff else {
+                            tracing::trace!("no vec diff?");
+                            continue;
+                        };
+                        let Some(g) = w.upgrade() else {
+                            tracing::trace!("Weak reference to widget has been dropped");
+                            return;
+                        };
+                        if let Err(err) = g.update(cx, |i, cx| {
+                            for v in vec_diffs {
+                                v.apply_to_vec(&mut i.groups);
                             }
-                        })
+                            cx.notify();
+                        }) {
+                            tracing::error!(?err, "Error updating groups");
+                        }
                     }
-                    GroupDataUpdate::GroupRemoved(session) => {
-                        let info = session.state.group_info;
-                        e.update(cx, |i, cx| {
-                            if let Some(index) =
-                                i.groups.iter().position(|g| g.group_id == info.group_id)
-                            {
-                                i.groups.remove(index);
-                                cx.notify();
-                            } else {
-                                tracing::warn!("Group with id {:?} not found", info.group_id);
-                            }
-                        })
-                    }
-                } {
-                    tracing::error!(?err, "Updating entity failed");
                 }
             }
         });

@@ -9,6 +9,7 @@ pub mod config;
 pub mod models;
 pub mod pages;
 pub mod router;
+pub mod util;
 pub mod widgets;
 
 pub fn make_application() -> Application {

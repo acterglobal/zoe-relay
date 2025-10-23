@@ -45,6 +45,7 @@ futures = { workspace = true }
 rand = { workspace = true }
 async-once-cell = { workspace = true }
 async-broadcast = { workspace = true }
+eyeball-im = { workspace = true }
 
 # Logging
 tracing = { workspace = true }

@@ -22,6 +22,23 @@ where
         }
     }
 }
+impl<K, T> FromIterator<(K, T)> for RankedIndex<K, T>
+where
+    K: 'static + Ord + Clone,
+    T: 'static + Clone + Eq,
+{
+    fn from_iter<I>(iter: I) -> Self
+    where
+        I: IntoIterator<Item = (K, T)>,
+    {
+        let mut m = RankedIndex::default();
+        // I feel like I should use a more efficient way to insert items
+        for (rank, value) in iter {
+            m.insert(rank, value);
+        }
+        m
+    }
+}
 
 impl<K, T> Deref for RankedIndex<K, T>
 where
@@ -59,6 +76,29 @@ where
         self.vector.insert(pos, (rank, value));
     }
 
+    pub fn remove_and_insert(&mut self, pred: impl Fn(&T) -> bool, rank: K, value: T) {
+        let mut t = self.vector.transaction();
+        {
+            // remove old
+            let mut entries = t.entries();
+            while let Some(entry) = entries.next() {
+                if pred(&entry.1) {
+                    ObservableVectorTransactionEntry::remove(entry);
+                }
+            }
+        }
+
+        let mut pos = t.len();
+        for (idx, (k, _v)) in t.iter().enumerate() {
+            if k <= &rank {
+                pos = idx;
+                break;
+            }
+        }
+        t.insert(pos, (rank, value));
+        t.commit();
+    }
+
     /// Remove all instances in the vector having the specific value
     pub fn remove(&mut self, value: &T) {
         let mut t = self.vector.transaction();
@@ -71,9 +111,56 @@ where
         t.commit();
     }
 
+    /// Remove all instances in the vector having the specific value
+    pub fn remove_where(&mut self, predicate: impl Fn(&T) -> bool) {
+        let mut t = self.vector.transaction();
+        let mut entries = t.entries();
+        while let Some(entry) = entries.next() {
+            if predicate(&entry.1) {
+                ObservableVectorTransactionEntry::remove(entry);
+            }
+        }
+        t.commit();
+    }
+
     /// Returns the current list of values in order of their rank
     pub fn values(&self) -> Vec<&T> {
         self.vector.iter().map(|(_k, v)| v).collect()
+    }
+
+    /// Returns the current list of values in order of their rank
+    pub fn values_cloned(&self) -> Vec<T> {
+        self.vector.iter().map(|(_k, v)| v.clone()).collect()
+    }
+
+    pub fn batched_update_stream(&self) -> impl Stream<Item = Vec<VectorDiff<T>>> + use<K, T> {
+        self.vector.subscribe().into_batched_stream().map(|l| {
+            l.into_iter()
+                .map(|v| match v {
+                    VectorDiff::Append { values } => VectorDiff::Append {
+                        values: values.into_iter().map(|(_k, v)| v).collect(),
+                    },
+                    VectorDiff::Clear => VectorDiff::Clear,
+                    VectorDiff::PushFront { value } => VectorDiff::PushFront { value: value.1 },
+                    VectorDiff::PushBack { value } => VectorDiff::PushBack { value: value.1 },
+                    VectorDiff::PopFront => VectorDiff::PopFront,
+                    VectorDiff::PopBack => VectorDiff::PopBack,
+                    VectorDiff::Insert { index, value } => VectorDiff::Insert {
+                        index,
+                        value: value.1,
+                    },
+                    VectorDiff::Set { index, value } => VectorDiff::Set {
+                        index,
+                        value: value.1,
+                    },
+                    VectorDiff::Remove { index } => VectorDiff::Remove { index },
+                    VectorDiff::Truncate { length } => VectorDiff::Truncate { length },
+                    VectorDiff::Reset { values } => VectorDiff::Reset {
+                        values: values.into_iter().map(|(_k, v)| v).collect(),
+                    },
+                })
+                .collect()
+        })
     }
 
     pub fn update_stream(&self) -> impl Stream<Item = VectorDiff<T>> + use<K, T> {

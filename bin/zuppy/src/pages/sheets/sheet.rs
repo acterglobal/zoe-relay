@@ -36,6 +36,6 @@ impl Render for SheetPage {
             return self.render_error(_window, cx, "Group not found".to_string());
         };
 
-        div().child(div().child(group.name))
+        div().child(div().child(group.name.clone()))
     }
 }
