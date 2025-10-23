@@ -2,7 +2,7 @@ use crate::models::groups::Groups;
 use crate::router::Router;
 use crate::widgets::sidebar::ZuppySidebar;
 use gpui::{AppContext, Context, Entity, IntoElement, ParentElement, Render, Styled, Window, div};
-use gpui_component::{ActiveTheme, Root};
+use gpui_component::{ActiveTheme, Root, v_flex};
 
 use crate::widgets::status_bar::StatusBar;
 
@@ -24,8 +24,8 @@ impl ZuppyApp {
         let groups = cx.new(|cx| Groups::new(cx, client_state.clone()));
         Self {
             sidebar: cx.new(|_| ZuppySidebar::new(groups.clone())),
+            status_bar: cx.new(|cx| StatusBar::new(client_state.clone(), cx)),
             router: cx.new(|cx| Router::new(win, cx, client_state.clone(), groups.clone())),
-            status_bar: cx.new(|cx| StatusBar::new(client_state, cx)),
             groups,
         }
     }
@@ -34,7 +34,8 @@ impl ZuppyApp {
 impl Render for ZuppyApp {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
-        div()
+
+        v_flex()
             .size_full()
             .child(
                 div()

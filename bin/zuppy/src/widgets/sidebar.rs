@@ -4,14 +4,12 @@ use crate::{
 };
 use gpui::{
     App, AppContext, Context, Entity, InteractiveElement, IntoElement, ParentElement, Render,
-    RenderOnce, StatefulInteractiveElement, Styled, Window, div, prelude::FluentBuilder,
+    RenderOnce, StatefulInteractiveElement, Styled, Window, prelude::FluentBuilder,
 };
 use gpui_component::{
     Collapsible, Icon, Side, h_flex,
     sidebar::{Sidebar, SidebarGroup, SidebarHeader, SidebarMenu, SidebarMenuItem},
 };
-use gpui_router::use_navigate;
-use tracing::Instrument;
 
 pub struct ZuppySidebar {
     collapsed: bool,
@@ -46,35 +44,8 @@ impl Collapsible for GroupsSidebar {
     }
 }
 
-#[derive(IntoElement)]
-struct NoSheetSidebar {
-    collapsed: bool,
-}
-
-impl NoSheetSidebar {
-    pub fn new() -> Self {
-        Self { collapsed: false }
-    }
-}
-
-impl Collapsible for NoSheetSidebar {
-    fn collapsed(self, collapsed: bool) -> Self {
-        Self { collapsed }
-    }
-
-    fn is_collapsed(&self) -> bool {
-        self.collapsed
-    }
-}
-
-impl RenderOnce for NoSheetSidebar {
-    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
-        div()
-    }
-}
-
 impl RenderOnce for GroupsSidebar {
-    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         cx.read_entity(&self.groups, |state, cx| {
             if state.groups.is_empty() {
                 SidebarGroup::new("Sheets").child(
@@ -105,7 +76,7 @@ impl ZuppySidebar {
 }
 
 impl Render for ZuppySidebar {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
         Sidebar::new(Side::Left)
             .collapsed(self.collapsed)
             .collapsible(true)

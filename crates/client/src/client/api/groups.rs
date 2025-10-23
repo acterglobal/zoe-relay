@@ -3,29 +3,75 @@ use std::sync::Arc;
 use super::Client;
 use crate::error::Result;
 use async_stream::stream;
-use eyeball_im::{VectorDiff, VectorSubscriber};
+use eyeball_im::VectorDiff;
 use futures::Stream;
-use zoe_app_primitives::group::events::{GroupId, GroupInfo};
+use zoe_app_primitives::{
+    group::events::{
+        GroupId, GroupInfoUpdate, GroupInfoUpdateContent, permissions::GroupAction,
+        roles::GroupRole, settings::GroupSettings,
+    },
+    identity::IdentityRef,
+    metadata::Metadata,
+    protocol::InstalledApp,
+};
 use zoe_state_machine::{
     group::{CreateGroupBuilder, CreateGroupResult, GroupDataUpdate},
     index::RankedIndex,
+    state::GroupState,
 };
 
 #[cfg(feature = "frb-api")]
 use flutter_rust_bridge::frb;
+use zoe_wire_protocol::{KeyPair, Message, MessageId};
 
-#[derive(Debug, Eq, PartialEq, PartialOrd, Ord)]
+#[derive(Debug, Eq, PartialEq)]
 pub struct SimpleGroupView {
+    /// The id of this group
     pub group_id: GroupId,
+    /// Visible Name
     pub name: String,
+    /// Optional Description
+    pub description: Option<String>,
+
+    // global group settings as of now
+    pub settings: GroupSettings,
+
+    /// Installed applications in this group
+    pub installed_apps: Vec<InstalledApp>,
+
+    // what role this identitiy has in this group
+    pub my_role: GroupRole,
 }
 
-impl From<GroupInfo> for SimpleGroupView {
-    fn from(info: GroupInfo) -> Self {
-        Self {
+impl SimpleGroupView {
+    pub fn can_i(&self, action: GroupAction) -> bool {
+        self.settings
+            .permissions
+            .can_perform_action(&self.my_role, action)
+    }
+}
+
+impl SimpleGroupView {
+    pub fn new(state: GroupState, id: &IdentityRef) -> Self {
+        let my_role = state.member_role(id).unwrap_or(GroupRole::Member);
+        let info = state.group_info;
+        let mut me = Self {
             group_id: info.group_id,
             name: info.name,
+            settings: info.settings,
+            description: None,
+            installed_apps: info.installed_apps,
+            my_role,
+        };
+        for m in info.metadata {
+            match m {
+                Metadata::Description(desc) => me.description = Some(desc),
+                _ => {
+                    // not supported yet
+                }
+            }
         }
+        me
     }
 }
 
@@ -48,12 +94,14 @@ impl Client {
         impl Stream<Item = ()>,
     )> {
         let (initial, mut updates_stream) = self.group_manager().groups_and_stream().await;
+        let my_id = IdentityRef::Key(self.public_key());
 
-        let mut live_index = RankedIndex::from_iter(
-            initial
-                .into_iter()
-                .map(|info| (info.group_id.clone(), Arc::new(SimpleGroupView::from(info)))),
-        );
+        let mut live_index = RankedIndex::from_iter(initial.into_iter().map(|state| {
+            (
+                state.group_info.group_id.clone(),
+                Arc::new(SimpleGroupView::new(state, &my_id)),
+            )
+        }));
 
         let current_state = live_index.values_cloned(); // just Arcs anyways
         let listener = live_index.batched_update_stream();
@@ -70,22 +118,22 @@ impl Client {
                 };
                 match update {
                     GroupDataUpdate::GroupAdded(group) => {
-                        let info = group.state.group_info;
-                        live_index
-                            .insert(info.group_id.clone(), Arc::new(SimpleGroupView::from(info)));
+                        live_index.insert(
+                            group.state.group_info.group_id.clone(),
+                            Arc::new(SimpleGroupView::new(group.state, &my_id)),
+                        );
                     }
                     GroupDataUpdate::GroupUpdated(group) => {
-                        let info = group.state.group_info;
-                        let group_id = info.group_id.clone();
+                        let group_id = group.state.group_info.group_id.clone();
                         live_index.remove_and_insert(
                             |s| s.group_id == group_id,
                             group_id.clone(),
-                            Arc::new(SimpleGroupView::from(info)),
+                            Arc::new(SimpleGroupView::new(group.state, &my_id)),
                         );
                     }
                     GroupDataUpdate::GroupRemoved(session) => {
-                        let info = session.state.group_info;
-                        live_index.remove_where(|s| s.group_id == info.group_id);
+                        let group_id = session.state.group_info.group_id.clone();
+                        live_index.remove_where(|s| s.group_id == group_id);
                     }
                 }
                 yield
@@ -93,5 +141,27 @@ impl Client {
         });
 
         Ok((current_state, listener, poller))
+    }
+
+    pub async fn update_group(
+        &self,
+        group_id: &GroupId,
+        update: GroupInfoUpdateContent,
+    ) -> Result<MessageId> {
+        self.update_group_with_sender(group_id, &self.keypair(), update)
+            .await
+    }
+
+    pub async fn update_group_with_sender(
+        &self,
+        group_id: &GroupId,
+        sender: &KeyPair,
+        update: GroupInfoUpdateContent,
+    ) -> Result<MessageId> {
+        Ok(self
+            .group_manager()
+            .publish_group_event(group_id, update.into(), sender)
+            .await
+            .map(|message| message.consume().0)?)
     }
 }

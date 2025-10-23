@@ -1,5 +1,5 @@
 use gpui::{App, Window};
-use gpui_router::{Route, use_navigate};
+use gpui_router::use_navigate;
 
 #[derive(Debug)]
 pub enum Routes {

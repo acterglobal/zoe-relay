@@ -155,12 +155,12 @@ impl<M: MessagesManagerTrait + Clone + 'static> GroupManager<M> {
     }
 
     /// Get the list of group IDs currently known
-    pub async fn groups_and_stream(&self) -> (Vec<GroupInfo>, Receiver<GroupDataUpdate>) {
+    pub async fn groups_and_stream(&self) -> (Vec<GroupState>, Receiver<GroupDataUpdate>) {
         let groups = self.groups.read().await;
         (
             groups
                 .values()
-                .map(|session| session.state.group_info.clone())
+                .map(|session| session.state.clone())
                 .collect(),
             self.subscribe_to_updates(),
         )

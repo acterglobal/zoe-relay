@@ -29,7 +29,7 @@ impl Router {
             user_info_page: cx.new(|cx| UserInfoPage::new(cx, client_state.clone())),
             dashboard: cx.new(|cx| DashboardPage::new(cx, client_state.clone())),
             create_sheet: cx.new(|cx| CreateSheetPage::new(win, cx, client_state.clone())),
-            sheet: cx.new(|_cx| SheetPage::new(group_state.clone())),
+            sheet: cx.new(|cx| SheetPage::new(win, cx, client_state.clone(), group_state.clone())),
             no_match: cx.new(|_cx| NoMatch {}),
         }
     }

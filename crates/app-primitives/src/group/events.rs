@@ -262,3 +262,9 @@ pub enum GroupActivityEvent {
     /// Unknown management event for forward compatibility
     Unknown { discriminant: u32, data: Vec<u8> },
 }
+
+impl From<GroupInfoUpdateContent> for GroupActivityEvent {
+    fn from(updates: GroupInfoUpdateContent) -> Self {
+        Self::UpdateGroup { updates }
+    }
+}

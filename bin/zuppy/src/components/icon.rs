@@ -8,6 +8,7 @@ pub enum IconName {
     NetworkWorking,
     NetworkBroken,
     NetworkSynced,
+    Search,
 }
 
 impl IconName {
@@ -18,6 +19,7 @@ impl IconName {
             Self::NetworkAlert => "icons/network-alert.svg",
             Self::NetworkWorking => "icons/network-cog.svg",
             Self::NetworkSynced => "icons/network-synced.svg",
+            Self::Search => "icons/search.svg",
         }
         .into()
     }

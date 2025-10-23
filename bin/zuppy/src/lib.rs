@@ -1,6 +1,6 @@
 use std::process::exit;
 
-use gpui::{App, AppContext, Application, WindowOptions};
+use gpui::{App, AppContext, Application, TitlebarOptions, WindowOptions};
 use gpui_component::Root;
 
 pub mod app;
@@ -21,12 +21,19 @@ pub fn run_app() {
     app.run(|app: &mut App| {
         config::init(app);
         let client_state = models::client_state::ClientStateSetup::new(app);
-        if let Err(err) =
-            app.open_window(WindowOptions::default(), |window, cx| -> gpui::Entity<_> {
+        if let Err(err) = app.open_window(
+            WindowOptions {
+                titlebar: Some(TitlebarOptions {
+                    title: Some("zuppy".into()),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+            |window, cx| -> gpui::Entity<_> {
                 let view = cx.new(|cx| app::ZuppyApp::new(window, cx, client_state));
                 cx.new(|cx| Root::new(view.into(), window, cx))
-            })
-        {
+            },
+        ) {
             tracing::error!("Running zuppy failed: {err}");
             exit(1);
         }

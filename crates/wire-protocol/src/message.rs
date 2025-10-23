@@ -845,6 +845,15 @@ impl MessageFull {
         &self.signature
     }
 
+    pub fn consume(self) -> (MessageId, Signature, Box<Message>) {
+        let MessageFull {
+            id,
+            signature,
+            message,
+        } = self;
+        (id, signature, message)
+    }
+
     pub fn ref_tag(&self) -> Tag {
         Tag::Event {
             id: *self.id(),
