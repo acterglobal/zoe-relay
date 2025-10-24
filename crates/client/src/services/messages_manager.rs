@@ -697,7 +697,7 @@ mod tests {
 
         // Create test tags
         let channel_tag = Tag::Channel {
-            id: b"test-channel".to_vec(),
+            id: b"test-channel".to_vec().into(),
             relays: vec![],
         };
 
@@ -778,7 +778,7 @@ mod tests {
         let mut state = SubscriptionState::new();
 
         let tag = Tag::Channel {
-            id: b"test".to_vec(),
+            id: b"test".to_vec().into(),
             relays: vec![],
         };
 
@@ -840,7 +840,7 @@ mod tests {
 
         // Test Channel filter matching
         let channel_id = b"test-channel-123".to_vec();
-        let channel_filter = Filter::Channel(channel_id.clone());
+        let channel_filter = Filter::Channel(channel_id.clone().into());
 
         // Create message with matching channel tag
         let message_with_channel = MessageV0 {
@@ -849,7 +849,7 @@ mod tests {
                 when: 1640995200,
                 kind: Kind::Regular,
                 tags: vec![Tag::Channel {
-                    id: channel_id.clone(),
+                    id: channel_id.clone().into(),
                     relays: vec![],
                 }],
             },
@@ -865,7 +865,7 @@ mod tests {
         );
 
         // Test with different channel ID
-        let different_channel_filter = Filter::Channel(b"different-channel".to_vec());
+        let different_channel_filter = Filter::Channel(b"different-channel".to_vec().into());
         assert!(
             !different_channel_filter.matches(&full_message),
             "Channel filter should not match message with different channel tag"

@@ -26,7 +26,7 @@ const STREAM_HEIGHT_KEY: &str = "stream_height";
 // Lua script for atomic message storage
 const STORE_MESSAGE_SCRIPT: &str = r#"
 local message_key = KEYS[1]
-local stream_id_key = KEYS[2] 
+local stream_id_key = KEYS[2]
 local global_stream = KEYS[3]
 
 local message_data = ARGV[1]
@@ -40,7 +40,7 @@ local set_result
 if expiration_time ~= "" and timeout ~= "" then
     set_result = redis.call('SET', message_key, message_data, 'EX', timeout, 'NX')
 else
-    set_result = redis.call('SET', message_key, message_data, 'NX')  
+    set_result = redis.call('SET', message_key, message_data, 'NX')
 end
 
 -- If message already exists, return existing stream ID
@@ -56,7 +56,7 @@ end
 -- Message is new - add to global stream
 local xadd_args = {global_stream, '*', 'id', message_id_bytes, 'author', author_bytes}
 
--- Add expiration if provided  
+-- Add expiration if provided
 if expiration_time ~= "" then
     table.insert(xadd_args, 'exp')
     -- Decode hex-encoded expiration time back to bytes
@@ -72,7 +72,7 @@ end
 for i = 6, #ARGV, 2 do
     if ARGV[i] and ARGV[i+1] then
         table.insert(xadd_args, ARGV[i])     -- tag key
-        table.insert(xadd_args, ARGV[i+1])   -- tag value  
+        table.insert(xadd_args, ARGV[i+1])   -- tag value
     end
 end
 
@@ -218,7 +218,7 @@ impl RedisMessageStorage {
         self.get_inner_raw(&message_id).await
     }
     /// Store a message in Redis and publish to stream for real-time delivery
-    /// Returns PublishResult indicating if message was newly stored or already existed with stream ID  
+    /// Returns PublishResult indicating if message was newly stored or already existed with stream ID
     ///
     /// This method uses a Lua script to ensure atomicity of core operations:
     /// 1. Message storage (SET NX)
@@ -286,7 +286,7 @@ impl RedisMessageStorage {
                 }
                 Tag::Channel { id: channel_id, .. } => {
                     script_args.push(CHANNEL_KEY.as_bytes().to_vec());
-                    script_args.push(channel_id.clone());
+                    script_args.push(channel_id.to_vec());
                 }
                 Tag::Protected => {
                     // Protected messages aren't added to public stream
@@ -449,7 +449,7 @@ impl RedisMessageStorage {
 
     /// Check which messages the server already has and return their global stream IDs.
     /// Returns a vec of `Option<String>` in the same order as the input, where:
-    /// - `Some(stream_id)` means the server has the message with that global stream ID  
+    /// - `Some(stream_id)` means the server has the message with that global stream ID
     /// - `None` means the server doesn't have this message yet
     pub async fn check_messages(&self, message_ids: &[MessageId]) -> Result<Vec<Option<String>>> {
         if message_ids.is_empty() {

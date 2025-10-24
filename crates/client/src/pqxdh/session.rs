@@ -15,6 +15,11 @@ use super::{PqxdhError, Result};
 pub struct PqxdhSessionId([u8; 32]);
 
 impl PqxdhSessionId {
+    /// Create a new PqxdhSessionId from a 32-byte array
+    pub fn new(id: [u8; 32]) -> Self {
+        Self(id)
+    }
+
     pub fn random(rng: &mut impl rand::Rng) -> Self {
         let mut id = [0u8; 32];
         rng.fill_bytes(&mut id);

@@ -174,8 +174,8 @@ mod tests {
         let keypair = KeyPair::generate(&mut rand::thread_rng());
         let session = PqxdhSession::from_shared_secret(
             shared_secret,
-            session_channel_id,
-            session_channel_id, // their_session_channel_id
+            PqxdhSessionId::new(session_channel_id),
+            PqxdhSessionId::new(session_channel_id), // their_session_channel_id
             keypair.public_key(),
         );
 
@@ -207,7 +207,7 @@ mod tests {
 
         // Add some test data
         state.inbox_tag = Some(Tag::Channel {
-            id: vec![1, 2, 3, 4],
+            id: vec![1, 2, 3, 4].into(),
             relays: vec![],
         });
 
@@ -219,8 +219,8 @@ mod tests {
         let keypair = KeyPair::generate(&mut rand::thread_rng());
         let session = PqxdhSession::from_shared_secret(
             shared_secret,
-            [5u8; 32],
-            [6u8; 32], // their_session_channel_id
+            PqxdhSessionId::new([5u8; 32]),
+            PqxdhSessionId::new([6u8; 32]), // their_session_channel_id
             keypair.public_key(),
         );
         state.sessions.insert(target_id, session);
@@ -378,7 +378,7 @@ mod tests {
             &handler.state,
             |state: &mut PqxdhProtocolState| {
                 state.inbox_tag = Some(Tag::Channel {
-                    id: vec![1, 2, 3],
+                    id: vec![1, 2, 3].into(),
                     relays: vec![],
                 });
             },
@@ -414,7 +414,7 @@ mod tests {
             &handler.state,
             |state: &mut PqxdhProtocolState| {
                 state.inbox_tag = Some(Tag::Channel {
-                    id: vec![1, 2, 3],
+                    id: vec![1, 2, 3].into(),
                     relays: vec![],
                 });
             },
@@ -481,7 +481,7 @@ mod tests {
 
         // Verify session was created
         let state = handler.state.read().await;
-        assert!(state.sessions.contains_key(&KeyId::from_bytes(session_id)));
+        assert!(state.sessions.contains_key(&KeyId::from_bytes(*session_id)));
     }
 
     /// Test client connect_to_service with inbox not found
@@ -536,15 +536,15 @@ mod tests {
         );
 
         // Create a test session
-        let session_id: PqxdhSessionId = [42u8; 32];
+        let session_id: PqxdhSessionId = PqxdhSessionId::new([42u8; 32]);
         let shared_secret = PqxdhSharedSecret {
             shared_key: [1u8; 32],
             consumed_one_time_key_ids: vec![],
         };
         let test_session = PqxdhSession::from_shared_secret(
             shared_secret,
-            session_id,
-            [43u8; 32], // their_session_channel_id
+            session_id.clone(),
+            PqxdhSessionId::new([43u8; 32]), // their_session_channel_id
             keypair.public_key(),
         );
 
@@ -553,9 +553,7 @@ mod tests {
         SharedObservable::<_, AsyncLock>::update(
             &handler.state,
             |state: &mut PqxdhProtocolState| {
-                state
-                    .sessions
-                    .insert(KeyId::from_bytes(session_id), test_session);
+                state.sessions.insert((&session_id).into(), test_session);
             },
         )
         .await;
@@ -578,7 +576,7 @@ mod tests {
             PqxdhInboxProtocol::EchoService,
         );
 
-        let session_id: PqxdhSessionId = [42u8; 32];
+        let session_id: PqxdhSessionId = PqxdhSessionId::new([42u8; 32]);
         let message = "Test message".to_string();
         let result = handler.send_message(&session_id, &message).await;
 
@@ -614,7 +612,7 @@ mod tests {
             &handler.state,
             |state: &mut PqxdhProtocolState| {
                 state.inbox_tag = Some(Tag::Channel {
-                    id: vec![1, 2, 3],
+                    id: vec![1, 2, 3].into(),
                     relays: vec![],
                 });
                 let (_, private_keys) =
@@ -659,26 +657,24 @@ mod tests {
         );
 
         // Add some state
-        let session_id: PqxdhSessionId = [99u8; 32];
+        let session_id: PqxdhSessionId = PqxdhSessionId::new([99u8; 32]);
         let shared_secret = PqxdhSharedSecret {
             shared_key: [2u8; 32],
             consumed_one_time_key_ids: vec!["test_key".to_string()],
         };
         let test_session = PqxdhSession::from_shared_secret(
             shared_secret,
-            session_id,
-            [100u8; 32], // their_session_channel_id
+            session_id.clone(),
+            PqxdhSessionId::new([100u8; 32]), // their_session_channel_id
             keypair.public_key(),
         );
 
         SharedObservable::<_, AsyncLock>::update(
             &original_handler.state,
             |state: &mut PqxdhProtocolState| {
-                state
-                    .sessions
-                    .insert(KeyId::from_bytes(session_id), test_session);
+                state.sessions.insert((&session_id).into(), test_session);
                 state.inbox_tag = Some(Tag::Channel {
-                    id: vec![4, 5, 6],
+                    id: vec![4, 5, 6].into(),
                     relays: vec![],
                 });
             },
@@ -701,13 +697,13 @@ mod tests {
         assert!(
             restored_state
                 .sessions
-                .contains_key(&KeyId::from_bytes(session_id))
+                .contains_key(&KeyId::from_bytes(*session_id))
         );
         assert_eq!(restored_state.protocol, PqxdhInboxProtocol::EchoService);
         assert_eq!(
             restored_state.inbox_tag,
             Some(Tag::Channel {
-                id: vec![4, 5, 6],
+                id: vec![4, 5, 6].into(),
                 relays: vec![]
             })
         );
@@ -755,10 +751,11 @@ mod tests {
                 shared_key: [i as u8; 32],
                 consumed_one_time_key_ids: vec![format!("key_{}", i)],
             };
+            let session_id_wrapped = PqxdhSessionId::new(*session_id);
             let test_session = PqxdhSession::from_shared_secret(
                 shared_secret,
-                *session_id,
-                [(i + 10) as u8; 32], // their_session_channel_id
+                session_id_wrapped.clone(),
+                PqxdhSessionId::new([(i + 10) as u8; 32]), // their_session_channel_id
                 keypair.public_key(),
             );
 
@@ -767,7 +764,7 @@ mod tests {
                 |state: &mut PqxdhProtocolState| {
                     state
                         .sessions
-                        .insert(KeyId::from_bytes(*session_id), test_session);
+                        .insert((&session_id_wrapped).into(), test_session);
                 },
             )
             .await;
@@ -801,26 +798,22 @@ mod tests {
         );
 
         // Create a test session
-        let session_id: PqxdhSessionId = [55u8; 32];
+        let session_id: PqxdhSessionId = PqxdhSessionId::new([42u8; 32]);
         let shared_secret = PqxdhSharedSecret {
-            shared_key: [3u8; 32],
+            shared_key: [1u8; 32],
             consumed_one_time_key_ids: vec![],
         };
         let test_session = PqxdhSession::from_shared_secret(
             shared_secret,
-            session_id,
-            [56u8; 32], // their_session_channel_id
+            session_id.clone(),
+            PqxdhSessionId::new([43u8; 32]), // their_session_channel_id
             keypair.public_key(),
         );
-
-        // Add session to state
 
         SharedObservable::<_, AsyncLock>::update(
             &handler.state,
             |state: &mut PqxdhProtocolState| {
-                state
-                    .sessions
-                    .insert(KeyId::from_bytes(session_id), test_session);
+                state.sessions.insert((&session_id).into(), test_session);
             },
         )
         .await;
@@ -852,28 +845,25 @@ mod tests {
         );
 
         // Create a test session
-        let session_id: PqxdhSessionId = [77u8; 32];
+        // Create a test session without inbox tag
+        let session_id: PqxdhSessionId = PqxdhSessionId::new([42u8; 32]);
         let shared_secret = PqxdhSharedSecret {
-            shared_key: [4u8; 32],
+            shared_key: [1u8; 32],
             consumed_one_time_key_ids: vec![],
         };
         let test_session = PqxdhSession::from_shared_secret(
             shared_secret,
-            session_id,
-            [78u8; 32], // their_session_channel_id
+            session_id.clone(),
+            PqxdhSessionId::new([43u8; 32]), // their_session_channel_id
             keypair.public_key(),
         );
-
-        // Add session to state
 
         SharedObservable::<_, AsyncLock>::update(
             &handler.state,
             |state: &mut PqxdhProtocolState| {
-                state
-                    .sessions
-                    .insert(KeyId::from_bytes(session_id), test_session);
+                state.sessions.insert((&session_id).into(), test_session);
                 state.inbox_tag = Some(Tag::Channel {
-                    id: vec![1, 2, 3],
+                    id: vec![1, 2, 3].into(),
                     relays: vec![],
                 });
             },
@@ -898,7 +888,7 @@ mod tests {
             PqxdhInboxProtocol::EchoService,
         );
 
-        let session_id: PqxdhSessionId = [88u8; 32];
+        let session_id: PqxdhSessionId = PqxdhSessionId::new([88u8; 32]);
         let result = handler
             .listen_for_messages::<String>(session_id, true)
             .await;
