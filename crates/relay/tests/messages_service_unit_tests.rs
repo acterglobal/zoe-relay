@@ -1,8 +1,8 @@
 use futures_util::StreamExt;
 use rand::rngs::OsRng;
 use zoe_wire_protocol::{
-    CatchUpRequest, Filter, FilterOperation, FilterUpdateRequest, KeyId, KeyPair, Kind, Message,
-    MessageFilters, MessageFull, Tag, VerifyingKey,
+    CatchUpRequest, ChannelId, Filter, FilterOperation, FilterUpdateRequest, KeyId, KeyPair, Kind,
+    Message, MessageFilters, MessageFull, Tag, VerifyingKey,
 };
 
 // Helper function to create test VerifyingKeys from byte arrays
@@ -48,13 +48,14 @@ async fn test_filter_operations_with_new_types() {
     let mut filters = MessageFilters::default();
 
     // Test adding channels
-    let add_channels = FilterOperation::add_channels(vec![b"general".to_vec(), b"tech".to_vec()]);
+    let add_channels =
+        FilterOperation::add_channels(vec![b"general".to_vec().into(), b"tech".to_vec().into()]);
     filters.apply_operation(&add_channels);
 
     // Check that channels were added
     if let Some(filter_list) = &filters.filters {
-        assert!(filter_list.contains(&Filter::Channel(b"general".to_vec())));
-        assert!(filter_list.contains(&Filter::Channel(b"tech".to_vec())));
+        assert!(filter_list.contains(&Filter::Channel(b"general".to_vec().into())));
+        assert!(filter_list.contains(&Filter::Channel(b"tech".to_vec().into())));
     } else {
         panic!("Expected filters to be Some");
     }
@@ -86,7 +87,7 @@ async fn test_catch_up_with_new_api() {
 
     // Store a test message
     let tags = vec![Tag::Channel {
-        id: channel_id.to_vec(),
+        id: channel_id.to_vec().into(),
         relays: vec![],
     }];
 
@@ -108,7 +109,7 @@ async fn test_catch_up_with_new_api() {
         .expect("Failed to store message");
 
     // Test catch-up with new API
-    let channel_filter = Filter::Channel(channel_id.to_vec());
+    let channel_filter = Filter::Channel(channel_id.to_vec().into());
     let catch_up_stream = storage
         .catch_up(&channel_filter, None)
         .await
@@ -136,11 +137,11 @@ async fn test_catch_up_with_new_api() {
 async fn test_catch_up_request_with_unified_filter() {
     setup_tracing();
 
-    let channel_id = b"test_channel_123";
+    let channel_id: ChannelId = b"test_channel_123".to_vec().into();
 
     // Test CatchUpRequest with new unified Filter type
     let catch_up_request = CatchUpRequest {
-        filter: Filter::Channel(channel_id.to_vec()),
+        filter: Filter::Channel(channel_id.clone()),
         since: None,
         max_messages: Some(10),
         request_id: 123,
@@ -153,7 +154,7 @@ async fn test_catch_up_request_with_unified_filter() {
 
     // Verify the filter is correct
     match &catch_up_request.filter {
-        Filter::Channel(id) => assert_eq!(id, channel_id),
+        Filter::Channel(id) => assert_eq!(id, &channel_id),
         _ => panic!("Expected Channel filter"),
     }
 }
@@ -166,7 +167,7 @@ async fn test_filter_update_request() {
 
     // Test FilterUpdateRequest with new operations
     let operations = vec![
-        FilterOperation::add_channels(vec![b"general".to_vec(), b"tech".to_vec()]),
+        FilterOperation::add_channels(vec![b"general".to_vec().into(), b"tech".to_vec().into()]),
         FilterOperation::add_authors(vec![KeyId::from(*alice_key.id())]),
         FilterOperation::add_events(vec![zoe_wire_protocol::MessageId::from_content(
             b"important",
@@ -182,8 +183,8 @@ async fn test_filter_update_request() {
 
     // Check that all filters were applied correctly
     if let Some(filter_list) = &filters.filters {
-        assert!(filter_list.contains(&Filter::Channel(b"general".to_vec())));
-        assert!(filter_list.contains(&Filter::Channel(b"tech".to_vec())));
+        assert!(filter_list.contains(&Filter::Channel(b"general".to_vec().into())));
+        assert!(filter_list.contains(&Filter::Channel(b"tech".to_vec().into())));
         assert!(filter_list.contains(&Filter::Author(KeyId::from(*alice_key.id()))));
         assert!(
             filter_list.contains(&Filter::Event(zoe_wire_protocol::MessageId::from_content(

@@ -168,7 +168,7 @@ mod tests {
 
     #[test]
     fn test_installed_app_creation() {
-        let app_tag = vec![1, 2, 3, 4];
+        let app_tag = ChannelId::from([1u8; 32]);
         let app = InstalledApp::new(
             AppProtocolVariant::DigitalGroupsOrganizer,
             Version::new(1, 2, 3),
@@ -180,7 +180,7 @@ mod tests {
         assert_eq!(app.version.patch, 3);
         assert_eq!(app.app_tag, app_tag);
 
-        let app_simple_tag = vec![5, 6, 7, 8];
+        let app_simple_tag = ChannelId::from([1u8; 32]);
         let app_simple = InstalledApp::new_simple(
             AppProtocolVariant::Unknown("chat".to_string()),
             2,
@@ -205,7 +205,7 @@ mod tests {
         );
         assert_eq!(app.app_tag.len(), 32); // 32-byte random tag
 
-        let custom_tag = vec![1, 2, 3, 4];
+        let custom_tag = ChannelId::from([1u8; 32]);
         let app_custom = InstalledApp::new(
             AppProtocolVariant::Unknown("calendar".to_string()),
             Version::new(1, 0, 0),
@@ -216,7 +216,7 @@ mod tests {
 
     #[test]
     fn test_installed_app_channel_tag() {
-        let custom_tag = vec![1, 2, 3, 4];
+        let custom_tag = ChannelId::from([1u8; 32]);
         let app = InstalledApp::new(
             AppProtocolVariant::DigitalGroupsOrganizer,
             Version::new(1, 0, 0),
@@ -230,7 +230,7 @@ mod tests {
         let app = InstalledApp::new(
             AppProtocolVariant::DigitalGroupsOrganizer,
             Version::new(1, 2, 0),
-            vec![1, 2, 3, 4],
+            ChannelId::from([1u8; 32]),
         );
 
         let serialized = postcard::to_stdvec(&app).unwrap();
@@ -243,7 +243,7 @@ mod tests {
         let app = InstalledApp::new(
             AppProtocolVariant::DigitalGroupsOrganizer,
             Version::new(1, 2, 0),
-            vec![1, 2, 3, 4],
+            ChannelId::from([1u8; 32]),
         );
         assert_eq!(app.to_string(), "dgo v1.2.0");
     }

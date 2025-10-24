@@ -3,8 +3,8 @@ use rand::rngs::OsRng;
 use std::{sync::Arc, time::SystemTime};
 use zoe_message_store::storage::RedisMessageStorage;
 use zoe_wire_protocol::{
-    Filter, FilterOperation, FilterUpdateRequest, KeyId, KeyPair, Kind, Message, MessageFilters,
-    MessageFull, MessageId, Tag, VerifyingKey,
+    ChannelId, Filter, FilterOperation, FilterUpdateRequest, KeyId, KeyPair, Kind, Message,
+    MessageFilters, MessageFull, MessageId, Tag, VerifyingKey,
 };
 
 // Helper function to create test VerifyingKeys from byte arrays
@@ -54,7 +54,7 @@ fn create_test_message(channel_id: &[u8], author_keypair: &KeyPair, content: &st
         .as_secs();
 
     let tags = vec![Tag::Channel {
-        id: channel_id.to_vec(),
+        id: channel_id.to_vec().into(),
         relays: vec![],
     }];
 
@@ -74,13 +74,14 @@ async fn test_generic_filter_operations() {
     let mut filters = MessageFilters::default();
 
     // Test Add operation for channels
-    let add_channels = FilterOperation::add_channels(vec![b"general".to_vec(), b"tech".to_vec()]);
+    let add_channels =
+        FilterOperation::add_channels(vec![b"general".to_vec().into(), b"tech".to_vec().into()]);
     filters.apply_operation(&add_channels);
 
     // Check that channels were added
     let expected_filters = vec![
-        Filter::Channel(b"general".to_vec()),
-        Filter::Channel(b"tech".to_vec()),
+        Filter::Channel(b"general".to_vec().into()),
+        Filter::Channel(b"tech".to_vec().into()),
     ];
     assert_eq!(filters.filters, Some(expected_filters));
 
@@ -94,20 +95,20 @@ async fn test_generic_filter_operations() {
     if let Some(filter_list) = &filters.filters {
         assert!(filter_list.contains(&Filter::Author(alice_key)));
         assert!(filter_list.contains(&Filter::Author(bob_key)));
-        assert!(filter_list.contains(&Filter::Channel(b"general".to_vec())));
-        assert!(filter_list.contains(&Filter::Channel(b"tech".to_vec())));
+        assert!(filter_list.contains(&Filter::Channel(b"general".to_vec().into())));
+        assert!(filter_list.contains(&Filter::Channel(b"tech".to_vec().into())));
     } else {
         panic!("Expected filters to be Some");
     }
 
     // Test Remove operation
-    let remove_channel = FilterOperation::remove_channels(vec![b"general".to_vec()]);
+    let remove_channel = FilterOperation::remove_channels(vec![b"general".to_vec().into()]);
     filters.apply_operation(&remove_channel);
 
     // Check that "general" was removed but "tech" remains
     if let Some(filter_list) = &filters.filters {
-        assert!(!filter_list.contains(&Filter::Channel(b"general".to_vec())));
-        assert!(filter_list.contains(&Filter::Channel(b"tech".to_vec())));
+        assert!(!filter_list.contains(&Filter::Channel(b"general".to_vec().into())));
+        assert!(filter_list.contains(&Filter::Channel(b"tech".to_vec().into())));
     }
 
     // Test Add events
@@ -131,7 +132,7 @@ async fn test_generic_filter_operations() {
     // Test ReplaceAll with new filters
     let new_author = create_test_verifying_key_id(b"new-author");
     let new_filter_list = vec![
-        Filter::Channel(b"new-channel".to_vec()),
+        Filter::Channel(b"new-channel".to_vec().into()),
         Filter::Author(new_author),
     ];
     let replace_all = FilterOperation::ReplaceAll(new_filter_list.clone());
@@ -148,7 +149,7 @@ async fn test_atomic_multi_field_operations() {
     let user1_key = create_test_verifying_key_id(b"user1");
 
     let operations = vec![
-        FilterOperation::add_channels(vec![b"general".to_vec(), b"tech".to_vec()]),
+        FilterOperation::add_channels(vec![b"general".to_vec().into(), b"tech".to_vec().into()]),
         FilterOperation::add_authors(vec![alice_key]),
         FilterOperation::add_events(vec![MessageId::from_content(b"important")]),
         FilterOperation::add_users(vec![user1_key]),
@@ -161,8 +162,8 @@ async fn test_atomic_multi_field_operations() {
 
     // Check that all filters were added
     if let Some(filter_list) = &filters.filters {
-        assert!(filter_list.contains(&Filter::Channel(b"general".to_vec())));
-        assert!(filter_list.contains(&Filter::Channel(b"tech".to_vec())));
+        assert!(filter_list.contains(&Filter::Channel(b"general".to_vec().into())));
+        assert!(filter_list.contains(&Filter::Channel(b"tech".to_vec().into())));
         assert!(filter_list.contains(&Filter::Author(alice_key)));
         assert!(filter_list.contains(&Filter::Event(MessageId::from_content(b"important"))));
         assert!(filter_list.contains(&Filter::User(user1_key)));
@@ -223,7 +224,7 @@ async fn test_channel_streams_storage_and_retrieval() {
     println!("Stored msg4 with stream ID: {stream_id4}");
 
     // Test channel catch-up retrieval - should maintain arrival order
-    let channel_a_filter = Filter::Channel(channel_a.to_vec());
+    let channel_a_filter = Filter::Channel(channel_a.to_vec().into());
     let channel_a_stream = storage
         .catch_up(&channel_a_filter, None)
         .await
@@ -266,7 +267,7 @@ async fn test_channel_streams_storage_and_retrieval() {
     assert_eq!(content3, "Message 3 in channel A");
 
     // Test channel B catch-up
-    let channel_b_filter = Filter::Channel(channel_b.to_vec());
+    let channel_b_filter = Filter::Channel(channel_b.to_vec().into());
     let channel_b_stream = storage
         .catch_up(&channel_b_filter, None)
         .await
@@ -297,7 +298,7 @@ async fn test_channel_streams_storage_and_retrieval() {
 async fn test_filter_update_request() {
     // Test the FilterUpdateRequest structure
     let operations = vec![
-        FilterOperation::add_channels(vec![b"general".to_vec(), b"tech".to_vec()]),
+        FilterOperation::add_channels(vec![b"general".to_vec().into(), b"tech".to_vec().into()]),
         FilterOperation::remove_authors(vec![create_test_verifying_key_id(b"spammer")]),
         FilterOperation::add_events(vec![MessageId::from_content(b"important")]),
     ];
@@ -314,8 +315,8 @@ async fn test_filter_update_request() {
 
     // Check that channels were added correctly
     if let Some(filter_list) = &filters.filters {
-        assert!(filter_list.contains(&Filter::Channel(b"general".to_vec())));
-        assert!(filter_list.contains(&Filter::Channel(b"tech".to_vec())));
+        assert!(filter_list.contains(&Filter::Channel(b"general".to_vec().into())));
+        assert!(filter_list.contains(&Filter::Channel(b"tech".to_vec().into())));
         assert!(filter_list.contains(&Filter::Event(MessageId::from_content(b"important"))));
         // Authors should not contain the "spammer" we tried to remove
         assert!(!filter_list.iter().any(|f| matches!(f, Filter::Author(_))));
@@ -328,9 +329,11 @@ async fn test_filter_update_request() {
 async fn test_duplicate_prevention() {
     let mut filters = MessageFilters::default();
 
+    let channel: ChannelId = b"general".to_vec().into();
+
     // Add same channel twice
-    let add_channels1 = FilterOperation::add_channels(vec![b"general".to_vec()]);
-    let add_channels2 = FilterOperation::add_channels(vec![b"general".to_vec()]);
+    let add_channels1 = FilterOperation::add_channels(vec![channel.clone()]);
+    let add_channels2 = FilterOperation::add_channels(vec![channel.clone()]);
 
     filters.apply_operation(&add_channels1);
     filters.apply_operation(&add_channels2);
@@ -339,7 +342,7 @@ async fn test_duplicate_prevention() {
     if let Some(filter_list) = &filters.filters {
         let channel_count = filter_list
             .iter()
-            .filter(|f| matches!(f, Filter::Channel(ref c) if c == b"general"))
+            .filter(|f| matches!(f, Filter::Channel(ref c) if c == &channel))
             .count();
         assert_eq!(channel_count, 1);
     } else {
@@ -359,9 +362,9 @@ async fn test_comprehensive_scenario() {
 
     // Create initial filters (user starts with general channel)
     let mut filters = MessageFilters::default();
-    filters.apply_operation(&FilterOperation::add_channels(vec![
-        general_channel.to_vec()
-    ]));
+    filters.apply_operation(&FilterOperation::add_channels(vec![general_channel
+        .to_vec()
+        .into()]));
 
     // Store some messages in different channels
     let msg1 = create_test_message(general_channel, &keypair, "Welcome to general!");
@@ -378,7 +381,9 @@ async fn test_comprehensive_scenario() {
 
     // User joins tech channel (this is the race condition scenario we're solving)
     let join_tech = FilterUpdateRequest {
-        operations: vec![FilterOperation::add_channels(vec![tech_channel.to_vec()])],
+        operations: vec![FilterOperation::add_channels(vec![tech_channel
+            .to_vec()
+            .into()])],
     };
 
     // Apply the filter update (this would be atomic on server)
@@ -388,14 +393,14 @@ async fn test_comprehensive_scenario() {
 
     // Now user is subscribed to both general and tech
     if let Some(filter_list) = &filters.filters {
-        assert!(filter_list.contains(&Filter::Channel(general_channel.to_vec())));
-        assert!(filter_list.contains(&Filter::Channel(tech_channel.to_vec())));
+        assert!(filter_list.contains(&Filter::Channel(general_channel.to_vec().into())));
+        assert!(filter_list.contains(&Filter::Channel(tech_channel.to_vec().into())));
     } else {
         panic!("Expected filters to be Some");
     }
 
     // User can catch up on tech channel history
-    let tech_filter = Filter::Channel(tech_channel.to_vec());
+    let tech_filter = Filter::Channel(tech_channel.to_vec().into());
     let tech_stream = storage
         .catch_up(&tech_filter, None)
         .await
@@ -424,7 +429,7 @@ async fn test_comprehensive_scenario() {
     // User joins urgent channel and blocks a user in one atomic operation
     let complex_update = FilterUpdateRequest {
         operations: vec![
-            FilterOperation::add_channels(vec![urgent_channel.to_vec()]),
+            FilterOperation::add_channels(vec![urgent_channel.to_vec().into()]),
             FilterOperation::add_authors(vec![create_test_verifying_key_id(b"blocked_user")]), // Block by adding to authors filter (inverted logic for demo)
         ],
     };
@@ -435,9 +440,9 @@ async fn test_comprehensive_scenario() {
 
     // Verify complex update worked
     if let Some(filter_list) = &filters.filters {
-        assert!(filter_list.contains(&Filter::Channel(general_channel.to_vec())));
-        assert!(filter_list.contains(&Filter::Channel(tech_channel.to_vec())));
-        assert!(filter_list.contains(&Filter::Channel(urgent_channel.to_vec())));
+        assert!(filter_list.contains(&Filter::Channel(general_channel.to_vec().into())));
+        assert!(filter_list.contains(&Filter::Channel(tech_channel.to_vec().into())));
+        assert!(filter_list.contains(&Filter::Channel(urgent_channel.to_vec().into())));
         // Check that the blocked user author filter was added
         let blocked_user_key = create_test_verifying_key_id(b"blocked_user");
         assert!(filter_list.contains(&Filter::Author(blocked_user_key)));
@@ -446,7 +451,7 @@ async fn test_comprehensive_scenario() {
     }
 
     // Get urgent channel history
-    let urgent_filter = Filter::Channel(urgent_channel.to_vec());
+    let urgent_filter = Filter::Channel(urgent_channel.to_vec().into());
     let urgent_stream = storage
         .catch_up(&urgent_filter, None)
         .await
@@ -716,7 +721,7 @@ async fn test_all_signature_types_comprehensive() {
         .expect("ML-DSA-87 signature verification should succeed");
 
     // Test channel streaming with mixed signature types
-    let channel_filter = Filter::Channel(test_channel.to_vec());
+    let channel_filter = Filter::Channel(test_channel.to_vec().into());
     let channel_stream = storage
         .catch_up(&channel_filter, None)
         .await
@@ -862,7 +867,7 @@ async fn test_signature_type_ordering() {
         .as_secs();
 
     let tags = vec![Tag::Channel {
-        id: test_channel.to_vec(),
+        id: test_channel.to_vec().into(),
         relays: vec![],
     }];
 
@@ -926,7 +931,7 @@ async fn test_signature_type_ordering() {
         .expect("Failed to store Ed25519 message");
 
     // Retrieve messages and verify ordering
-    let channel_filter = Filter::Channel(test_channel.to_vec());
+    let channel_filter = Filter::Channel(test_channel.to_vec().into());
     let channel_stream = storage
         .catch_up(&channel_filter, None)
         .await

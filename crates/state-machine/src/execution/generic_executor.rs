@@ -262,7 +262,7 @@ where
         &self.store
     }
 
-    /// Get access to the factory for direct operations  
+    /// Get access to the factory for direct operations
     pub fn factory(&self) -> &TFactory {
         &self.factory
     }
@@ -280,6 +280,7 @@ mod tests {
             indexing::keys::{ExecuteReference, IndexKey},
             models::core::ActivityMeta,
         },
+        group::events::GroupId,
         identity::IdentityRef,
     };
 
@@ -524,7 +525,7 @@ mod tests {
         let activity_id = MessageId::from([1u8; 32]);
         let group_meta = ActivityMeta {
             activity_id,
-            group_id: vec![0u8; 32],
+            group_id: GroupId::from([1u8; 32]),
             actor: IdentityRef::Key(
                 zoe_wire_protocol::KeyPair::generate(&mut rand::thread_rng()).public_key(),
             ),

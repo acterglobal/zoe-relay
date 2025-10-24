@@ -460,7 +460,8 @@ mod tests {
         let channel_name = "e2e_test_channel";
 
         // Set up subscriptions for both clients to listen to the same channel
-        let channel_filter = zoe_wire_protocol::Filter::Channel(channel_name.as_bytes().to_vec());
+        let channel_filter =
+            zoe_wire_protocol::Filter::Channel(channel_name.as_bytes().to_vec().into());
 
         // Subscribe both clients to the channel
         messages_service1
@@ -479,7 +480,7 @@ mod tests {
         // Message from Client 1 to the channel
         let message1_content = "Hello from Client 1! 👋".as_bytes().to_vec();
         let channel_tag = zoe_wire_protocol::Tag::Channel {
-            id: channel_name.as_bytes().to_vec(),
+            id: channel_name.as_bytes().to_vec().into(),
             relays: vec![],
         };
 
@@ -1001,7 +1002,7 @@ mod tests {
         let messages_manager1 = MessagesManager::builder()
             .with_filters(zoe_wire_protocol::MessageFilters {
                 filters: Some(vec![zoe_wire_protocol::Filter::Channel(
-                    general_channel.as_bytes().to_vec(),
+                    general_channel.as_bytes().to_vec().into(),
                 )]),
             })
             .autosubscribe(true)
@@ -1020,8 +1021,9 @@ mod tests {
 
         // Step 2: Client 2 goes online and uploads a range of messages to the new channel
         let timestamp_base = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
+        // Publish a message after catch-up subscription is in place
         let channel_tag = zoe_wire_protocol::Tag::Channel {
-            id: new_channel.as_bytes().to_vec(),
+            id: new_channel.as_bytes().to_vec().into(),
             relays: vec![],
         };
 
@@ -1079,7 +1081,7 @@ mod tests {
         let original_stream = messages_manager1
             .clone()
             .catch_up_and_subscribe(
-                zoe_wire_protocol::Filter::Channel(new_channel.as_bytes().to_vec()),
+                zoe_wire_protocol::Filter::Channel(new_channel.as_bytes().to_vec().into()),
                 None,
             )
             .await?;
@@ -1134,7 +1136,7 @@ mod tests {
         // Explicitly ensure the filter is added (this should be redundant but let's be sure)
         messages_manager1
             .ensure_contains_filter(zoe_wire_protocol::Filter::Channel(
-                new_channel.as_bytes().to_vec(),
+                new_channel.as_bytes().to_vec().into(),
             ))
             .await?;
 

@@ -148,7 +148,7 @@ async fn test_encrypted_group_activity() {
     // Process the activity
     dga.publish_app_event(
         &result.group_id,
-        result.group_id.clone(),
+        result.group_id.clone().into(),
         activity_event,
         &alice_key,
     )
@@ -434,7 +434,7 @@ async fn test_subscription_filter_creation() {
     match filter {
         Tag::Channel { id, relays } => {
             // GroupId is ChannelId, so direct comparison
-            assert_eq!(id, result.group_id);
+            assert_eq!(id, result.group_id.into());
             assert!(relays.is_empty());
         }
         _ => panic!("Expected Channel tag"),
@@ -1253,7 +1253,7 @@ async fn test_join_group_preserves_all_group_metadata() {
             zoe_app_primitives::protocol::AppProtocolVariant::DigitalGroupsOrganizer,
             1,
             2,
-            vec![1, 2, 3, 4], // Custom channel tag
+            vec![1, 2, 3, 4].into(), // Custom channel tag
         ));
 
     let alice_manager = alice_manager.await;
@@ -1313,7 +1313,7 @@ async fn test_join_group_preserves_all_group_metadata() {
         .group_info
         .installed_apps
         .iter()
-        .find(|app| app.app_tag == vec![1, 2, 3, 4]);
+        .find(|app| app.app_tag == vec![1, 2, 3, 4].into());
     assert!(custom_app.is_some());
 }
 
@@ -1739,7 +1739,7 @@ async fn test_app_installation_update_processing() {
     let new_app = InstalledApp::new(
         AppProtocolVariant::DigitalGroupsOrganizer,
         Version::new(1, 0, 0),
-        vec![1, 2, 3, 4], // app_tag
+        vec![1, 2, 3, 4].into(), // app_tag
     );
 
     let app_installation_event = GroupActivityEvent::UpdateGroup {

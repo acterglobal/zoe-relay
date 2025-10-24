@@ -10,6 +10,7 @@ mod tests {
     use super::events::roles::GroupRole;
     use super::events::settings::{EncryptionSettings, GroupSettings};
     use super::events::{GroupActivityEvent, GroupInfo};
+    use crate::group::events::GroupId;
     use crate::metadata::Metadata;
     use crate::relay::RelayEndpoint;
     use std::net::{IpAddr, Ipv4Addr, SocketAddr};
@@ -215,10 +216,10 @@ mod tests {
 
     #[test]
     fn test_group_join_info() {
-        let channel_id = "test_channel_123".to_string();
+        let channel_id: GroupId = GroupId::from([12u8; 32]);
         let group_info = GroupInfo {
             name: "Test Group".to_string(),
-            group_id: channel_id.as_bytes().to_vec(),
+            group_id: channel_id.clone(),
             settings: GroupSettings::default(),
             key_info: create_test_group_key_info(blake3::Hash::from([1u8; 32])),
             metadata: Vec::new(),
@@ -232,7 +233,6 @@ mod tests {
         );
 
         let join_info = GroupJoinInfo::new(
-            channel_id.clone(),
             group_info.clone(),
             encryption_key,
             key_info.clone(),
@@ -243,10 +243,7 @@ mod tests {
             value: "alice".to_string(),
         });
 
-        assert_eq!(
-            join_info.group_info.group_id,
-            channel_id.as_bytes().to_vec()
-        );
+        assert_eq!(join_info.group_info.group_id, channel_id.clone().into());
         assert_eq!(join_info.group_info, group_info);
         assert_eq!(join_info.encryption_key, encryption_key);
         assert_eq!(join_info.key_info, key_info);
@@ -274,10 +271,9 @@ mod tests {
         .with_name("Secondary".to_string());
 
         let mut join_info = GroupJoinInfo::new(
-            "test".to_string(),
             GroupInfo {
                 name: "Test".to_string(),
-                group_id: "test".as_bytes().to_vec(),
+                group_id: GroupId::from([1u8; 32]),
                 settings: GroupSettings::default(),
                 key_info: create_test_group_key_info(blake3::Hash::from([1u8; 32])),
                 metadata: Vec::new(),
@@ -300,10 +296,9 @@ mod tests {
 
         // Test with no relays
         let empty_join_info = GroupJoinInfo::new(
-            "test".to_string(),
             GroupInfo {
                 name: "Test".to_string(),
-                group_id: "test".as_bytes().to_vec(),
+                group_id: GroupId::from([71u8; 32]),
                 settings: GroupSettings::default(),
                 key_info: create_test_group_key_info(blake3::Hash::from([1u8; 32])),
                 metadata: Vec::new(),
@@ -324,7 +319,7 @@ mod tests {
         // Test creating a GroupInfo struct
         let group_info = GroupInfo {
             name: "Test Group".to_string(),
-            group_id: "test_group".as_bytes().to_vec(),
+            group_id: GroupId::from([1u8; 32]),
             settings: GroupSettings::default(),
             key_info: create_test_group_key_info(blake3::Hash::from([1u8; 32])),
             metadata: Vec::new(),
@@ -413,10 +408,9 @@ mod tests {
     #[test]
     fn test_postcard_serialization_group_join_info() {
         let join_info = GroupJoinInfo::new(
-            "test_channel".to_string(),
             GroupInfo {
                 name: "Test".to_string(),
-                group_id: "test_channel".as_bytes().to_vec(),
+                group_id: GroupId::from([12u8; 32]),
                 settings: GroupSettings::default(),
                 key_info: create_test_group_key_info(blake3::Hash::from([1u8; 32])),
                 metadata: Vec::new(),

@@ -218,7 +218,7 @@ mod tests {
     fn test_any_dgo_model_dispatch() {
         let meta = ActivityMeta {
             activity_id: MessageId::from([1u8; 32]),
-            group_id: vec![2u8; 32],
+            group_id: [2u8; 32].into(),
             actor: IdentityRef::Key(
                 zoe_wire_protocol::KeyPair::generate(&mut rand::thread_rng()).public_key(),
             ),

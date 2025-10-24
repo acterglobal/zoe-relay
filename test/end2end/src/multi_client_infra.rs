@@ -17,15 +17,15 @@
 //! #[tokio::test]
 //! async fn test_multi_client_message_exchange() -> Result<()> {
 //!     let mut harness = MultiClientTestHarness::setup().await?;
-//!     
+//!
 //!     // Create multiple clients
 //!     let client_a = harness.create_client("alice").await?;
 //!     let client_b = harness.create_client("bob").await?;
 //!     let client_c = harness.create_client("charlie").await?;
-//!     
+//!
 //!     // Test protocol between clients
 //!     harness.test_message_broadcast(&[client_a, client_b, client_c]).await?;
-//!     
+//!
 //!     Ok(())
 //! }
 //! ```
@@ -40,7 +40,7 @@
 //!     // Setup server (using your own server setup)
 //!     let server_addr = setup_test_server().await?;
 //!     let server_public_key = get_server_public_key();
-//!     
+//!
 //!     // Create client and establish authenticated connection
 //!     let client_keypair = KeyPair::generate(&mut rand::rngs::OsRng);
 //!     let (connection, version, verified_count, warnings) =
@@ -49,11 +49,11 @@
 //!             &server_public_key,
 //!             &[&client_keypair],
 //!         ).await?;
-//!     
+//!
 //!     // Now use the connection for your custom protocol testing
 //!     let (mut send, mut recv) = connection.open_bi().await?;
 //!     // ... your protocol logic here
-//!     
+//!
 //!     Ok(())
 //! }
 //! ```
@@ -289,7 +289,7 @@ impl TestClient {
     ) -> Result<()> {
         let timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
         let channel_tag = Tag::Channel {
-            id: channel.as_bytes().to_vec(),
+            id: channel.as_bytes().to_vec().into(),
             relays: vec![],
         };
 
@@ -323,7 +323,7 @@ impl TestClient {
         message_stream: Receiver<zoe_wire_protocol::StreamMessage>,
         channel: &str,
     ) -> Result<Receiver<zoe_wire_protocol::StreamMessage>> {
-        let filter = Filter::Channel(channel.as_bytes().to_vec());
+        let filter = Filter::Channel(channel.as_bytes().to_vec().into());
 
         messages_manager
             .ensure_contains_filter(filter)

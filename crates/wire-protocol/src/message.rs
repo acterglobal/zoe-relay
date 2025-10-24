@@ -1230,7 +1230,7 @@ mod tests {
                 relays: vec!["relay2".to_string()],
             },
             Tag::Channel {
-                id: vec![3],
+                id: vec![3].into(),
                 relays: vec!["relay3".to_string()],
             },
         ];
@@ -1533,7 +1533,7 @@ mod tests {
             1714857600,
             Kind::Regular,
             vec![Tag::Channel {
-                id: vec![1],
+                id: vec![1].into(),
                 relays: vec!["relay1".to_string()],
             }],
         );

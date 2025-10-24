@@ -426,7 +426,7 @@ mod tests {
     fn test_filter_enum() {
         // Test that Filter variants work correctly
         let author = Filter::Author(create_test_verifying_key_id(b"alice"));
-        let channel = Filter::Channel(b"general".to_vec());
+        let channel = Filter::Channel(b"general".to_vec().into());
         let event = Filter::Event(MessageId::from_content(b"important"));
         let user = Filter::User(create_test_verifying_key_id(b"bob"));
 
@@ -457,7 +457,7 @@ mod tests {
         assert!(filters.is_empty());
 
         // Add some filters
-        filters.filters = Some(vec![Filter::Channel(b"general".to_vec())]);
+        filters.filters = Some(vec![Filter::Channel(b"general".to_vec().into())]);
         assert!(!filters.is_empty());
 
         // Clear filters but add authors
@@ -472,7 +472,7 @@ mod tests {
     #[test]
     fn test_filter_operations() {
         // Test convenience constructors
-        let channels = vec![b"general".to_vec(), b"tech".to_vec()];
+        let channels = vec![b"general".to_vec().into(), b"tech".to_vec().into()];
         let authors = vec![create_test_verifying_key_id(b"alice")];
 
         // Test add operations
@@ -480,8 +480,8 @@ mod tests {
         match add_channels {
             FilterOperation::Add(filters) => {
                 assert_eq!(filters.len(), 2);
-                assert!(filters.contains(&Filter::Channel(b"general".to_vec())));
-                assert!(filters.contains(&Filter::Channel(b"tech".to_vec())));
+                assert!(filters.contains(&Filter::Channel(b"general".to_vec().into())));
+                assert!(filters.contains(&Filter::Channel(b"tech".to_vec().into())));
             }
             _ => panic!("Expected Add operation"),
         }
@@ -496,12 +496,12 @@ mod tests {
         }
 
         // Test remove operations
-        let remove_channels = FilterOperation::remove_channels(channels.clone());
+        let remove_channels = FilterOperation::remove_channels(channels.clone().into());
         match remove_channels {
             FilterOperation::Remove(filters) => {
                 assert_eq!(filters.len(), 2);
-                assert!(filters.contains(&Filter::Channel(b"general".to_vec())));
-                assert!(filters.contains(&Filter::Channel(b"tech".to_vec())));
+                assert!(filters.contains(&Filter::Channel(b"general".to_vec().into())));
+                assert!(filters.contains(&Filter::Channel(b"tech".to_vec().into())));
             }
             _ => panic!("Expected Remove operation"),
         }
@@ -517,7 +517,7 @@ mod tests {
         assert!(filters.is_empty());
 
         // Add some filters
-        let add_op = FilterOperation::add_channels(vec![b"general".to_vec()]);
+        let add_op = FilterOperation::add_channels(vec![b"general".to_vec().into()]);
         filters.apply_operation(&add_op);
         assert!(!filters.is_empty());
         assert_eq!(filters.filters.as_ref().unwrap().len(), 1);
@@ -529,7 +529,7 @@ mod tests {
         assert_eq!(filters.filters.as_ref().unwrap().len(), 2);
 
         // Remove a filter
-        let remove_op = FilterOperation::remove_channels(vec![b"general".to_vec()]);
+        let remove_op = FilterOperation::remove_channels(vec![b"general".to_vec().into()]);
         filters.apply_operation(&remove_op);
         assert_eq!(filters.filters.as_ref().unwrap().len(), 1);
 
@@ -543,12 +543,15 @@ mod tests {
     fn test_catchup_request_constructors() {
         // Test channel catch-up request
         let channel_request = CatchUpRequest::for_channel(
-            b"general".to_vec(),
+            b"general".to_vec().into(),
             Some("0-0".to_string()),
             Some(100),
             123,
         );
-        assert_eq!(channel_request.filter, Filter::Channel(b"general".to_vec()));
+        assert_eq!(
+            channel_request.filter,
+            Filter::Channel(b"general".to_vec().into())
+        );
         assert_eq!(channel_request.request_id, 123);
 
         // Test author catch-up request

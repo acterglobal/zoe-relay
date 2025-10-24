@@ -11,7 +11,11 @@ use zoe_app_primitives::extra::rpc::whatsappbot::{
     WhatsAppBot as WhatsAppBotService, WhatsAppBotSessionInit, WhatsAppBotSessionInitFailure,
     WhatsAppBotSessionInitResponse,
 };
-use zoe_client::{Client, client::ZoeClientMessageManager, pqxdh::PqxdhProtocolHandler};
+use zoe_client::{
+    Client,
+    client::ZoeClientMessageManager,
+    pqxdh::{PqxdhProtocolHandler, PqxdhSessionId},
+};
 use zoe_wire_protocol::{
     Tag, VerifyingKey,
     version::{Version, VersionReq},
@@ -78,7 +82,9 @@ impl ZoeBridgeBot {
     }
 
     /// Create a PQXDH connection stream
-    pub async fn pqxdh_connection_stream<T>(&self) -> Result<impl Stream<Item = ([u8; 32], T)>>
+    pub async fn pqxdh_connection_stream<T>(
+        &self,
+    ) -> Result<impl Stream<Item = (PqxdhSessionId, T)>>
     where
         T: serde::Serialize + for<'de> serde::Deserialize<'de> + Send,
     {
@@ -94,7 +100,11 @@ impl ZoeBridgeBot {
     }
 
     /// Send a message via PQXDH
-    pub async fn send_pqxdh_message<T>(&self, session_id: &[u8; 32], message: &T) -> Result<()>
+    pub async fn send_pqxdh_message<T>(
+        &self,
+        session_id: &PqxdhSessionId,
+        message: &T,
+    ) -> Result<()>
     where
         T: serde::Serialize + for<'de> serde::Deserialize<'de> + Clone,
     {
@@ -130,7 +140,9 @@ impl ZoeBridgeBot {
                 );
 
                 // Send response directly
-                let _ = self.send_pqxdh_message(&session_id, &response).await;
+                let _ = self
+                    .send_pqxdh_message(&PqxdhSessionId::new(session_id), &response)
+                    .await;
                 // TODO: drop the session and burn the code.
 
                 return Err(anyhow::anyhow!("Invalid session initialization message"));
@@ -152,7 +164,9 @@ impl ZoeBridgeBot {
                 );
 
                 // Send response directly
-                let _ = self.send_pqxdh_message(&session_id, &response).await;
+                let _ = self
+                    .send_pqxdh_message(&PqxdhSessionId::new(session_id), &response)
+                    .await;
 
                 return Err(anyhow::anyhow!("Failed to parse version requirement"));
             }
@@ -198,7 +212,8 @@ impl ZoeBridgeBot {
         };
 
         // Send the response directly
-        self.send_pqxdh_message(&session_id, &response).await?;
+        self.send_pqxdh_message(&PqxdhSessionId::new(session_id), &response)
+            .await?;
 
         match response {
             WhatsAppBotSessionInitResponse::Success(_) => {
@@ -230,7 +245,10 @@ impl ZoeBridgeBot {
             session_id,
         );
 
-        let transport = self.pqxdh_handler.tarpc_transport(session_id).await?;
+        let transport = self
+            .pqxdh_handler
+            .tarpc_transport(PqxdhSessionId::new(session_id))
+            .await?;
 
         // Spawn the tarpc server
         let server_task = tokio::spawn(async move {
@@ -375,7 +393,7 @@ impl ZoeBridgeBot {
 
         let pqxdh_events = TokioStreamExt::map(pqxdh_stream, |(session_id, raw_data)| {
             BridgeEvent::PqxdhConnection {
-                session_id,
+                session_id: *session_id,
                 raw_data,
             }
         });

@@ -1170,7 +1170,7 @@ mod app_integration_tests {
 
     #[test]
     fn test_multiple_installed_apps() {
-        let custom_channel_id = vec![1, 2, 3, 4];
+        let custom_channel_id = ChannelId::from([1u8; 32]);
         let builder = CreateGroupBuilder::new("Multi-App Group".to_string())
             .install_dgo_app_default()
             .install_app(

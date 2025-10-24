@@ -35,7 +35,7 @@ async fn test_broadcast_channel_receiver_lifecycle_issue() -> Result<()> {
 
     // Create a test filter
     let test_tag = Tag::Channel {
-        id: b"test_channel".to_vec(),
+        id: b"test_channel".to_vec().into(),
         relays: vec![],
     };
     let test_filter = Filter::from(test_tag.clone());
@@ -137,7 +137,7 @@ async fn test_broadcast_channel_correct_usage_pattern() -> Result<()> {
 
     // Create a test filter
     let test_tag = Tag::Channel {
-        id: b"test_channel_correct".to_vec(),
+        id: b"test_channel_correct".to_vec().into(),
         relays: vec![],
     };
     let test_filter = Filter::from(test_tag.clone());
@@ -245,7 +245,7 @@ async fn test_broadcast_channel_multiple_receivers() -> Result<()> {
 
     // Create a test filter
     let test_tag = Tag::Channel {
-        id: b"test_channel_multi".to_vec(),
+        id: b"test_channel_multi".to_vec().into(),
         relays: vec![],
     };
     let test_filter = Filter::from(test_tag.clone());

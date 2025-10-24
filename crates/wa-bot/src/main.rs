@@ -562,7 +562,7 @@ async fn run_pqxdh_service(bridge_bot: &ZoeBridgeBot) -> Result<()> {
             while let Some((session_id, connection_request)) = connection_stream.next().await {
                 info!("🔗 New PQXDH connection from: {}", connection_request.client_name);
                 info!("📨 Initial message: {}", connection_request.message);
-                info!("🆔 Session ID: {}", hex::encode(session_id));
+                info!("🆔 Session ID: {}", hex::encode(*session_id));
 
                 // Send a welcome response
                 let response = format!("Welcome to WhatsApp Bot, {}! Your connection is established.", connection_request.client_name);
@@ -666,7 +666,7 @@ async fn run_test_pqxdh_connection(
         .map_err(|e| anyhow::anyhow!("Failed to connect to target WhatsApp bot: {}", e))?;
 
     info!("✅ PQXDH connection established!");
-    info!("🆔 Session ID: {}", hex::encode(session_id));
+    info!("🆔 Session ID: {}", hex::encode(*session_id));
 
     // Pin the stream to make it work with timeout
     let mut response_stream = Box::pin(response_stream);

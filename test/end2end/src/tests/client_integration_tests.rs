@@ -2,7 +2,7 @@
 //!
 //! This module contains end-to-end tests for client functionality including:
 //! - Message posting and retrieval
-//! - User data storage and retrieval  
+//! - User data storage and retrieval
 //! - Subscription and unsubscription functionality
 
 use crate::infra::TestInfrastructure;
@@ -38,7 +38,7 @@ async fn test_message_posting_and_retrieval() -> Result<()> {
     let test_channel = format!("test_channel_{}", rand::thread_rng().next_u32());
 
     // Subscribe to the channel FIRST (like working test)
-    let filter = Filter::Channel(test_channel.as_bytes().to_vec());
+    let filter = Filter::Channel(test_channel.as_bytes().to_vec().into());
 
     messages_service
         .ensure_contains_filter(filter)
@@ -53,7 +53,7 @@ async fn test_message_posting_and_retrieval() -> Result<()> {
     // Publish a test message
     let timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
     let channel_tag = Tag::Channel {
-        id: test_channel.as_bytes().to_vec(),
+        id: test_channel.as_bytes().to_vec().into(),
         relays: vec![],
     };
 
@@ -248,7 +248,7 @@ async fn test_subscription_unsubscription_functionality() -> Result<()> {
     let test_channel = format!("sub_test_{}", rand::thread_rng().next_u32());
 
     // Step 1: Subscribe to a specific channel
-    let filter = Filter::Channel(test_channel.as_bytes().to_vec());
+    let filter = Filter::Channel(test_channel.as_bytes().to_vec().into());
 
     messages_service
         .ensure_contains_filter(filter)
@@ -263,7 +263,7 @@ async fn test_subscription_unsubscription_functionality() -> Result<()> {
     // Step 2: Test that subscription works by publishing a message
     let timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
     let channel_tag = Tag::Channel {
-        id: test_channel.as_bytes().to_vec(),
+        id: test_channel.as_bytes().to_vec().into(),
         relays: vec![],
     };
 
@@ -378,7 +378,7 @@ async fn test_all_signature_types_e2e() -> Result<()> {
     info!("📡 All clients connected to message service");
 
     // Subscribe all clients to the test channel
-    let filter = Filter::Channel(test_channel.as_bytes().to_vec());
+    let filter = Filter::Channel(test_channel.as_bytes().to_vec().into());
 
     ed25519_service
         .ensure_contains_filter(filter.clone())
@@ -408,7 +408,7 @@ async fn test_all_signature_types_e2e() -> Result<()> {
     // Create and publish messages from each client
     let timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
     let channel_tag = Tag::Channel {
-        id: test_channel.as_bytes().to_vec(),
+        id: test_channel.as_bytes().to_vec().into(),
         relays: vec![],
     };
 
@@ -624,7 +624,7 @@ async fn test_signature_type_interoperability_e2e() -> Result<()> {
     let ml_dsa_65_service = ml_dsa_65_persistence.messages_manager().clone();
 
     // Subscribe both clients to the same channel
-    let filter = Filter::Channel(test_channel.as_bytes().to_vec());
+    let filter = Filter::Channel(test_channel.as_bytes().to_vec().into());
 
     ed25519_service
         .ensure_contains_filter(filter.clone())
@@ -636,7 +636,7 @@ async fn test_signature_type_interoperability_e2e() -> Result<()> {
     // Ed25519 client sends message to ML-DSA-65 client
     let timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
     let channel_tag = Tag::Channel {
-        id: test_channel.as_bytes().to_vec(),
+        id: test_channel.as_bytes().to_vec().into(),
         relays: vec![],
     };
 

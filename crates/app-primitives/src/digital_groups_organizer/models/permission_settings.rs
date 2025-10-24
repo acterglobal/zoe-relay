@@ -152,7 +152,7 @@ mod tests {
         let mut rng = OsRng;
         let keypair = KeyPair::generate(&mut rng);
         let actor = keypair.public_key();
-        let group_id = vec![1u8; 32];
+        let group_id = [1u8; 32].into();
 
         let meta = ActivityMeta {
             activity_id: MessageId::from_bytes([2; 32]),

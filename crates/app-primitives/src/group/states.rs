@@ -290,7 +290,7 @@ pub type GroupStateResult<T> = Result<T, GroupStateError>;
 /// member.last_active = join_time + 3600; // 1 hour later
 ///
 /// // Check how long they've been inactive
-/// let current_time = join_time + 7200; // 2 hours later  
+/// let current_time = join_time + 7200; // 2 hours later
 /// let inactive_duration = current_time - member.last_active;
 /// assert_eq!(inactive_duration, 3600); // 1 hour inactive
 /// ```
@@ -427,7 +427,7 @@ pub struct CrossChannelMetrics {
     pub reconstructions_performed: u64,
     pub reconstruction_time_ms: u64,
 
-    /// Permission lookup metrics  
+    /// Permission lookup metrics
     pub permission_lookups: u64,
     pub permission_lookup_time_ms: u64,
 
@@ -1598,7 +1598,7 @@ mod tests {
     pub(crate) fn create_test_group_info() -> GroupInfo {
         GroupInfo {
             name: "Test Group".to_string(),
-            group_id: [1u8; 32].to_vec(),
+            group_id: [1u8; 32].into(),
             settings: GroupSettings::default(),
             key_info: create_test_group_key_info(),
             metadata: vec![

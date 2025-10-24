@@ -43,7 +43,7 @@ pub type DgoExecutor<S> = GenericExecutor<DgoFactory<S>, S>;
 /// Type alias for DGO events (for consistency)
 pub type DgoEvent = DgoActivityEvent;
 
-/// Type alias for DGO models (for consistency)  
+/// Type alias for DGO models (for consistency)
 pub type DgoModel = AnyDgoModel;
 
 /// Factory for creating DGO models from events
@@ -279,7 +279,7 @@ mod tests {
         let activity_id = MessageId::from([1u8; 32]);
         let group_meta = ActivityMeta {
             activity_id,
-            group_id: vec![0u8; 32],
+            group_id: GroupId::from([2u8; 32]),
             actor: IdentityRef::Key(
                 zoe_wire_protocol::KeyPair::generate(&mut rand::thread_rng()).public_key(),
             ),
@@ -335,7 +335,7 @@ mod tests {
         let model_id = MessageId::from([1u8; 32]);
         let create_group_meta = ActivityMeta {
             activity_id: model_id,
-            group_id: vec![0u8; 32],
+            group_id: GroupId::from([1u8; 32]),
             actor: IdentityRef::Key(
                 zoe_wire_protocol::KeyPair::generate(&mut rand::thread_rng()).public_key(),
             ),
@@ -374,7 +374,7 @@ mod tests {
         let activity_id = MessageId::from([2u8; 32]);
         let update_group_meta = ActivityMeta {
             activity_id,
-            group_id: vec![0u8; 32],
+            group_id: GroupId::from([0u8; 32]),
             actor: IdentityRef::Key(
                 zoe_wire_protocol::KeyPair::generate(&mut rand::thread_rng()).public_key(),
             ),
@@ -414,7 +414,7 @@ mod tests {
         let actor = IdentityRef::Key(
             zoe_wire_protocol::KeyPair::generate(&mut rand::thread_rng()).public_key(),
         );
-        let group_id = vec![1u8; 32];
+        let group_id = GroupId::from([1u8; 32]);
         let actor_role = zoe_app_primitives::group::events::roles::GroupRole::Member;
         let state_message_id = zoe_wire_protocol::MessageId::from([2u8; 32]);
         let group_permissions =
@@ -449,7 +449,7 @@ mod tests {
         let actor = IdentityRef::Key(
             zoe_wire_protocol::KeyPair::generate(&mut rand::thread_rng()).public_key(),
         );
-        let group_id = vec![1u8; 32];
+        let group_id = GroupId::from([1u8; 32]);
         let actor_role = zoe_app_primitives::group::events::roles::GroupRole::Admin;
         let state_message_id = zoe_wire_protocol::MessageId::from([3u8; 32]);
         let group_permissions =
@@ -549,7 +549,7 @@ mod tests {
         let actor = IdentityRef::Key(
             zoe_wire_protocol::KeyPair::generate(&mut rand::thread_rng()).public_key(),
         );
-        let group_id = vec![1u8; 32];
+        let group_id = [1u8; 32].into();
         let actor_role = zoe_app_primitives::group::events::roles::GroupRole::Member;
         let state_message_id = zoe_wire_protocol::MessageId::from([4u8; 32]);
         let group_permissions =
@@ -575,7 +575,7 @@ mod tests {
         let factory = DgoFactory::load_state(&store).await.unwrap();
 
         // Create a proper IndexKey for testing
-        let group_id = vec![1u8; 32];
+        let group_id: GroupId = [1u8; 32].into();
         let list_id =
             zoe_app_primitives::digital_groups_organizer::indexing::keys::IndexKey::GroupModels(
                 group_id.clone(),
@@ -634,7 +634,7 @@ mod tests {
         let activity_id = MessageId::from([5u8; 32]);
         let group_meta = ActivityMeta {
             activity_id,
-            group_id: vec![0u8; 32],
+            group_id: GroupId::from([1u8; 32]),
             actor: IdentityRef::Key(
                 zoe_wire_protocol::KeyPair::generate(&mut rand::thread_rng()).public_key(),
             ),

@@ -15,12 +15,6 @@ use flutter_rust_bridge::frb;
 /// keys, channel information, and relay endpoints for communication.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct GroupJoinInfo {
-    /// Hash ID of the initial CreateGroup message
-    ///
-    /// This serves as the unique channel ID for the group and is derived
-    /// from the Blake3 hash of the initial CreateGroup message.
-    pub channel_id: String,
-
     /// Group information from the CreateGroup event
     ///
     /// Contains the group name, description, metadata, settings, and other
@@ -59,14 +53,12 @@ pub struct GroupJoinInfo {
 impl GroupJoinInfo {
     /// Create new group join information
     pub fn new(
-        channel_id: String,
         group_info: GroupInfo,
         encryption_key: [u8; 32],
         key_info: GroupKeyInfo,
         relay_endpoints: Vec<RelayEndpoint>,
     ) -> Self {
         Self {
-            channel_id,
             group_info,
             encryption_key,
             key_info,

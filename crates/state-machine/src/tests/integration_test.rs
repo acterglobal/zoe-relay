@@ -107,7 +107,7 @@ mod tests {
         // Create a group with multiple DGO apps (different channels)
         let dgo_app1 = default_dgo_app();
         let mut dgo_app2 = default_dgo_app();
-        dgo_app2.app_tag = vec![2, 2, 2, 2]; // Different channel
+        dgo_app2.app_tag = vec![2, 2, 2, 2].into(); // Different channel
 
         let create_group = CreateGroupBuilder::new("Multi-App Group".to_string())
             .description("A group with multiple apps".to_string())

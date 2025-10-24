@@ -102,7 +102,7 @@ async fn test_pqxdh_simple_echo_e2e() -> Result<()> {
     // Alice echoes the message back
     let echo_message = format!("Echo: {received_message}");
     alice_handler
-        .send_message(&alice_session_id, &echo_message)
+        .send_message(&alice_session_id.clone(), &echo_message)
         .await
         .unwrap();
 
@@ -134,7 +134,7 @@ async fn test_pqxdh_simple_echo_e2e() -> Result<()> {
 
     let mut alice_listen_stream = Box::pin(
         alice_handler
-            .listen_for_messages::<String>(alice_session_id, true)
+            .listen_for_messages::<String>(alice_session_id.clone(), true)
             .await?,
     );
 
