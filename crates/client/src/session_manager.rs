@@ -229,8 +229,13 @@ impl<S: StateStorage + 'static, M: MessagesManagerTrait + Clone + 'static> Sessi
         let mut group_updates = group_manager.subscribe_to_updates();
 
         let task = tokio::spawn(async move {
-            while let Ok(update) = group_updates.recv().await {
-                tracing::debug!("Received group manager update: {:?}", update);
+            loop {
+                let Ok(update) = group_updates.recv().await.inspect_err(|e| {
+                    tracing::error!(error=?e, "Failed to receive group manager update");
+                }) else {
+                    continue;
+                };
+                tracing::debug!(?update, "Received group manager update");
                 match update {
                     GroupDataUpdate::GroupAdded(group_session)
                     | GroupDataUpdate::GroupUpdated(group_session) => {
@@ -258,9 +263,7 @@ impl<S: StateStorage + 'static, M: MessagesManagerTrait + Clone + 'static> Sessi
                     }
                 }
             }
-            tracing::debug!("Group manager listener task ended");
         });
-
         tracing::debug!("Group manager listener started");
         Ok((group_manager, task))
     }

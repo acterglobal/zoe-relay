@@ -106,13 +106,12 @@ impl Client {
 
         let poller = stream!({
             loop {
-                let update = match updates_stream.recv().await {
-                    Err(e) => {
-                        tracing::error!("Error receiving group update: {}", e);
-                        yield;
-                        continue;
-                    }
-                    Ok(update) => update,
+                let Ok(update) = updates_stream.recv().await.map_err(|e| {
+                    tracing::error!("Error receiving group update: {}", e);
+                    e
+                }) else {
+                    yield;
+                    continue;
                 };
                 match update {
                     GroupDataUpdate::GroupAdded(group) => {

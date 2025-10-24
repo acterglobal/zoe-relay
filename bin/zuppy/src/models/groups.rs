@@ -53,12 +53,12 @@ impl Groups {
 
         let zoe = zoe.clone();
         let watch_task = cx.spawn(async move |w: WeakEntity<Self>, cx| {
-            let (groups, diff_stream, updates_stream) = match zoe.groups_view().await {
-                Ok(view) => view,
-                Err(err) => {
+            let Ok((groups, diff_stream, updates_stream)) =
+                zoe.groups_view().await.inspect_err(|err| {
                     tracing::error!(?err, "Error getting groups view");
-                    return;
-                }
+                })
+            else {
+                return;
             };
 
             {
