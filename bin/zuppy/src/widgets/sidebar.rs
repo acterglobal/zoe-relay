@@ -46,7 +46,7 @@ impl Collapsible for GroupsSidebar {
 
 impl RenderOnce for GroupsSidebar {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
-        cx.read_entity(&self.groups, |state, cx| {
+        cx.read_entity(&self.groups, |state, _cx| {
             if state.groups.is_empty() {
                 SidebarGroup::new("Sheets").child(
                     SidebarMenu::new().child(

@@ -7,8 +7,8 @@ use eyeball_im::VectorDiff;
 use futures::Stream;
 use zoe_app_primitives::{
     group::events::{
-        GroupId, GroupInfoUpdate, GroupInfoUpdateContent, permissions::GroupAction,
-        roles::GroupRole, settings::GroupSettings,
+        GroupId, GroupInfoUpdateContent, permissions::GroupAction, roles::GroupRole,
+        settings::GroupSettings,
     },
     identity::IdentityRef,
     metadata::Metadata,
@@ -20,9 +20,7 @@ use zoe_state_machine::{
     state::GroupState,
 };
 
-#[cfg(feature = "frb-api")]
-use flutter_rust_bridge::frb;
-use zoe_wire_protocol::{KeyPair, Message, MessageId};
+use zoe_wire_protocol::{KeyPair, MessageId};
 
 #[derive(Debug, Eq, PartialEq)]
 pub struct SimpleGroupView {

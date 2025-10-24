@@ -6,7 +6,7 @@ use std::{
 
 use eyeball::{AsyncLock, SharedObservable};
 use futures::{Stream, StreamExt};
-use zoe_wire_protocol::{Filter, KeyId, MessageFull, PqxdhEncryptedContent, Tag};
+use zoe_wire_protocol::{Filter, MessageFull, PqxdhEncryptedContent, Tag};
 
 use super::{PqxdhProtocolState, PqxdhSessionId, Result};
 use crate::pqxdh::PqxdhError;

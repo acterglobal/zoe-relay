@@ -5,8 +5,7 @@ use gpui::{
     SharedString, Stateful, StatefulInteractiveElement, Styled, WeakEntity, Window, div,
 };
 use gpui_component::{
-    ActiveTheme, ContextModal, StyledExt, group_box::GroupBox, notification::NotificationType,
-    v_flex,
+    ContextModal, StyledExt, group_box::GroupBox, notification::NotificationType,
 };
 use gpui_router::use_params;
 use zoe_app_primitives::{
@@ -28,8 +27,8 @@ pub struct SheetPage {
 
 impl SheetPage {
     pub fn new(
-        window: &mut Window,
-        cx: &mut Context<Self>,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
         client_state: Entity<ClientState>,
         groups: Entity<Groups>,
     ) -> Self {
@@ -101,7 +100,7 @@ impl SheetPage {
 
     fn render_title(
         &mut self,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut Context<Self>,
         group: Arc<SimpleGroupView>,
     ) -> Stateful<Div> {
@@ -172,7 +171,7 @@ impl SheetPage {
     }
     fn render_description(
         &mut self,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut Context<Self>,
         group: Arc<SimpleGroupView>,
     ) -> Stateful<Div> {

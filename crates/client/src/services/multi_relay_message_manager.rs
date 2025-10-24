@@ -5,12 +5,10 @@ use std::time::SystemTime;
 use async_broadcast::{Receiver, Sender as BroadcastSender};
 use async_trait::async_trait;
 use futures::stream::Stream;
-use quinn::udp::BATCH_SIZE;
 use tokio::sync::RwLock;
 use tokio::task::JoinHandle;
 
 use eyeball::{AsyncLock, SharedObservable};
-use tokio_util::time::delay_queue::Expired;
 use zoe_client_storage::MessageStorage;
 use zoe_wire_protocol::{
     CatchUpResponse, Filter, KeyId, MessageFull, PublishResult, StoreKey, StreamMessage,
@@ -52,7 +50,7 @@ pub struct RelayConnection {
     /// Relay-specific subscription state
     pub subscription_state: SubscriptionState,
     /// Task for syncing messages from the relay
-    sync_task: JoinHandle<()>,
+    _sync_task: JoinHandle<()>,
 }
 
 /// Multi-relay message manager that provides unified messaging across multiple relays
@@ -149,7 +147,7 @@ impl<S: MessageStorage + 'static> MultiRelayMessageManager<S> {
             connection_state: ConnectionState::Connected,
             last_seen: SystemTime::now(),
             subscription_state: SubscriptionState::default(),
-            sync_task: task,
+            _sync_task: task,
         };
 
         // Add to our connections map

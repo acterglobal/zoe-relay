@@ -12,7 +12,7 @@ pub struct ZuppyApp {
     sidebar: Entity<ZuppySidebar>,
     status_bar: Entity<StatusBar>,
     router: Entity<Router>,
-    groups: Entity<Groups>,
+    _groups: Entity<Groups>,
 }
 
 impl ZuppyApp {
@@ -26,7 +26,7 @@ impl ZuppyApp {
             sidebar: cx.new(|_| ZuppySidebar::new(groups.clone())),
             status_bar: cx.new(|cx| StatusBar::new(client_state.clone(), cx)),
             router: cx.new(|cx| Router::new(win, cx, client_state.clone(), groups.clone())),
-            groups,
+            _groups: groups,
         }
     }
 }

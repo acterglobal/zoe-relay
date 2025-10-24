@@ -7,7 +7,7 @@ use quinn::{Connection, Endpoint};
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
-use tracing::info;
+use tracing::trace;
 use zoe_client_storage::{SqliteMessageStorage, StorageConfig as DbConfig};
 use zoe_wire_protocol::{KeyPair, VerifyingKey, connection::client::create_client_endpoint};
 
@@ -242,23 +242,12 @@ impl RelayClientInner {
         server_addr: SocketAddr,
         server_public_key: &VerifyingKey,
     ) -> Result<(Endpoint, Connection)> {
-        info!("🚀 Starting relay client with transport keys");
-        info!(
-            "🔑 Client TLS key: {} ({})",
-            client_keypair_tls.public_key(),
-            client_keypair_tls.algorithm()
-        );
-        info!(
-            "🔑 Client inner public key id: {}",
-            hex::encode(client_keypair_inner.public_key().id())
-        );
-        info!("🌐 Connecting to server: {}", server_addr);
-        info!(
-            "🔐 Server public key: {} ({})",
-            hex::encode(server_public_key.id()),
-            server_public_key.algorithm()
-        );
-
+        trace!(server_addr = ?server_addr,
+            server_pub_key_id = ?server_public_key.id(),
+            server_key_algorithm = %server_public_key.algorithm(),
+            client_pub_key_id = ?client_keypair_inner.public_key().id(),
+            client_key_algorithm = %client_keypair_tls.algorithm(),
+            "Starting relay client with transport keys");
         // Create client endpoint and establish QUIC connection
         let client_endpoint = create_client_endpoint(server_public_key)?;
         let connection = client_endpoint.connect(server_addr, "localhost")?.await?;
@@ -270,10 +259,7 @@ impl RelayClientInner {
             &client_protocol_config,
         ) {
             Ok(negotiated_version) => {
-                info!(
-                    "✅ Connected to relay server with protocol: {}",
-                    negotiated_version
-                );
+                trace!(%negotiated_version, "Connected to relay server with protocol");
             }
             Err(e) => {
                 return Err(ClientError::ProtocolError(format!(
@@ -299,10 +285,7 @@ impl RelayClientInner {
             return Err(anyhow::anyhow!("ML-DSA handshake failed").into());
         };
 
-        info!(
-            "🔐 ML-DSA handshake completed: {} out of {} keys verified",
-            verified_count, 1
-        );
+        trace!(verified_count, "ML-DSA handshake completed: keys verified",);
 
         Ok((client_endpoint, connection))
     }
