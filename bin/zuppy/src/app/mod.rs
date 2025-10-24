@@ -1,10 +1,13 @@
+pub mod args;
+pub mod layout;
+
 use crate::models::groups::Groups;
 use crate::router::Router;
-use crate::widgets::sidebar::ZuppySidebar;
 use gpui::{AppContext, Context, Entity, IntoElement, ParentElement, Render, Styled, Window, div};
 use gpui_component::{ActiveTheme, Root, v_flex};
 
-use crate::widgets::status_bar::StatusBar;
+use layout::sidebar::ZuppySidebar;
+use layout::status_bar::StatusBar;
 
 use crate::models::client_state::ClientState;
 

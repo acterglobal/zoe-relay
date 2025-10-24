@@ -23,6 +23,7 @@ anyhow.workspace = true
 gpui-router = "0.2.4"
 serde_json.workspace = true
 eyeball-im.workspace = true
+clap.workspace = true
 
 # smallvec is included here for convenience, it is used by gpui when creating
 # components that can have children. uncomment this line or

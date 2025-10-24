@@ -14325,6 +14325,7 @@ name = "zuppy"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "clap",
  "eyeball-im",
  "futures",
  "gpui",

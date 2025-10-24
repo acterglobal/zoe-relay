@@ -32,7 +32,7 @@ impl Routes {
         if let Some(sub) = sub {
             nav(format!("/{}/{}", self.base_path(), sub).into());
         } else {
-            nav(self.base_path().into());
+            nav(format!("/{}", self.base_path()).into());
         }
         window.refresh();
     }

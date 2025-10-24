@@ -1,9 +1,7 @@
-use std::{fmt::Debug, path::PathBuf};
+use std::fmt::Debug;
 
 use gpui::{App, AppContext, AsyncApp, Context, Entity, Global, Task};
-use zoe_app_primitives::connection::RelayAddress;
 use zoe_client::{ClientBuilder, ClientSecret};
-use zoe_wire_protocol::VerifyingKey;
 
 pub enum ClientState {
     Init,
@@ -32,38 +30,14 @@ impl Global for ClientStateSyncHolder {}
 
 pub struct ClientStateSetup;
 
-const DEFAULT_SERVER_ADDRESS: &'static str = "a.dev.hellozoe.app:13918";
-const DEFAULT_SERVER_KEY: &'static str =
-    "00202ee21d8cc6e519ba164ca4d10c2bae101f83bfd46249f2b7bb86f9083d50ed76";
-
 impl ClientStateSetup {
-    pub fn new(cx: &mut App) -> Entity<ClientState> {
-        Self::with_storage_dir(cx, &PathBuf::from(".local/zuppy"))
-    }
-
-    pub fn with_storage_dir(cx: &mut App, main_dir: &PathBuf) -> Entity<ClientState> {
+    pub fn with_builder(
+        cx: &mut App,
+        mut builder: ClientBuilder,
+        credential_url: String,
+        fresh_instance_fn: impl FnOnce(&mut ClientBuilder) + 'static,
+    ) -> Entity<ClientState> {
         let client_state_main = cx.new(|_cx| ClientState::Init);
-        let mut builder = ClientBuilder::default();
-
-        // Parse server key
-        let server_key =
-            VerifyingKey::from_hex(DEFAULT_SERVER_KEY).expect("Static key doesn't fail");
-        // Create RelayAddress
-        let default_relay = RelayAddress::new(server_key)
-            .with_address_str(DEFAULT_SERVER_ADDRESS.to_owned())
-            .with_name("Default Server".to_string());
-
-        builder
-            .db_storage_dir_pathbuf(main_dir.clone().join("db.sqlite"))
-            .media_storage_dir_pathbuf(main_dir.join("media"));
-        builder.autoconnect(true);
-
-        let credential_url = format!(
-            "zuppy:{}",
-            std::path::absolute(main_dir)
-                .expect("Failed to read dir path")
-                .display()
-        );
         let client_state = client_state_main.clone();
         let cred_read = cx.read_credentials(&credential_url);
 
@@ -71,7 +45,7 @@ impl ClientStateSetup {
             tracing::trace!("reading creds");
             if !match cred_read.await {
                 Ok(None) => {
-                    tracing::trace!("none found. contuing");
+                    tracing::trace!("none found. continuing");
                     false
                 }
                 Err(err) => {
@@ -89,8 +63,7 @@ impl ClientStateSetup {
                     }
                 },
             } {
-                // no credentials found, use default relay
-                builder.servers(vec![default_relay]);
+                fresh_instance_fn(&mut builder);
             }
 
             tracing::trace!("building client");

@@ -1,5 +1,6 @@
 use std::process::exit;
 
+use clap::Parser;
 use gpui::{App, AppContext, Application, TitlebarOptions, WindowOptions};
 use gpui_component::Root;
 
@@ -16,11 +17,20 @@ pub fn make_application() -> Application {
     Application::new().with_assets(crate::config::assets::Assets)
 }
 
-pub fn run_app() {
+pub fn run() {
+    let opts = app::args::ZuppyArgs::parse();
+    run_app(opts)
+}
+
+pub fn run_app(opts: app::args::ZuppyArgs) {
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::new(&opts.log))
+        .init();
+
     let app = make_application();
-    app.run(|app: &mut App| {
+    app.run(move |app: &mut App| {
         config::init(app);
-        let client_state = models::client_state::ClientStateSetup::new(app);
+        let client_state = opts.init_client_state(app);
         if let Err(err) = app.open_window(
             WindowOptions {
                 titlebar: Some(TitlebarOptions {
@@ -34,7 +44,7 @@ pub fn run_app() {
                 cx.new(|cx| Root::new(view.into(), window, cx))
             },
         ) {
-            tracing::error!("Running zuppy failed: {err}");
+            tracing::error!(%err, "Running zuppy failed");
             exit(1);
         }
     });
