@@ -5,10 +5,12 @@ use std::time::SystemTime;
 use async_broadcast::{Receiver, Sender as BroadcastSender};
 use async_trait::async_trait;
 use futures::stream::Stream;
+use quinn::udp::BATCH_SIZE;
 use tokio::sync::RwLock;
 use tokio::task::JoinHandle;
 
 use eyeball::{AsyncLock, SharedObservable};
+use tokio_util::time::delay_queue::Expired;
 use zoe_client_storage::MessageStorage;
 use zoe_wire_protocol::{
     CatchUpResponse, Filter, KeyId, MessageFull, PublishResult, StoreKey, StreamMessage,
@@ -49,6 +51,8 @@ pub struct RelayConnection {
     pub last_seen: SystemTime,
     /// Relay-specific subscription state
     pub subscription_state: SubscriptionState,
+    /// Task for syncing messages from the relay
+    sync_task: JoinHandle<()>,
 }
 
 /// Multi-relay message manager that provides unified messaging across multiple relays
@@ -75,14 +79,18 @@ pub struct MultiRelayMessageManager<S: MessageStorage> {
     global_catchup_tx: BroadcastSender<CatchUpResponse>,
     /// Map of active catch-up tasks by relay ID
     catch_up_tasks: Arc<RwLock<BTreeMap<KeyId, JoinHandle<()>>>>,
+    /// Keeper receivers to prevent broadcast channels from becoming inactive
+    _global_events_keeper: Arc<async_broadcast::InactiveReceiver<MessageEvent>>,
+    _global_messages_keeper: Arc<async_broadcast::InactiveReceiver<StreamMessage>>,
+    _global_catchup_keeper: Arc<async_broadcast::InactiveReceiver<CatchUpResponse>>,
 }
 
 impl<S: MessageStorage + 'static> MultiRelayMessageManager<S> {
     /// Create a new multi-relay message manager
     pub fn new(storage: Arc<S>) -> Self {
-        let (global_events_tx, _) = async_broadcast::broadcast(1000);
-        let (global_messages_tx, _) = async_broadcast::broadcast(1000);
-        let (global_catchup_tx, _) = async_broadcast::broadcast(1000);
+        let (global_events_tx, global_events_rx) = async_broadcast::broadcast(100);
+        let (global_messages_tx, global_messages_rx) = async_broadcast::broadcast(100);
+        let (global_catchup_tx, global_catchup_rx) = async_broadcast::broadcast(100);
 
         let relay_connections = Arc::new(RwLock::new(BTreeMap::new()));
         let catch_up_tasks = Arc::new(RwLock::new(BTreeMap::new()));
@@ -94,6 +102,9 @@ impl<S: MessageStorage + 'static> MultiRelayMessageManager<S> {
             global_messages_tx,
             global_catchup_tx,
             catch_up_tasks,
+            _global_events_keeper: Arc::new(global_events_rx.deactivate()),
+            _global_messages_keeper: Arc::new(global_messages_rx.deactivate()),
+            _global_catchup_keeper: Arc::new(global_catchup_rx.deactivate()),
         }
     }
 
@@ -109,11 +120,36 @@ impl<S: MessageStorage + 'static> MultiRelayMessageManager<S> {
         manager: Arc<MessagesManager>,
         should_catch_up: bool,
     ) -> Result<()> {
+        // Start forwarding events from this relay to the global event broadcaster
+        let mut relay_events = manager.message_events_stream();
+        let global_tx = self.global_events_tx.clone();
+        let task = tokio::spawn(async move {
+            loop {
+                match relay_events.recv().await {
+                    Ok(event) => {
+                        if let Err(e) = global_tx.broadcast(event).await {
+                            tracing::debug!("Failed to forward event to global broadcaster: {}", e);
+                        }
+                    }
+                    Err(async_broadcast::RecvError::Closed) => {
+                        tracing::debug!(%relay_id,
+                            "Relay event stream closed, stopping forwarding");
+                        break;
+                    }
+                    Err(err) => {
+                        tracing::warn!(%relay_id, ?err,
+                            "Error receiving event from relay");
+                    }
+                }
+            }
+        });
+
         let connection = RelayConnection {
             manager: Arc::clone(&manager),
             connection_state: ConnectionState::Connected,
             last_seen: SystemTime::now(),
             subscription_state: SubscriptionState::default(),
+            sync_task: task,
         };
 
         // Add to our connections map
@@ -122,10 +158,7 @@ impl<S: MessageStorage + 'static> MultiRelayMessageManager<S> {
             connections.insert(relay_id, connection);
         }
 
-        tracing::info!(
-            "Added relay connection: {}",
-            hex::encode(relay_id.as_bytes())
-        );
+        tracing::trace!(%relay_id, "Added relay connection");
 
         // Start catch-up task if requested
         if should_catch_up {
@@ -142,10 +175,7 @@ impl<S: MessageStorage + 'static> MultiRelayMessageManager<S> {
             let mut tasks = self.catch_up_tasks.write().await;
             if let Some(task) = tasks.remove(relay_id) {
                 task.abort();
-                tracing::debug!(
-                    "Cancelled catch-up task for relay: {}",
-                    hex::encode(relay_id.as_bytes())
-                );
+                tracing::debug!(%relay_id, "Cancelled catch-up task for relay");
             }
         }
 
@@ -153,10 +183,7 @@ impl<S: MessageStorage + 'static> MultiRelayMessageManager<S> {
         let removed = connections.remove(relay_id);
 
         if let Some(connection) = &removed {
-            tracing::info!(
-                "Removed relay connection: {}",
-                hex::encode(relay_id.as_bytes())
-            );
+            tracing::trace!(%relay_id, "Removed relay connection");
             Some(Arc::clone(&connection.manager))
         } else {
             None
@@ -194,10 +221,7 @@ impl<S: MessageStorage + 'static> MultiRelayMessageManager<S> {
         let tasks = Arc::clone(&self.catch_up_tasks);
 
         let task = tokio::spawn(async move {
-            tracing::info!(
-                "Starting catch-up task for relay: {}",
-                hex::encode(relay_id.as_bytes())
-            );
+            tracing::trace!(%relay_id, "Starting catch-up task for relay");
 
             match Self::process_all_unsynced_messages_for_relay::<MessagesManager>(
                 &storage,
@@ -208,18 +232,10 @@ impl<S: MessageStorage + 'static> MultiRelayMessageManager<S> {
             .await
             {
                 Ok(total_processed) => {
-                    tracing::info!(
-                        "Catch-up completed for relay: {} ({} messages processed)",
-                        hex::encode(relay_id.as_bytes()),
-                        total_processed
-                    );
+                    tracing::trace!(%relay_id, total_processed, "Catch-up completed");
                 }
-                Err(e) => {
-                    tracing::warn!(
-                        "Catch-up failed for relay {}: {}",
-                        hex::encode(relay_id.as_bytes()),
-                        e
-                    );
+                Err(err) => {
+                    tracing::warn!(%relay_id, ?err, "Catch-up failed for relay");
                 }
             }
 
@@ -249,11 +265,8 @@ impl<S: MessageStorage + 'static> MultiRelayMessageManager<S> {
         let mut batch_count = 0;
 
         loop {
-            tracing::debug!(
-                "Processing batch {} for relay {} (batch size: {})",
-                batch_count,
-                hex::encode(relay_id.as_bytes()),
-                batch_size
+            tracing::trace!(%relay_id, batch_count, batch_size,
+                "Processing batch for relay",
             );
 
             let batch_result = Self::process_unsynced_messages_batch_for_relay(
@@ -263,10 +276,8 @@ impl<S: MessageStorage + 'static> MultiRelayMessageManager<S> {
 
             let Some(batch_processed) = batch_result else {
                 // No more messages to process - we're done
-                tracing::debug!(
-                    "No unsynced messages left for relay {}, stopping catch-up after {} batches",
-                    hex::encode(relay_id.as_bytes()),
-                    batch_count
+                tracing::debug!(%relay_id, batch_count,
+                    "No unsynced messages left for relay, stopping catch-up",
                 );
                 break;
             };
@@ -274,11 +285,8 @@ impl<S: MessageStorage + 'static> MultiRelayMessageManager<S> {
             total_processed += batch_processed;
             batch_count += 1;
 
-            tracing::debug!(
-                "Batch {} complete: {} messages processed for relay {}",
-                batch_count,
-                batch_processed,
-                hex::encode(relay_id.as_bytes())
+            tracing::debug!(%relay_id, batch_count, batch_processed,
+                "Batch complete",
             );
         }
 
@@ -310,10 +318,8 @@ impl<S: MessageStorage + 'static> MultiRelayMessageManager<S> {
         }
 
         let batch_message_count = unsynced_messages.len();
-        tracing::debug!(
-            "Processing batch of {} unsynced messages for relay {}",
-            batch_message_count,
-            hex::encode(relay_id.as_bytes())
+        tracing::debug!(%relay_id, batch_message_count,
+            "Processing batch of unsynced messages for relay",
         );
 
         // Filter out expired messages and delete them immediately from storage
@@ -346,10 +352,8 @@ impl<S: MessageStorage + 'static> MultiRelayMessageManager<S> {
         // If all messages were expired, return Some(0) to indicate we processed a batch
         // but didn't sync any messages (they were expired and removed)
         if valid_messages.is_empty() {
-            tracing::debug!(
-                "All {} messages in batch were expired and removed for relay {}",
-                expired_count,
-                hex::encode(relay_id.as_bytes())
+            tracing::debug!(%relay_id, expired_count,
+                "All messages in batch were expired and removed for relay"
             );
             return Ok(Some(0));
         }
@@ -357,11 +361,8 @@ impl<S: MessageStorage + 'static> MultiRelayMessageManager<S> {
         // Now check which valid messages already exist on the server
         let message_ids: Vec<_> = valid_messages.iter().map(|msg| *msg.id()).collect();
 
-        tracing::debug!(
-            "Checking existence of {} valid messages on relay {} ({} expired messages removed)",
-            message_ids.len(),
-            hex::encode(relay_id.as_bytes()),
-            expired_count
+        tracing::debug!(%relay_id, len=message_ids.len(), expired_count,
+            "Checking existence of valid messages on relay",
         );
 
         let existence_results = manager.check_messages(message_ids).await?;
@@ -373,23 +374,18 @@ impl<S: MessageStorage + 'static> MultiRelayMessageManager<S> {
 
             if let Some(global_stream_id) = existence_result {
                 // Message already exists on server, just mark as synced
-                if let Err(e) = storage
+                if let Err(err) = storage
                     .mark_message_synced(message.id(), relay_key_id, global_stream_id)
                     .await
                 {
-                    tracing::error!(
-                        "Failed to mark existing message {} as synced to relay {}: {}",
-                        hex::encode(message.id().as_bytes()),
-                        hex::encode(relay_id.as_bytes()),
-                        e
+                    tracing::error!(%relay_id, message_id = %message.id(), ?err,
+                        "Failed to mark existing message as synced to relay",
                     );
                     continue;
                 }
 
-                tracing::debug!(
-                    "Message {} already exists on relay {}, marked as synced",
-                    hex::encode(message.id().as_bytes()),
-                    hex::encode(relay_id.as_bytes())
+                tracing::debug!(%relay_id, message_id = %message.id(),
+                    "Message already exists on relay, marked as synced",
                 );
                 processed_count += 1;
                 continue;
@@ -405,38 +401,29 @@ impl<S: MessageStorage + 'static> MultiRelayMessageManager<S> {
                         continue;
                     }
                 },
-                Err(e) => {
-                    tracing::error!(error=?e,
-                        "Failed to send message {} to relay {}",
-                        hex::encode(message.id().as_bytes()),
-                        hex::encode(relay_id.as_bytes()),
+                Err(err) => {
+                    tracing::error!(%relay_id, message_id = %message.id(), ?err,
+                        "Failed to send message to relay",
                     );
                     continue;
                 }
             };
 
             // Mark as synced in storage
-            if let Err(e) = storage
+            if let Err(err) = storage
                 .mark_message_synced(message.id(), relay_key_id, &global_stream_id)
                 .await
             {
-                tracing::error!(
-                    "Failed to mark message {} as synced to relay {}: {}",
-                    hex::encode(message.id().as_bytes()),
-                    hex::encode(relay_id.as_bytes()),
-                    e
+                tracing::error!(%relay_id, message_id = %message.id(), ?err,
+                    "Failed to mark message as synced to relay",
                 );
                 continue;
             }
             processed_count += 1;
         }
 
-        tracing::debug!(
-            "Batch complete: {}/{} valid messages successfully processed for relay {} ({} expired messages removed)",
-            processed_count,
-            valid_messages.len(),
-            hex::encode(relay_id.as_bytes()),
-            expired_count
+        tracing::debug!(%relay_id, processed_count = processed_count, expired_count = expired_count, valid_count = valid_messages.len(),
+            "Batch complete",
         );
 
         Ok(Some(processed_count))
@@ -470,15 +457,13 @@ impl<S: MessageStorage + 'static> MessagesManagerTrait for MultiRelayMessageMana
             if matches!(connection.connection_state, ConnectionState::Connected) {
                 match connection.manager.subscribe().await {
                     Ok(()) => {
-                        tracing::debug!("Subscribed to relay {}", hex::encode(relay_id.as_bytes()));
+                        tracing::debug!(%relay_id, "Subscribed to relay");
                     }
-                    Err(e) => {
-                        tracing::warn!(
-                            "Failed to subscribe to relay {}: {}",
-                            hex::encode(relay_id.as_bytes()),
-                            e
+                    Err(err) => {
+                        tracing::warn!(%relay_id,  ?err,
+                            "Failed to subscribe to relay",
                         );
-                        results.push(e);
+                        results.push(err);
                     }
                 }
             }
@@ -509,10 +494,7 @@ impl<S: MessageStorage + 'static> MessagesManagerTrait for MultiRelayMessageMana
                 ClientError::Generic(format!("Failed to store message for offline delivery: {e}"))
             })?;
 
-            tracing::info!(
-                "No relays available, stored message {} for offline processing",
-                hex::encode(message.id().as_bytes())
-            );
+            tracing::trace!(message_id = %message.id(), "No relays available, stored message for offline processing");
 
             return Ok(PublishResult::StoredNew {
                 global_stream_id: "queued_offline".to_string(),
@@ -551,23 +533,18 @@ impl<S: MessageStorage + 'static> MessagesManagerTrait for MultiRelayMessageMana
                     .map_err(|e| {
                         ClientError::Generic(format!(
                             "Failed to mark message {} as synced to relay {}: {}",
-                            hex::encode(message.id().as_bytes()),
-                            hex::encode(relay_id.as_bytes()),
+                            message.id(),
+                            relay_id,
                             e
                         ))
                     })?;
 
-                tracing::debug!(
-                    "Successfully published message to relay {}",
-                    hex::encode(relay_id.as_bytes())
-                );
+                tracing::debug!("Successfully published message to relay {}", relay_id);
                 Ok(result)
             }
-            Err(e) => {
-                tracing::warn!(
-                    "Failed to publish message to relay {}: {}",
-                    hex::encode(relay_id.as_bytes()),
-                    e
+            Err(err) => {
+                tracing::warn!(?err, %relay_id,
+                    "Failed to publish message to relay",
                 );
 
                 // Store message for offline processing - background task will retry
@@ -580,12 +557,12 @@ impl<S: MessageStorage + 'static> MessagesManagerTrait for MultiRelayMessageMana
                         ))
                     })?;
 
-                tracing::info!(
-                    "Stored message {} for offline processing after publish failure",
-                    hex::encode(message.id().as_bytes())
+                tracing::trace!(
+                    message_id = %message.id(),
+                    "Stored message for offline processing after publish failure",
                 );
 
-                Err(e.into())
+                Err(err.into())
             }
         }
     }
@@ -603,18 +580,11 @@ impl<S: MessageStorage + 'static> MessagesManagerTrait for MultiRelayMessageMana
                     .await
                 {
                     Ok(()) => {
-                        tracing::debug!(
-                            "Added filter to relay {}",
-                            hex::encode(relay_id.as_bytes())
-                        );
+                        tracing::debug!(%relay_id, "Added filter to relay");
                     }
-                    Err(e) => {
-                        tracing::warn!(
-                            "Failed to add filter to relay {}: {}",
-                            hex::encode(relay_id.as_bytes()),
-                            e
-                        );
-                        results.push(e);
+                    Err(err) => {
+                        tracing::warn!(%relay_id, ?err, "Failed to add filter");
+                        results.push(err);
                     }
                 }
             }
@@ -676,22 +646,15 @@ impl<S: MessageStorage + 'static> MessagesManagerTrait for MultiRelayMessageMana
                     .await
                 {
                     Ok(Some(data)) => {
-                        tracing::debug!(
-                            "Found user data on relay {}",
-                            hex::encode(relay_id.as_bytes())
-                        );
+                        tracing::debug!(%relay_id, "Found user data" );
                         return Ok(Some(data));
                     }
                     Ok(None) => {
                         // Not found on this relay, try next
                         continue;
                     }
-                    Err(e) => {
-                        tracing::warn!(
-                            "Failed to get user data from relay {}: {}",
-                            hex::encode(relay_id.as_bytes()),
-                            e
-                        );
+                    Err(err) => {
+                        tracing::warn!(%relay_id, ?err, "Failed to get user data");
                         continue;
                     }
                 }
@@ -714,18 +677,14 @@ impl<S: MessageStorage + 'static> MessagesManagerTrait for MultiRelayMessageMana
             if matches!(connection.connection_state, ConnectionState::Connected) {
                 match connection.manager.check_messages(message_ids.clone()).await {
                     Ok(result) => {
-                        tracing::debug!(
-                            "Successfully checked {} messages on relay {}",
-                            message_ids.len(),
-                            hex::encode(relay_id.as_bytes())
+                        tracing::debug!(%relay_id, len=%message_ids.len(),
+                            "Successfully checked messages on relay"
                         );
                         return Ok(result);
                     }
-                    Err(e) => {
-                        tracing::warn!(
-                            "Failed to check messages on relay {}: {}",
-                            hex::encode(relay_id.as_bytes()),
-                            e
+                    Err(err) => {
+                        tracing::warn!(%relay_id, ?err,
+                            "Failed to check messages on relay",
                         );
                         continue;
                     }
@@ -745,9 +704,8 @@ impl<S: MessageStorage> Drop for MultiRelayMessageManager<S> {
         if let Ok(mut tasks) = self.catch_up_tasks.try_write() {
             for (relay_id, task) in tasks.iter() {
                 task.abort();
-                tracing::debug!(
-                    "Cancelled catch-up task for relay during drop: {}",
-                    hex::encode(relay_id.as_bytes())
+                tracing::debug!(%relay_id,
+                    "Cancelled catch-up task for relay during drop",
                 );
             }
             tasks.clear();
