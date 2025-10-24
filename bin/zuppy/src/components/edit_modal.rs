@@ -134,17 +134,17 @@ impl EditModalImpl {
         let this = entity.downgrade();
         let input = self.input.clone();
         let title = self.options.title.clone();
+        let label = self.options.label.clone();
 
         window.open_modal(cx, move |modal, _, _| {
+            let mut inner = v_flex().gap_3();
+            if let Some(label) = label.clone() {
+                inner = inner.child(label);
+            }
             modal
                 .title(title.clone())
                 .child(entity.clone()) // we keep it around for as long as the modal is open
-                .child(
-                    v_flex()
-                        .gap_3()
-                        .child("What should the name be?")
-                        .child(TextInput::new(&input).cleanable()),
-                )
+                .child(inner.child(TextInput::new(&input).cleanable()))
                 .footer({
                     let this = this.clone();
                     move |_, _, _, _| -> Vec<Button> {
