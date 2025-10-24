@@ -151,7 +151,7 @@ impl SheetPage {
             })
     }
 
-    fn _on_submit(
+    fn _on_submit_descr(
         this: WeakEntity<Self>,
         window: &mut Window,
         cx: &mut App,
@@ -206,15 +206,20 @@ impl SheetPage {
                     EditModal::default()
                         .title("Add Group Description".to_owned())
                         .placeholder("What is this about?")
-                        .show(win, cx, {
-                            let g = g.clone();
-                            let this = this.clone();
-                            move |new_value: SharedString, win, cx| {
+                        .show_with_textinput_decorator(
+                            win,
+                            cx,
+                            |s| s.multi_line().auto_grow(2, 10),
+                            {
+                                let g = g.clone();
                                 let this = this.clone();
-                                let group = g.clone();
-                                Self::_on_submit(this, win, cx, group, new_value);
-                            }
-                        });
+                                move |new_value: SharedString, win, cx| {
+                                    let this = this.clone();
+                                    let group = g.clone();
+                                    Self::_on_submit_descr(this, win, cx, group, new_value);
+                                }
+                            },
+                        );
                 });
             // nothing for us to show
         };
@@ -237,14 +242,15 @@ impl SheetPage {
                 EditModal::default()
                     .title("Edit Description".to_owned())
                     .current_value(description.clone())
-                    .placeholder("Enter new group name")
-                    .show(win, cx, {
+                    .placeholder("Leave empty to clear")
+                    .allow_empty(true)
+                    .show_with_textinput_decorator(win, cx, |s| s.multi_line().auto_grow(2, 10), {
                         let g = g.clone();
                         let this = this.clone();
                         move |new_value: SharedString, win, cx| {
                             let this = this.clone();
                             let group = g.clone();
-                            Self::_on_submit(this, win, cx, group, new_value);
+                            Self::_on_submit_descr(this, win, cx, group, new_value);
                         }
                     });
             })

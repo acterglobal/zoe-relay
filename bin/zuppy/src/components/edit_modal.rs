@@ -57,7 +57,17 @@ impl EditModal {
         cx: &mut App,
         on_submit: impl Fn(SharedString, &mut Window, &mut App) + 'static,
     ) {
-        let _ = cx.new(|cx| EditModalImpl::show(self, window, cx, Rc::new(on_submit)));
+        self.show_with_textinput_decorator(window, cx, |state| state, on_submit);
+    }
+
+    pub fn show_with_textinput_decorator(
+        self,
+        window: &mut Window,
+        cx: &mut App,
+        decorator: impl Fn(InputState) -> InputState + 'static,
+        on_submit: impl Fn(SharedString, &mut Window, &mut App) + 'static,
+    ) {
+        let _ = cx.new(|cx| EditModalImpl::show(self, window, cx, decorator, Rc::new(on_submit)));
     }
 }
 
@@ -72,6 +82,7 @@ impl EditModalImpl {
         options: EditModal,
         window: &mut Window,
         cx: &mut Context<Self>,
+        decorator: impl Fn(InputState) -> InputState + 'static,
         on_submit: Rc<dyn Fn(SharedString, &mut Window, &mut App) + 'static>,
     ) -> Self {
         let input = cx.new(|cx| {
@@ -84,7 +95,7 @@ impl EditModalImpl {
                 Some(placeholder) => s.placeholder(placeholder),
                 None => s,
             };
-            s
+            decorator(s)
         });
 
         let s = Self {
