@@ -17,6 +17,7 @@ use crate::models::{client_state::ClientState, routes::Routes};
 pub struct CreateSheetPage {
     client_state: Entity<ClientState>,
     name: Entity<InputState>,
+    description: Entity<InputState>,
 }
 
 impl CreateSheetPage {
@@ -29,11 +30,18 @@ impl CreateSheetPage {
             client_state,
             name: cx
                 .new(|cx| InputState::new(win, cx).placeholder("e.g. Party Planning, Family Info")),
+            description: cx.new(|cx| {
+                InputState::new(win, cx)
+                    .auto_grow(2, 30)
+                    .multi_line()
+                    .placeholder("e.g. Let's get together to plan a great party!")
+            }),
         }
     }
 
     fn submit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let name = self.name.read(cx).value();
+        let description = self.description.read(cx).value().trim().to_string();
 
         // Validate inputs
         if name.is_empty() {
@@ -51,7 +59,10 @@ impl CreateSheetPage {
         };
 
         let zoe = client.clone();
-        let create_group_b = CreateGroupBuilder::default().name(name.into());
+        let mut create_group_b = CreateGroupBuilder::default().name(name.into());
+        if !description.is_empty() {
+            create_group_b = create_group_b.description(description.into());
+        }
         window
             .spawn(cx, async move |w| {
                 if let Err(err) = match zoe.create_group(create_group_b).await {
@@ -90,6 +101,11 @@ impl Render for CreateSheetPage {
                             .label("Name")
                             .required(true)
                             .child(TextInput::new(&self.name)),
+                    )
+                    .child(
+                        form_field()
+                            .label("Description")
+                            .child(TextInput::new(&self.description)),
                     )
                     .child(
                         form_field().no_label_indent().child(
