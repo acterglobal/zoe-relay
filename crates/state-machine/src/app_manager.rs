@@ -103,6 +103,11 @@ impl<
             .publish_app_event(group_id, app_tag, event, sender)
             .await
     }
+
+    /// Get access to the DGO executor for testing and advanced operations
+    pub fn dgo_executor(&self) -> &Arc<DgoExecutor<S>> {
+        &self.dgo_executor
+    }
 }
 
 #[cfg(test)]

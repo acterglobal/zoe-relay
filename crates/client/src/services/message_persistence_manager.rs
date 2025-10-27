@@ -5,7 +5,7 @@ use eyeball::AsyncLock;
 use futures::Stream;
 use std::{ops::Deref, sync::Arc};
 use tokio::{select, task::JoinHandle};
-use tracing::{debug, error, warn};
+use tracing::{debug, error, trace, warn};
 use zoe_client_storage::MessageStorage;
 use zoe_wire_protocol::{
     CatchUpResponse, Filter, KeyId, MessageFull, PublishResult, StreamMessage, VerifyingKey,
@@ -368,11 +368,12 @@ impl<T: MessagesManagerTrait> GenericMessagePersistenceManager<T> {
                         ClientError::Generic(format!("Failed to mark message as synced: {e}"))
                     })?;
 
-                Ok(if was_already_stored {
-                    None
+                if was_already_stored {
+                    trace!("Message event was already stored");
+                    Ok(None)
                 } else {
-                    Some(event)
-                })
+                    Ok(Some(event))
+                }
             }
             MessageEvent::MessageSent { message, .. } => {
                 debug!(
@@ -382,11 +383,12 @@ impl<T: MessagesManagerTrait> GenericMessagePersistenceManager<T> {
                 let was_already_stored = storage.store_message(message).await.map_err(|e| {
                     ClientError::Generic(format!("Failed to store sent message: {e}"))
                 })?;
-                Ok(if was_already_stored {
-                    None
+                if was_already_stored {
+                    trace!("Sent message event was already stored");
+                    Ok(None)
                 } else {
-                    Some(event)
-                })
+                    Ok(Some(event))
+                }
             }
             MessageEvent::CatchUpMessage {
                 message,
@@ -400,11 +402,12 @@ impl<T: MessagesManagerTrait> GenericMessagePersistenceManager<T> {
                 let was_already_stored = storage.store_message(message).await.map_err(|e| {
                     ClientError::Generic(format!("Failed to store catch-up message: {e}"))
                 })?;
-                Ok(if was_already_stored {
-                    None
+                if was_already_stored {
+                    trace!("Catch-up message event was already stored");
+                    Ok(None)
                 } else {
-                    Some(event)
-                })
+                    Ok(Some(event))
+                }
             }
             MessageEvent::StreamHeightUpdate { .. } => {
                 // Stream height updates don't need persistence by themselves

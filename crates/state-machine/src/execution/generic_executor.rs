@@ -166,7 +166,7 @@ where
                     e.into()
                 ))
             })?;
-        // FIXME: due to the serttings model not having indixes, this has a slightly different layout
+        // FIXME: due to the settings model not having indixes, this has a slightly different layout
         let mut all_exec_keys: Vec<<TFactory::SettingsModel as GroupStateModel>::ExecutiveKey> =
             Vec::new();
         for execution_info in execution_results.into_iter() {

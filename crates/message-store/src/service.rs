@@ -3,7 +3,7 @@ use crate::storage::RedisMessageStorage;
 use futures::StreamExt;
 use std::sync::Arc;
 use tokio::sync::{mpsc, RwLock};
-use tracing::{error, info, warn};
+use tracing::{debug, error, warn};
 use zoe_wire_protocol::{
     CatchUpRequest, CatchUpResponse, FilterOperation, FilterUpdateRequest, KeyId, MessageError,
     MessageFilters, MessageFull, MessageId, MessageService as MessageServiceRpc, PublishResult,
@@ -99,13 +99,13 @@ async fn subscription_task(
     sender: mpsc::UnboundedSender<StreamMessage>,
 ) -> Result<(), MessageStoreError> {
     let task_id = format!("{:p}", &sender);
-    info!(
+    debug!(
         "🔄 Starting subscription task {} with filters: {:?}",
         task_id, filters
     );
 
     let stream = service.listen_for_messages(&filters, since, limit).await?;
-    info!("Subscription stream created, starting to listen for messages");
+    debug!("Subscription stream created, starting to listen for messages");
 
     // Pin the stream so we can use it with .next()
     tokio::pin!(stream);
@@ -151,7 +151,7 @@ async fn subscription_task(
         }
     }
 
-    info!("Subscription task ended");
+    debug!("Subscription task ended");
     Ok(())
 }
 
@@ -160,7 +160,7 @@ async fn handle_catch_up_request(
     request: CatchUpRequest,
     sender: mpsc::UnboundedSender<CatchUpResponse>,
 ) -> Result<(), MessageStoreError> {
-    info!("Handling catch-up request: {:?}", request);
+    debug!("Handling catch-up request: {:?}", request);
 
     let stream = service.catch_up(&request.filter, request.since).await?;
 
@@ -216,7 +216,7 @@ async fn handle_catch_up_request(
         )));
     }
 
-    info!(
+    debug!(
         "Catch-up request completed for request_id: {}",
         request.request_id
     );

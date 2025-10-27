@@ -1,5 +1,5 @@
 // ChaCha20-Poly1305 and AES-GCM functionality moved to crypto module
-use zoe_wire_protocol::{ChaCha20Poly1305Content, KeyPair, MessageId, VerifyingKey};
+use zoe_wire_protocol::{ChaCha20Poly1305Content, Filter, KeyPair, MessageId, VerifyingKey};
 
 use zoe_app_primitives::{
     group::{
@@ -94,7 +94,7 @@ pub struct GroupManager<M: MessagesManagerTrait + Clone + 'static> {
 #[cfg_attr(feature = "frb-api", frb(ignore))]
 pub struct GroupManagerBuilder<M: MessagesManagerTrait + Clone + 'static> {
     sessions: Vec<GroupSession>,
-    message_manager: Option<Arc<M>>,
+    message_manager: Arc<M>,
 }
 
 #[cfg_attr(feature = "frb-api", frb(ignore))]
@@ -102,7 +102,7 @@ impl<M: MessagesManagerTrait + Clone + 'static> GroupManagerBuilder<M> {
     pub fn new(message_manager: Arc<M>) -> Self {
         Self {
             sessions: vec![],
-            message_manager: Some(message_manager),
+            message_manager,
         }
     }
 
@@ -116,9 +116,21 @@ impl<M: MessagesManagerTrait + Clone + 'static> GroupManagerBuilder<M> {
             sessions,
             message_manager,
         } = self;
-        let message_manager = message_manager.expect("Message manager must be provided");
         let (tx, rx) = async_broadcast::broadcast(10);
         let (app_tx, app_rx) = async_broadcast::broadcast(10);
+
+        // FIXME: would be nicer to have an API where we could send a list of filters
+        for session in &sessions {
+            let group_id = &session.state.group_info.group_id;
+            if let Err(e) = GroupManager::<M>::subscribe_to_group(&*message_manager, group_id).await
+            {
+                tracing::error!(
+                    error = ?e,
+                    group_id = ?group_id,
+                    "Failed to subscribe to existing group during build"
+                );
+            }
+        }
 
         let group_manager = GroupManager {
             groups: Arc::new(RwLock::new(HashMap::from_iter(
@@ -194,44 +206,6 @@ impl<M: MessagesManagerTrait + Clone + 'static> GroupManager<M> {
             .and_then(|session| session.state.member_role(&IdentityRef::Key(user.clone())))
     }
 
-    /// Subscribe to messages for a specific group
-    async fn subscribe_to_group(&self, group_id: &GroupId) -> GroupResult<()> {
-        use zoe_wire_protocol::Filter;
-
-        // Subscribe to group events (messages tagged with this group ID)
-        let group_filter = Filter::Channel(group_id.into());
-        self.message_manager
-            .ensure_contains_filter(group_filter)
-            .await
-            .map_err(|e| {
-                GroupError::MessageError(format!("Failed to subscribe to group {group_id:?}: {e}"))
-            })?;
-
-        tracing::info!(
-            group_id = ?group_id,
-            "Successfully subscribed to group messages"
-        );
-
-        Ok(())
-    }
-
-    /// Publish a group event message through the message manager
-    async fn publish(&self, message: MessageFull) -> GroupResult<()> {
-        let message_id = *message.id();
-
-        self.message_manager
-            .publish(message)
-            .await
-            .map_err(|e| GroupError::MessageError(format!("Failed to publish group event: {e}")))?;
-
-        tracing::info!(
-            message_id = ?message_id,
-            "Successfully published group event"
-        );
-
-        Ok(())
-    }
-
     /// Create and publish a group event in one operation
     pub async fn publish_group_event(
         &self,
@@ -239,6 +213,9 @@ impl<M: MessagesManagerTrait + Clone + 'static> GroupManager<M> {
         event: GroupActivityEvent,
         sender: &KeyPair,
     ) -> GroupResult<MessageFull> {
+        if !self.groups.read().await.contains_key(group_id) {
+            return Err(GroupError::GroupNotFound(format!("{group_id:?}")));
+        }
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map_err(|e| GroupError::CryptoError(format!("Failed to get timestamp: {e}")))?
@@ -327,24 +304,105 @@ impl<M: MessagesManagerTrait + Clone + 'static> GroupManager<M> {
 
         Ok(message)
     }
+    /// Catch up on missed messages for a specific group
+    pub async fn catch_up_group(
+        &self,
+        group_id: &GroupId,
+        since: Option<String>,
+    ) -> GroupResult<()> {
+        use futures::StreamExt;
+        use zoe_wire_protocol::Filter;
+
+        let group_filter = Filter::Channel(group_id.into());
+
+        tracing::info!(
+            group_id = ?group_id,
+            since = ?since,
+            "Starting catch-up for group"
+        );
+
+        // Get catch-up stream from message manager
+        let mut catch_up_stream = self
+            .message_manager
+            .catch_up_and_subscribe(group_filter, since)
+            .await
+            .map_err(|e| {
+                GroupError::MessageError(format!(
+                    "Failed to start catch-up for group {group_id:?}: {e}"
+                ))
+            })?;
+
+        let mut processed_count = 0;
+
+        // Process all catch-up messages
+        while let Some(message_full) = catch_up_stream.next().await {
+            let message_id = *message_full.id();
+            if let Err(e) = self.handle_incoming_message_internal(*message_full).await {
+                tracing::error!(
+                    error = ?e,
+                    message_id = ?message_id,
+                    group_id = ?group_id,
+                    "Failed to process catch-up message"
+                );
+            } else {
+                processed_count += 1;
+            }
+        }
+
+        tracing::info!(
+            group_id = ?group_id,
+            processed_count = processed_count,
+            "Completed catch-up for group"
+        );
+
+        Ok(())
+    }
+}
+
+// internal helpers
+impl<M: MessagesManagerTrait + Clone + 'static> GroupManager<M> {
+    /// Subscribe to messages for a specific group
+    async fn subscribe_to_group<T: MessagesManagerTrait>(
+        message_manager: &T,
+        group_id: &GroupId,
+    ) -> GroupResult<()> {
+        // Subscribe to group events (messages tagged with this group ID)
+        let group_filter = Filter::Channel(group_id.into());
+        message_manager
+            .ensure_contains_filter(group_filter)
+            .await
+            .map_err(|e| {
+                GroupError::MessageError(format!("Failed to subscribe to group {group_id:?}: {e}"))
+            })?;
+
+        tracing::info!(
+            group_id = ?group_id,
+            "Successfully subscribed to group messages"
+        );
+
+        Ok(())
+    }
+
+    /// Publish a group event message through the message manager
+    async fn publish(&self, message: MessageFull) -> GroupResult<()> {
+        let message_id = *message.id();
+
+        self.message_manager
+            .publish(message)
+            .await
+            .map_err(|e| GroupError::MessageError(format!("Failed to publish group event: {e}")))?;
+
+        tracing::info!(
+            message_id = ?message_id,
+            "Successfully published group event"
+        );
+
+        Ok(())
+    }
 
     /// Start processing incoming messages from the message manager
     async fn start_message_processing(&self) {
         let mut messages_stream = self.message_manager.message_events_stream();
-        let group_ids: Vec<GroupId> = {
-            let groups = self.groups.read().await;
-            groups.keys().cloned().collect()
-        };
-        for group_id in group_ids {
-            if let Err(e) = self.subscribe_to_group(&group_id).await {
-                tracing::error!(
-                    error = ?e,
-                    group_id = ?group_id,
-                    "Failed to subscribe to existing group during build"
-                );
-            }
-        }
-
         tracing::info!("Starting automatic message processing for GroupManager");
 
         loop {
@@ -407,59 +465,6 @@ impl<M: MessagesManagerTrait + Clone + 'static> GroupManager<M> {
             }
         }
         None
-    }
-    /// Catch up on missed messages for a specific group
-    pub async fn catch_up_group(
-        &self,
-        group_id: &GroupId,
-        since: Option<String>,
-    ) -> GroupResult<()> {
-        use futures::StreamExt;
-        use zoe_wire_protocol::Filter;
-
-        let group_filter = Filter::Channel(group_id.into());
-
-        tracing::info!(
-            group_id = ?group_id,
-            since = ?since,
-            "Starting catch-up for group"
-        );
-
-        // Get catch-up stream from message manager
-        let mut catch_up_stream = self
-            .message_manager
-            .catch_up_and_subscribe(group_filter, since)
-            .await
-            .map_err(|e| {
-                GroupError::MessageError(format!(
-                    "Failed to start catch-up for group {group_id:?}: {e}"
-                ))
-            })?;
-
-        let mut processed_count = 0;
-
-        // Process all catch-up messages
-        while let Some(message_full) = catch_up_stream.next().await {
-            let message_id = *message_full.id();
-            if let Err(e) = self.handle_incoming_message_internal(*message_full).await {
-                tracing::error!(
-                    error = ?e,
-                    message_id = ?message_id,
-                    group_id = ?group_id,
-                    "Failed to process catch-up message"
-                );
-            } else {
-                processed_count += 1;
-            }
-        }
-
-        tracing::info!(
-            group_id = ?group_id,
-            processed_count = processed_count,
-            "Completed catch-up for group"
-        );
-
-        Ok(())
     }
 }
 
@@ -674,7 +679,7 @@ impl<M: MessagesManagerTrait + Clone + 'static> GroupManager<M> {
             .insert(group_id.clone(), group_session.clone());
 
         // Subscribe to messages for this group
-        if let Err(e) = self.subscribe_to_group(&group_id).await {
+        if let Err(e) = Self::subscribe_to_group(&*self.message_manager, &group_id).await {
             tracing::error!(
                 error = ?e,
                 group_id = ?group_id,
@@ -952,7 +957,7 @@ impl<M: MessagesManagerTrait + Clone + 'static> GroupManager<M> {
             .insert(group_id.clone(), group_session.clone());
 
         // Subscribe to messages for this group
-        self.subscribe_to_group(&group_id).await?;
+        Self::subscribe_to_group(&*self.message_manager, &group_id).await?;
 
         // Broadcast the group addition
         self.safe_broadcast(GroupDataUpdate::GroupAdded(group_session));
