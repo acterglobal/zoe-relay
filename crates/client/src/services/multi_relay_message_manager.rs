@@ -5,7 +5,6 @@ use std::time::SystemTime;
 use async_broadcast::{Receiver, Sender as BroadcastSender};
 use async_trait::async_trait;
 use futures::stream::Stream;
-use tokio::select;
 use tokio::sync::RwLock;
 use tokio::task::JoinHandle;
 
@@ -171,77 +170,6 @@ impl<S: MessageStorage + 'static> MultiRelayMessageManager<S> {
         }
 
         Ok(())
-    }
-
-    /// Start forwarding events from a relay manager to global streams
-    async fn start_event_forwarding(
-        &self,
-        relay_id: KeyId,
-        manager: Arc<MessagesManager>,
-    ) -> JoinHandle<()> {
-        let global_events_tx = self.global_events_tx.clone();
-        let global_messages_tx = self.global_messages_tx.clone();
-        let global_catchup_tx = self.global_catchup_tx.clone();
-
-        // Forward message events
-        let events_stream = manager.message_events_stream();
-        let events_tx = global_events_tx.clone();
-
-        let messages_stream = manager.messages_stream();
-        let messages_tx = global_messages_tx.clone();
-        // Forward catch-up responses
-        let catchup_stream = manager.catch_up_stream();
-        let catchup_tx = global_catchup_tx.clone();
-        let relay_id = hex::encode(relay_id.as_bytes());
-
-        tokio::spawn(async move {
-            let mut events_stream = events_stream;
-            let mut messages_stream = messages_stream;
-            let mut catchup_stream = catchup_stream;
-            loop {
-                select! {
-                    event = events_stream.recv() => {
-                        let event = match event {
-                            Ok(event) => event,
-                            Err(e) => {
-                                tracing::error!(error=?e, relay_id=relay_id, "Event forwarding ended for relay");
-                                break;
-                            }
-                        };
-                        if let Err(e) = events_tx.broadcast(event).await {
-                            tracing::error!(error=?e, relay_id=relay_id, "Failed to forward message event from relay");
-                            break;
-                        }
-                    }
-                    message = messages_stream.recv() => {
-                        let message = match message {
-                            Ok(message) => message,
-                            Err(e) => {
-                                tracing::error!(error=?e, relay_id=relay_id, "Message forwarding ended for relay");
-                                break;
-                            }
-                        };
-                        if let Err(e) = messages_tx.broadcast(message).await {
-                            tracing::error!(error=?e, relay_id=relay_id, "Failed to forward stream message from relay");
-                            break;
-                        }
-                    }
-                    response = catchup_stream.recv() => {
-                        let response = match response {
-                            Ok(response) => response,
-                            Err(e) => {
-                                tracing::error!(error=?e, relay_id=relay_id, "Catch-up forwarding ended for relay");
-                                break;
-                            }
-                        };
-                        if let Err(e) = catchup_tx.broadcast(response).await {
-                            tracing::error!(error=?e, relay_id=relay_id, "Failed to forward catch-up response from relay");
-                            break;
-                        }
-                    }
-                }
-            }
-        })
     }
 
     /// Remove a relay connection

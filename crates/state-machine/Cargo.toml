@@ -23,7 +23,7 @@ rand_chacha = "0.3"
 postcard = "1.0"
 # AES-GCM removed - only using ChaCha20-Poly1305 from wire-protocol
 rand = "0.8"
-thiserror = "1.0"
+thiserror.workspace = true
 async-broadcast = { workspace = true }
 async-trait = "0.1"
 eyeball = { workspace = true }

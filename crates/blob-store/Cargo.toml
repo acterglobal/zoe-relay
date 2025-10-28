@@ -7,7 +7,8 @@ edition = "2024"
 zoe-wire-protocol = { path = "../wire-protocol" }
 
 # Iroh blob store dependencies
-iroh-blobs = "0.93.0"
+iroh-blobs = "0.96.0"
+irpc = "0.5.0" # bound by iroh-blobs
 
 # Serialization and utilities
 serde = { workspace = true }
@@ -25,12 +26,11 @@ clap = { workspace = true }
 chrono = { workspace = true }
 
 # File system and path handling
-path-clean = "0.1"
+path-clean = "1"
 tempfile = { workspace = true }
 
 # Async runtime
 futures = { workspace = true }
-irpc = "0.5.0"
 
 [dev-dependencies]
 tokio-test = "0.4"

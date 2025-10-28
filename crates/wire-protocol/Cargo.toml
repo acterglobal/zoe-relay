@@ -22,7 +22,6 @@ tokio-util = { workspace = true, features = ["codec"] }
 serde = { workspace = true }
 serde_bytes = "0.11"
 postcard = { workspace = true }
-heapless = "0.7.2"
 semver = { version = "1.0", features = ["serde"] }
 
 # Cryptography
@@ -56,16 +55,16 @@ quinn = { workspace = true }
 rustls = { workspace = true, default-features = false, features = ["std"] }
 rustls-pki-types = "1.12"
 rustls-webpki = "0.103"
-rcgen = "0.12"
 
 # Networking utilities
-socket2 = "0.5"
+socket2 = "0.6"
 
 # Certificate parsing and generation
-x509-parser = "0.16"
+x509-parser = "0.18"
 x509-cert = "0.2"
+rcgen.workspace = true
 der = "0.7"
-const-oid = "0.9"
+const-oid = "0.9" # bound by x509-cert
 hex = { workspace = true }
 uuid = { workspace = true }
 
@@ -74,7 +73,7 @@ uuid = { workspace = true }
 # Logging
 tracing = { workspace = true }
 
-# Async utilities  
+# Async utilities
 async-trait = { workspace = true }
 
 # RPC framework
@@ -92,7 +91,7 @@ tokio-test = { workspace = true }
 test-case = { workspace = true }
 proptest = "1.0"
 quickcheck = "1.0"
-mockall = "0.12"
+mockall.workspace = true
 tempfile = { workspace = true }
 serial_test = { workspace = true }
 
@@ -101,8 +100,8 @@ assert_matches = { workspace = true }
 pretty_assertions = { workspace = true }
 
 # Additional testing utilities
-criterion = "0.5"
-hex-literal = "0.4"
+criterion = "0.7"
+hex-literal = "1"
 chrono = { workspace = true }
 
 
