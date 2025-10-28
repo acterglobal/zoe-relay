@@ -96,40 +96,21 @@ impl TestInfrastructure {
         debug!("✅ Connected to blob service");
 
         // Use a random database number to avoid conflicts between parallel tests
-        let db_num = rand::random::<u8>() % 15 + 1; // Use databases 1-15 (avoid 0 which might be used elsewhere)
+        let db_num = rand::random::<u8>() % 15 + 1; // Use databases 1-15 (avoid 0 which is used for local dev usually)
         let redis_url = format!("redis://127.0.0.1:6379/{db_num}");
 
         // Try to connect to Redis, but don't fail if it's not available
-        let message_service = match RedisMessageStorage::new(redis_url.clone()).await {
-            Ok(service) => {
-                debug!("✅ Connected to Redis message store");
-
-                // Clean up the test database to ensure isolation
-                let client = redis::Client::open(redis_url.clone()).map_err(|e| {
-                    anyhow::anyhow!("Failed to create Redis client for cleanup: {}", e)
-                })?;
-                let mut conn = client
-                    .get_multiplexed_async_connection()
-                    .await
-                    .map_err(|e| {
-                        anyhow::anyhow!("Failed to connect to Redis for cleanup: {}", e)
-                    })?;
-                let _: () = redis::cmd("FLUSHDB")
-                    .query_async(&mut conn)
-                    .await
-                    .map_err(|e| anyhow::anyhow!("Failed to flush test database: {}", e))?;
-
-                service
-            }
-            Err(e) => {
+        let message_service = RedisMessageStorage::new(redis_url.clone())
+            .await
+            .inspect_err(|e| {
                 warn!(
                     "⚠️ Failed to connect to Redis ({}), tests will be limited",
                     e
-                );
-                // We'll still create the service router but message tests will be skipped
-                return Err(anyhow::anyhow!("Redis not available for testing: {}", e));
-            }
-        };
+                )
+            })?;
+
+        message_service.clear_all().await?;
+        debug!("✅ Connected to fresh Redis message store");
 
         // Create service router
         let router = RelayServiceRouter::new(blob_service, message_service);

@@ -60,9 +60,9 @@ pub trait GroupAppService: Send + Sync {
         &self,
         group_id: &GroupId,
         actor_identity_ref: &IdentityRef,
-        group_state_reference: MessageId,
+        group_state_reference: Option<MessageId>,
         app_id: &AppProtocolVariant,
-    ) -> (GroupRole, MessageId, GroupPermissions);
+    ) -> crate::error::GroupResult<(GroupRole, MessageId, GroupPermissions)>;
 
     /// Publish an app event to a group
     ///

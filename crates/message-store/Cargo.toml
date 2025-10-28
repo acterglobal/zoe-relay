@@ -5,6 +5,9 @@ edition = "2021"
 description = "Zoe message storage and handling with Redis backend and tarpc service interface"
 license = "MIT OR Apache-2.0"
 
+[features]
+test-utils = []
+
 [dependencies]
 zoe-wire-protocol = { path = "../wire-protocol" }
 
@@ -60,6 +63,6 @@ libcrux-ml-dsa = { workspace = true }
 rand = { workspace = true }
 rand_chacha = { workspace = true }
 ed25519-dalek = { workspace = true }
-blake3 = { workspace = true } 
+blake3 = { workspace = true }
 tracing-subscriber = { workspace = true }
 env_logger = { workspace = true }

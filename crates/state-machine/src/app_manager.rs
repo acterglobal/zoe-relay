@@ -171,15 +171,15 @@ mod tests {
             &self,
             _group_id: &GroupId,
             _actor_identity_ref: &IdentityRef,
-            _group_state_reference: MessageId,
+            _group_state_reference: Option<MessageId>,
             _app_id: &AppProtocolVariant,
-        ) -> (GroupRole, MessageId, GroupPermissions) {
+        ) -> GroupResult<(GroupRole, MessageId, GroupPermissions)> {
             // Return default values for tests
-            (
+            Ok((
                 GroupRole::Member,
                 MessageId::from([0u8; 32]),
                 GroupPermissions::default(),
-            )
+            ))
         }
 
         async fn publish_app_event<T: serde::Serialize + Send>(

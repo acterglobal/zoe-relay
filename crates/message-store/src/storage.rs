@@ -104,6 +104,14 @@ impl RedisMessageStorage {
 
         return conn.get(id).await.map_err(MessageStoreError::Redis);
     }
+
+    // clear the inner data for testing
+    #[cfg(any(test, feature = "test-utils"))]
+    pub async fn clear_all(&self) -> Result<()> {
+        let mut conn = self.conn.lock().await;
+        conn.flushdb().await.map_err(MessageStoreError::Redis)
+    }
+
     /// Retrieve a specific message by ID as its raw data
     async fn get_inner_raw(&self, id: &str) -> Result<Option<Vec<u8>>> {
         self.get_inner::<Vec<u8>>(id).await

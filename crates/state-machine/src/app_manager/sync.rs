@@ -184,20 +184,17 @@ impl<
 
                             // Deserialize the settings data as UpdateDgoSettingsContent
                             let settings_updates: UpdateDgoSettingsContent =
-                                match postcard::from_bytes(&settings) {
-                                    Ok(updates) => updates,
-                                    Err(e) => {
-                                        tracing::error!(
-                                            group_id = ?group_id,
-                                            app_id = ?app_id,
-                                            error = ?e,
-                                            "Failed to deserialize DGO settings data"
-                                        );
-                                        return Err(GroupError::MessageError(format!(
-                                            "Failed to deserialize DGO settings: {e}"
-                                        )));
-                                    }
-                                };
+                                postcard::from_bytes(&settings).map_err(|e| {
+                                    tracing::error!(
+                                        group_id = ?group_id,
+                                        app_id = ?app_id,
+                                        error = ?e,
+                                        "Failed to deserialize DGO settings data"
+                                    );
+                                    GroupError::MessageError(format!(
+                                        "Failed to deserialize DGO settings: {e}"
+                                    ))
+                                })?;
 
                             // Create a DgoSettingsEvent
                             let settings_event = DgoSettingsEvent::new(
@@ -207,19 +204,25 @@ impl<
                             );
 
                             // Get the actual actor role and permission context
+                            // Use None to get current state (before this message is processed)
                             let (actor_role, app_state_message_id, _group_permissions) = self
                                 .group_service
-                                .get_permission_context(
-                                    &group_id,
-                                    &meta.actor,
-                                    meta.activity_id,
-                                    &app_id,
-                                )
-                                .await;
+                                .get_permission_context(&group_id, &meta.actor, None, &app_id)
+                                .await
+                                .map_err(|e| {
+                                    tracing::error!(
+                                        group_id = ?group_id,
+                                        app_id = ?app_id,
+                                        error = ?e,
+                                        "Failed to get permission context for DGO settings"
+                                    );
+                                    GroupError::MessageError(format!(
+                                        "Failed to get permission context: {e}"
+                                    ))
+                                })?;
 
                             // Execute the settings event using the existing DGO executor
-                            if let Err(e) = self
-                                .dgo_executor
+                            self.dgo_executor
                                 .execute_settings_event(
                                     settings_event,
                                     meta,
@@ -227,17 +230,17 @@ impl<
                                     app_state_message_id,
                                 )
                                 .await
-                            {
-                                tracing::error!(
-                                    group_id = ?group_id,
-                                    app_id = ?app_id,
-                                    error = ?e,
-                                    "Failed to execute DGO settings event"
-                                );
-                                return Err(GroupError::MessageError(format!(
-                                    "Failed to execute DGO settings event: {e}"
-                                )));
-                            }
+                                .map_err(|e| {
+                                    tracing::error!(
+                                        group_id = ?group_id,
+                                        app_id = ?app_id,
+                                        error = ?e,
+                                        "Failed to execute DGO settings event"
+                                    );
+                                    GroupError::MessageError(format!(
+                                        "Failed to execute DGO settings event: {e}"
+                                    ))
+                                })?;
 
                             tracing::info!(
                                 group_id = ?group_id,
@@ -348,10 +351,19 @@ impl<
                     .get_permission_context(
                         &app_state.group_id,
                         &actor_identity_ref,
-                        group_state_reference,
+                        Some(group_state_reference),
                         &app_state.installed_app.app_id,
                     )
-                    .await;
+                    .await
+                    .map_err(|e| {
+                        tracing::error!(
+                            message_id = ?activity_id,
+                            group_id = ?app_state.group_id,
+                            error = ?e,
+                            "Failed to get permission context for DGO event"
+                        );
+                        GroupError::MessageError(format!("Failed to get permission context: {e}"))
+                    })?;
 
                 let group_meta = ActivityMeta {
                     activity_id,

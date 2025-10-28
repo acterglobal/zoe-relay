@@ -912,18 +912,18 @@ async fn test_app_manager_handles_stream_closure_gracefully() {
             &self,
             _group_id: &zoe_app_primitives::group::events::GroupId,
             _actor_identity_ref: &zoe_app_primitives::identity::IdentityRef,
-            _group_state_reference: zoe_wire_protocol::MessageId,
+            _group_state_reference: Option<zoe_wire_protocol::MessageId>,
             _app_id: &zoe_app_primitives::protocol::AppProtocolVariant,
-        ) -> (
+        ) -> crate::error::GroupResult<(
             zoe_app_primitives::group::events::roles::GroupRole,
             zoe_wire_protocol::MessageId,
             zoe_app_primitives::group::events::permissions::GroupPermissions,
-        ) {
-            (
+        )> {
+            Ok((
                 zoe_app_primitives::group::events::roles::GroupRole::Member,
                 zoe_wire_protocol::MessageId::from([0u8; 32]),
                 zoe_app_primitives::group::events::permissions::GroupPermissions::default(),
-            )
+            ))
         }
 
         async fn publish_app_event<T: serde::Serialize + Send>(
@@ -1062,18 +1062,18 @@ async fn test_multiple_receivers_handle_stream_closure_independently() {
             &self,
             _group_id: &zoe_app_primitives::group::events::GroupId,
             _actor_identity_ref: &zoe_app_primitives::identity::IdentityRef,
-            _group_state_reference: zoe_wire_protocol::MessageId,
+            _group_state_reference: Option<zoe_wire_protocol::MessageId>,
             _app_id: &zoe_app_primitives::protocol::AppProtocolVariant,
-        ) -> (
+        ) -> crate::error::GroupResult<(
             zoe_app_primitives::group::events::roles::GroupRole,
             zoe_wire_protocol::MessageId,
             zoe_app_primitives::group::events::permissions::GroupPermissions,
-        ) {
-            (
+        )> {
+            Ok((
                 zoe_app_primitives::group::events::roles::GroupRole::Member,
                 zoe_wire_protocol::MessageId::from([0u8; 32]),
                 zoe_app_primitives::group::events::permissions::GroupPermissions::default(),
-            )
+            ))
         }
 
         async fn publish_app_event<T: serde::Serialize + Send>(

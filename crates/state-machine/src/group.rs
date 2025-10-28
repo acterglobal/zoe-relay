@@ -530,66 +530,83 @@ impl<M: MessagesManagerTrait + Clone + 'static> GroupAppService for GroupManager
         &self,
         group_id: &GroupId,
         actor_identity_ref: &zoe_app_primitives::identity::IdentityRef,
-        group_state_reference: zoe_wire_protocol::MessageId,
+        group_state_reference: Option<zoe_wire_protocol::MessageId>,
         app_id: &zoe_app_primitives::protocol::AppProtocolVariant,
-    ) -> (
+    ) -> GroupResult<(
         zoe_app_primitives::group::events::roles::GroupRole,
         zoe_wire_protocol::MessageId,
         zoe_app_primitives::group::events::permissions::GroupPermissions,
-    ) {
+    )> {
         let mut groups = self.groups.write().await;
 
-        // Default to Member role and initial group creation message ID
-        let mut actor_role = zoe_app_primitives::group::events::roles::GroupRole::Member;
-        let mut app_state_message_id = MessageId::from([0u8; 32]); // Default fallback
+        let group_session = groups
+            .get_mut(group_id)
+            .ok_or_else(|| GroupError::GroupNotFound(format!("{group_id:?}")))?;
 
-        if let Some(group_session) = groups.get_mut(group_id) {
-            // Get the initial group creation message ID from the event history
-            let initial_message_id = group_session
-                .state
-                .event_history
-                .first()
-                .copied()
-                .unwrap_or(MessageId::from([0u8; 32]));
+        // Get the initial group creation message ID from the event history
+        let initial_message_id = group_session
+            .state
+            .event_history
+            .first()
+            .copied()
+            .ok_or_else(|| {
+                GroupError::InvalidOperation(format!("Group {group_id:?} has no event history"))
+            })?;
 
-            // Optimize for the common case: if referencing current state (all zeros), use current state directly
-            if group_state_reference == MessageId::from([0u8; 32]) {
-                actor_role = group_session
+        let (actor_role, app_state_message_id) = match group_state_reference {
+            Some(state_ref) => {
+                // For historical state, use the reconstruction method
+                let group_state = group_session
+                    .state
+                    .lookup_group_state_at_message(state_ref)
+                    .ok_or_else(|| {
+                        GroupError::InvalidOperation(format!(
+                            "Could not reconstruct group state at message {state_ref:?}"
+                        ))
+                    })?;
+
+                let actor_role = group_state
+                    .get_actor_role_at_message(actor_identity_ref, state_ref)
+                    .ok_or_else(|| {
+                        GroupError::PermissionDenied(format!(
+                            "Actor {actor_identity_ref:?} not found in group at message {state_ref:?}"
+                        ))
+                    })?;
+
+                // Get the last app settings message ID before the group state reference
+                // If no app settings found, use the initial group creation message ID
+                let app_state_message_id = group_state
+                    .get_app_settings_message_before(app_id, state_ref)
+                    .unwrap_or(initial_message_id);
+
+                (actor_role, app_state_message_id)
+            }
+            None => {
+                // Use current state
+                let actor_role = group_session
                     .state
                     .members
                     .get(actor_identity_ref)
-                    .map(|member| member.role.clone())
-                    .unwrap_or(zoe_app_primitives::group::events::roles::GroupRole::Member);
+                    .ok_or_else(|| {
+                        GroupError::PermissionDenied(format!(
+                            "Actor {actor_identity_ref:?} not found in group"
+                        ))
+                    })?
+                    .role
+                    .clone();
 
                 // For current state, use the initial group creation message ID as baseline
-                app_state_message_id = initial_message_id;
-            } else {
-                // For historical state, use the reconstruction method
-                if let Some(group_state) = group_session
-                    .state
-                    .lookup_group_state_at_message(group_state_reference)
-                {
-                    actor_role = group_state
-                        .get_actor_role_at_message(actor_identity_ref, group_state_reference)
-                        .unwrap_or(zoe_app_primitives::group::events::roles::GroupRole::Member);
-
-                    // Get the last app settings message ID before the group state reference
-                    // If no app settings found, use the initial group creation message ID
-                    app_state_message_id = group_state
-                        .get_app_settings_message_before(app_id, group_state_reference)
-                        .unwrap_or(initial_message_id);
-                }
+                (actor_role, initial_message_id)
             }
-        }
-
-        // Get group permissions from the group state (always present)
-        let group_permissions = if let Some(group_session) = groups.get(group_id) {
-            group_session.state.group_info.settings.permissions.clone()
-        } else {
-            zoe_app_primitives::group::events::permissions::GroupPermissions::default()
         };
 
-        (actor_role, app_state_message_id, group_permissions)
+        // Get group permissions from the group state
+        let group_permissions = groups
+            .get(group_id)
+            .map(|session| session.state.group_info.settings.permissions.clone())
+            .ok_or_else(|| GroupError::GroupNotFound(format!("{group_id:?}")))?;
+
+        Ok((actor_role, app_state_message_id, group_permissions))
     }
 
     async fn publish_app_event<T: serde::Serialize + Send>(
@@ -960,7 +977,16 @@ impl<M: MessagesManagerTrait + Clone + 'static> GroupManager<M> {
         Self::subscribe_to_group(&*self.message_manager, &group_id).await?;
 
         // Broadcast the group addition
-        self.safe_broadcast(GroupDataUpdate::GroupAdded(group_session));
+        self.safe_broadcast(GroupDataUpdate::GroupAdded(group_session.clone()));
+
+        // Broadcast app installations for any installed apps in the joined group
+        let installed_apps = group_session.state.group_info.installed_apps.clone();
+        if !installed_apps.is_empty() {
+            self.safe_broadcast_app_update(GroupAppUpdate::InstalledApsUpdate {
+                group_id: group_id.clone(),
+                installed_apps,
+            });
+        }
 
         tracing::info!(
             group_id = ?group_id,

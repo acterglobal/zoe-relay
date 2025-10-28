@@ -274,7 +274,7 @@ async fn test_dgo_app_settings_permission_validation() -> Result<()> {
 
     // Step 3: Alice (admin) successfully updates settings
     let admin_settings_updates = vec![PermissionUpdate::TextBlocks(
-        TextBlocksPermissionUpdate::Create(FeaturePermission::AllMembers),
+        TextBlocksPermissionUpdate::Update(FeaturePermission::ModeratorOrAbove),
     )];
 
     // Serialize the settings updates
