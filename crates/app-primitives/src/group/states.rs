@@ -754,6 +754,11 @@ impl GroupState {
                             self.group_info.metadata = metadata;
                         }
                         crate::group::events::GroupInfoUpdate::AddMetadata(metadata) => {
+                            // Remove any existing metadata that should be replaced
+                            self.group_info
+                                .metadata
+                                .retain(|existing| !metadata.should_replace(existing));
+                            // Add the new metadata
                             self.group_info.metadata.push(metadata);
                         }
                         crate::group::events::GroupInfoUpdate::ClearMetadata => {
@@ -2783,5 +2788,199 @@ mod tests {
         assert_eq!(resolved_events[0].1.timestamp, 1000);
         assert_eq!(resolved_events[1].1.timestamp, 1001);
         assert_eq!(resolved_events[2].1.timestamp, 1002);
+    }
+
+    #[test]
+    fn test_add_metadata_replaces_same_type() {
+        let creator_key = KeyPair::generate(&mut OsRng);
+        let message =
+            create_test_message_full(&creator_key, b"test content".to_vec(), 1000).unwrap();
+        let mut group_info = create_test_group_info();
+
+        // Set initial metadata with various types
+        group_info.metadata = vec![
+            Metadata::Description("Old description".to_string()),
+            Metadata::Generic {
+                key: "category".to_string(),
+                value: "test".to_string(),
+            },
+            Metadata::Email("old@example.com".to_string()),
+            Metadata::Social {
+                platform: "twitter".to_string(),
+                handle: "@oldhandle".to_string(),
+            },
+            Metadata::Social {
+                platform: "github".to_string(),
+                handle: "@user".to_string(),
+            },
+        ];
+
+        let mut group_state = GroupState::initial(&message, group_info);
+        assert_eq!(group_state.group_info.metadata.len(), 5);
+
+        // Test 1: Replace Description
+        let update_desc = GroupActivityEvent::UpdateGroup {
+            updates: vec![GroupInfoUpdate::AddMetadata(Metadata::Description(
+                "New description".to_string(),
+            ))],
+        };
+        group_state
+            .apply_event(
+                update_desc,
+                create_test_message_id(50),
+                IdentityRef::Key(creator_key.public_key()),
+                1001,
+            )
+            .unwrap();
+
+        // Should still have 5 items (replaced, not added)
+        assert_eq!(group_state.group_info.metadata.len(), 5);
+        // Description should be updated
+        assert_eq!(
+            group_state.description(),
+            Some("New description".to_string())
+        );
+
+        // Test 2: Replace Generic metadata with matching key
+        let update_generic = GroupActivityEvent::UpdateGroup {
+            updates: vec![GroupInfoUpdate::AddMetadata(Metadata::Generic {
+                key: "category".to_string(),
+                value: "production".to_string(),
+            })],
+        };
+        group_state
+            .apply_event(
+                update_generic,
+                create_test_message_id(51),
+                IdentityRef::Key(creator_key.public_key()),
+                1002,
+            )
+            .unwrap();
+
+        // Should still have 5 items (replaced, not added)
+        assert_eq!(group_state.group_info.metadata.len(), 5);
+        // Generic metadata should be updated
+        let generic_meta = group_state.generic_metadata();
+        assert_eq!(
+            generic_meta.get("category"),
+            Some(&"production".to_string())
+        );
+
+        // Test 3: Add Generic metadata with different key (should add, not replace)
+        let add_new_generic = GroupActivityEvent::UpdateGroup {
+            updates: vec![GroupInfoUpdate::AddMetadata(Metadata::Generic {
+                key: "priority".to_string(),
+                value: "high".to_string(),
+            })],
+        };
+        group_state
+            .apply_event(
+                add_new_generic,
+                create_test_message_id(52),
+                IdentityRef::Key(creator_key.public_key()),
+                1003,
+            )
+            .unwrap();
+
+        // Should now have 6 items (new key, so added)
+        assert_eq!(group_state.group_info.metadata.len(), 6);
+        let generic_meta = group_state.generic_metadata();
+        assert_eq!(generic_meta.get("priority"), Some(&"high".to_string()));
+
+        // Test 4: Replace Email
+        let update_email = GroupActivityEvent::UpdateGroup {
+            updates: vec![GroupInfoUpdate::AddMetadata(Metadata::Email(
+                "new@example.com".to_string(),
+            ))],
+        };
+        group_state
+            .apply_event(
+                update_email,
+                create_test_message_id(53),
+                IdentityRef::Key(creator_key.public_key()),
+                1004,
+            )
+            .unwrap();
+
+        // Should still have 6 items (replaced, not added)
+        assert_eq!(group_state.group_info.metadata.len(), 6);
+        // Email should be updated
+        let has_new_email = group_state
+            .group_info
+            .metadata
+            .iter()
+            .any(|m| matches!(m, Metadata::Email(e) if e == "new@example.com"));
+        assert!(has_new_email);
+        let has_old_email = group_state
+            .group_info
+            .metadata
+            .iter()
+            .any(|m| matches!(m, Metadata::Email(e) if e == "old@example.com"));
+        assert!(!has_old_email);
+
+        // Test 5: Replace Social metadata for same platform
+        let update_twitter = GroupActivityEvent::UpdateGroup {
+            updates: vec![GroupInfoUpdate::AddMetadata(Metadata::Social {
+                platform: "twitter".to_string(),
+                handle: "@newhandle".to_string(),
+            })],
+        };
+        group_state
+            .apply_event(
+                update_twitter,
+                create_test_message_id(54),
+                IdentityRef::Key(creator_key.public_key()),
+                1005,
+            )
+            .unwrap();
+
+        // Should still have 6 items (replaced twitter, not added)
+        assert_eq!(group_state.group_info.metadata.len(), 6);
+        // Twitter handle should be updated
+        let twitter_handles: Vec<_> = group_state
+            .group_info
+            .metadata
+            .iter()
+            .filter_map(|m| match m {
+                Metadata::Social { platform, handle } if platform == "twitter" => {
+                    Some(handle.clone())
+                }
+                _ => None,
+            })
+            .collect();
+        assert_eq!(twitter_handles.len(), 1);
+        assert_eq!(twitter_handles[0], "@newhandle");
+
+        // Test 6: Add Social metadata for different platform (should add, not replace)
+        let add_linkedin = GroupActivityEvent::UpdateGroup {
+            updates: vec![GroupInfoUpdate::AddMetadata(Metadata::Social {
+                platform: "linkedin".to_string(),
+                handle: "@linkedinuser".to_string(),
+            })],
+        };
+        group_state
+            .apply_event(
+                add_linkedin,
+                create_test_message_id(55),
+                IdentityRef::Key(creator_key.public_key()),
+                1006,
+            )
+            .unwrap();
+
+        // Should now have 7 items (different platform, so added)
+        assert_eq!(group_state.group_info.metadata.len(), 7);
+        // Should have both github and linkedin social entries
+        let social_platforms: Vec<_> = group_state
+            .group_info
+            .metadata
+            .iter()
+            .filter_map(|m| match m {
+                Metadata::Social { platform, .. } => Some(platform.clone()),
+                _ => None,
+            })
+            .collect();
+        assert!(social_platforms.contains(&"twitter".to_string()));
+        assert!(social_platforms.contains(&"github".to_string()));
+        assert!(social_platforms.contains(&"linkedin".to_string()));
     }
 }

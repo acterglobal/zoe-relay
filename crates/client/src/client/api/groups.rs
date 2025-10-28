@@ -10,6 +10,7 @@ use zoe_app_primitives::{
         GroupId, GroupInfoUpdateContent, permissions::GroupAction, roles::GroupRole,
         settings::GroupSettings,
     },
+    icon::Icon,
     identity::IdentityRef,
     metadata::Metadata,
     protocol::InstalledApp,
@@ -26,6 +27,9 @@ use zoe_wire_protocol::{KeyPair, MessageId};
 pub struct SimpleGroupView {
     /// The id of this group
     pub group_id: GroupId,
+
+    /// Icon of the group
+    pub icon: Option<Icon>,
     /// Visible Name
     pub name: String,
     /// Optional Description
@@ -58,12 +62,17 @@ impl SimpleGroupView {
             name: info.name,
             settings: info.settings,
             description: None,
+            icon: None,
             installed_apps: info.installed_apps,
             my_role,
         };
         for m in info.metadata {
             match m {
-                Metadata::Description(desc) => me.description = Some(desc),
+                // we only take the first entry
+                Metadata::Description(desc) if me.description.is_none() => {
+                    me.description = Some(desc)
+                }
+                Metadata::Icon(icon) if me.icon.is_none() => me.icon = Some(icon),
                 _ => {
                     // not supported yet
                 }

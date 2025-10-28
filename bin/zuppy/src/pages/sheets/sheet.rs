@@ -10,6 +10,7 @@ use gpui_component::{
 use gpui_router::use_params;
 use zoe_app_primitives::{
     group::events::{GroupId, GroupInfoUpdate, permissions::GroupAction},
+    icon::Icon,
     metadata::Metadata,
 };
 use zoe_client::client::api::groups::SimpleGroupView;
@@ -97,6 +98,75 @@ impl SheetPage {
             })
             .detach();
     }
+    fn render_titlebar(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+        group: Arc<SimpleGroupView>,
+    ) -> Stateful<Div> {
+        let can_edit = group.can_i(GroupAction::UpdateGroup);
+        let title = self.render_title(window, cx, group.clone());
+        if group.icon.is_none() && !can_edit {
+            return title;
+        };
+
+        let icon = if let Some(Icon::Emoji(emoji)) = &group.icon {
+            div().child(SharedString::from(emoji)).text_xl()
+        } else {
+            div().child(SharedString::from("❓"))
+        };
+
+        let icon_outer = if !can_edit {
+            icon.id("sheet-icon")
+        } else {
+            let this = cx.entity().downgrade();
+            icon.cursor_pointer()
+                .id("sheet-icon-edit")
+                .hoverable_tooltip(move |_w, ctx| {
+                    ctx.new(|_| SimplePopover::new("Click to edit".into()))
+                        .into()
+                })
+                .on_click(move |_, win, cx| {
+                    let current = if let Some(Icon::Emoji(emoji)) = &group.icon {
+                        emoji.clone()
+                    } else {
+                        String::new()
+                    };
+                    EditModal::default()
+                        .title("Edit Emoji Icon".to_owned())
+                        .current_value(current)
+                        .placeholder("Enter new emoji")
+                        .show(win, cx, {
+                            let this = this.clone();
+                            let group = group.clone();
+                            move |new_value, win, cx| {
+                                if let Err(err) = this.update(
+                                    cx,
+                                    |me: &mut SheetPage, cx: &mut Context<SheetPage>| {
+                                        me.submit_group_update(
+                                            win,
+                                            cx,
+                                            group.clone(),
+                                            GroupInfoUpdate::AddMetadata(Metadata::Icon(
+                                                Icon::Emoji(new_value.to_string()),
+                                            )),
+                                        );
+                                    },
+                                ) {
+                                    tracing::error!("Failed to update group emoji: {}", err);
+                                }
+                            }
+                        });
+                })
+        };
+
+        div()
+            .id("sheet-title-container")
+            .h_flex()
+            .justify_start()
+            .child(icon_outer.mr_2())
+            .child(title)
+    }
 
     fn render_title(
         &mut self,
@@ -123,7 +193,6 @@ impl SheetPage {
                     .into()
             })
             .on_click(move |_, win, cx| {
-                print!("clicked");
                 EditModal::default()
                     .title("Edit Group Name".to_owned())
                     .current_value(name.clone())
@@ -268,7 +337,7 @@ impl Render for SheetPage {
                     .rounded_xl()
                     .p_10()
                     .v_flex()
-                    .child(self.render_title(window, cx, group.clone()))
+                    .child(self.render_titlebar(window, cx, group.clone()))
                     .child(self.render_description(window, cx, group.clone())),
             ),
         }
