@@ -106,9 +106,8 @@ impl Client {
 
         let poller = stream!({
             loop {
-                let Ok(update) = updates_stream.recv().await.map_err(|e| {
+                let Ok(update) = updates_stream.recv().await.inspect_err(|&e| {
                     tracing::error!("Error receiving group update: {}", e);
-                    e
                 }) else {
                     yield;
                     continue;
@@ -145,7 +144,7 @@ impl Client {
         group_id: &GroupId,
         update: GroupInfoUpdateContent,
     ) -> Result<MessageId> {
-        self.update_group_with_sender(group_id, &self.keypair(), update)
+        self.update_group_with_sender(group_id, self.keypair(), update)
             .await
     }
 

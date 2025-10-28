@@ -496,7 +496,7 @@ mod tests {
         }
 
         // Test remove operations
-        let remove_channels = FilterOperation::remove_channels(channels.clone().into());
+        let remove_channels = FilterOperation::remove_channels(channels.clone());
         match remove_channels {
             FilterOperation::Remove(filters) => {
                 assert_eq!(filters.len(), 2);

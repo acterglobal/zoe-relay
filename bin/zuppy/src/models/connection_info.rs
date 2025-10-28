@@ -75,6 +75,6 @@ impl ConnectionInfo {
             return false;
         }
         tracing::trace!("updated status");
-        return true;
+        true
     }
 }

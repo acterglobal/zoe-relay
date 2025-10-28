@@ -30,7 +30,7 @@ struct ForwardCompatibleConfig {
 struct VariantInfo {
     /// The original variant
     variant: Variant,
-    /// The explicit discriminant value
+    /// The discriminant value (explicit or auto-assigned)
     discriminant: u32,
 }
 
@@ -199,6 +199,7 @@ fn parse_enum_variants_for_derive(
     // Split variants into known variants (with discriminants) and unknown variant
     let mut known_variants = Vec::new();
     let mut unknown_variant_info = None;
+    let mut next_auto_discriminant = 0u32;
 
     for variant in &data.variants {
         if variant.ident == unknown_variant_ident {
@@ -234,11 +235,23 @@ fn parse_enum_variants_for_derive(
             unknown_variant_info = Some(variant.clone());
         } else {
             // Parse discriminant for known variants only
-            let discriminant = parse_discriminant_attribute(&variant.attrs)?;
+            let explicit_discriminant = parse_discriminant_attribute(&variant.attrs)?;
+
+            let discriminant = if let Some(disc) = explicit_discriminant {
+                // Use explicit discriminant
+                disc
+            } else {
+                // Auto-assign discriminant
+                next_auto_discriminant
+            };
+
             known_variants.push(VariantInfo {
                 variant: variant.clone(),
                 discriminant,
             });
+
+            // Update next auto discriminant to be one more than current
+            next_auto_discriminant = discriminant.saturating_add(1);
         }
     }
 
@@ -418,13 +431,26 @@ fn parse_enum_variants(input: &DeriveInput) -> Result<Vec<VariantInfo>> {
     };
 
     let mut variants = Vec::new();
+    let mut next_auto_discriminant = 0u32;
 
     for variant in &data.variants {
-        let discriminant = parse_discriminant_attribute(&variant.attrs)?;
+        let explicit_discriminant = parse_discriminant_attribute(&variant.attrs)?;
+
+        let discriminant = if let Some(disc) = explicit_discriminant {
+            // Use explicit discriminant
+            disc
+        } else {
+            // Auto-assign discriminant
+            next_auto_discriminant
+        };
+
         variants.push(VariantInfo {
             variant: variant.clone(),
             discriminant,
         });
+
+        // Update next auto discriminant to be one more than current
+        next_auto_discriminant = discriminant.saturating_add(1);
     }
 
     if variants.is_empty() {
@@ -437,17 +463,16 @@ fn parse_enum_variants(input: &DeriveInput) -> Result<Vec<VariantInfo>> {
     Ok(variants)
 }
 
-fn parse_discriminant_attribute(attrs: &[Attribute]) -> Result<u32> {
+fn parse_discriminant_attribute(attrs: &[Attribute]) -> Result<Option<u32>> {
     for attr in attrs {
         if attr.path().is_ident("discriminant") {
-            return attr.parse_args::<syn::LitInt>()?.base10_parse::<u32>();
+            return Ok(Some(
+                attr.parse_args::<syn::LitInt>()?.base10_parse::<u32>()?,
+            ));
         }
     }
 
-    Err(Error::new(
-        Span::call_site(),
-        "all variants must have #[discriminant(N)] attribute",
-    ))
+    Ok(None)
 }
 
 fn validate_discriminants(

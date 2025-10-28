@@ -10,6 +10,7 @@ pub mod digital_groups_organizer;
 pub mod extra;
 pub mod file;
 pub mod group;
+pub mod icon;
 pub mod identity;
 pub mod invitation;
 pub mod metadata;

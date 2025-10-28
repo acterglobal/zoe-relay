@@ -55,12 +55,12 @@ impl RenderOnce for GroupsSidebar {
                     ),
                 )
             } else {
-                return SidebarGroup::new("Sheets").children(state.groups.iter().map(|g| {
+                SidebarGroup::new("Sheets").children(state.groups.iter().map(|g| {
                     let group_id_hex = g.group_id.to_hex();
                     SidebarMenu::new().child(SidebarMenuItem::new(g.name.clone()).on_click(
                         move |_, w, cx| Routes::Sheet.route_sub(w, cx, Some(group_id_hex.clone())),
                     ))
-                }));
+                }))
             }
         })
     }

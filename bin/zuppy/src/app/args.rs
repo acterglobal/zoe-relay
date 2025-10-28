@@ -14,8 +14,8 @@ const IS_DEBUG: bool = true;
 const IS_DEBUG: bool = false;
 
 // FIXME: allow to load from cli, env and file
-const DEFAULT_SERVER_ADDRESS: &'static str = "a.dev.hellozoe.app:13918";
-const DEFAULT_SERVER_KEY: &'static str =
+const DEFAULT_SERVER_ADDRESS: &str = "a.dev.hellozoe.app:13918";
+const DEFAULT_SERVER_KEY: &str =
     "00202ee21d8cc6e519ba164ca4d10c2bae101f83bfd46249f2b7bb86f9083d50ed76";
 
 #[derive(Parser, Debug)]

@@ -61,7 +61,7 @@ impl CreateSheetPage {
         let zoe = client.clone();
         let mut create_group_b = CreateGroupBuilder::default().name(name.into());
         if !description.is_empty() {
-            create_group_b = create_group_b.description(description.into());
+            create_group_b = create_group_b.description(description);
         }
         window
             .spawn(cx, async move |w| {

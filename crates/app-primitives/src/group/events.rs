@@ -44,15 +44,15 @@ impl GroupId {
     }
 }
 
-impl Into<ChannelId> for GroupId {
-    fn into(self) -> ChannelId {
-        ChannelId::from(self.0.as_bytes().to_vec())
+impl From<GroupId> for ChannelId {
+    fn from(val: GroupId) -> Self {
+        ChannelId::from(val.0.as_bytes().to_vec())
     }
 }
 
-impl Into<ChannelId> for &GroupId {
-    fn into(self) -> ChannelId {
-        ChannelId::from(self.0.as_bytes().to_vec())
+impl From<&GroupId> for ChannelId {
+    fn from(val: &GroupId) -> Self {
+        ChannelId::from(val.0.as_bytes().to_vec())
     }
 }
 

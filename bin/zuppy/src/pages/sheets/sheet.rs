@@ -43,8 +43,8 @@ impl SheetPage {
         groups: Entity<Groups>,
     ) -> Result<Arc<SimpleGroupView>, String> {
         let params = use_params(cx);
-        let hex_id = params.get("id").ok_or_else(|| "Missing group ID")?;
-        let id = GroupId::from_hex(&hex_id).map_err(|error| error.to_string())?;
+        let hex_id = params.get("id").ok_or("Missing group ID")?;
+        let id = GroupId::from_hex(hex_id).map_err(|error| error.to_string())?;
         cx.read_entity(&groups, |groups, _app| groups.get(id))
             .ok_or_else(|| "Group not found".to_string())
     }

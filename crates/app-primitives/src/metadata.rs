@@ -1,6 +1,7 @@
 use forward_compatible_enum::ForwardCompatibleEnum;
 
 use crate::file::Image;
+use crate::icon::Icon;
 #[cfg(feature = "frb-api")]
 use flutter_rust_bridge::frb;
 
@@ -17,6 +18,8 @@ pub enum Metadata {
     Avatar(Image),
     #[discriminant(21)]
     Background(Image),
+    #[discriminant(22)]
+    Icon(Icon),
     #[discriminant(30)]
     Website(String),
     #[discriminant(40)]

@@ -41,39 +41,39 @@ impl From<blake3::Hash> for PqxdhSessionId {
     }
 }
 
-impl Into<ChannelId> for &PqxdhSessionId {
-    fn into(self) -> ChannelId {
-        ChannelId::from(self.0)
+impl From<&PqxdhSessionId> for ChannelId {
+    fn from(val: &PqxdhSessionId) -> Self {
+        ChannelId::from(val.0)
     }
 }
 
-impl Into<ChannelId> for PqxdhSessionId {
-    fn into(self) -> ChannelId {
-        ChannelId::from(self.0)
+impl From<PqxdhSessionId> for ChannelId {
+    fn from(val: PqxdhSessionId) -> Self {
+        ChannelId::from(val.0)
     }
 }
 
-impl Into<KeyId> for &PqxdhSessionId {
-    fn into(self) -> KeyId {
-        KeyId::from(self.0)
+impl From<&PqxdhSessionId> for KeyId {
+    fn from(val: &PqxdhSessionId) -> Self {
+        KeyId::from(val.0)
     }
 }
 
-impl Into<KeyId> for PqxdhSessionId {
-    fn into(self) -> KeyId {
-        KeyId::from(self.0)
+impl From<PqxdhSessionId> for KeyId {
+    fn from(val: PqxdhSessionId) -> Self {
+        KeyId::from(val.0)
     }
 }
 
-impl Into<[u8; 32]> for &PqxdhSessionId {
-    fn into(self) -> [u8; 32] {
-        self.0.into()
+impl From<&PqxdhSessionId> for [u8; 32] {
+    fn from(val: &PqxdhSessionId) -> Self {
+        val.0
     }
 }
 
-impl Into<[u8; 32]> for PqxdhSessionId {
-    fn into(self) -> [u8; 32] {
-        self.0.into()
+impl From<PqxdhSessionId> for [u8; 32] {
+    fn from(val: PqxdhSessionId) -> Self {
+        val.0
     }
 }
 

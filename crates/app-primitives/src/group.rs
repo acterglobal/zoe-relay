@@ -243,7 +243,7 @@ mod tests {
             value: "alice".to_string(),
         });
 
-        assert_eq!(join_info.group_info.group_id, channel_id.clone().into());
+        assert_eq!(join_info.group_info.group_id, channel_id.clone());
         assert_eq!(join_info.group_info, group_info);
         assert_eq!(join_info.encryption_key, encryption_key);
         assert_eq!(join_info.key_info, key_info);

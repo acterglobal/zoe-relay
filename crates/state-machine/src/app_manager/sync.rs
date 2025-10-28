@@ -125,7 +125,7 @@ impl<
                     }
 
                     // Subscribe to the app channel
-                    let channel_filter = Filter::Channel(installed_app.app_tag.clone().into());
+                    let channel_filter = Filter::Channel(installed_app.app_tag.clone());
                     self.message_manager
                         .ensure_contains_filter(channel_filter)
                         .await

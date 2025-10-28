@@ -120,13 +120,12 @@ impl EditModalImpl {
             return;
         }
         window.close_modal(cx);
-        if let Some(current_value) = &self.options.current_value {
-            if &value == current_value {
+        if let Some(current_value) = &self.options.current_value
+            && &value == current_value {
                 // nothing to be done
                 return;
             }
-        }
-        (&self.on_submit)(value, window, cx);
+        (self.on_submit)(value, window, cx);
     }
 
     fn _show(&self, window: &mut Window, cx: &mut Context<Self>) {
