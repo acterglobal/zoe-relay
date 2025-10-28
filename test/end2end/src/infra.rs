@@ -21,7 +21,7 @@ use zoe_blob_store::service::BlobServiceImpl;
 use zoe_client::Client;
 use zoe_client::{RelayClient, RelayClientBuilder};
 use zoe_message_store::storage::RedisMessageStorage;
-use zoe_relay::{relay::RelayServer, services::RelayServiceRouter};
+use zoe_relay_server::{relay::RelayServer, services::RelayServiceRouter};
 use zoe_state_machine::messages::MessagesManagerTrait;
 use zoe_wire_protocol::BlobId;
 use zoe_wire_protocol::{

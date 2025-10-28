@@ -44,7 +44,7 @@ zoe-relay = { path = "../relay" }
 ### Starting a Relay Server
 
 ```rust
-use zoe_relay::RelayServer;
+use zoe_relay_server::RelayServer;
 
 let server = RelayServer::new(config).await?;
 server.start().await?;

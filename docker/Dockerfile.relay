@@ -19,11 +19,13 @@ WORKDIR /app
 COPY Cargo.toml Cargo.lock ./
 COPY crates/ ./crates/
 COPY test/ ./test/
+COPY bin/relay ./bin/relay
+COPY bin/system-check ./bin/system-check
 
 # Build the relay binary in release mode
 RUN cargo build --release --bin zoe-relay
 # Also build system check binary with health bridge feature for optional health monitoring
-RUN cargo build --release --bin zoe-system-check --features health-bridge
+RUN cargo build --release --bin zoe-system-check
 
 # Runtime stage - minimal image
 FROM debian:bookworm-slim

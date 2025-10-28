@@ -1,23 +1,11 @@
 [workspace]
 resolver = "3"
 members = [
-    "crates/app-primitives",
-    "crates/blob-store",
-    "crates/client",
-    "crates/client-storage",
-    "crates/encrypted-storage",
-    "crates/forward-compatible-enum",
-    "crates/message-store",
-    "crates/relay",
-    "crates/signal-bot",
-    "crates/state-machine",
-    "crates/wa-bot",
-    "crates/whatsmeow",
-    "crates/wire-protocol",
+    "crates/*",
     "test/end2end",
 
     # binaries
-    "bin/zuppy",
+    "bin/*",
 ]
 
 [workspace.dependencies]

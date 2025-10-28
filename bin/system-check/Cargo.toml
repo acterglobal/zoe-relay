@@ -1,0 +1,18 @@
+[package]
+name = "zoe-system-check"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "zoe-system-check"
+
+[dependencies]
+zoe-client = { path = "../../crates/client", features = ["cli", "health-bridge"] }
+zoe-wire-protocol = { path = "../../crates/wire-protocol" }
+zoe-app-primitives = { path = "../../crates/app-primitives" }
+clap.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+tempfile.workspace = true
+tokio.workspace = true
+rustls.workspace = true

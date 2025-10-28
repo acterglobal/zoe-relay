@@ -8,9 +8,9 @@ use std::{
 use tracing::info;
 use zoe_app_primitives::{
     connection::{NetworkAddress, RelayAddress},
-    qr::{display_qr_code, QrOptions},
+    qr::{QrOptions, display_qr_code},
 };
-use zoe_relay::ZoeRelayServer;
+use zoe_relay_server::ZoeRelayServer;
 use zoe_wire_protocol::{Algorithm, KeyPair, VerifyingKey};
 
 /// Zoe Relay Server - QUIC relay with ed25519 authentication
@@ -467,21 +467,29 @@ mod tests {
         assert_eq!(relay_info.addresses.len(), 4);
 
         // Verify specific addresses are present
-        assert!(relay_info
-            .addresses
-            .contains(&NetworkAddress::ipv4_with_port(
-                Ipv4Addr::new(203, 0, 113, 1),
-                8080
-            )));
-        assert!(relay_info
-            .addresses
-            .contains(&NetworkAddress::dns("relay.example.com")));
-        assert!(relay_info
-            .addresses
-            .contains(&NetworkAddress::dns_with_port("relay.example.com", 8443)));
-        assert!(relay_info
-            .addresses
-            .contains(&NetworkAddress::dns_with_port("backup.example.org", 9443)));
+        assert!(
+            relay_info
+                .addresses
+                .contains(&NetworkAddress::ipv4_with_port(
+                    Ipv4Addr::new(203, 0, 113, 1),
+                    8080
+                ))
+        );
+        assert!(
+            relay_info
+                .addresses
+                .contains(&NetworkAddress::dns("relay.example.com"))
+        );
+        assert!(
+            relay_info
+                .addresses
+                .contains(&NetworkAddress::dns_with_port("relay.example.com", 8443))
+        );
+        assert!(
+            relay_info
+                .addresses
+                .contains(&NetworkAddress::dns_with_port("backup.example.org", 9443))
+        );
     }
 
     #[test]
@@ -514,13 +522,17 @@ mod tests {
         assert_eq!(relay_info.addresses.len(), 1);
 
         // Verify localhost is not present
-        assert!(!relay_info
-            .addresses
-            .contains(&NetworkAddress::ipv4_with_port(Ipv4Addr::LOCALHOST, 8080)));
+        assert!(
+            !relay_info
+                .addresses
+                .contains(&NetworkAddress::ipv4_with_port(Ipv4Addr::LOCALHOST, 8080))
+        );
 
         // Verify external address is present
-        assert!(relay_info
-            .addresses
-            .contains(&NetworkAddress::dns_with_port("relay.example.com", 8443)));
+        assert!(
+            relay_info
+                .addresses
+                .contains(&NetworkAddress::dns_with_port("relay.example.com", 8443))
+        );
     }
 }

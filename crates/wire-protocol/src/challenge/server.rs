@@ -25,7 +25,7 @@ use tracing::{debug, warn};
 /// # Arguments
 ///
 /// * `send` - Stream for sending data to the client
-/// * `recv` - Stream for receiving data from the client  
+/// * `recv` - Stream for receiving data from the client
 /// * `server_keypair` - Server's keypair for signing the challenge nonce
 ///
 /// # Returns
@@ -43,7 +43,7 @@ use tracing::{debug, warn};
 /// # Example
 ///
 /// ```rust
-/// use zoe_relay::challenge::perform_multi_challenge_handshake;
+/// use zoe_relay_server::challenge::perform_multi_challenge_handshake;
 ///
 /// let verified_keys = perform_multi_challenge_handshake(
 ///     send_stream,

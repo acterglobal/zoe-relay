@@ -1,13 +1,9 @@
 [package]
-name = "zoe-relay"
+name = "zoe-relay-server"
 version = "0.1.0"
 edition = "2021"
 description = "Zoe relay server providing QUIC transport with ML-DSA-44-based authentication"
 license = "MIT OR Apache-2.0"
-
-[[bin]]
-name = "zoe-relay"
-path = "src/main.rs"
 
 [features]
 default = []
@@ -28,7 +24,6 @@ rand = { workspace = true }
 serde = { workspace = true }
 tarpc = { workspace = true, features = ['serde-transport'] }
 toml = "0.9.4"
-clap = { workspace = true }
 
 # Error handling
 anyhow = { workspace = true }

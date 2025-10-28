@@ -18,7 +18,7 @@
 //! ## Example
 //!
 //! ```rust
-//! use zoe_relay::{ServiceRouter, Service, ConnectionInfo};
+//! use zoe_relay_server::{ServiceRouter, Service, ConnectionInfo};
 //! use zoe_wire_protocol::StreamPair;
 //! use async_trait::async_trait;
 //!
@@ -30,7 +30,7 @@
 //!
 //! impl TryFrom<u8> for ServiceType {
 //!     type Error = MyError;
-//!     
+//!
 //!     fn try_from(value: u8) -> Result<Self, Self::Error> {
 //!         match value {
 //!             1 => Ok(ServiceType::MessageService),

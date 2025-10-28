@@ -26,7 +26,7 @@
 //! ### Implementing a Service Router
 //!
 //! ```rust
-//! use zoe_relay::{RelayServer, ServiceRouter};
+//! use zoe_relay_server::{RelayServer, ServiceRouter};
 //! use ed25519_dalek::SigningKey;
 //! use std::net::SocketAddr;
 //! use zoe_wire_protocol::KeyPair;
@@ -55,10 +55,10 @@
 //! #     type ServiceId = u8;
 //! #     type Service = MyService;
 //! #     async fn parse_service_id(&self, service_id: u8) -> Result<Self::ServiceId, Self::Error> { Ok(service_id) }
-//! #     async fn create_service(&self, _: &Self::ServiceId, _: &zoe_relay::ConnectionInfo, _: zoe_wire_protocol::StreamPair) -> Result<Self::Service, Self::Error> { Ok(MyService) }
+//! #     async fn create_service(&self, _: &Self::ServiceId, _: &zoe_relay_server::ConnectionInfo, _: zoe_wire_protocol::StreamPair) -> Result<Self::Service, Self::Error> { Ok(MyService) }
 //! # }
 //! # #[async_trait]
-//! # impl zoe_relay::Service for MyService {
+//! # impl zoe_relay_server::Service for MyService {
 //! #     type Error = MyError;
 //! #     async fn run(self) -> Result<(), Self::Error> { Ok(()) }
 //! # }

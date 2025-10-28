@@ -2,17 +2,13 @@
 # Production-ready setup with Redis, Relay Server, and WhatsApp Bot
 
 services:
-
-
-#    ########  #######  ########    ########  ######## ##          ###    ##    ## 
-#         ##  ##     ## ##          ##     ## ##       ##         ## ##    ##  ##  
-#        ##   ##     ## ##          ##     ## ##       ##        ##   ##    ####   
-#       ##    ##     ## ######      ########  ######   ##       ##     ##    ##    
-#      ##     ##     ## ##          ##   ##   ##       ##       #########    ##    
-#     ##      ##     ## ##          ##    ##  ##       ##       ##     ##    ##    
-#    ########  #######  ########    ##     ## ######## ######## ##     ##    ##    
-
-
+  #    ########  #######  ########    ########  ######## ##          ###    ##    ##
+  #         ##  ##     ## ##          ##     ## ##       ##         ## ##    ##  ##
+  #        ##   ##     ## ##          ##     ## ##       ##        ##   ##    ####
+  #       ##    ##     ## ######      ########  ######   ##       ##     ##    ##
+  #      ##     ##     ## ##          ##   ##   ##       ##       #########    ##
+  #     ##      ##     ## ##          ##    ##  ##       ##       ##     ##    ##
+  #    ########  #######  ########    ##     ## ######## ######## ##     ##    ##
 
   zoe-relay:
     build:
@@ -42,7 +38,11 @@ services:
       # Optional: custom configuration
       # - ./config:/app/config:ro
     healthcheck:
-      test: ["CMD-SHELL", "test -f /shared/keys/zoe_relay_server_public_key.pem && timeout 5 bash -c '</dev/udp/localhost/13908' || exit 1"]
+      test:
+        [
+          "CMD-SHELL",
+          "test -f /shared/keys/zoe_relay_server_public_key.pem && timeout 5 bash -c '</dev/udp/localhost/13908' || exit 1",
+        ]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -50,14 +50,12 @@ services:
     networks:
       - zoe-network
 
-
-# #####  ###### #####  #  ####  
-# #    # #      #    # # #      
-# #    # #####  #    # #  ####  
-# #####  #      #    # #      # 
-# #   #  #      #    # # #    # 
-# #    # ###### #####  #  ####  
-
+  # #####  ###### #####  #  ####
+  # #    # #      #    # # #
+  # #    # #####  #    # #  ####
+  # #####  #      #    # #      #
+  # #   #  #      #    # # #    #
+  # #    # ###### #####  #  ####
 
   zoe-redis:
     image: redis:7-alpine
@@ -73,27 +71,23 @@ services:
     networks:
       - zoe-network
 
+  #::::::::::::::::::'########:'##::::'##:'########:'########:::::'###:::::::::::::::::::::::::3
+  #:::::::::::::::::: ##.....::. ##::'##::... ##..:: ##.... ##:::'## ##::::::::::::::::::::::::3
+  #:::::::::::::::::: ##::::::::. ##'##:::::: ##:::: ##:::: ##::'##:. ##:::::::::::::::::::::::3
+  #:::'#######::::::: ######:::::. ###::::::: ##:::: ########::'##:::. ##:::::::'#######:::::::3
+  #:::........::::::: ##...:::::: ## ##:::::: ##:::: ##.. ##::: #########:::::::........:::::::3
+  #:::::::::::::::::: ##:::::::: ##:. ##::::: ##:::: ##::. ##:: ##.... ##::::::::::::::::::::::3
+  #:::::::::::::::::: ########: ##:::. ##:::: ##:::: ##:::. ##: ##:::: ##::::::::::::::::::::::3
+  #::::::::::::::::::........::..:::::..:::::..:::::..:::::..::..:::::..:::::::::::::::::::::::3
 
-
-#::::::::::::::::::'########:'##::::'##:'########:'########:::::'###:::::::::::::::::::::::::3
-#:::::::::::::::::: ##.....::. ##::'##::... ##..:: ##.... ##:::'## ##::::::::::::::::::::::::3
-#:::::::::::::::::: ##::::::::. ##'##:::::: ##:::: ##:::: ##::'##:. ##:::::::::::::::::::::::3
-#:::'#######::::::: ######:::::. ###::::::: ##:::: ########::'##:::. ##:::::::'#######:::::::3
-#:::........::::::: ##...:::::: ## ##:::::: ##:::: ##.. ##::: #########:::::::........:::::::3
-#:::::::::::::::::: ##:::::::: ##:. ##::::: ##:::: ##::. ##:: ##.... ##::::::::::::::::::::::3
-#:::::::::::::::::: ########: ##:::. ##:::: ##:::: ##:::. ##: ##:::: ##::::::::::::::::::::::3
-#::::::::::::::::::........::..:::::..:::::..:::::..:::::..::..:::::..:::::::::::::::::::::::3
-
-
-
-#                                                                                    
-#     #    # ######   ##   #      ##### #    #     ####  #    # ######  ####  #    # 
-#     #    # #       #  #  #        #   #    #    #    # #    # #      #    # #   #  
-#     ###### #####  #    # #        #   ######    #      ###### #####  #      ####   
-#     #    # #      ###### #        #   #    #    #      #    # #      #      #  #   
-#     #    # #      #    # #        #   #    #    #    # #    # #      #    # #   #  
-#     #    # ###### #    # ######   #   #    #     ####  #    # ######  ####  #    # 
-#                                                                                    
+  #
+  #     #    # ######   ##   #      ##### #    #     ####  #    # ######  ####  #    #
+  #     #    # #       #  #  #        #   #    #    #    # #    # #      #    # #   #
+  #     ###### #####  #    # #        #   ######    #      ###### #####  #      ####
+  #     #    # #      ###### #        #   #    #    #      #    # #      #      #  #
+  #     #    # #      #    # #        #   #    #    #    # #    # #      #    # #   #
+  #     #    # ###### #    # ######   #   #    #     ####  #    # ######  ####  #    #
+  #
 
   # Health bridge for relay server (optional)
   zoe-relay-health-bridge:
@@ -105,17 +99,25 @@ services:
       zoe-relay:
         condition: service_started
     ports:
-      - "${RELAY_HEALTH_BRIDGE_PORT:-13980}:8080
+      - "${RELAY_HEALTH_BRIDGE_PORT:-13980}:8080"
     environment:
       - RUST_LOG=${RUST_LOG:-info}
     networks:
       - zoe-network
-    command: ["./zoe-system-check", "health-bridge", 
-              "--http-port", "8080, 
-              "--health-check-port", "13908",
-              "--target-address", "zoe-relay"]
+    command:
+      [
+        "./zoe-system-check",
+        "health-bridge",
+        "--http-port",
+        "8080",
+        "--health-check-port",
+        "13908",
+        "--target-address",
+        "zoe-relay",
+      ]
     healthcheck:
-      test: ["CMD-SHELL", "timeout 5 bash -c '</dev/tcp/localhost/8083' || exit 1"]
+      test:
+        ["CMD-SHELL", "timeout 5 bash -c '</dev/tcp/localhost/8083' || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -123,14 +125,13 @@ services:
     profiles:
       - relay-health-bridge
 
-#   #     #                               #                     ######               
-#   #  #  # #    #   ##   #####  ####    # #   #####  #####     #     #  ####  ##### 
-#   #  #  # #    #  #  #    #   #       #   #  #    # #    #    #     # #    #   #   
-#   #  #  # ###### #    #   #    ####  #     # #    # #    #    ######  #    #   #   
-#   #  #  # #    # ######   #        # ####### #####  #####     #     # #    #   #   
-#   #  #  # #    # #    #   #   #    # #     # #      #         #     # #    #   #   
-#    ## ##  #    # #    #   #    ####  #     # #      #         ######   ####    #   
-                                                                                  
+  #   #     #                               #                     ######
+  #   #  #  # #    #   ##   #####  ####    # #   #####  #####     #     #  ####  #####
+  #   #  #  # #    #  #  #    #   #       #   #  #    # #    #    #     # #    #   #
+  #   #  #  # ###### #    #   #    ####  #     # #    # #    #    ######  #    #   #
+  #   #  #  # #    # ######   #        # ####### #####  #####     #     # #    #   #
+  #   #  #  # #    # #    #   #   #    # #     # #      #         #     # #    #   #
+  #    ## ##  #    # #    #   #    ####  #     # #      #         ######   ####    #
 
   zoe-wa-bot:
     build:
@@ -185,12 +186,20 @@ services:
       - RUST_LOG=${RUST_LOG:-info}
     networks:
       - zoe-network
-    command: ["./zoe-wa-bot", "health-bridge",
-              "--http-port", "8080",
-              "--health-check-port", "8080",
-              "--target-address", "zoe-wa-bot"]
+    command:
+      [
+        "./zoe-wa-bot",
+        "health-bridge",
+        "--http-port",
+        "8080",
+        "--health-check-port",
+        "8080",
+        "--target-address",
+        "zoe-wa-bot",
+      ]
     healthcheck:
-      test: ["CMD-SHELL", "timeout 5 bash -c '</dev/tcp/localhost/8080' || exit 1"]
+      test:
+        ["CMD-SHELL", "timeout 5 bash -c '</dev/tcp/localhost/8080' || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -198,16 +207,13 @@ services:
     profiles:
       - whatsapp-bot-health
 
-
-
-#    #####                                   ######               
-#   #     # #  ####  #    #   ##   #         #     #  ####  ##### 
-#   #       # #    # ##   #  #  #  #         #     # #    #   #   
-#    #####  # #      # #  # #    # #         ######  #    #   #   
-#         # # #  ### #  # # ###### #         #     # #    #   #   
-#   #     # # #    # #   ## #    # #         #     # #    #   #   
-#    #####  #  ####  #    # #    # ######    ######   ####    #   
-                                                               
+  #    #####                                   ######
+  #   #     # #  ####  #    #   ##   #         #     #  ####  #####
+  #   #       # #    # ##   #  #  #  #         #     # #    #   #
+  #    #####  # #      # #  # #    # #         ######  #    #   #
+  #         # # #  ### #  # # ###### #         #     # #    #   #
+  #   #     # # #    # #   ## #    # #         #     # #    #   #
+  #    #####  #  ####  #    # #    # ######    ######   ####    #
 
   zoe-signal-bot:
     build:
@@ -263,33 +269,35 @@ services:
       - RUST_LOG=${RUST_LOG:-info}
     networks:
       - zoe-network
-    command: ["./signal-bot", "health-bridge",
-              "--http-port", "8080",
-              "--health-check-port", "8080",
-              "--target-address", "zoe-signal-bot"]
+    command:
+      [
+        "./signal-bot",
+        "health-bridge",
+        "--http-port",
+        "8080",
+        "--health-check-port",
+        "8080",
+        "--target-address",
+        "zoe-signal-bot",
+      ]
     healthcheck:
-      test: ["CMD-SHELL", "timeout 5 bash -c '</dev/tcp/localhost/8080' || exit 1"]
+      test:
+        ["CMD-SHELL", "timeout 5 bash -c '</dev/tcp/localhost/8080' || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 15s
     profiles:
       - signal-bot-health-bridge
-                   
-                                  
- #####    #####    #####    ##### 
-                                  
-                                  
-                                  
-                                  
-        
-                                                  
-#    # ###### ##### #    #  ####  #####  #    # 
-##   # #        #   #    # #    # #    # #   #  
-# #  # #####    #   #    # #    # #    # ####   
-#  # # #        #   # ## # #    # #####  #  #   
-#   ## #        #   ##  ## #    # #   #  #   #  
-#    # ######   #   #    #  ####  #    # #    #                            
+
+  #####    #####    #####    #####
+
+#    # ###### ##### #    #  ####  #####  #    #
+##   # #        #   #    # #    # #    # #   #
+# #  # #####    #   #    # #    # #    # ####
+#  # # #        #   # ## # #    # #####  #  #
+#   ## #        #   ##  ## #    # #   #  #   #
+#    # ######   #   #    #  ####  #    # #    #
 
 networks:
   zoe-network:
@@ -298,31 +306,30 @@ networks:
       config:
         - subnet: 172.20.0.0/16
 
-                                                  
-# #    #  ####  #      #    # #    # ######  ####  
-# #    # #    # #      #    # ##  ## #      #      
-# #    # #    # #      #    # # ## # #####   ####  
-# #    # #    # #      #    # #    # #           # 
-#  #  #  #    # #      #    # #    # #      #    # 
-#   ##    ####  ######  ####  #    # ######  ####  
+# #    #  ####  #      #    # #    # ######  ####
+# #    # #    # #      #    # ##  ## #      #
+# #    # #    # #      #    # # ## # #####   ####
+# #    # #    # #      #    # #    # #           #
+#  #  #  #    # #      #    # #    # #      #    #
+#   ##    ####  ######  ####  #    # ######  ####
 
 volumes:
   # Persistent storage for relay server data (keys, blobs, etc.) - private to relay
   zoe_relay_data:
     driver: local
-  
+
   # Shared volume for public key exchange only - separate from private data
   zoe_shared_keys:
     driver: local
-  
+
   # Persistent storage for WhatsApp bot data (database, session, etc.)
   zoe_wa_bot_data:
     driver: local
-  
+
   # Persistent storage for Redis data
   zoe_redis_data:
     driver: local
-    
+
   # Persistent storage for Signal bot data (encrypted database)
   signal_bot_data:
     driver: local

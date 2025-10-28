@@ -25,7 +25,7 @@ Certificate  TLS 1.3        Extract Key    First Byte        ServiceRouter::rout
 ### Implementing a Service Router
 
 ```rust
-use zoe_relay::{ServiceRouter, ConnectionInfo, StreamPair};
+use zoe_relay_server::{ServiceRouter, ConnectionInfo, StreamPair};
 use async_trait::async_trait;
 
 struct MyServiceRouter;
@@ -43,7 +43,7 @@ impl ServiceRouter for MyServiceRouter {
         match service_id {
             1 => {
                 // Handle message service
-                println!("Routing to message service for client: {}", 
+                println!("Routing to message service for client: {}",
                          hex::encode(connection_info.client_public_key.to_bytes()));
                 // Your message service logic here
             }
@@ -64,7 +64,7 @@ impl ServiceRouter for MyServiceRouter {
 ### Running the Relay Server
 
 ```rust
-use zoe_relay::RelayServer;
+use zoe_relay_server::RelayServer;
 use ed25519_dalek::SigningKey;
 use std::net::SocketAddr;
 
@@ -73,11 +73,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let addr: SocketAddr = "127.0.0.1:4433".parse()?;
     let server_key = SigningKey::generate(&mut rand::thread_rng());
     let router = MyServiceRouter;
-    
+
     let server = RelayServer::new(addr, server_key, router)?;
     println!("🚀 Relay server running on {}", addr);
     server.run().await?;
-    
+
     Ok(())
 }
 ```
@@ -194,7 +194,7 @@ impl ServiceRouter for ZoeyrServiceRouter {
 Basic server implementation:
 
 ```rust
-use zoe_relay::{RelayServer, ServiceRouter, ConnectionInfo, StreamPair};
+use zoe_relay_server::{RelayServer, ServiceRouter, ConnectionInfo, StreamPair};
 use ed25519_dalek::SigningKey;
 
 struct EchoService;
@@ -220,10 +220,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let addr = "127.0.0.1:4433".parse()?;
     let server_key = SigningKey::generate(&mut rand::thread_rng());
     let router = EchoService;
-    
+
     let server = RelayServer::new(addr, server_key, router)?;
     server.run().await?;
-    
+
     Ok(())
 }
 ```
@@ -264,4 +264,4 @@ The relay server is intentionally minimal - all service-specific configuration i
 
 ## License
 
-This project is licensed under MIT OR Apache-2.0. 
+This project is licensed under MIT OR Apache-2.0.

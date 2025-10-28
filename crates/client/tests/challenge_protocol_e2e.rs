@@ -61,7 +61,7 @@ async fn test_challenge_protocol_basic_handshake() -> Result<()> {
             info!("📡 Server accepted bidirectional stream");
 
             // Perform challenge handshake
-            let verified_keys = zoe_relay::challenge::perform_multi_challenge_handshake(
+            let verified_keys = zoe_relay_server::challenge::perform_multi_challenge_handshake(
                 send,
                 recv,
                 &server_keypair,
@@ -159,7 +159,7 @@ async fn test_challenge_protocol_multiple_keys() -> Result<()> {
             let connection = server_endpoint.accept().await.unwrap().await.unwrap();
             let (send, recv) = connection.open_bi().await.unwrap();
 
-            let verified_keys = zoe_relay::challenge::perform_multi_challenge_handshake(
+            let verified_keys = zoe_relay_server::challenge::perform_multi_challenge_handshake(
                 send,
                 recv,
                 &server_keypair,
@@ -249,7 +249,7 @@ async fn test_challenge_protocol_invalid_signature() -> Result<()> {
             let connection = server_endpoint.accept().await.unwrap().await.unwrap();
             let (send, recv) = connection.accept_bi().await.unwrap();
 
-            let _verified_keys = zoe_relay::challenge::perform_multi_challenge_handshake(
+            let _verified_keys = zoe_relay_server::challenge::perform_multi_challenge_handshake(
                 send,
                 recv,
                 &server_keypair,
