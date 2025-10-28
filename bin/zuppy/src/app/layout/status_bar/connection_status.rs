@@ -1,5 +1,6 @@
+use gpui::Stateful;
 use gpui::{
-    AppContext, Context, Entity, InteractiveElement, IntoElement, ParentElement, Render,
+    AppContext, Context, Div, Entity, InteractiveElement, IntoElement, ParentElement, Render,
     StatefulInteractiveElement, Styled, Window, div,
 };
 use gpui_component::ActiveTheme;
@@ -27,7 +28,7 @@ impl ConnectionStatus {
 }
 
 impl ConnectionStatus {
-    fn render_error(&self, error_message: String, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_error(&self, error_message: String, cx: &mut Context<Self>) -> Stateful<Div> {
         div()
             .id("client_error")
             .child(Icon::new(IconName::NetworkWorking).text_color(cx.theme().red))
@@ -38,30 +39,43 @@ impl ConnectionStatus {
             })
     }
 
-    fn render_connection_info(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
-        let e = div()
-            .id("connected_info")
-            .child(Icon::new(IconName::NetworkSynced).text_color(cx.theme().green.darken(0.2)));
-        if let Some(ref info) = self.current_status.read(cx).current_state {
-            let msg = format!(
-                "Connected to {} / {}",
-                info.connected_count, info.total_count
-            );
-            return e.cursor_pointer().hoverable_tooltip(move |_w, ctx| {
-                ctx.new(|_| SimplePopover::new(msg.clone().into())).into()
-            });
+    fn render_connection_info(&mut self, cx: &mut Context<Self>) -> Stateful<Div> {
+        let Some(ref info) = self.current_status.read(cx).current_state else {
+            return self.render_in_progress(cx);
+        };
+
+        if info.connected_count == 0 {
+            return self.render_error("Not connected to any server".into(), cx);
         }
-        e
+
+        let msg = format!(
+            "Connected to {} / {}",
+            info.connected_count, info.total_count
+        );
+
+        div()
+            .id("connected_info")
+            .child(Icon::new(IconName::NetworkSynced).text_color(cx.theme().green.darken(0.2)))
+            .cursor_pointer()
+            .hoverable_tooltip(move |_w, ctx| {
+                ctx.new(|_| SimplePopover::new(msg.clone().into())).into()
+            })
+    }
+
+    fn render_in_progress(&mut self, cx: &mut Context<Self>) -> Stateful<Div> {
+        div()
+            .child(Icon::new(IconName::NetworkWorking).text_color(cx.theme().yellow.darken(0.2)))
+            .id("connection_in_progress")
     }
 }
 
 impl Render for ConnectionStatus {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         match self.client_state.read(cx) {
-            ClientState::Init => div().child(Icon::new(IconName::NetworkWorking)),
-            ClientState::Loading => div().child(Icon::new(IconName::NetworkWorking)),
-            ClientState::Zoe(_) => div().child(self.render_connection_info(cx)),
-            ClientState::Error(e) => div().child(self.render_error(e.clone(), cx)),
+            ClientState::Init => self.render_connection_info(cx),
+            ClientState::Loading => self.render_in_progress(cx),
+            ClientState::Zoe(_) => self.render_connection_info(cx),
+            ClientState::Error(e) => self.render_error(e.clone(), cx),
         }
     }
 }
