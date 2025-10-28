@@ -141,6 +141,10 @@ pub enum Kind {
 /// ```
 #[derive(Clone, PartialEq, ForwardCompatibleEnum)]
 pub enum Content {
+    /// There is nothing in this message
+    #[discriminant(0)]
+    Empty,
+
     /// Raw byte content without encryption.
     ///
     /// Use this variant for:
@@ -148,7 +152,7 @@ pub enum Content {
     /// - Content that is already encrypted at a higher layer
     /// - Metadata or routing information
     /// - Binary data that should be transmitted as-is
-    #[discriminant(0)]
+    #[discriminant(1)]
     Raw(Vec<u8>),
 
     /// ChaCha20-Poly1305 encrypted content with context-derived keys.
@@ -220,6 +224,7 @@ pub enum Content {
 impl std::fmt::Debug for Content {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Content::Empty => write!(f, "Empty"),
             Content::Raw(data) => write!(f, "Raw([u8; {}])", data.len()),
             Content::ChaCha20Poly1305(..) => write!(f, "ChaCha20Poly1305(#redacted#)"),
             Content::Ed25519SelfEncrypted(..) => write!(f, "Ed25519SelfEncrypted(#redacted#)"),
@@ -342,6 +347,10 @@ impl Content {
     /// Check if this content is raw
     pub fn is_raw(&self) -> bool {
         matches!(self, Content::Raw(_))
+    }
+    /// Check if this content is empty
+    pub fn is_empty(&self) -> bool {
+        matches!(self, Content::Empty)
     }
 }
 

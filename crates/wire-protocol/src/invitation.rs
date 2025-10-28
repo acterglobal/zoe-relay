@@ -72,17 +72,6 @@ pub struct GroupInvitationData {
     pub timestamp: u64,
 }
 
-/// Event sent to the group to announce a new member
-///
-/// This is sent outside the PQXDH session to the group's regular channel
-/// to notify existing members of the new joiner.
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
-pub struct ProfileSetEvent {
-    pub event_type: String, // "member_joined"
-    pub user_profile: UserProfile,
-    pub timestamp: u64,
-}
-
 /// Generate a random ephemeral group invite protocol ID
 ///
 /// Returns a random value in the range 0-999 for use with

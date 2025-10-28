@@ -154,7 +154,7 @@ pub use crypto::*;
 pub use inbox::*;
 pub use invitation::{
     generate_ephemeral_group_invite_id, GroupInvitationData, GroupMetadata, HandshakePurpose,
-    HandshakeResponse, ProfileSetEvent, UserProfile, VerificationHandshakeRequest,
+    HandshakeResponse, UserProfile, VerificationHandshakeRequest,
 };
 pub use message::*;
 pub use relay::*;
