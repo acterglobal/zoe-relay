@@ -8,7 +8,9 @@ use gpui::{
 };
 use gpui_component::{
     Collapsible, Icon, Side, h_flex,
-    sidebar::{Sidebar, SidebarGroup, SidebarHeader, SidebarMenu, SidebarMenuItem},
+    sidebar::{
+        Sidebar, SidebarGroup, SidebarHeader, SidebarMenu, SidebarMenuItem, SidebarToggleButton,
+    },
 };
 
 pub struct ZuppySidebar {
@@ -76,13 +78,15 @@ impl ZuppySidebar {
 }
 
 impl Render for ZuppySidebar {
-    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let me = cx.entity().downgrade();
         Sidebar::new(Side::Left)
             .collapsed(self.collapsed)
             .collapsible(true)
             .header(
                 SidebarHeader::new().child(
                     h_flex()
+                        .gap_2()
                         .id("sidebar-menu-home")
                         .child(Icon::new(IconName::Menu))
                         .cursor_pointer()
@@ -91,13 +95,18 @@ impl Render for ZuppySidebar {
                 ),
             )
             .child(GroupsSidebar::new(self.groups.clone()))
+        // Not really convinced by this
+        // .footer(
+        //     SidebarToggleButton::left()
+        //         .collapsed(self.collapsed)
+        //         .on_click(move |_, _, cx| {
+        //             if let Err(err) = me.update(cx, |me, cx| {
+        //                 me.collapsed = !me.collapsed;
+        //                 cx.notify();
+        //             }) {
+        //                 tracing::error!(?err, "Failed to update sidebar state");
+        //             }
+        //         }),
+        // )
     }
-
-    // // Toggle button
-    // SidebarToggleButton::left()
-    //     .collapsed(collapsed)
-    //     .on_click(|_, _, _| {
-    //         collapsed = !collapsed;
-    //     })
-    // }
 }
