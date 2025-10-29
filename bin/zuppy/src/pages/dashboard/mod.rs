@@ -1,22 +1,23 @@
-use gpui::{AppContext, Context, Entity, IntoElement, Render, Window};
+use gpui::{AppContext, Context, Entity, IntoElement, Render, Styled, Window};
+use gpui_component::group_box::GroupBox;
 
 use crate::models::client_state::ClientState;
-use crate::widgets::interactive_counter::InteractiveCounter;
+use crate::models::user_info::UserInfoModel;
 
 pub struct DashboardPage {
-    counter: Entity<InteractiveCounter>,
+    user_info: Entity<UserInfoModel>,
 }
 
 impl DashboardPage {
-    pub fn new(cx: &mut Context<Self>, _client_state: Entity<ClientState>) -> Self {
+    pub fn new(cx: &mut Context<Self>, client_state: Entity<ClientState>) -> Self {
         Self {
-            counter: cx.new(|_cx| InteractiveCounter::new(0)),
+            user_info: cx.new(|cx| UserInfoModel::new(cx, client_state)),
         }
     }
 }
 
 impl Render for DashboardPage {
     fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-        self.counter.clone()
+        GroupBox::new().fill().title("Good day").m_10().p_10()
     }
 }

@@ -79,7 +79,6 @@ impl ZuppySidebar {
 
 impl Render for ZuppySidebar {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let me = cx.entity().downgrade();
         Sidebar::new(Side::Left)
             .collapsed(self.collapsed)
             .collapsible(true)
