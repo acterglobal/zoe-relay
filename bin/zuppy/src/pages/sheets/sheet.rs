@@ -18,7 +18,7 @@ use zoe_client::client::api::groups::SimpleGroupView;
 use crate::{
     components::edit_modal::EditModal,
     models::{client_state::ClientState, groups::Groups},
-    widgets::simple_popover::SimplePopover,
+    widgets::{sheet_icon::SheetIcon, simple_popover::SimplePopover},
 };
 
 pub struct SheetPage {
@@ -110,61 +110,59 @@ impl SheetPage {
             return title;
         };
 
-        let icon = if let Some(Icon::Emoji(emoji)) = &group.icon {
-            div().child(SharedString::from(emoji)).text_xl()
-        } else {
-            div().child(SharedString::from("❓"))
-        };
-
-        let icon_outer = if !can_edit {
-            icon.id("sheet-icon")
-        } else {
-            let this = cx.entity().downgrade();
-            icon.cursor_pointer()
-                .id("sheet-icon-edit")
-                .hoverable_tooltip(move |_w, ctx| {
-                    ctx.new(|_| SimplePopover::new("Click to edit".into()))
-                        .into()
-                })
-                .on_click(move |_, win, cx| {
-                    let current = if let Some(Icon::Emoji(emoji)) = &group.icon {
-                        emoji.clone()
-                    } else {
-                        String::new()
-                    };
-                    EditModal::default()
-                        .title("Edit Emoji Icon".to_owned())
-                        .current_value(current)
-                        .placeholder("Enter new emoji")
-                        .show(win, cx, {
-                            let this = this.clone();
-                            let group = group.clone();
-                            move |new_value, win, cx| {
-                                if let Err(err) = this.update(
-                                    cx,
-                                    |me: &mut SheetPage, cx: &mut Context<SheetPage>| {
-                                        me.submit_group_update(
-                                            win,
-                                            cx,
-                                            group.clone(),
-                                            GroupInfoUpdate::AddMetadata(Metadata::Icon(
-                                                Icon::Emoji(new_value.to_string()),
-                                            )),
-                                        );
-                                    },
-                                ) {
-                                    tracing::error!("Failed to update group emoji: {}", err);
-                                }
-                            }
-                        });
-                })
-        };
+        // let icon_outer = if !can_edit {
+        //     icon.id("sheet-icon")
+        // } else {
+        //     let this = cx.entity().downgrade();
+        //     icon.cursor_pointer()
+        //         .hoverable_tooltip(move |_w, ctx| {
+        //             ctx.new(|_| SimplePopover::new("Click to edit".into()))
+        //                 .into()
+        //         })
+        //         .on_click(move |_, win, cx| {
+        //             let current = if let Some(Icon::Emoji(emoji)) = &group.icon {
+        //                 emoji.clone()
+        //             } else {
+        //                 String::new()
+        //             };
+        //             EditModal::default()
+        //                 .title("Edit Emoji Icon".to_owned())
+        //                 .current_value(current)
+        //                 .placeholder("Enter new emoji")
+        //                 .show(win, cx, {
+        //                     let this = this.clone();
+        //                     let group = group.clone();
+        //                     move |new_value, win, cx| {
+        //                         if let Err(err) = this.update(
+        //                             cx,
+        //                             |me: &mut SheetPage, cx: &mut Context<SheetPage>| {
+        //                                 me.submit_group_update(
+        //                                     win,
+        //                                     cx,
+        //                                     group.clone(),
+        //                                     GroupInfoUpdate::AddMetadata(Metadata::Icon(
+        //                                         Icon::Emoji(new_value.to_string()),
+        //                                     )),
+        //                                 );
+        //                             },
+        //                         ) {
+        //                             tracing::error!("Failed to update group emoji: {}", err);
+        //                         }
+        //                     }
+        //                 });
+        //         })
+        // };
 
         div()
             .id("sheet-title-container")
             .h_flex()
             .justify_start()
-            .child(icon_outer.mr_2())
+            .gap_2()
+            .child(
+                SheetIcon::new("sheet-icon-edit", group.icon.clone())
+                    .text_xl()
+                    .mr_2(),
+            )
             .child(title)
     }
 
