@@ -12,6 +12,9 @@ use gpui_component::{
         Sidebar, SidebarGroup, SidebarHeader, SidebarMenu, SidebarMenuItem, SidebarToggleButton,
     },
 };
+use sheets_menu::SheetsMenu;
+
+mod sheets_menu;
 
 pub struct ZuppySidebar {
     collapsed: bool,
@@ -49,21 +52,9 @@ impl Collapsible for GroupsSidebar {
 impl RenderOnce for GroupsSidebar {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         cx.read_entity(&self.groups, |state, _cx| {
-            if state.groups.is_empty() {
-                SidebarGroup::new("Sheets").child(
-                    SidebarMenu::new().child(
-                        SidebarMenuItem::new("Create new sheet")
-                            .on_click(|_, window, app| Routes::CreateSheet.route(window, app)),
-                    ),
-                )
-            } else {
-                SidebarGroup::new("Sheets").children(state.groups.iter().map(|g| {
-                    let group_id_hex = g.group_id.to_hex();
-                    SidebarMenu::new().child(SidebarMenuItem::new(g.name.clone()).on_click(
-                        move |_, w, cx| Routes::Sheet.route_sub(w, cx, Some(group_id_hex.clone())),
-                    ))
-                }))
-            }
+            SheetsMenu::new("Sheets")
+                .groups(state.groups.iter())
+                .collapsed(self.collapsed)
         })
     }
 }
@@ -79,6 +70,7 @@ impl ZuppySidebar {
 
 impl Render for ZuppySidebar {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let me = cx.entity().downgrade();
         Sidebar::new(Side::Left)
             .collapsed(self.collapsed)
             .collapsible(true)
@@ -93,19 +85,19 @@ impl Render for ZuppySidebar {
                         .on_click(move |_, window, cx| Routes::Dashboard.route(window, cx)),
                 ),
             )
-            .child(GroupsSidebar::new(self.groups.clone()))
-        // Not really convinced by this
-        // .footer(
-        //     SidebarToggleButton::left()
-        //         .collapsed(self.collapsed)
-        //         .on_click(move |_, _, cx| {
-        //             if let Err(err) = me.update(cx, |me, cx| {
-        //                 me.collapsed = !me.collapsed;
-        //                 cx.notify();
-        //             }) {
-        //                 tracing::error!(?err, "Failed to update sidebar state");
-        //             }
-        //         }),
-        // )
+            .child(GroupsSidebar::new(self.groups.clone()).collapsed(self.collapsed))
+            // Not really convinced by this
+            .footer(
+                SidebarToggleButton::left()
+                    .collapsed(self.collapsed)
+                    .on_click(move |_, _, cx| {
+                        if let Err(err) = me.update(cx, |me, cx| {
+                            me.collapsed = !me.collapsed;
+                            cx.notify();
+                        }) {
+                            tracing::error!(?err, "Failed to update sidebar state");
+                        }
+                    }),
+            )
     }
 }
