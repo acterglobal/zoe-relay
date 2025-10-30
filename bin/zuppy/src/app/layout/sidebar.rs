@@ -8,9 +8,7 @@ use gpui::{
 };
 use gpui_component::{
     Collapsible, Icon, Side, h_flex,
-    sidebar::{
-        Sidebar, SidebarGroup, SidebarHeader, SidebarMenu, SidebarMenuItem, SidebarToggleButton,
-    },
+    sidebar::{Sidebar, SidebarHeader, SidebarToggleButton},
 };
 use sheets_menu::SheetsMenu;
 
